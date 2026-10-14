@@ -48,7 +48,40 @@ Power and volume; Space pauses and R rotates the displayed guest. S captures a l
 display rotation cancel all input; native mapping uses the same rotation/letterbox
 transform as Android. F6 schedules a clearly
 labeled two-contact pinch, not guest acceptance evidence. Arrow keys replay labeled
-acceleration only. `--script FILE` runs deterministic production input commands:
+acceleration only.
+
+Window/guest geometry changes cancel admitted contacts, including generated
+replay contacts. A held mouse/finger leaving the fitted image cancels ownership;
+moving back in cannot continue it. A fresh Down starts a new gesture. A failed
+cancel still drops local IDs and the existing control fence retries cancellation
+before newer input. Cancellation uses the shared full-input operation, so held
+hardware buttons are released too; this adapter has no contacts-only cancel API.
+
+Audio is enabled by default; `--no-audio` explicitly disables it. The SDL sink
+opens paused at44100Hz/stereo/S16LE, then starts after a worker RUNNING receipt.
+Pause immediately pauses/clears the SDL queue and fences transport packets. A
+quick Resume waits for the worker to observe PAUSED before sending native Resume;
+the sink resumes only on the matching command/epoch RUNNING receipt. Stop mutes
+and clears the sink. SDL initialization/open/specification/queue failure is an
+actionable frontend failure and requests ordinary guest Stop; a clean guest
+receipt does not change that frontend failure into success.
+
+Each enqueue admits at most the remaining4410-frame SDL queue capacity (100ms),
+discarding the rest of that packet. A4096-frame packet cannot overshoot the cap.
+This bounds SDL queued bytes, not backend/socket capacity, device latency or
+physical playback. Receipts distinguish native capture/pull/drop, worker discard,
+socket send loss, adapter discard, SDL accepted/cleared frames, current SDL depth, peak depth bound and dequeue estimate. The dequeue estimate is accepted minus cleared minus current depth; SDL may have moved those frames into its backend/device buffer without
+audible output. Driver/device ID and returned PCM/period specification are logged;
+default selection does not expose a reliable physical-device name. Underruns and
+physical audibility are explicitly unavailable/unobserved. They require separate
+target evidence, as do changed guest pixels, simultaneous input and nonzero PCM.
+
+The pause/queue helpers and their synthetic regressions are source tests, not
+guest acceptance. A new matched frontend/domain build and actual SDL playback,
+interruption, bounded1200s per-window media observations and clean persistence
+remain required; older no-audio producers do not acquire these changes.
+
+`--script FILE` runs deterministic production input commands:
 
 ```text
 # seconds kind arguments
