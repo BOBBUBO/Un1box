@@ -15,6 +15,10 @@
 #include <iostream>
 #include <unistd.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <sys/socket.h>
+#include <cerrno>
+#endif
 namespace fs = std::filesystem;
 static void put(const fs::path &p, const std::string &s) {
     fs::create_directories(p.parent_path());
@@ -74,6 +78,35 @@ int main() {
     assert(delivery.needs_cancel());
     assert(delivery.send(ControlKind::cancel, [] { return true; }));
     assert(!delivery.needs_cancel());
+#ifdef __linux__
+    // Exercise a real bounded private socket reaching EAGAIN. This is transport
+    // regression evidence only; no engine or guest is involved.
+    int sockets[2];
+    assert(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, sockets) == 0);
+    int small_buffer = 4096;
+    assert(setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &small_buffer, sizeof(small_buffer)) == 0);
+    std::array<char, 1024> packet{};
+    while (send(sockets[0], packet.data(), packet.size(), MSG_NOSIGNAL) == ssize_t(packet.size())) {
+    }
+    assert(errno == EAGAIN || errno == EWOULDBLOCK);
+    lt::ControlDelivery bounded;
+    assert(!bounded.send(ControlKind::input, [&] {
+        return send(sockets[0], packet.data(), packet.size(), MSG_NOSIGNAL) == ssize_t(packet.size());
+    }));
+    assert(bounded.needs_cancel());
+    bounded.retry_cancel(
+        [&] { return send(sockets[0], packet.data(), packet.size(), MSG_NOSIGNAL) == ssize_t(packet.size()); });
+    assert(bounded.needs_cancel());
+    while (recv(sockets[1], packet.data(), packet.size(), 0) > 0) {
+    }
+    bounded.retry_cancel([&] { return send(sockets[0], "C", 1, MSG_NOSIGNAL) == 1; });
+    assert(!bounded.needs_cancel());
+    assert(bounded.send(ControlKind::input, [&] { return send(sockets[0], "I", 1, MSG_NOSIGNAL) == 1; }));
+    assert(recv(sockets[1], packet.data(), packet.size(), 0) == 1 && packet[0] == 'C');
+    assert(recv(sockets[1], packet.data(), packet.size(), 0) == 1 && packet[0] == 'I');
+    close(sockets[0]);
+    close(sockets[1]);
+#endif
     // A zero engine return is not a guest shutdown receipt. Finalization may
     // briefly retain dirty while the confirmed publisher is still cleaning up.
     assert(lt::terminal_issue(true, true, false, true, 0) == lt::TerminalIssue::unconfirmed_shutdown);
