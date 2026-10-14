@@ -33,7 +33,8 @@ volume.c, all compiled common/HFS/DMG/minizip inputs, required headers and licen
 texts. `selected-sources.json` documents the compilation inputs and historical
 before/after exclusion artifacts; compiler dependency files establish the header
 closure. The public `xpwn-selected.SHA256SUMS` pins 35 original files, including
-all eight required headers plus upstream GPL/license documentation. CMake
+all 11 required headers (eight under includes and three minizip headers) plus
+upstream GPL/license documentation. CMake
 authenticates their content in both the Git-checkout and plain-export routes.
 The exporter records the real upstream pin in XPWN-COMMIT; it creates no Git
 repository or fabricated commit identity. Its 41 files exclude unused folding

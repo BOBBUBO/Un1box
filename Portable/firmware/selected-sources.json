@@ -117,11 +117,13 @@
       "manifest_sha256": "d959b407c202b904c7ec1f18dad4f2282f8f5886b306440064afbe44236db9b3",
       "verified_original_files": 35,
       "exported_files": 41,
-      "required_headers": 8,
+      "required_headers": 11,
       "metadata": "XPWN-COMMIT (not fabricated Git identity)",
       "original_and_exported_generation_parity": "PASS",
       "corrupt_header_rejected": "PASS",
-      "export_build": "NOT_TESTED; configure and generated source parity verified"
+      "export_build": "NOT_TESTED; configure and generated source parity verified",
+      "xpwn_include_headers": 8,
+      "minizip_headers": 3
     }
   },
   "original_activation": {
