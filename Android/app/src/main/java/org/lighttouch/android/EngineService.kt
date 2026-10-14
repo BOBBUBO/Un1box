@@ -23,7 +23,7 @@ class EngineService : Service() {
     private val touchAdmissionGuard = Any()
     private val lifecycleAdmission = WorkerLifecycleAdmission()
     private val touchTimestampOrder = TouchTimestampOrder()
-    private val audioGuard = Any()
+    private val audioGuard = AudioPacketEpoch()
     private val audioObservations = AudioObservations()
     @Volatile private var audioError = ""
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
@@ -134,7 +134,7 @@ class EngineService : Service() {
             if (result.isNotEmpty()) { error = result; return@run }
             userPaused = true
             synchronized(audioGuard) { audioObservations.pauses++ }
-            abandonAudioFocus(); pauseAudio()
+            pauseAudio(); abandonAudioFocus()
         } }
         override fun pause(paused: Boolean) { lifecycleAdmission.run {
             // A background callback can race the stop button. Shutdown already
@@ -142,11 +142,12 @@ class EngineService : Service() {
             if (stopping.get()) return@run
             userPaused = paused
             if (!paused) focusPaused = false
+            if (paused) pauseAudio() // Publish/flush the sink fence before native admission.
             Native.cancelInput()
             val result = Native.pause(paused)
             if (result.isNotEmpty()) error = result
             synchronized(audioGuard) { if (paused) audioObservations.pauses++ else audioObservations.resumes++ }
-            if (paused) { abandonAudioFocus(); pauseAudio() }
+            if (paused) abandonAudioFocus()
             else requestAudioFocus()
         } }
         override fun stop() {
@@ -293,6 +294,9 @@ class EngineService : Service() {
             val samples = ShortArray(8192)
             var format = ""
             while (alive.get()) {
+                // This ticket predates both the native PCM read and format read.
+                // Pause/resume can run while either JNI call is outside the sink lock.
+                val packetEpoch = audioGuard.capture()
                 val count = Native.audio(samples)
                 if (count < 0) {
                     synchronized(audioGuard) { audioObservations.nativePullFailures++ }
@@ -307,6 +311,10 @@ class EngineService : Service() {
                         require(spec[0] > 0 && spec[1] in 1..2) { "Invalid guest audio format" }
                         val next = spec.joinToString()
                         synchronized(audioGuard) {
+                            if (!audioGuard.isCurrent(packetEpoch) || focus == null || focusPaused || userPaused || stopping.get()) {
+                                audioObservations.discardedReadPackets++; audioObservations.discardedReadSamples += count
+                                return@synchronized
+                            }
                             if (next != format) {
                                 audio?.let { audioObservations.observeTrack(it.playbackHeadPosition, it.underrunCount); it.release() }
                                 val mask = if (spec[1] == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
@@ -321,7 +329,7 @@ class EngineService : Service() {
                             var offset = 0
                             // A positive short write retains the unwritten tail. Stop,
                             // pause and focus loss are checked before each retry.
-                            while (offset < count && alive.get() && focus != null && !focusPaused && !userPaused && !stopping.get()) {
+                            while (offset < count && audioGuard.isCurrent(packetEpoch) && alive.get() && focus != null && !focusPaused && !userPaused && !stopping.get()) {
                                 val requested = count - offset
                                 val written = audio!!.write(samples, offset, requested, AudioTrack.WRITE_BLOCKING)
                                 audioObservations.writeCalls++; audioObservations.lastWriteCode = written
@@ -341,14 +349,21 @@ class EngineService : Service() {
                         audioError = "Guest audio output failed: ${failure.message ?: "unknown error"}. Stop and restart the guest."
                         Thread.sleep(100)
                     }
-                } else Thread.sleep(10)
+                } else {
+                    if (count > 0) synchronized(audioGuard) {
+                        audioObservations.discardedReadPackets++; audioObservations.discardedReadSamples += count
+                    }
+                    Thread.sleep(10)
+                }
             }
             synchronized(audioGuard) { audio?.release(); audio = null }
         }, "guest-audio").start()
     }
     private fun pauseAudio() = synchronized(audioGuard) {
+        audioGuard.pause()
         audio?.let { audioObservations.observeTrack(it.playbackHeadPosition, it.underrunCount); it.pause(); it.flush(); audioObservations.flushed() }
     }
+    private fun playAudio() = synchronized(audioGuard) { audio?.play(); audioGuard.resume() }
     private fun observations() = Bundle().apply {
         val values = Native.observations()
         val keys = listOf("hostMonotonicNs", "presentedFrames", "firstPresentHostNs", "lastPresentHostNs", "maxPresentGapNs", "maxPresentWorkNs",
@@ -374,7 +389,9 @@ class EngineService : Service() {
             getLong("guestAgentState") == 2L -> "stale"
             else -> "absent"
         })
-        putBundle("audio", synchronized(audioGuard) { audioObservations.snapshot() })
+        putBundle("audio", synchronized(audioGuard) { audioObservations.snapshot().apply {
+            putLong("packetGeneration", audioGuard.currentGeneration()); putBoolean("packetAdmissionOpen", audioGuard.admissionOpen())
+        } })
         putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioFocusHeld", focus != null)
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
@@ -390,18 +407,19 @@ class EngineService : Service() {
     private fun audioAttributes() = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
     private fun requestAudioFocus() { lifecycleAdmission.run {
         if (userPaused || stopping.get()) return@run
-        if (focus != null) { synchronized(audioGuard) { audio?.play() }; return@run }
+        if (focus != null) { playAudio(); return@run }
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(audioAttributes())
             .setOnAudioFocusChangeListener({ change -> lifecycleAdmission.run {
                 if (change < 0) {
                     focusPaused = true
+                    pauseAudio()
                     synchronized(audioGuard) { audioObservations.focusLosses++ }
-                    Native.cancelInput(); Native.pause(true); pauseAudio()
+                    Native.cancelInput(); Native.pause(true)
                     if (change == AudioManager.AUDIOFOCUS_LOSS) abandonAudioFocus()
                 } else if (change == AudioManager.AUDIOFOCUS_GAIN && focusPaused && !userPaused && !stopping.get()) {
                     focusPaused = false
                     synchronized(audioGuard) { audioObservations.focusGains++ }
-                    Native.pause(false); synchronized(audioGuard) { audio?.play() }
+                    Native.pause(false); playAudio()
                 }
             } }, Handler(mainLooper)).build()
         if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
@@ -409,12 +427,13 @@ class EngineService : Service() {
                 // Resume the retained track before the audio thread sees focus.
                 // Backgrounding pauses it without changing the PCM format.
                 audio?.play()
+                audioGuard.resume()
                 focus = request
             }
         }
         else {
             synchronized(audioGuard) { audioObservations.focusDenied++ }
-            focusPaused = true; Native.cancelInput(); Native.pause(true)
+            focusPaused = true; pauseAudio(); Native.cancelInput(); Native.pause(true)
             audioError = "Audio focus unavailable. Pause and resume after other audio stops."
         }
     } }
