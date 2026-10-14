@@ -3,6 +3,7 @@
 #include <android/native_window_jni.h>
 #include <android/bitmap.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <mutex>
@@ -43,6 +44,28 @@ int last_buffer_format=0,last_buffer_width=0,last_buffer_height=0,last_buffer_st
 uint64_t geometry_failures=0,invalid_buffers=0,first_window_error_ns=0;
 unsigned window_log_budget=8;
 uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
+// Diagnostic stages only; they neither admit controls nor establish a guest scene.
+// This telemetry is lock-free on both supported Android ABIs. The sole presenter
+// writes the tuple; a reader samples once and reports overlaps rather than spins.
+// GuardWait identifies the last context observed under guard. Outside-guard
+// stages identify the retained snapshot, which may differ from the current
+// surfaceGeneration/presentationEpoch after a concurrent detach or Resume.
+static_assert(std::atomic<uint64_t>::is_always_lock_free, "Presenter telemetry requires lock-free 64-bit atomics");
+enum class PresentPhase : uint64_t {
+    NotStarted=0, GuardWait=1, InputStatus=2, FrameCopy=3, CopiedCache=4,
+    Configure=5, WindowLock=6, Scale=7, WindowPost=8, CommitWait=9,
+    PublishCommit=10, WindowRelease=11, IdleNoTarget=12, IdleNoNewFrame=13, Idle=14
+};
+std::atomic<uint64_t> window_attached{0},present_phase{0},present_phase_entry_ns{0};
+std::atomic<uint64_t> present_phase_generation{0},present_phase_epoch{0},present_phase_revision{0};
+void present_stage(PresentPhase phase,uint64_t generation,uint64_t epoch) {
+    ++present_phase_revision; // Odd during the tuple transition.
+    present_phase_generation.store(generation);
+    present_phase_epoch.store(epoch);
+    present_phase_entry_ns.store(monotonic_ns());
+    present_phase.store(static_cast<uint64_t>(phase));
+    ++present_phase_revision;
+}
 bool presenter_started = false;
 bool starting = false, startup_stop_requested = false, startup_pause_requested = false;
 uint64_t last_rejected_input = 0;
@@ -110,15 +133,19 @@ using WindowSnapshot = PresentationWindow<ANativeWindow, ANativeWindow_acquire, 
 using WindowPost = PresentationPost<ANativeWindow, ANativeWindow_unlockAndPost>;
 void present() {
     uint64_t configured_generation = 0;
+    uint64_t phase_generation=0,phase_epoch=0;
     for (;;) {
         // The snapshot outlives both guarded scopes, so its release is outside
         // the control mutex even when a stale platform operation returns late.
         std::optional<WindowSnapshot> snapshot;
         lt_frame_info source = LT_INIT(lt_frame_info);
         uint64_t begin = 0;
+        present_stage(PresentPhase::GuardWait,phase_generation,phase_epoch);
         {
             std::lock_guard<std::mutex> lock(guard);
+            phase_generation=surface_generation;phase_epoch=presentation_epoch;
             if (runtime) {
+                present_stage(PresentPhase::InputStatus,phase_generation,phase_epoch);
                 lt_input_status delivered=LT_INIT(lt_input_status);lt_error error=LT_INIT(lt_error);
                 if(lt_runtime_input_status(runtime,&delivered,&error)==LT_OK && delivered.state==3 && delivered.request_id!=last_rejected_input) {
                     last_rejected_input=delivered.request_id;
@@ -127,6 +154,7 @@ void present() {
                 }
             }
             if (runtime && window) {
+                present_stage(PresentPhase::FrameCopy,phase_generation,phase_epoch);
                 lt_error error = LT_INIT(lt_error);
                 lt_status status = lt_runtime_copy_frame(runtime, pixels.data(), pixels.size(), &sequence, &frame, &error);
                 if (status == LT_OK && frame.width && frame.height && frame.stride >= frame.width * 4 && frame.bytes <= pixels.size()) {
@@ -143,14 +171,18 @@ void present() {
                         const uint32_t rgb=uint32_t(sample[0])+sample[1]+sample[2];
                         ++frame_sample_pixels;frame_nonzero_rgb_samples+=rgb!=0;frame_rgb_sample_sum+=rgb;
                     }
+                    present_stage(PresentPhase::CopiedCache,phase_generation,phase_epoch);
                 } else if(status!=LT_AGAIN) ++frame_copy_failures;
             }
+            if(!snapshot)present_stage(runtime&&window?PresentPhase::IdleNoNewFrame:PresentPhase::IdleNoTarget,
+                phase_generation,phase_epoch);
         }
         if (snapshot) {
             ANativeWindow *target_window=snapshot->get();
             int geometry_code=0, geometry_width=0, geometry_height=0, geometry_format=0;
             const bool configure=configured_generation!=snapshot->generation();
             if(configure) {
+                present_stage(PresentPhase::Configure,phase_generation,phase_epoch);
                 // Only this presenter configures or draws the window. Binder
                 // setters only exchange the owning reference under guard.
                 geometry_width=ANativeWindow_getWidth(target_window);
@@ -160,6 +192,7 @@ void present() {
                 configured_generation=snapshot->generation();
             }
             ANativeWindow_Buffer target{};
+            present_stage(PresentPhase::WindowLock,phase_generation,phase_epoch);
             const int lock_code=ANativeWindow_lock(target_window,&target,nullptr);
             int post_code=0;
             bool valid_buffer=false;
@@ -168,6 +201,7 @@ void present() {
                 valid_buffer=target.bits && target.width>0 && target.height>0 && target.stride>=target.width &&
                     (target.format==WINDOW_FORMAT_RGBA_8888 || target.format==WINDOW_FORMAT_RGBX_8888);
                 if(valid_buffer) {
+                    present_stage(PresentPhase::Scale,phase_generation,phase_epoch);
                     const auto view=viewport(target.width,target.height,source);
                     // This thread is the sole pixels/frame writer and never
                     // resizes pixels. Capture reads under guard. Those concurrent
@@ -187,11 +221,14 @@ void present() {
                 }
                 // Exactly one post for every successful lock, including invalid
                 // layouts and a window detached while the call was in flight.
+                present_stage(PresentPhase::WindowPost,phase_generation,phase_epoch);
                 post_code=post.finish();
             }
             const auto now=monotonic_ns();
+            present_stage(PresentPhase::CommitWait,phase_generation,phase_epoch);
             {
                 std::lock_guard<std::mutex> lock(guard);
+                present_stage(PresentPhase::PublishCommit,phase_generation,phase_epoch);
                 if(snapshot->current(window,surface_generation,presentation_epoch)) {
                     if(configure) {
                         last_buffer_width=geometry_width;last_buffer_height=geometry_height;last_buffer_format=geometry_format;
@@ -216,8 +253,10 @@ void present() {
                     } else {++window_failures;sequence=0;last_lock_error=lock_code;if(!first_lock_error)first_lock_error=lock_code;window_error("lock",lock_code);}
                 }
             }
+            present_stage(PresentPhase::WindowRelease,phase_generation,phase_epoch);
+            snapshot.reset(); // Platform release is outside guard, including detach.
+            present_stage(PresentPhase::Idle,phase_generation,phase_epoch);
         }
-        snapshot.reset(); // Platform release is outside guard, including detach.
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
@@ -397,6 +436,7 @@ JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env
         std::lock_guard<std::mutex> lock(guard);
         if(request==surface_request) {
             retired=window;window=incoming;incoming=nullptr;
+            window_attached.store(window?1u:0u);
             ++surface_generation;++presentation_epoch;previous_present_ns=0;
             if(window)sequence=0; // Replay the latest cache on a replacement.
         }
@@ -539,6 +579,14 @@ JNI(observations) jlongArray JNICALL Java_org_lighttouch_android_Native_observat
     const auto agent_status=runtime?lt_runtime_guest_status(runtime,&live_agent,&agent_error):LT_AGAIN;
     // These samples use separate error buffers and never replace poll/control
     // failures. No heartbeat age or socket endpoint exists in this ABI.
+    // Existing runtime/control observations still use guard. These added phase
+    // loads add no wait, platform query or retry. All fields are atomic; a
+    // changed/odd revision marks this one in-flight stage sample unstable.
+    const auto phase_revision_before=present_phase_revision.load();
+    const auto phase=present_phase.load(),phase_entry=present_phase_entry_ns.load();
+    const auto phase_generation=present_phase_generation.load(),phase_epoch=present_phase_epoch.load();
+    const auto phase_revision_after=present_phase_revision.load();
+    const bool phase_stable=phase_revision_before==phase_revision_after && !(phase_revision_after&1u);
     jlong values[]={jlong(monotonic_ns()),jlong(presented_frames),jlong(first_present_ns),jlong(last_present_ns),
         jlong(max_present_gap_ns),jlong(max_present_work_ns),jlong(window_failures),jlong(frame_copy_failures),
         jlong(surface_generation),jlong(frame.sequence),jlong(frame.timestamp_ns),jlong(pcm_failures),jlong(pcm.dropped_frames),
@@ -549,7 +597,9 @@ JNI(observations) jlongArray JNICALL Java_org_lighttouch_android_Native_observat
         jlong(observer.display_sleeping),jlong(observer.backlight_level),jlong(agent_status),jlong(live_agent),
         jlong(observer.shutdown_phase),jlong(observer.shutdown_route),jlong(observer.shutdown_reply_status),
         jlong(observer.shutdown_reply_received),jlong(frame.width),jlong(frame.height),
-        jlong(frame_sample_pixels),jlong(frame_nonzero_rgb_samples),jlong(frame_rgb_sample_sum)};
+        jlong(frame_sample_pixels),jlong(frame_nonzero_rgb_samples),jlong(frame_rgb_sample_sum),
+        jlong(window_attached.load()),jlong(presentation_epoch),jlong(phase),jlong(phase_entry),
+        jlong(phase_generation),jlong(phase_epoch),jlong(phase_revision_after),jlong(phase_stable)};
     auto array=env->NewLongArray(sizeof(values)/sizeof(values[0]));
     env->SetLongArrayRegion(array,0,sizeof(values)/sizeof(values[0]),values);return array;
 }
