@@ -264,3 +264,7 @@ Start from a consumed worker waits for its Binder death and binds a fresh proces
 On API30+, only this app's `:engine` historical exit record is captured via
 ActivityManager/ApplicationExitInfo, with at most 4 MiB from its own trace stream,
 under private `files/worker-exits`. No other process or system logs are read.
+To retrieve a specific prior native crash without reproducing it, run only
+`OwnWorkerExitTest` with `-e workerPid PID`. It requests this app's exact :engine
+PID, validates the native-crash record and retains its bounded raw trace bytes
+for integration-owner tombstone/protobuf decoding. Default suites skip it.
