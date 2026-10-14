@@ -47,9 +47,11 @@ kill deadline. The plan is not a sustained-performance claim.
 3. Attempt normal admission of the same state without `--recover`. Record the
    native worker refusal text and output logs: `interrupted session: reopen with
    explicit cold recovery; data retained`. Core returns `LT_DIRTY`; the cached
-   CLI prints the message rather than the numeric code. Its parent may separately
-   report a pre-HELLO timeout, so that timeout alone is not the dirty-policy
-   result. The expected admission refusal starts no engine and does not clear
+   CLI prints the message rather than the numeric code. When the rejected worker
+   exits, its parent reports `worker control channel closed`; that generic
+   channel error alone is not the dirty-policy result. Admission that remains
+   busy for 60 seconds instead produces `worker startup timeout`, also not a
+   dirty-policy result. The expected refusal starts no engine and does not clear
    the marker or modify user data.
 4. Start the same state in a fresh worker with explicit `--recover`; record the
    different PID/start ticks and unchanged identity pin. Inspect actual Home,
@@ -68,3 +70,34 @@ must distinguish visible marker persistence, dirty admission policy, explicit
 recovery, guest shutdown confirmation and host process disposal. Do not turn
 synthetic contract tests, a typed request admission, exit0 alone, stale images,
 or host-created screenshot files into a guest persistence assertion.
+
+
+Cached CLI ownership and timeout details
+---------------------------------------
+
+The fdde frontend matches `Linux/Main.cpp` at3db9bc70; its source is unchanged
+through integrated app53ea5309. The frontend forks and execs its own executable,
+appending `--worker CONTROL_FD PCM_FD`. Identify the guest by that exact argv
+flag, its matching base/state/engine paths, direct parent relationship and
+`/proc/PID/stat` start ticks. Other descendants, including a desktop audio daemon,
+are not the guest. Verify identity immediately before any allocated signal;
+prefer a retained Linux pidfd to prevent PID reuse. Never signal a cached PID,
+`pgrep` name match, shared audio process, or another owner's process group.
+
+`--seconds 360` begins after admission/HELLO and SDL initialization, not at process
+launch. The separate pre-HELLO deadline is60seconds. Stop is asynchronous; the
+worker permits30seconds from native Stop admission and the parent35seconds from
+its submitted Stop. Both elapsed checks use a fresh monotonic timestamp and
+reject negative elapsed intervals. An outer launch supervisor must permit these
+phases (for example480seconds total), then retain an interrupted result if it
+must dispose the exclusively owned group. Its timeout is not clean shutdown.
+
+For refusal use the same `--base`, `--state`, `--engine`, `--rom`, `--package`
+arguments, omit `--recover`, and optionally add `--headless --seconds 1`; no
+window is needed to observe admission. For the recovery session add `--recover`
+only, keeping the identity paths unchanged. `--debug-touch-trace` requires the
+existing debug-enabled frontend build; `--trace-io` prints host-monotonic
+observations. A GUI stop is Escape; script `stop` also requests ordinary shutdown.
+The historical `run-private-acceptance.py` write/read scripts contain fixed
+45-second navigation and are not a substitute for current inspected readiness.
+No command or intentional interruption in this plan has been executed.
