@@ -68,6 +68,11 @@ def pixel_options(argv):
 class PixelAttempt(base.Attempt):
     def __init__(self, args):
         super().__init__(args)
+        ticks = memory_monitor.process_ticks(os.getpid())
+        if ticks is None: raise ValueError("Original supervisor process clock unavailable")
+        # Include CLI validation/import time; no later constructor clock may extend gates.
+        self.start = (ticks * 1_000_000_000 // os.sysconf("SC_CLK_TCK")) / 1e9
+        self.deadline = self.start + base.HARD_LIMIT
         self.pixel_readback_done = False
         self.pixel_monitor = None
         self.pixel_monitor_stop = multiprocessing.get_context("fork").Event()
