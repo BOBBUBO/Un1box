@@ -229,3 +229,28 @@ native preparer diagnostics remain at `files/prepared/job-*.native.log`.
 Default timeout is 1800 seconds per job, overridden with
 `firmwareTimeoutSeconds`. This establishes preparation/import only; guest boot
 and the normal picker flow still require independent acceptance.
+
+Production service status includes an `observations` Bundle for private
+acceptance: shared native producer/PCM queue counts, successful Surface posts,
+local CLOCK_MONOTONIC presentation intervals and work time, copy/window failures,
+and real AudioTrack pulled/accepted sample counts, nonzero counts, S16 RMS,
+short/failed writes, underruns and playback-head advancement. Guest frame
+sequence/timestamp and shared publication timestamp retain their documented
+clock semantics; PCM capture timestamps have a separate generation-relative
+epoch. Presentation intervals include intentional/static guest gaps and do not
+alone measure jank. Queued/accepted samples do not prove audible output.
+
+`GuestMediaLifecycleTest` requires `-e exerciseMedia true` and an already booted
+real guest. `mediaSeconds` controls the running measurement (30 by default;
+1200 for a 20-minute observation). Choose a real animation and use
+`requireFrameProgress=true`, or a known guest sound and
+`requireGuestAudio=true`, to require those measured deltas. The test records user
+pause/resume, background/surface loss and foreground return; optional
+`exerciseAudioFocus=true` temporarily requests real Android audio focus without
+synthesizing sound. It writes private `files/media-evidence-*/observations.json`
+and `result.json`, leaving visible/audible qualification false until independent
+inspection/listening. Metrics follow the official
+[AudioTrack API](https://developer.android.com/reference/android/media/AudioTrack).
+Each engine worker redirects its own native stdout/stderr before engine start
+into an append-only mode0600 `engine-PID.log` in the selected private state;
+`status.engineLog` identifies it. Prior worker logs and serial logs are retained.
