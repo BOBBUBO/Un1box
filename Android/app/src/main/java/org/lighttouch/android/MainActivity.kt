@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var engineRestarting = false
     private var busy by mutableStateOf(false)
     private var captureNotice by mutableStateOf("")
+    private var licensesOpen by mutableStateOf(false)
     private var devices by mutableStateOf<List<Bundle>>(emptyList())
     private var selected by mutableStateOf<Bundle?>(null)
     private var deviceMenu by mutableStateOf(false)
@@ -182,7 +183,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF71DCC8))) {
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp).semantics { testTagsAsResourceId = true }) {
-                        Text("LightTouch", style = MaterialTheme.typography.headlineMedium)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("LightTouch", style = MaterialTheme.typography.headlineMedium)
+                            TextButton(onClick = { licensesOpen = true }, modifier = Modifier.testTag("open_licenses")) { Text("Licenses") }
+                        }
                         Box {
                             OutlinedButton(onClick = { refreshDevices(); deviceMenu = true }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping"), modifier = Modifier.testTag("device_selector")) {
                                 Text(selected?.let { "${it.getString("name")} · ${it.getString("board")} ${it.getString("build")}" } ?: "Select or import device")
@@ -230,6 +234,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 }
             }
             if (preparationOpen) PreparationDialog()
+            if (licensesOpen) LicenseDialog { licensesOpen = false }
         }
     }
     @Composable
