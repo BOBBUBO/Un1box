@@ -20,3 +20,10 @@ confirm shutdown. The state prefix retains its existing failure remapping.
 A clean terminal receipt requires stopped state, valid `1`, confirmed `1`,
 dirty `0`, storage failed `0`, and engine exit `0`. No extra observations,
 engine phase poll, or public runtime API are introduced by these entries.
+
+Owner-bound input cancellation adds indices13 (`displayInputGeneration`) and14
+(`displayInputOwner`). The original thirteen entries keep their order and
+meaning. These two values describe the guarded Android lease state, rather than
+the runtime poll's shutdown facts; zero means no current owner/generation.
+They do not acknowledge guest input delivery. Historical candidate22 still
+contains the thirteen-entry producer and is unchanged by this source patch.

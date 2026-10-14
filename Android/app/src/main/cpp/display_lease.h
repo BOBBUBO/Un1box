@@ -26,10 +26,15 @@ class DisplayLease {
 public:
     struct Request { uint64_t owner=0, order=0; };
     uint64_t claim() {
-        if(serial_==uint64_t(std::numeric_limits<int64_t>::max()))return 0;
+        if(!input_generation_ || serial_==uint64_t(std::numeric_limits<int64_t>::max()))return 0;
         owner_=++serial_;++order_;clearContacts();return owner_;
     }
     bool owns(uint64_t token) const { return token && token==owner_; }
+    uint64_t inputGeneration(uint64_t token) const { return owns(token)?input_generation_:0; }
+    uint64_t currentOwner() const { return owner_; }
+    bool currentInput(uint64_t token,uint64_t generation) const {
+        return generation!=0 && inputGeneration(token)==generation;
+    }
     Request begin(uint64_t token) { return owns(token)?Request{token,++order_}:Request{}; }
     bool current(Request request) const { return owns(request.owner) && request.order==order_; }
     bool detach(uint64_t token) {
@@ -45,7 +50,13 @@ public:
         return owner_!=0 && (!uncertain_releases_.empty() || release_overflow_);
     }
     bool needsOwnedRelease() const { return contactsHeld() || pendingOwnedRelease(); }
-    void contactsReleased() { clearContacts(); input_pending_=false; }
+    // Call only after successful full-cancellation admission. A normal completed
+    // UP only discharges its release debt; it must not invalidate other fingers.
+    void contactsReleased() {
+        clearContacts();input_pending_=false;
+        if(input_generation_ && input_generation_<uint64_t(std::numeric_limits<int64_t>::max()))++input_generation_;
+        else input_generation_=0; // Exhaustion fails closed; never wrap authority.
+    }
     // Start each admitted batch before updating its IDs. Completion coverage is
     // separate from accumulated release debt: latest-only runtime status cannot
     // prove the outcome of a request overwritten by a later admission.
@@ -83,7 +94,7 @@ public:
     }
 
 private:
-    uint64_t serial_=0,owner_=0,order_=0;
+    uint64_t serial_=0,owner_=0,order_=0,input_generation_=1;
     uint64_t input_request_=0,input_owner_=0;
     bool input_pending_=false,release_overflow_=false;
     // UI contact IDs are small; generic JNI callers may use arbitrary IDs.

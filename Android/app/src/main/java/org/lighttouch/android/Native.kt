@@ -13,12 +13,13 @@ internal object Native {
     external fun status(): Array<String>
     external fun claimDisplay(): Long
     external fun ownsDisplay(lease: Long): Boolean
+    external fun displayInputGeneration(lease: Long): Long
     external fun attachDisplay(lease: Long, surface: Surface): String
     external fun detachDisplay(lease: Long)
     external fun releaseDisplay(lease: Long)
-    external fun cancelDisplayInput(lease: Long)
+    external fun cancelDisplayInput(lease: Long, inputGeneration: Long): String
     external fun backgroundDisplay(lease: Long): String
-    external fun touchDisplay(lease: Long, time: Long, ids: IntArray, phases: IntArray, xy: FloatArray, width: Int, height: Int, rotation: Int): String
+    external fun touchDisplay(lease: Long, inputGeneration: Long, time: Long, ids: IntArray, phases: IntArray, xy: FloatArray, width: Int, height: Int, rotation: Int): String
     external fun pause(paused: Boolean): String
     external fun stop(): String
     external fun shutdownGraceMillis(): Int

@@ -432,7 +432,7 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
             detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
         }
     }
-    auto arr=env->NewObjectArray(13,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(15,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
     env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));
@@ -445,7 +445,9 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     env->SetObjectArrayElement(arr,9,string(env,std::to_string(s.guest_shutdown_confirmed)));
     env->SetObjectArrayElement(arr,10,string(env,std::to_string(s.dirty)));
     env->SetObjectArrayElement(arr,11,string(env,std::to_string(s.storage_failed)));
-    env->SetObjectArrayElement(arr,12,string(env,std::to_string(s.engine_exit)));return arr;
+    env->SetObjectArrayElement(arr,12,string(env,std::to_string(s.engine_exit)));
+    env->SetObjectArrayElement(arr,13,string(env,std::to_string(display_lease.inputGeneration(display_lease.currentOwner()))));
+    env->SetObjectArrayElement(arr,14,string(env,std::to_string(display_lease.currentOwner())));return arr;
 }
 // Must hold guard. Routine attachment/detachment with no View-owned contacts
 // never cancels an unrelated Home/Power pulse. A real held-contact handoff uses
@@ -484,6 +486,9 @@ JNI(claimDisplay) jlong JNICALL Java_org_lighttouch_android_Native_claimDisplay(
 }
 JNI(ownsDisplay) jboolean JNICALL Java_org_lighttouch_android_Native_ownsDisplay(JNIEnv *,jobject,jlong lease) {
     std::lock_guard<std::mutex> lock(guard);return display_lease.owns(uint64_t(lease));
+}
+JNI(displayInputGeneration) jlong JNICALL Java_org_lighttouch_android_Native_displayInputGeneration(JNIEnv *,jobject,jlong lease) {
+    std::lock_guard<std::mutex> lock(guard);return jlong(display_lease.inputGeneration(uint64_t(lease)));
 }
 JNI(attachDisplay) jstring JNICALL Java_org_lighttouch_android_Native_attachDisplay(JNIEnv *env,jobject,jlong lease,jobject surface) {
     DisplayLease::Request owner;uint64_t request;
@@ -539,11 +544,14 @@ JNI(releaseDisplay) void JNICALL Java_org_lighttouch_android_Native_releaseDispl
     }
     if(retired)ANativeWindow_release(retired);
 }
-JNI(cancelDisplayInput) void JNICALL Java_org_lighttouch_android_Native_cancelDisplayInput(JNIEnv *,jobject,jlong lease) {
+JNI(cancelDisplayInput) jstring JNICALL Java_org_lighttouch_android_Native_cancelDisplayInput(JNIEnv *env,jobject,jlong lease,jlong generation) {
     std::lock_guard<std::mutex> lock(guard);
-    if(!display_lease.owns(uint64_t(lease)))return;
+    if(!display_lease.owns(uint64_t(lease)))return string(env,retired_display);
+    if(generation && !display_lease.currentInput(uint64_t(lease),uint64_t(generation)))
+        return string(env,"Display input generation retired");
     const auto cancelled=cancel_display_contacts();
     if(!cancelled.empty())diagnostic="Display contact release failed: "+cancelled;
+    return string(env,cancelled);
 }
 JNI(backgroundDisplay) jstring JNICALL Java_org_lighttouch_android_Native_backgroundDisplay(JNIEnv *env,jobject,jlong lease) {
     std::lock_guard<std::mutex> lock(guard);
@@ -646,9 +654,18 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
 JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,jobject,jlong time,jintArray ids,jintArray phases,jfloatArray xy,jint width,jint height,jint rotation) {
     std::lock_guard<std::mutex> lock(guard);return touch_command(env,0,time,ids,phases,xy,width,height,rotation);
 }
-JNI(touchDisplay) jstring JNICALL Java_org_lighttouch_android_Native_touchDisplay(JNIEnv *env,jobject,jlong lease,jlong time,jintArray ids,jintArray phases,jfloatArray xy,jint width,jint height,jint rotation) {
+JNI(touchDisplay) jstring JNICALL Java_org_lighttouch_android_Native_touchDisplay(JNIEnv *env,jobject,jlong lease,jlong generation,jlong time,jintArray ids,jintArray phases,jfloatArray xy,jint width,jint height,jint rotation) {
     std::lock_guard<std::mutex> lock(guard);
     if(!display_lease.owns(uint64_t(lease)))return string(env,retired_display);
+    // The fresh-DOWN getter is advisory; this guarded check closes the race with
+    // any successful full cancel between that getter and Binder admission.
+    if(!display_lease.currentInput(uint64_t(lease),uint64_t(generation)))
+        return string(env,"Display input generation retired");
+    if(runtime) {
+        lt_runtime_status state=LT_INIT(lt_runtime_status);lt_error error=LT_INIT(lt_error);
+        if(lt_runtime_poll(runtime,&state,&error)==LT_OK && state.state==LT_PAUSED)
+            return string(env,"Display input is paused");
+    }
     return touch_command(env,uint64_t(lease),time,ids,phases,xy,width,height,rotation);
 }
 JNI(motion) jstring JNICALL Java_org_lighttouch_android_Native_motion(JNIEnv *env,jobject,jint kind,jlong time,jfloatArray xyz,jint rotation) {

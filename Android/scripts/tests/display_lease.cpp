@@ -116,10 +116,12 @@ void pending_release_is_balanced_before_handoff_or_detach_and_completed_release_
 }
 void failed_release_keeps_old_obligation_retryable_without_minting_new_owner() {
     DisplayLease state;const auto a=state.claim();state.admittedContact(7,0);
+    const auto generation=state.inputGeneration(a);
     state.submittedInput(81,a);state.inputCompleted(81); // DOWN accepted; ledger is still held.
     const bool cancelled=false; // Production error branch: detach only, do not retire/mint.
     if(cancelled){state.contactsReleased();state.release(a);}else assert(state.detach(a));
     assert(state.owns(a) && state.contactsHeld() && state.needsOwnedRelease());
+    assert(state.inputGeneration(a)==generation); // BUSY/failure cannot invalidate authority.
     state.contactsReleased();assert(state.release(a));const auto b=state.claim();
     assert(b==a+1 && !state.needsOwnedRelease()); // No hidden failed-claim token mint.
     state.admittedContact(7,0);state.admittedContact(7,2);state.submittedInput(82,b);
@@ -183,6 +185,25 @@ void unknown_empty_release_does_not_create_debt_and_overflow_remains_conservativ
     state.inputCompleted(329);assert(state.pendingOwnedRelease());
     state.contactsReleased();assert(!state.needsOwnedRelease());
 }
+void successful_global_cancel_requires_fresh_generation_but_up_does_not() {
+    DisplayLease state;const auto a=state.claim();const auto first=state.inputGeneration(a);
+    assert(first && state.currentInput(a,first));
+    state.beginAdmittedBatch();state.admittedContact(7,0);state.admittedContact(23,0);
+    state.submittedInput(401,a);state.inputCompleted(401);
+    state.beginAdmittedBatch();state.admittedContact(7,2);state.submittedInput(402,a);state.inputCompleted(402);
+    assert(state.contactsHeld() && state.currentInput(a,first)); // Independent UP keeps23 usable.
+    state.contactsReleased(); // Successful focus cancellation; loss and gain may be unpolled.
+    assert(state.owns(a) && !state.currentInput(a,first) && !state.needsOwnedRelease());
+    const auto resumed=state.inputGeneration(a);assert(resumed>first);
+    // JNI's guarded mismatch branch admits nothing and does not cancel current input.
+    state.admittedContact(23,0);bool new_contact=true,power=true;
+    if(state.currentInput(a,first)){state.contactsReleased();new_contact=power=false;}
+    assert(new_contact && power && state.currentInput(a,resumed));
+    state.contactsReleased();const auto b=state.claim();const auto b_generation=state.inputGeneration(b);
+    assert(state.inputGeneration(a)==0 && !state.currentInput(a,b_generation));
+    if(state.owns(a)){state.contactsReleased();power=false;}
+    assert(power && state.inputGeneration(b)==b_generation && state.currentOwner()==b);
+}
 
 }
 int main() {
@@ -197,5 +218,6 @@ int main() {
     failed_rejected_up_and_touch_errors_preserve_pending_cleanup_for_next_claim();
     completion_covers_only_ids_in_its_own_batch();
     unknown_empty_release_does_not_create_debt_and_overflow_remains_conservative();
+    successful_global_cancel_requires_fresh_generation_but_up_does_not();
     std::cout<<"PASS display lease stale controls/conversion, converted refs, contact handoff and empty callback pulse preservation\n";
 }
