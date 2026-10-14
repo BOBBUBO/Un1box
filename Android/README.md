@@ -254,3 +254,7 @@ inspection/listening. Metrics follow the official
 Each engine worker redirects its own native stdout/stderr before engine start
 into an append-only mode0600 `engine-PID.log` in the selected private state;
 `status.engineLog` identifies it. Prior worker logs and serial logs are retained.
+Worker start failure and terminal/timed-out shutdown additionally retain
+`files/worker-observations-PID.json` before worker disposal, including error and
+native log paths. Audio-focus denial pauses the guest and reports a recovery
+message; user Resume requests focus again.
