@@ -34,6 +34,16 @@ def first_hello(rows):
     return next(iter(values), None)
 
 
+def request_owned_stop(verified, fd, retired, send):
+    if not verified or retired():
+        return False
+    try:
+        send(fd, signal.SIGINT)
+        return True
+    except ProcessLookupError:
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', type=Path, required=True)
@@ -120,13 +130,8 @@ def main():
         # A failed/timed-out input controller must not strand a button or start
         # a second observation. Ordinary owned Stop performs full cancellation
         # and keeps the production35s disposal/dirty-state policy authoritative.
-        requested_stop = False
-        if ownership_verified and not poll.poll(0):
-            try:
-                signal.pidfd_send_signal(fd, signal.SIGINT)
-                requested_stop = True
-            except ProcessLookupError:
-                pass
+        requested_stop = request_owned_stop(ownership_verified, fd, lambda: bool(poll.poll(0)),
+                                            signal.pidfd_send_signal)
         record({'error': str(error), 'finished_monotonic_ns': time.monotonic_ns(),
                 'guest_acceptance': False, 'no_clock_reset': True,
                 'ordinary_owned_Stop_requested': requested_stop})
