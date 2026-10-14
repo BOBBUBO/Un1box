@@ -171,3 +171,34 @@ android.sourceSets["debug"].jniLibs.srcDir(angleStage.map { it.dir("jniLibs") })
 android.sourceSets["debug"].assets.srcDir(angleStage.map { it.dir("assets") })
 android.packaging.jniLibs.keepDebugSymbols += setOf("**/libEGL_lighttouch_angle.so", "**/libGLESv1_CM_lighttouch_angle.so", "**/libGLESv2_lighttouch_angle.so")
 tasks.named("preDebugBuild").configure { dependsOn(prepareAngleRuntime) }
+
+// Firmware owns extraction; this consumer verifies the complete unchanged bundle
+// against the actual main variant graph before copying public notice assets.
+val frontendNotices = providers.gradleProperty("frontendNotices")
+val frontendNoticesSha = providers.gradleProperty("frontendNoticesSha256")
+val frontendNoticeAssets = layout.buildDirectory.dir("generated/frontendNoticeAssets")
+val prepareFrontendNotices = tasks.register<Exec>("prepareFrontendNotices") {
+    require(frontendNotices.isPresent == frontendNoticesSha.isPresent) {
+        "Supply frontendNotices and its frontendNoticesSha256 pin together"
+    }
+    inputs.file(rootProject.file("scripts/stage-frontend-notices.py"))
+    inputs.property("frontendEnabled", frontendNotices.isPresent)
+    if (frontendNotices.isPresent) {
+        dependsOn("recordApkRuntimeArtifacts")
+        inputs.dir(frontendNotices.map { file(it) }); inputs.property("frontendManifestPin", frontendNoticesSha)
+        inputs.file(layout.buildDirectory.file(providers.gradleProperty("auditConfiguration").orElse("debugRuntimeClasspath")
+            .map { "reports/$it-artifacts.json" }))
+    }
+    outputs.dir(frontendNoticeAssets)
+    doFirst {
+        val arguments = mutableListOf("python3", rootProject.file("scripts/stage-frontend-notices.py").absolutePath,
+            frontendNoticeAssets.get().dir("licenses/frontend").asFile.absolutePath)
+        if (frontendNotices.isPresent) {
+            arguments += listOf("--bundle", frontendNotices.get(), "--manifest-sha256", frontendNoticesSha.get(),
+                "--inventory", layout.buildDirectory.file("reports/" + providers.gradleProperty("auditConfiguration").orElse("debugRuntimeClasspath").get() + "-artifacts.json").get().asFile.absolutePath)
+        }
+        commandLine(arguments)
+    }
+}
+android.sourceSets["main"].assets.srcDir(frontendNoticeAssets)
+tasks.named("preBuild").configure { dependsOn(prepareFrontendNotices) }
