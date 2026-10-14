@@ -189,6 +189,12 @@ the first replay's final lift. Its subsequent replay was at apparent maximum zoo
 a later held-mouse/rotation sequence returned to the grid. Those observations do
 not qualify sustained simultaneous audio/touch or subsequent cancellation/zoom.
 The repeatable second-replay timing above remains a candidate for target execution.
+A later measured attempt did not reach a visually confirmed Photos viewer:
+manual captures were black sleep checkpoints, while an independent native capture
+showed the lit Lock Screen. Agent frontmost replied Home Screen, which alone did
+not establish unlock. Keep each image with its capture/frame timestamps and its
+own sleep/backlight diagnostics; later status rows cannot describe earlier pixels.
+No concurrency controller was admitted in that attempt.
 Host PulseAudio was `auto_null`, so physical audibility remains unqualified.
 
 The native recipe supplies `-audio driver=none`, which selects the default mixer
