@@ -27,6 +27,9 @@ class EngineService : Service() {
     private val buttonDownAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonUpAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonRejections = java.util.concurrent.atomic.AtomicLong(0)
+    private val shutdownWatchdog = ShutdownWatchdog(BuildConfig.SHUTDOWN_GRACE_MS, SystemClock::elapsedRealtime,
+        requestNativeStop = { Native.stop() }, cancelNativeContacts = { Native.cancelInput() },
+        nativeStatus = { Native.status() }, dispose = { receipt -> disposeAfterShutdown(receipt) })
     private val binder = object : IEngine.Stub() {
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
         override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
@@ -118,37 +121,7 @@ class EngineService : Service() {
         }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
-            Native.cancelInput()
-            error = Native.stop()
-            Thread({
-                val graceMs = Native.shutdownGraceMillis().toLong()
-                val deadline = SystemClock.elapsedRealtime() + graceMs
-                var terminal = false
-                while (SystemClock.elapsedRealtime() < deadline) {
-                    val observed = Native.status()
-                    val state = observed.firstOrNull()
-                    if (state == "stopped" || state == "failed") {
-                        terminal = true
-                        if (state == "failed") {
-                            val nativeFailure = observed.getOrNull(2)?.takeIf { it.isNotEmpty() }
-                                ?: error.takeIf { it.isNotEmpty() }
-                                ?: observed.getOrElse(1) { "Shutdown was not confirmed" }
-                            error = "Guest worker failed; writable state retained: $nativeFailure"
-                        }
-                        break
-                    }
-                    Thread.sleep(100)
-                }
-                if (!terminal) error = "Guest shutdown timed out after ${graceMs / 1000} seconds; worker terminated and dirty state preserved. " + error
-                if (error.isNotEmpty()) persistStopError(error)
-                persistObservations(if (terminal) "stop-terminal" else "stop-timeout")
-                // Native domain owns dirty/clean state. A timeout never marks clean.
-                alive.set(false)
-                abandonAudioFocus()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-                Process.killProcess(Process.myPid())
-            }, "guest-stop").start()
+            shutdownWatchdog.request()
         }
         override fun button(button: Int, down: Boolean) {
             val result = Native.button(button, down)
@@ -197,6 +170,25 @@ class EngineService : Service() {
     }
     private fun persistStopError(message: String) {
         try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Native dirty marker remains authoritative. */ }
+    }
+    private fun disposeAfterShutdown(receipt: ShutdownReceipt) {
+        alive.set(false)
+        error = when {
+            receipt.reason == "deadline-unconfirmed" -> "Guest shutdown was not confirmed within ${BuildConfig.SHUTDOWN_GRACE_MS / 1000} seconds; worker disposed and writable state retained. ${receipt.progress.error}"
+            receipt.terminalState == "failed" -> "Guest worker reported failure; writable state retained: ${receipt.progress.error}"
+            else -> receipt.progress.error
+        }.take(4096)
+        try {
+            if (error.isNotEmpty()) persistStopError(error)
+            // Cached facts only. Native.status/observations and audio/framework
+            // cleanup can block; none may precede this process disposal.
+            val record = JSONObject().put("reason", receipt.reason).put("admissionStage", receipt.progress.stage)
+                .put("error", error).put("nativeTerminalState", receipt.terminalState ?: JSONObject.NULL)
+                .put("acceptedAtHostMs", receipt.acceptedAtMs).put("deadlineHostMs", receipt.deadlineMs).put("observedAtHostMs", receipt.observedAtMs)
+                .put("workerPid", Process.myPid()).put("shutdownConfirmationInferred", false).put("nativeStateMarkersModified", false)
+            try { File(filesDir, "worker-shutdown-${Process.myPid()}.json").writeText(record.toString(2)) }
+            catch (_: java.io.IOException) { /* Retained state markers stay authoritative. */ }
+        } finally { Process.killProcess(Process.myPid()) }
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { foreground(); return START_NOT_STICKY }
     override fun onBind(intent: Intent): IBinder = binder

@@ -223,7 +223,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { startGuest() }, enabled = !busy && selected != null && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
-                            Button(onClick = { engineExpectedExit = true; engine?.stop(); stopSensors(); status = "stopping" }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
+                            Button(onClick = { stopGuest() }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
                             Button(onClick = {
                                 val pausing = status != "paused"
                                 if (pausing) displayView?.cancelOwnedGesture()
@@ -425,6 +425,16 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             } }
             catch (failure: Exception) { handler.post { error = "Guest start failed: ${failure.message ?: "worker exited"}. Writable state and private diagnostics retained."; status = "failed" } }
         }, "guest-start").start()
+    }
+    private fun stopGuest() {
+        val worker = engine ?: return
+        engineExpectedExit = true; status = "stopping"; stopSensors()
+        Thread({
+            try { worker.stop() }
+            catch (failure: RemoteException) { handler.post {
+                if (engine?.asBinder() == worker.asBinder()) error = "Stop admission failed; writable state retained: ${failure.message ?: "worker exited"}"
+            } }
+        }, "guest-stop-request").start()
     }
     private fun restartGuestForStart(old: IEngine) {
         engineRestarting = true; engineExpectedExit = true; pendingGuestStart = true; status = "stopping"
