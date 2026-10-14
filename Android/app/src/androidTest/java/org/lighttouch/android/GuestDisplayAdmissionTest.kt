@@ -3,7 +3,6 @@ package org.lighttouch.android
 import android.os.Binder
 import android.os.SystemClock
 import android.view.MotionEvent
-import androidx.test.annotation.UiThreadTest
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
@@ -33,7 +32,15 @@ class GuestDisplayAdmissionTest {
         val event = MotionEvent.obtain(now, now, action, 160f, 240f, 0)
         try { assertTrue(display.dispatchTouchEvent(event)) } finally { event.recycle() }
     }
-    @Test @UiThreadTest fun changedViewportCancelsBeforeSurfaceAndSuppressesOldContinuations() {
+    private fun onMain(action: () -> Unit) {
+        var failure: Throwable? = null
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            try { action() } catch (caught: Throwable) { failure = caught }
+        }
+        // Assertion failures belong to JUnit, not the application's main Looper.
+        failure?.let { throw it }
+    }
+    @Test fun changedViewportCancelsBeforeSurfaceAndSuppressesOldContinuations() = onMain {
         val endpoint = Endpoint()
         val display = GuestDisplay(InstrumentationRegistry.getInstrumentation().targetContext) { endpoint.worker }
         display.layout(0, 0, 320, 480)
@@ -59,7 +66,7 @@ class GuestDisplayAdmissionTest {
         assertEquals(listOf("touch", "touch"), endpoint.calls.drop(afterResize))
         assertArrayEquals(intArrayOf(), display.inputObservations().getIntArray("androidContactIds"))
     }
-    @Test @UiThreadTest fun nonemptyNativeRejectionsDropViewOwnershipUntilFreshDown() {
+    @Test fun nonemptyNativeRejectionsDropViewOwnershipUntilFreshDown() = onMain {
         for (message in listOf("Touch left guest viewport; gesture cancelled", "No active guest frame; gesture cancelled", "No active guest session; touch was not admitted")) {
             val endpoint = Endpoint()
             val errors = mutableListOf<String>()
