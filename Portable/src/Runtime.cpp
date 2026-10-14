@@ -1,3 +1,4 @@
+#include "LinuxTrace.hpp"
 #include "Internal.hpp"
 #include "MotionClock.hpp"
 #include "Lifecycle.hpp"
@@ -165,6 +166,9 @@ struct lt_runtime {
     lt_shared_frame *shared = nullptr;
     size_t mapping_bytes = 0;
     std::vector<char *> argv;
+#if defined(__linux__) && !defined(__ANDROID__)
+    bool linux_touch_trace = false;
+#endif
     std::vector<uint8_t> scratch;
     uint64_t serial = 0, audio_generation = 0, input_id = 0, pcm_dropped = 0;
     lt::MotionClock motion_clock;
@@ -322,6 +326,23 @@ struct lt_runtime {
         publisher_running = false;
     }
 };
+#if defined(__linux__) && !defined(__ANDROID__)
+lt_status lt::linux_touch_trace_enable(lt_runtime *r, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(!r->started && !r->done, "touch trace must be enabled before start", LT_BUSY);
+        if (r->linux_touch_trace)
+            return;
+        r->argv.reserve(r->argv.size() + 2);
+        r->argv.pop_back();
+        r->argv.push_back(const_cast<char *>("-trace"));
+        r->argv.push_back(const_cast<char *>("enable=ipod_touch_multitouch_log"));
+        r->argv.push_back(nullptr);
+        r->linux_touch_trace = true;
+    });
+}
+#endif
 extern "C" {
 lt_status lt_engine_board(const char *library, const char *board, lt_board_info *out, lt_error *e) {
     return lt::guard(e, [&] {

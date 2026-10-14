@@ -1,5 +1,6 @@
 #include "lighttouch.h"
 #include "../Portable/src/Elapsed.hpp"
+#include "../Portable/src/LinuxTrace.hpp"
 #include "TouchScript.hpp"
 #include "ControlDelivery.hpp"
 #include "Presentation.hpp"
@@ -135,7 +136,7 @@ static void peer(int socket) {
 struct Options {
     std::string base, state, rom, engine, package, import, sha, screenshot, script, library, record, name;
     bool recover = false, headless = false, audio = true, worker = false, list = false, library_operation = false;
-    bool debug_qmp = false, trace_io = false;
+    bool debug_qmp = false, trace_io = false, debug_touch_trace = false;
     int control = -1, pcm = -1;
     double seconds = 0;
 };
@@ -159,6 +160,8 @@ static Options options(int argc, char **argv) {
             o.headless = true;
         else if (key == "--no-audio")
             o.audio = false;
+        else if (key == "--debug-touch-trace")
+            o.debug_touch_trace = true;
         else if (key == "--trace-io")
             o.trace_io = true;
         else if (key == "--debug-qmp")
@@ -176,7 +179,8 @@ static Options options(int argc, char **argv) {
             std::cout
                 << "lighttouch-linux --base DIR --state DIR --engine LIB [--rom FILE] [--package ITPACK]\n  [--import "
                    "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
-                   "[--no-audio] [--trace-io]\n\nMouse left/right: contacts 1/2. H: Home, P: Power, Space: pause, "
+                   "[--no-audio] [--trace-io] [--debug-touch-trace]\n\nMouse left/right: contacts 1/2. H: Home, P: "
+                   "Power, Space: pause, "
                    "Escape: orderly "
                    "stop.\nC: release all contacts. F5: pinch in. F6: labeled two-contact pinch. F7: "
                    "crossing/independent lift. "
@@ -273,6 +277,11 @@ static int worker(const Options &o) {
                              {sizeof(lt_boot_config), 1, nullptr, o.rom.empty() ? nullptr : o.rom.c_str(),
                               o.package.empty() ? nullptr : o.package.c_str(), serial.c_str(), uint32_t(o.audio)}};
     check(lt_runtime_create(&config, &r, &error), error);
+    if (o.debug_touch_trace) {
+        check(lt::linux_touch_trace_enable(r, &error), error);
+        std::cerr << "debug_touch_trace worker_pid=" << getpid()
+                  << " fixed_event=ipod_touch_multitouch_log clock=guest_virtual_seconds\n";
+    }
     if (o.debug_qmp) {
         check(lt_runtime_debug_qmp_enable(r, &error), error);
         char path[1024];
