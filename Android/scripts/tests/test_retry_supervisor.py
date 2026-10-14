@@ -111,7 +111,7 @@ class Supervision(unittest.TestCase):
                 f"{root}/assets/bootrom.bin":rom,f"{root}/assets/guest.itpack":guest,
                 "files/library/selected":args.record_id.encode()}
             attempt = retry.Attempt(args)
-            attempt.path_presence = mock.Mock(side_effect=[True,True,True,True,False])
+            attempt.path_presence = mock.Mock(side_effect=lambda path:not path.endswith("/.dirty"))
             calls = []
             def adb(*argv,**kwargs):
                 calls.append(argv)
@@ -127,6 +127,90 @@ class Supervision(unittest.TestCase):
             self.assertTrue(ready["visualUIInspectionRequired"])
             self.assertEqual(ready["uiGateDeadlineSeconds"],240)
             self.assertFalse(any("am" in call for call in calls))
+            attempt.start=time.monotonic()-300
+            with self.assertRaisesRegex(RuntimeError,"exceeded boot gate"):
+                attempt.verify_record("123")
+            # A separately verified import may finish after the UI boot gate;
+            # it still uses the original clock and must precede Stop admission.
+            bound=attempt.verify_record("123",imported_record=args.record_id,expected_uid=10200)
+            self.assertEqual(bound["recordId"],args.record_id)
+            self.assertTrue((attempt.output/"record-bound.json").exists())
+            attempt.start=time.monotonic()-841
+            with self.assertRaisesRegex(RuntimeError,"guest-start budget"):
+                attempt.verify_record("123",imported_record=args.record_id,expected_uid=10200)
+
+    def test_fresh_service_gate_needs_no_installed_app_or_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.arguments(directory); args.fresh_library = True
+            attempt = retry.Attempt(args);attempt.start=0
+            attempt.avd = mock.Mock();attempt.avd.poll.return_value=None
+            attempt.logcat = mock.Mock()
+            now = [0]
+            def adb(*argv,**kwargs):
+                self.assertNotIn("run-as",argv)
+                if argv==("shell","getconf","PAGE_SIZE"):return 0,b"16384\n"
+                if argv==("shell","getprop","sys.boot_completed"):return 0,b"1\n"
+                if argv[:3]==("shell","service","check"):return 0,b"Service: found\n"
+                if argv==("shell","pidof","system_server"):return 0,b"123\n"
+                return 0,b""
+            attempt.adb=adb
+            with mock.patch.object(retry.time,"monotonic",side_effect=lambda:now[0]), \
+                 mock.patch.object(retry.time,"sleep",side_effect=lambda _:now.__setitem__(0,now[0]+31)):
+                ready=attempt.gate()
+            self.assertTrue(ready["serviceGatePassed"])
+            self.assertFalse(ready["recordGatePassed"] or ready["uiGatePassed"])
+            self.assertIsNone(ready["recordId"]);self.assertIsNone(ready["appUid"])
+
+    def import_attempt(self, directory, receipt_changes=None):
+        args=self.arguments(directory);args.fresh_library=True
+        args.lock_sha256="b"*64;args.rom_sha256="c"*64;args.guest_sha256="d"*64
+        attempt=retry.Attempt(args);attempt.service_server_pid="123"
+        record="a"*32;uid=10200;path="files/import-evidence-123/result.json"
+        receipt={"pass":True,"recordId":record,"appUid":uid};receipt.update(receipt_changes or {})
+        data=json.dumps(receipt).encode()
+        command={"schema":1,"recordId":record,"appUid":uid,"importReceiptPath":path,
+                 "importReceiptSha256":hashlib.sha256(data).hexdigest()}
+        (attempt.output/"import-record.json").write_text(json.dumps(command))
+        attempt.adb=mock.Mock(return_value=(0,data))
+        attempt.verify_record=mock.Mock(return_value={})
+        return attempt,command
+
+    def test_actual_import_receipt_binds_once_after_boot_gate_without_clock_reset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            attempt,command=self.import_attempt(directory)
+            attempt.start=time.monotonic()-300;origin=attempt.start;deadline=attempt.deadline
+            attempt.bind_imported_record()
+            attempt.verify_record.assert_called_once_with("123",imported_record="a"*32,expected_uid=10200)
+            self.assertEqual(attempt.record_id,"a"*32);self.assertEqual(attempt.bound_app_uid,10200)
+            self.assertEqual((attempt.start,attempt.deadline),(origin,deadline))
+            attempt.bind_imported_record();self.assertEqual(attempt.adb.call_count,1)
+            command["recordId"]="e"*32
+            (attempt.output/"import-record.json").write_text(json.dumps(command))
+            with self.assertRaisesRegex(RuntimeError,"already fixed"):attempt.bind_imported_record()
+
+    def test_failed_import_or_uid_mismatch_never_binds_controller_assertion(self):
+        for changes in ({"pass":False},{"appUid":10201},{"recordId":"e"*32}):
+            with self.subTest(changes=changes),tempfile.TemporaryDirectory() as directory:
+                attempt,_=self.import_attempt(directory,changes)
+                with self.assertRaisesRegex(RuntimeError,"did not pass"):attempt.bind_imported_record()
+                self.assertIsNone(attempt.record_id);attempt.verify_record.assert_not_called()
+
+    def test_wrong_receipt_hash_or_path_fails_before_record_admission(self):
+        for change in ({"importReceiptSha256":"0"*64},{"importReceiptPath":"../private/receipt.json"}):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as directory:
+                attempt,command=self.import_attempt(directory);command.update(change)
+                (attempt.output/"import-record.json").write_text(json.dumps(command))
+                with self.assertRaises(RuntimeError):attempt.bind_imported_record()
+                self.assertIsNone(attempt.record_id);attempt.verify_record.assert_not_called()
+
+    def test_unbound_stop_does_not_guess_dirty_record_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            attempt=retry.Attempt(self.arguments(directory))
+            calls=[]
+            def adb(*argv,**kwargs):calls.append(argv);return 1,b""
+            attempt.adb=adb;attempt.stop()
+            self.assertFalse(any("/state/.dirty" in str(a) for argv in calls for a in argv))
+            self.assertFalse(json.loads((attempt.output/"unbound-record-stop.json").read_text())["dirtyMarkerPathKnown"])
 
     def test_independent_deadline_disposes_hung_owned_child(self):
         # Actual OS subprocesses, no Android tools, compiler, window or guest.

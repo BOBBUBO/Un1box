@@ -130,6 +130,11 @@ class Attempt:
         self.complete = PROCESS_CONTEXT.Event()
         self.worker_pid = None
         self.stop_attempted = False
+        self.record_id = getattr(args,"record_id",None)
+        self.fresh_library = getattr(args,"fresh_library",False)
+        self.import_command_sha256 = None
+        self.service_server_pid = None
+        self.bound_app_uid = None
 
     def write(self, name, value):
         (self.output/name).write_text(json.dumps(value, indent=2) + "\n")
@@ -206,12 +211,23 @@ class Attempt:
                 stable_since = time.monotonic() if healthy else None
                 stable_pid = pid if healthy else None
             if healthy and time.monotonic()-stable_since >= 30:
-                return self.verify_record(pid.decode())
+                self.service_server_pid = pid.decode()
+                if self.fresh_library:
+                    if time.monotonic()-self.start >= BOOT_LIMIT:
+                        raise RuntimeError("Fresh service readiness exceeded boot gate")
+                    ready = {"serviceGatePassed":True,"recordGatePassed":False,"uiGatePassed":False,
+                        "freshLibrary":True,"visualUIInspectionRequired":True,"uiGateDeadlineSeconds":BOOT_LIMIT,
+                        "pageBytes":16384,"systemServerPid":self.service_server_pid,"appUid":None,"recordId":None,
+                        "elapsedSeconds":time.monotonic()-self.start,"guestStartedBySupervisor":False,
+                        "guestAcceptancePassed":False,"stopAtSeconds":STOP_AT,"hardDeadlineSeconds":HARD_LIMIT}
+                    self.write("ready.json",ready)
+                    return ready
+                return self.verify_record(self.service_server_pid)
             time.sleep(1)
         raise RuntimeError("Android services did not remain stable within 240 seconds")
 
-    def verify_record(self, system_pid):
-        record = self.args.record_id
+    def verify_record(self, system_pid, imported_record=None, expected_uid=None):
+        record = imported_record if imported_record is not None else self.record_id
         root = f"files/library/records/{record}"
         for path in (f"{root}/record.json", f"{root}/state", f"{root}/base/device.lock.json", f"{root}/assets"):
             if self.path_presence(path) is not True:
@@ -245,15 +261,56 @@ class Attempt:
         code, uid = self.adb("exec-out", "run-as", PACKAGE, "id", "-u")
         if code or not uid.strip().isdigit() or int(uid) <= 10000:
             raise RuntimeError("Normal target app UID was not verified")
-        if time.monotonic()-self.start >= BOOT_LIMIT:
+        if expected_uid is not None and int(uid) != expected_uid:
+            raise RuntimeError("Import receipt UID differs from actual target UID")
+        if imported_record is None and time.monotonic()-self.start >= BOOT_LIMIT:
             raise RuntimeError("Service/record readiness exceeded boot gate")
+        if imported_record is not None and time.monotonic()-self.start >= STOP_AT:
+            raise RuntimeError("Import verification exceeded guest-start budget")
         ready = {"serviceGatePassed": True, "recordGatePassed": True, "uiGatePassed":False,
                  "visualUIInspectionRequired": True, "uiGateDeadlineSeconds":BOOT_LIMIT, "appUid": int(uid),
                  "pageBytes": 16384, "systemServerPid": system_pid, "recordId":record,
                  "elapsedSeconds":time.monotonic()-self.start, "guestStartedBySupervisor":False,
                  "guestAcceptancePassed":False, "stopAtSeconds":STOP_AT, "hardDeadlineSeconds":HARD_LIMIT}
-        self.write("ready.json", ready)
+        self.write("record-bound.json" if imported_record is not None else "ready.json", ready)
         return ready
+
+    def bind_imported_record(self):
+        if not self.fresh_library:
+            return
+        command_file = self.output/"import-record.json"
+        if not command_file.exists():
+            return
+        raw = command_file.read_bytes()
+        if len(raw)>16384:
+            raise RuntimeError("Import controller receipt exceeds bound")
+        digest = hashlib.sha256(raw).hexdigest()
+        if self.import_command_sha256 is not None:
+            if digest != self.import_command_sha256:
+                raise RuntimeError("Imported record choice is already fixed")
+            return
+        command = json.loads(raw)
+        record,uid,path,pin = (command.get(k) for k in ("recordId","appUid","importReceiptPath","importReceiptSha256"))
+        if (command.get("schema")!=1 or not isinstance(record,str) or not re.fullmatch(r"[0-9a-f]{32}",record)
+            or type(uid) is not int or uid<=10000 or not isinstance(path,str)
+            or not re.fullmatch(r"files/import-evidence-[0-9]+/result\.json",path)
+            or not isinstance(pin,str) or not re.fullmatch(r"[0-9a-f]{64}",pin)):
+            raise RuntimeError("Invalid fixed import controller receipt")
+        code,data = self.adb("exec-out","run-as",PACKAGE,"cat",path)
+        if code or len(data)>65536 or hashlib.sha256(data).hexdigest()!=pin:
+            raise RuntimeError("Actual app import receipt does not match frozen controller pin")
+        receipt = json.loads(data)
+        if receipt.get("pass") is not True or receipt.get("recordId")!=record or receipt.get("appUid")!=uid:
+            raise RuntimeError("Actual app import did not pass for the requested identity/UID")
+        self.verify_record(self.service_server_pid,imported_record=record,expected_uid=uid)
+        self.record_id = record
+        self.bound_app_uid = uid
+        self.import_command_sha256 = digest
+        self.write("import-binding.json",{"recordId":record,"appUid":uid,"importReceiptPath":path,
+            "importReceiptSha256":pin,"controllerSha256":digest,"elapsedSeconds":time.monotonic()-self.start,
+            "verifiedLockSha256":self.args.lock_sha256,"verifiedRomSha256":self.args.rom_sha256,
+            "verifiedGuestPackageSha256":self.args.guest_sha256,
+            "guestStartedBySupervisor":False,"guestAcceptancePassed":False})
 
     def path_presence(self, path):
         # exec-out preserves bytes, but can return host exit0 for a remote stat
@@ -303,7 +360,15 @@ class Attempt:
                 code, data = self.adb("exec-out", "run-as", PACKAGE, "cat", f"files/{prefix}{self.worker_pid}{suffix}", timeout=2)
                 (self.output/f"{prefix}{self.worker_pid}{suffix}").write_bytes(data)
                 self.write(f"{prefix}extraction.json", {"exit":code,"guestShutdownConfirmed":False})
-        self.adb("exec-out", "run-as", PACKAGE, "stat", f"files/library/records/{self.args.record_id}/state/.dirty", timeout=2)
+        if self.record_id is not None:
+            self.adb("exec-out", "run-as", PACKAGE, "stat", f"files/library/records/{self.record_id}/state/.dirty", timeout=2)
+            self.write("record-marker-stop.json",{"recordId":self.record_id,
+                "statePathPresent":self.path_presence(f"files/library/records/{self.record_id}/state"),
+                "dirtyMarkerPresent":self.path_presence(f"files/library/records/{self.record_id}/state/.dirty"),
+                "guestShutdownConfirmed":False})
+        else:
+            self.write("unbound-record-stop.json",{"recordId":None,"dirtyMarkerPathKnown":False,
+                "guestShutdownConfirmed":False})
 
     def cleanup(self):
         if self.avd is None:
@@ -347,7 +412,9 @@ def main():
     parser.add_argument("--emulator", required=True)
     parser.add_argument("--avd", default="LightTouch_API35_16K")
     parser.add_argument("--user", required=True)
-    parser.add_argument("--record-id", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--record-id")
+    mode.add_argument("--fresh-library",action="store_true")
     parser.add_argument("--record-sha256")
     parser.add_argument("--lock-sha256", required=True)
     parser.add_argument("--rom-sha256", required=True)
@@ -359,7 +426,7 @@ def main():
     hashes = [args.lock_sha256,args.rom_sha256,args.guest_sha256]
     if args.record_sha256:
         hashes.append(args.record_sha256)
-    if not re.fullmatch(r"[0-9a-f]{32}",args.record_id) or any(not re.fullmatch(r"[0-9a-f]{64}",x) for x in hashes):
+    if (args.record_id is not None and not re.fullmatch(r"[0-9a-f]{32}",args.record_id)) or any(not re.fullmatch(r"[0-9a-f]{64}",x) for x in hashes):
         parser.error("Record ID and frozen record/lock hashes must be lowercase hex")
     attempt = Attempt(args)
     try:
@@ -369,6 +436,8 @@ def main():
         while time.monotonic()-attempt.start < STOP_AT and not (attempt.output/"request-stop").exists():
             if attempt.avd.poll() is not None:
                 raise RuntimeError("Owned emulator exited during guest observation")
+            if attempt.fresh_library:
+                attempt.bind_imported_record()
             time.sleep(.5)
         attempt.stop()
     except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired, KeyboardInterrupt) as error:
