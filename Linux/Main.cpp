@@ -728,8 +728,6 @@ static int frontend(const Options &o, int argc, char **argv) {
     }
     close(sockets[1]);
     close(audio[1]);
-    peer(sockets[0]);
-    peer(audio[0]);
     struct Child {
         pid_t pid;
         int control, audio, status = 0;
@@ -766,6 +764,8 @@ static int frontend(const Options &o, int argc, char **argv) {
                           << "; lease/state may remain owned; no clean exit inferred" << std::endl;
         }
     } child{pid, sockets[0], audio[0], 0, child_start_ticks(pid)};
+    peer(sockets[0]);
+    peer(audio[0]);
     std::cout << "admission worker_pid=" << pid << " start_ticks=" << child.ticks
               << " parent_started_monotonic_ns=" << admission_started
               << " absolute_budget_ns=" << lt::admission_absolute_ns
@@ -834,7 +834,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                         "worker handshake invalid");
                 hello = incoming;
                 fd = passed;
-                break; // If cancelled, this now-started VM receives ordinary Stop below.
+                break; // Start can race this handoff; cancellation follows ordinary Stop below.
             }
             if (passed >= 0) {
                 close(passed);
