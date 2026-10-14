@@ -180,7 +180,9 @@ The preparation dialog reads firmware IDs from the original upstream catalog,
 bundled as a generated build asset. Native `lt_firmware_supports` labels implemented
 versus unsupported routes; it does not imply measured target acceptance. Pick a
 legitimate stock IPSW and verified private handoff root containing `inventory.json`
-and `release-guest-unpacked/guest-tools`. Both are copied into app-private storage.
+and `release-guest-unpacked/guest-tools`. Only the required guest-tools subtree, inventory and IPSW are copied into
+app-private storage; unrelated NAND fixtures, SDKs and captures stay at their
+original location.
 The local inventory is trusted hash evidence, not the unavailable original exporter
 manifest; the historical Apple SDKs are not bundled or replaced. Native validates
 stock firmware/catalog identity, local guest tool hashes and package payload tables.
