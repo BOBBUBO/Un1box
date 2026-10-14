@@ -133,6 +133,7 @@ static void peer(int socket) {
 struct Options {
     std::string base, state, rom, engine, package, import, sha, screenshot, script, library, record, name;
     bool recover = false, headless = false, audio = true, worker = false, list = false, library_operation = false;
+    bool debug_qmp = false;
     int control = -1, pcm = -1;
     double seconds = 0;
 };
@@ -156,6 +157,8 @@ static Options options(int argc, char **argv) {
             o.headless = true;
         else if (key == "--no-audio")
             o.audio = false;
+        else if (key == "--debug-qmp")
+            o.debug_qmp = true;
         else if (key == "--seconds") {
             require(i + 1 < argc, "missing duration");
             o.seconds = std::stod(argv[++i]);
@@ -263,6 +266,12 @@ static int worker(const Options &o) {
                              {sizeof(lt_boot_config), 1, nullptr, o.rom.empty() ? nullptr : o.rom.c_str(),
                               o.package.empty() ? nullptr : o.package.c_str(), serial.c_str(), uint32_t(o.audio)}};
     check(lt_runtime_create(&config, &r, &error), error);
+    if (o.debug_qmp) {
+        check(lt_runtime_debug_qmp_enable(r, &error), error);
+        char path[1024];
+        check(lt_runtime_debug_qmp_path(r, path, sizeof(path), &error), error);
+        std::cerr << "debug_qmp worker_pid=" << getpid() << " private_path=" << path << "\n";
+    }
     Packet hello;
     hello.kind = Hello;
     int fd = -1;

@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <limits>
 namespace lt {
@@ -159,6 +160,8 @@ struct lt_runtime {
     std::atomic<uint64_t> frame_sequence{0}, frame_timestamp{0}, frame_published{0}, pcm_captured{0}, pcm_pulled{0};
     std::mutex mutex;
     int frame_fd = -1;
+    int debug_qmp_fd = -1;
+    std::string debug_qmp_path, debug_qmp_endpoint;
     lt_shared_frame *shared = nullptr;
     size_t mapping_bytes = 0;
     std::vector<char *> argv;
@@ -182,6 +185,12 @@ struct lt_runtime {
             munmap(shared, mapping_bytes);
         if (frame_fd >= 0)
             close(frame_fd);
+        if (debug_qmp_fd >= 0) {
+            struct stat st {};
+            if (lstat(debug_qmp_path.c_str(), &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == geteuid())
+                unlink(debug_qmp_path.c_str());
+            close(debug_qmp_fd);
+        }
     }
     void publish() {
         bool quit_sent = false;
@@ -371,6 +380,52 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         lt::io(fcntl(runtime->frame_fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) == 0,
                "seal frame size");
         *out = runtime.release();
+    });
+}
+lt_status lt_runtime_debug_qmp_enable(lt_runtime *r, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+#ifndef LIGHTTOUCH_ENABLE_DEBUG_QMP
+        throw lt::Failure(LT_UNSUPPORTED, "private QMP instrumentation disabled in this build");
+#else
+        lt::require(!r->started && !lt::process_started, "debug QMP must be enabled before start", LT_BUSY);
+        if (r->debug_qmp_fd >= 0)
+            return;
+        auto work = r->device->state / "work";
+        lt::fs::create_directories(work);
+        struct OwnedFd {
+            int value;
+            ~OwnedFd() { if (value >= 0) close(value); }
+        } fd{open(work.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)};
+        lt::io(fd.value >= 0, "open private QMP work directory");
+        struct stat st{};
+        lt::io(fstat(fd.value, &st) == 0, "inspect private QMP directory");
+        lt::require(st.st_uid == geteuid(), "QMP directory owner mismatch");
+        lt::io(fchmod(fd.value, 0700) == 0, "protect private QMP directory");
+        std::string name = "qmp-" + std::to_string(getpid()) + ".sock";
+        std::string path = (work / name).string();
+        if (lstat(path.c_str(), &st) == 0) {
+            lt::require(S_ISSOCK(st.st_mode) && st.st_uid == geteuid(), "unexpected QMP path occupant");
+            lt::io(unlink(path.c_str()) == 0, "remove stopped QMP socket");
+        }
+        r->argv.reserve(r->argv.size() + 2);
+        r->debug_qmp_path = path;
+        r->debug_qmp_endpoint = "unix:/proc/self/fd/" + std::to_string(fd.value) + "/" + name + ",server=on,wait=off";
+        r->argv.pop_back();
+        r->argv.push_back(const_cast<char *>("-qmp"));
+        r->argv.push_back(r->debug_qmp_endpoint.data());
+        r->argv.push_back(nullptr);
+        r->debug_qmp_fd = fd.value;
+        fd.value = -1;
+#endif
+    });
+}
+lt_status lt_runtime_debug_qmp_path(lt_runtime *r, char *path, uint32_t capacity, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && path, "debug QMP path output required");
+        lt::require(r->debug_qmp_fd >= 0, "debug QMP is not enabled", LT_UNSUPPORTED);
+        lt::require(r->debug_qmp_path.size() < capacity, "debug QMP path buffer too small");
+        memcpy(path, r->debug_qmp_path.c_str(), r->debug_qmp_path.size() + 1);
     });
 }
 lt_status lt_runtime_start(lt_runtime *r, lt_error *e) {

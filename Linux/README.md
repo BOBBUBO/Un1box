@@ -216,3 +216,17 @@ adapter checks; they cannot qualify real iOS graphics/input/audio/persistence. B
 classes retain `initial_gate_claims: none`. Inspect actual guest pixels, contact IDs,
 audible output, persisted text, target identity and lifecycle transitions before the
 integrator marks a gate. No data here qualifies deferred gyro work.
+
+Kernel handoff diagnosis can explicitly enable `LIGHTTOUCH_ENABLE_DEBUG_QMP=ON`
+in a diagnostic build and pass Linux `--debug-qmp`. The default build rejects this
+option as unsupported. Android debug instrumentation calls
+`lt_runtime_debug_qmp_enable` between create/start and reads the derived socket
+using `lt_runtime_debug_qmp_path`; production UI never enables it. The domain adds
+the engine monitor endpoint internally and accepts no caller path, argv or command.
+The private socket is state/work/qmp-PID.sock; the native directory FD stays open
+through engine cleanup. Its short /proc/self/fd alias avoids the Unix 108-byte path
+limit. A client with a different process must open the actual path's parent directory
+and use its own short FD alias; Java LocalSocket on the long path can fail. Use the
+backend fixed bounded read-only snapshot client (status/CPU/register reads), retain
+its private JSONL, and omit the feature from release builds. Debug snapshots do not
+qualify guest boot/render/input by themselves.
