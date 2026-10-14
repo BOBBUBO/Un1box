@@ -26,7 +26,7 @@ Android version, GPU driver or device has passed guest acceptance.
 | --- | --- |
 | Poco F3, ARM64, Android 16/API 36,4 KiB pages, Adreno 650 | Candidate 25 has compiled/static checks; its guest qualification is pending. Historical candidate 24 reached an inspected Lock Screen and touch-unlocked Home, but its latest Stop was unconfirmed, retained dirty state and produced no terminal receipt. Historical 21b/23 clean Stop and persistence results belong to those artifacts. |
 | x86_64 Android emulators,4 KiB/16 KiB pages | APK/library packaging and selected app/provider loading checks passed. Complete current guest boot, input, audio and clean halt qualification remains open. Static16 KiB ELF/ZIP alignment is not guest execution proof. |
-| Physical Pixel 8/9/10 and other devices | Broad compatibility is intended. Pixel 8/9 are untested; an older 21b Pixel 10 demo showed logo/flicker/black behavior. Physical Pixel 10 remains unqualified; emulator profiles do not qualify Tensor hardware or its GPU. |
+| Physical Pixel 8/9/10 and other devices | Pixel 8/9 are untested. On Pixel 10/Tensor G5, the user reports APK25's smooth bootloader progress bar followed by a flickering Apple logo and eventual idle display. Reported worker readings were approximately 140% of one host core and 482 MiB PSS. No physical-device ADB evidence was captured; a crash loop or OOM cause is unproven. Physical Pixel 10 remains unqualified; emulator profiles do not qualify Tensor hardware or its GPU. |
 | Prepared n81 route | Native kboot/NAND/NOR/ARMv7 routing exists. Supplemental Linux/Android guest/GLES2/input qualification remains open; this does not expand the n72 stock-preparation coverage. |
 
 Gyro/motion is deferred and unqualified. Current Linux final-engine guest
