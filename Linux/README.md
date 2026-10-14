@@ -74,6 +74,43 @@ Touch phases: down=0, move=1, up=2, cancel=3. Motion arguments: field bits (1 ac
 evidence. Observe actual guest responses to qualify gestures/gyro. No guest gyro
 capability is fabricated from host hardware.
 
+`touches COUNT ID PHASE X Y ...` submits all listed contacts as one native batch
+with one timestamp, preserving simultaneous down/move/lift. The parser rejects
+duplicate IDs, excess contacts, truncated lists and coordinates outside 0..1.
+
+For actual guest qualification, `scripts/make-touch-acceptance.py` creates private
+offline Safari page/load and two-contact/lifecycle schedules. It only writes files;
+it never starts a guest or writes device state. For example:
+
+```sh
+python3 Linux/scripts/make-touch-acceptance.py --output-dir /private/touch-test \
+  --start 60 --address .5 .08 --clear .9 .08 --go .92 .95
+```
+
+The example field coordinates are placeholders. Launch Safari through the typed
+`guest launch com.apple.mobilesafari` operation, inspect its screenshot/frontmost
+reply, dismiss any bookmark sheet through real touches, and measure the address,
+clear and keyboard Go positions. The current verified type helper calls the focused
+delegate's `insertText:`; it neither selects/clears the field nor submits navigation.
+The generated load script taps those measured controls and captures the typed URL
+and loaded page. Confirm the colored A/B/C ruler loaded before running the gesture
+script on the retained page or combining both schedules before their final Stop.
+
+The page is a bounded `data:text/html` URL with no network or installed probe. Its
+DOM counter reports actual active/max contacts and guest touch identifiers. Compare
+before/during/after pinch ruler sizes, crossing identifiers, independent lift and
+cancel captures with the typed Safari frontmost replies. Repeat after pause/cancel,
+then perform rotation/letterbox and focus-loss checks in the live SDL window using
+R and actual focus changes; a headless cancellation replay does not qualify those
+window transitions. Scripts and admission logs alone do not verify guest gestures.
+
+Status logs report native produced frames and their host-monotonic timestamp,
+captured/pulled/dropped PCM frames, bounded native queued packets, socket drops,
+received nonzero samples, SDL queued/discarded frames and SDL queue errors. These
+separate producer/transport/sink failures; queued or nonzero samples alone do not
+prove audible playback. Run without `--no-audio` for concurrent qualification and
+use a supported guest audio workload; the offline zoom page itself is silent.
+
 `--headless --seconds N --screenshot /private/frame.bmp` captures at the duration checkpoint before requesting shutdown, then exercises the same worker,
 input and frame transport without a window. Screenshots require an actual published
 guest frame; there is no fallback image. Use `--no-audio` only when testing unrelated

@@ -1,5 +1,6 @@
 #include "lighttouch.h"
 #include "../Portable/src/Elapsed.hpp"
+#include "TouchScript.hpp"
 #include <SDL.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
@@ -59,6 +60,7 @@ struct Packet {
     uint32_t size = sizeof(Packet), version = 1, kind = 0, reserved = 0;
     lt_runtime_status status{};
     lt_runtime_diagnostics diagnostics{};
+    lt_runtime_io_stats io{};
     lt_input_status input_status{};
     lt_touch_batch touch{};
     lt_motion motion{};
@@ -67,6 +69,7 @@ struct Packet {
     uint32_t guest_operation = 0;
     char guest_argument[1024]{};
     uint64_t guest_id = 0;
+    uint64_t pcm_socket_dropped = 0;
     uint32_t button = 0, value = 0;
     uint64_t mapping_bytes = 0;
 };
@@ -266,7 +269,7 @@ static int worker(const Options &o) {
     require(send_packet(o.control, hello, fd), "send worker frame FD");
     close(fd);
     check(lt_runtime_start(r, &error), error);
-    uint64_t last_status = 0, stopping_since = 0, reported_input = 0, pending_guest = 0;
+    uint64_t last_status = 0, stopping_since = 0, reported_input = 0, pending_guest = 0, pcm_socket_dropped = 0;
     for (;;) {
         Packet p;
         for (int budget = 0; budget < 32 && receive(o.control, p); budget++) {
@@ -346,8 +349,12 @@ static int worker(const Options &o) {
             Packet update;
             update.kind = Status;
             update.status = status;
+            update.pcm_socket_dropped = pcm_socket_dropped;
             update.diagnostics = {sizeof(lt_runtime_diagnostics), 1, 0, 0, 0, 0, 0, 0, 0, 0};
             lt_runtime_diagnose(r, &update.diagnostics, &error);
+            update.io.size = sizeof(update.io);
+            update.io.version = 1;
+            lt_runtime_io_statistics(r, &update.io, &error);
             if (result != LT_OK)
                 update.error = error;
             send_packet(o.control, update);
@@ -368,7 +375,8 @@ static int worker(const Options &o) {
                 lt_status res = lt_runtime_pcm(r, pcm.samples.data(), 4096, &pcm.info, &error);
                 if (res != LT_OK)
                     break;
-                send(o.pcm, &pcm, sizeof pcm, MSG_DONTWAIT | MSG_NOSIGNAL);
+                if (send(o.pcm, &pcm, sizeof pcm, MSG_DONTWAIT | MSG_NOSIGNAL) != sizeof pcm)
+                    pcm_socket_dropped += pcm.info.frames;
             }
         }
         if (stopping_since && lt::elapsed_exceeds(now_ns(), stopping_since, lt::worker_shutdown_timeout_ns)) {
@@ -399,12 +407,12 @@ static std::vector<Script> script_file(const std::string &path) {
         require(bool(input >> s.at >> cmd) && s.at >= previous, "invalid script order");
         previous = s.at;
         auto &p = s.packet;
-        if (cmd == "touch") {
+        if (cmd == "touch" || cmd == "touches") {
             p.kind = Touch;
-            p.touch = {sizeof(p.touch), 1, 0, 1, 0, {}};
-            auto &c = p.touch.contacts[0];
-            c = {sizeof(c), 1, 0, 0, 0, 0};
-            require(bool(input >> c.id >> c.phase >> c.x >> c.y), "invalid scripted touch");
+            uint32_t count = 1;
+            if (cmd == "touches")
+                require(bool(input >> count), "script touches missing count");
+            p.touch = lt::parse_touch_contacts(input, count);
         } else if (cmd == "button") {
             p.kind = Button;
             require(bool(input >> p.button >> p.value), "invalid button");
@@ -615,6 +623,8 @@ static int frontend(const Options &o, int argc, char **argv) {
     uint64_t sequence = 0, start = now_ns();
     bool stopping = false, paused = false, terminal = false;
     uint64_t stop_since = 0;
+    uint64_t pcm_received = 0, pcm_nonzero_samples = 0, pcm_socket_dropped = 0, pcm_sdl_queued = 0,
+             pcm_sdl_discarded = 0, pcm_sdl_errors = 0;
     std::map<uint32_t, std::pair<double, double>> contacts;
     std::map<SDL_FingerID, uint32_t> fingers;
     uint32_t next_finger = 10000, display_rotation = 0;
@@ -700,6 +710,7 @@ static int frontend(const Options &o, int argc, char **argv) {
             if (update.kind == Status) {
                 const auto &s = update.status;
                 diagnostics = update.diagnostics;
+                pcm_socket_dropped = update.pcm_socket_dropped;
                 std::cout << "status state=" << s.state << " confirmed=" << s.guest_shutdown_confirmed
                           << " dirty=" << s.dirty << " frames=" << s.frames
                           << " sleeping=" << diagnostics.display_sleeping
@@ -707,7 +718,15 @@ static int frontend(const Options &o, int argc, char **argv) {
                           << " shutdown_phase=" << diagnostics.shutdown_phase
                           << " shutdown_route=" << diagnostics.shutdown_route
                           << " shutdown_reply=" << diagnostics.shutdown_reply_received << ":"
-                          << diagnostics.shutdown_reply_status << "\n";
+                          << diagnostics.shutdown_reply_status << " frame_sequence=" << update.io.frame_sequence
+                          << " frame_monotonic_ns=" << update.io.frame_timestamp_ns
+                          << " pcm_captured=" << update.io.pcm_captured_frames
+                          << " pcm_pulled=" << update.io.pcm_pulled_frames
+                          << " pcm_native_dropped=" << update.io.pcm_dropped_frames
+                          << " pcm_native_packets=" << update.io.pcm_queued_packets << " pcm_received=" << pcm_received
+                          << " pcm_nonzero_samples=" << pcm_nonzero_samples
+                          << " pcm_socket_dropped=" << pcm_socket_dropped << " pcm_sdl_queued=" << pcm_sdl_queued
+                          << " pcm_sdl_discarded=" << pcm_sdl_discarded << " pcm_sdl_errors=" << pcm_sdl_errors << "\n";
                 if (window) {
                     std::string title = "LightTouch — " + std::string(s.state == LT_RUNNING    ? "running"
                                                                       : s.state == LT_PAUSED   ? "paused"
@@ -753,10 +772,18 @@ static int frontend(const Options &o, int argc, char **argv) {
                 break;
             require(n == sizeof pcm && pcm.version == 1 && pcm.info.frames <= 4096 && pcm.info.channels == 2,
                     "invalid PCM packet");
+            pcm_received += pcm.info.frames;
+            for (uint32_t i = 0; i < pcm.info.frames * 2; i++)
+                pcm_nonzero_samples += pcm.samples[i] != 0;
             if (sound) {
-                if (SDL_GetQueuedAudioSize(sound) > 17640)
+                if (SDL_GetQueuedAudioSize(sound) > 17640) {
+                    pcm_sdl_discarded += SDL_GetQueuedAudioSize(sound) / 4;
                     SDL_ClearQueuedAudio(sound);
-                SDL_QueueAudio(sound, pcm.samples.data(), pcm.info.frames * 4);
+                }
+                if (SDL_QueueAudio(sound, pcm.samples.data(), pcm.info.frames * 4) == 0)
+                    pcm_sdl_queued += pcm.info.frames;
+                else
+                    pcm_sdl_errors++;
             }
         }
         if (frame_copy(shared, pixels, frame, sequence) && renderer) {

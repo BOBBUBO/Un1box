@@ -4,6 +4,7 @@
 #include "../src/MotionClock.hpp"
 #include "../src/Base64.hpp"
 #include "../src/Elapsed.hpp"
+#include "../../Linux/TouchScript.hpp"
 #include <zlib.h>
 #include <cassert>
 #include <cmath>
@@ -45,6 +46,20 @@ static std::string sha_file(const fs::path &p) {
     return h;
 }
 int main() {
+    std::istringstream pair("17 0 .3 .5 91 0 .7 .5");
+    auto batch = lt::parse_touch_contacts(pair, 2);
+    assert(batch.count == 2 && batch.contacts[0].id == 17 && batch.contacts[1].id == 91);
+    for (const auto &text : {"17 0 .3 .5 17 0 .7 .5", "17 0 .3 .5", "17 4 .3 .5 91 0 .7 .5", "17 0 1.1 .5 91 0 .7 .5",
+                             "17 0 .3 .5 91 0 .7 .5 extra"}) {
+        bool rejected = false;
+        try {
+            std::istringstream invalid(text);
+            lt::parse_touch_contacts(invalid, 2);
+        } catch (const std::exception &) {
+            rejected = true;
+        }
+        assert(rejected);
+    }
     // Stop is admitted after the loop timestamp is sampled. Unsigned subtraction
     // with that stale snapshot used to kill a real worker in the same iteration.
     const uint64_t loop_snapshot = 90000000000ull;
