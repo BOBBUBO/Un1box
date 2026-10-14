@@ -1,14 +1,14 @@
 # Build and run the Android development candidate
 
-This guide follows the verified candidate17b build. It is a Debug development APK, with arm64-v8a and x86_64, API29 minimum and API35 compile/target. The main/test APKs are built together; running Android instrumentation is a separate step.
+This guide follows the verified candidate18 build. It is a Debug development APK, with arm64-v8a and x86_64, API29 minimum and API35 compile/target. The main/test APKs are built together; running Android instrumentation is a separate step.
 
-| Source | Candidate17b revision |
+| Source | Candidate18 revision |
 | --- | --- |
-| Android UI, Binder and tests | `dace47d80762ae30389dc0ccf0acce71687a4e65` |
+| Android UI, Binder and tests | `4cdea763896f689f1cbd8bad8a982877f972685f` |
 | Portable domain, firmware and CActivation | `53ea530954411460d915aace69249398801c4101` |
 | QEMU engine and JNI bridge headers/helper, both ABIs | `91a43a76d582b8c0aff91005142055fb7cad5ca9` |
 
-The native/JNI source at the two app revisions was checked byte-identical; only the View test changed for the final retry. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `LightTouchMac/Resources/firmware-catalog.json`.
+All62 tracked native/JNI/CActivation files at the two app revisions were checked byte-identical. Candidate18 adds the viewport ownership fix and bounded wake diagnosis without changing native input APIs. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `LightTouchMac/Resources/firmware-catalog.json`.
 
 ## Inputs and build
 
@@ -20,13 +20,13 @@ The verified build requires these supplied local inputs:
 - Same-NDK static PIC firmware dependency prefixes under `deps/{arm64-v8a,x86_64}/prefix`, including pinned OpenSSL, plus the hash-verified XPwn checkout or selected source export. Firmware CMake verifies the selected source inputs.
 - The frozen candidate02 x86 ANGLE three-library/closure/notice inputs and frontend notice bundle. Use their sealed producer manifest SHA256 pins; keep these legal build inputs separate from firmware/ROM/guest assets. ARM uses the platform provider; packaging ANGLE does not enable it automatically.
 
-Set the following placeholders to your verified source/input directories and to the publisher's sealed manifest pins. The recipe below is the candidate17b command with machine-local paths parameterized; all properties were used in the tested build.
+Set the following placeholders to your verified source/input directories and to the publisher's sealed manifest pins. The recipe below is the candidate18 command with machine-local paths parameterized; all properties were used in the tested build.
 
 ```sh
 export ANDROID_HOME=/path/to/Android/Sdk
 export JAVA_HOME=/path/to/jdk-17
 export CMAKE_BUILD_PARALLEL_LEVEL=2
-LT_ANDROID_SRC=/path/to/android-dace-source
+LT_ANDROID_SRC=/path/to/android-4cdea-source
 LT_NATIVE_SRC=/path/to/native-53ea-source
 LT_QEMU_SRC=/path/to/qemu-91a-source
 LT_INPUTS=/path/to/verified-build-inputs
@@ -44,8 +44,8 @@ cd "$LT_ANDROID_SRC/Android"
   "-PnativeDepsRoot=$LT_INPUTS/deps" "-PengineRoot=$LT_INPUTS/engine" \
   "-PengineNoticeArm64=$LT_INPUTS/engine/arm64-v8a/notices" \
   "-PengineNoticeX86=$LT_INPUTS/engine/x86_64/notices" \
-  -PsourceRevision=dace47d80762ae30389dc0ccf0acce71687a4e65 \
-  -PsourceReference=https://github.com/blake-lucas/LightTouch/tree/dace47d80762ae30389dc0ccf0acce71687a4e65 \
+  -PsourceRevision=4cdea763896f689f1cbd8bad8a982877f972685f \
+  -PsourceReference=https://github.com/blake-lucas/LightTouch/tree/4cdea763896f689f1cbd8bad8a982877f972685f \
   "-PbuildRoot=$LT_BUILD" \
   "-PangleLibraries=$LT_INPUTS/angle/lib" \
   "-PangleManifest=$LT_INPUTS/angle/closure.json" \
@@ -58,7 +58,7 @@ cd "$LT_ANDROID_SRC/Android"
   :app:testDebugUnitTest --tests 'org.lighttouch.android.*'
 ```
 
-The tested retry passed the ten JVM cases and compiled the real-View, dirty-admission and concurrent-media instrumentation classes. Preserve source archives, exact argv/environment, producer manifests and input-to-packaged strip mappings. Different local paths/debug signing keys can change APK bytes; compare the actual payload provenance rather than assume every new build matches a sealed APK hash.
+The tested build passed the ten JVM cases and compiled the real-View, dirty-admission and concurrent-media instrumentation classes. Preserve source archives, exact argv/environment, producer manifests and input-to-packaged strip mappings. Different local paths/debug signing keys can change APK bytes; compare the actual payload provenance rather than assume every new build matches a sealed APK hash.
 
 Check the APK before installing:
 
@@ -70,7 +70,7 @@ python3 scripts/check-apk.py "$LT_APK"
 "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$LT_TEST_APK"
 ```
 
-Candidate17b's sealed checks covered all17 DSOs, uncompressed16KiB APK/ELF alignment, ABI/SONAME/platform-or-packaged dependency closure,247 notice payload hashes and exact input-or-NDK-strip mappings. The firmware corresponding-source kit covers its declared subset; complete app/engine sources, static-library relink material, source availability and whole-APK licensing eligibility remain separate reviews. Use the matching producer receipts rather than reuse a kit for a different binary.
+Candidate18's sealed checks covered all17 DSOs, uncompressed16KiB APK/ELF alignment, ABI/SONAME/platform-or-packaged dependency closure,247 notice payload hashes and exact input-or-NDK-strip mappings. The firmware corresponding-source kit covers its declared subset; complete app/engine sources, static-library relink material, source availability and whole-APK licensing eligibility remain separate reviews. Use the matching producer receipts rather than reuse a kit for a different binary.
 
 ## Install and supply private guest inputs
 
@@ -108,6 +108,8 @@ adb -s "$LT_DEVICE_SERIAL" shell am instrument --no-restart -w -r \
   org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-This real View/fake Binder test passed on Poco; it is not guest input proof. Candidate17b also passed actual dirty admission with unchanged metadata and explicit recovery/QMP diagnosis to a lit lock screen. Required guest multi-contact response, concurrent touch/render/nonzero audio, full lifecycle, sustained20-minute session, clean same-state reboot/persistence, prepared-stock boot and both AVD page-size gates remain subject to their own retained acceptance. See [candidate17 sequence](CANDIDATE17-ACCEPTANCE.md) and [concurrent/media recipes](CONCURRENT-ACCEPTANCE.md) for opt-ins and manual checks.
+Candidate18 passed all three real View/fake Binder cases on Poco, including unowned resize preserving an unrelated button pulse; this is not native button delivery or guest input proof. Candidate17b passed actual dirty admission with unchanged metadata and explicit recovery/QMP diagnosis to a lit lock screen. Its later wake diagnosis remained black, and Stop disposed the worker after the deadline with dirty state retained. Shutdown receipts are best effort: a missing receipt does not establish a blocked call or a clean halt. See [wake diagnosis](WAKE-DIAGNOSIS.md) for the optional150–500ms host hold and its separate guest-clock limits.
+
+Required guest multi-contact response, concurrent touch/render/nonzero audio, full lifecycle, sustained20-minute session, clean same-state reboot/persistence, prepared-stock boot and both AVD page-size gates remain subject to their own retained acceptance. See [candidate17 sequence](CANDIDATE17-ACCEPTANCE.md) and [concurrent/media recipes](CONCURRENT-ACCEPTANCE.md) for opt-ins and manual checks.
 
 Gyro/motion is explicitly deferred/unqualified and does not block the initial goal. Do not enable experimental motion, build a probe/SDK or advertise modeled board gyro as working. Android display/audio/touch/lifecycle and durability remain required.
