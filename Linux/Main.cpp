@@ -2,6 +2,7 @@
 #include "../Portable/src/Elapsed.hpp"
 #include "TouchScript.hpp"
 #include "ControlDelivery.hpp"
+#include "Presentation.hpp"
 #include <SDL.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
@@ -617,6 +618,9 @@ static int frontend(const Options &o, int argc, char **argv) {
         if (!renderer)
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
         require(renderer, SDL_GetError());
+        SDL_RendererInfo info{};
+        require(SDL_GetRendererInfo(renderer, &info) == 0, SDL_GetError());
+        std::cout << "SDL renderer=" << info.name << " opaque_format=BGRX32\n";
     }
     if (o.audio) {
         SDL_AudioSpec want{}, got{};
@@ -825,32 +829,35 @@ static int frontend(const Options &o, int argc, char **argv) {
         }
         if (frame_copy(shared, pixels, frame, sequence) && renderer) {
             if (!texture) {
-                texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING,
-                                            int(frame.width), int(frame.height));
+                texture = lt::opaque_texture(renderer, int(frame.width), int(frame.height));
                 require(texture, SDL_GetError());
             } else {
                 int width = 0, height = 0;
-                SDL_QueryTexture(texture, nullptr, nullptr, &width, &height);
+                require(SDL_QueryTexture(texture, nullptr, nullptr, &width, &height) == 0,
+                        std::string("SDL texture query: ") + SDL_GetError());
                 if (width != int(frame.width) || height != int(frame.height)) {
                     SDL_DestroyTexture(texture);
-                    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING,
-                                                int(frame.width), int(frame.height));
+                    texture = lt::opaque_texture(renderer, int(frame.width), int(frame.height));
                     require(texture, SDL_GetError());
                 }
             }
-            SDL_UpdateTexture(texture, nullptr, pixels.data(), int(frame.stride));
+            require(SDL_UpdateTexture(texture, nullptr, pixels.data(), int(frame.stride)) == 0,
+                    std::string("SDL texture update: ") + SDL_GetError());
         }
         if (renderer && texture) {
             int width = 0, height = 0;
-            SDL_GetRendererOutputSize(renderer, &width, &height);
+            require(SDL_GetRendererOutputSize(renderer, &width, &height) == 0,
+                    std::string("SDL renderer output: ") + SDL_GetError());
             double display_width = (display_rotation % 180) ? frame.height : frame.width;
             double display_height = (display_rotation % 180) ? frame.width : frame.height;
             double scale = std::min(double(width) / display_width, double(height) / display_height);
             SDL_Rect dest{int((width - frame.width * scale) / 2), int((height - frame.height * scale) / 2),
                           int(frame.width * scale), int(frame.height * scale)};
-            SDL_SetRenderDrawColor(renderer, 24, 24, 24, 255);
-            SDL_RenderClear(renderer);
-            SDL_RenderCopyEx(renderer, texture, nullptr, &dest, display_rotation, nullptr, SDL_FLIP_NONE);
+            require(SDL_SetRenderDrawColor(renderer, 24, 24, 24, 255) == 0,
+                    std::string("SDL clear color: ") + SDL_GetError());
+            require(SDL_RenderClear(renderer) == 0, std::string("SDL clear: ") + SDL_GetError());
+            require(SDL_RenderCopyEx(renderer, texture, nullptr, &dest, display_rotation, nullptr, SDL_FLIP_NONE) == 0,
+                    std::string("SDL rotated frame: ") + SDL_GetError());
             SDL_RenderPresent(renderer);
         }
         SDL_Event event;
