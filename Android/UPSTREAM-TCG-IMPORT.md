@@ -8,6 +8,7 @@ not a new Android host 16 KiB allocator or graphics-provider change.
 | `57da5d7347061971b8d0c930c864a45c0a33b388` | Remove n72 CP15 field offsets that wrote into CPU/TLB memory; use state-free maintenance operations and callback-only QEMU_CALL |
 | `909d3ccb62658e3074e4cd1835a7669ef2c5e54f` | Use 4 KiB **guest** pages on supported iPod/iPhone/iPad boards; reject ARMv6 fine-page descriptors |
 | `d0ffac78801f0a166a17c5964ec5a1a1f0b2d301` | Remember MMIO instruction boundaries so repeatedly polled reads can end a translation block without repeated unwind |
+| `f578200af70f26206aa42b1478e24e617b692210` | Echo EA/EB touch-read commands while preserving prefix checksums and report contents |
 
 The portable fork additionally retains the minimum cached instruction limit
 under the existing mutex, including different TB variants at one physical PC.
@@ -40,3 +41,15 @@ actual app-UID library mapping and guest rendering on a 16 KiB target.
 Real Linux/Poco boot, multi-touch, concurrent audio/render/input, lifecycle,
 safe shutdown/restart and persistence remain required on the new candidate.
 Gyro and guest motion qualification remain deferred and unqualified.
+
+The final clean backend producer is
+`b59b3620b01da9285dea3a9ee6f58c1bb3cecfc2`; the integration commit is
+`a4749f1ba6`. Native Linux, arm64-v8a and x86_64 builds passed. Native Linux's
+bare-metal test observed no block at `0x400` and 2 rewinds across 1,000 reads.
+Production-function ASan/UBSan regressions passed for CP15 descriptors, minimum
+limits, explicit-count replay, full-flush reclamation, touch frame handover in
+Apple/portable variants and retained AP-wake behavior; RCU ownership tests passed.
+Both Android engines retain `0x4000` PT_LOAD alignment. Full-flush reclamation
+bounds hint lifetime, and explicitly counted replay blocks bypass the hint.
+These results establish builds and mechanisms. Final-engine Linux/iOS guest and
+Android guest acceptance remain separate, pending target evidence.
