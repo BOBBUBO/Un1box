@@ -44,8 +44,14 @@ use ordinary Stop. Forced known-process disposal remains failure with dirty stat
 
 Start `watch-ready-captures.py` before HELLO, with exact frontend PID/startticks,
 window, log, a new capture directory and `--timeout 1200 --max-captures 12
---execute`. Its fresh/nonblack capture is not a Home assertion. Independently
-inspect copied native pixels, then split balanced Home150ms, current wake capture,
+--execute`. Its fresh/nonblack capture is not a Home assertion.
+Invoke that helper from its committed `Linux/scripts` repository path. Its
+outside-repository evidence check derives the root from its own file location;
+copying it into a private run directory changes that contract and must not be
+used as an executable snapshot. Retain a source/hash snapshot separately and
+validate the repository helper before launch. The visual-gate watchdog has no
+such repository-root derivation and can use its reviewed private snapshot.
+Independently inspect copied native pixels, then split balanced Home150ms, current wake capture,
 inspected Lock Screen, mapped slider(.18,.90) to(.92,.90), and inspected Home.
 Use focused XTest events without `--window`/inherited xdotool window stack; retain
 the current viewport letterbox and paired native/presentation receipts. Do not

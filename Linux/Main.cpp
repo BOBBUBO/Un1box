@@ -827,10 +827,17 @@ static int frontend(const Options &o, int argc, char **argv) {
     SDL_Renderer *&renderer = sdl.renderer;
     SDL_Texture *&texture = sdl.texture;
     SDL_AudioDeviceID &sound = sdl.sound;
+    std::string last_window_title = "LightTouch — starting";
+    auto set_window_title = [&](const std::string &title) {
+        if (window && title != last_window_title) {
+            SDL_SetWindowTitle(window, title.c_str());
+            last_window_title = title;
+        }
+    };
     if (!o.headless) {
         sdl.initialized = true; // SDL_Quit also cleans a partially failed init.
         require(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0, SDL_GetError());
-        window = SDL_CreateWindow("LightTouch — starting", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 480, 800,
+        window = SDL_CreateWindow(last_window_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 480, 800,
                                   SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
         require(window, SDL_GetError());
         renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
@@ -908,7 +915,7 @@ static int frontend(const Options &o, int argc, char **argv) {
             if (window) {
                 const std::string title = "LightTouch — validating prepared device: " + std::to_string(progress.done) +
                                           "/" + std::to_string(progress.total) + " bytes — Escape cancels";
-                SDL_SetWindowTitle(window, title.c_str());
+                set_window_title(title);
             }
         }
         if (renderer) {
@@ -935,8 +942,7 @@ static int frontend(const Options &o, int argc, char **argv) {
     std::cout << "admission hello_verified_observed_monotonic_ns=" << now_ns() << " worker_pid=" << pid
               << " start_ticks=" << child.ticks << " mapping_bytes=" << hello.mapping_bytes
               << "; guest readiness still pending" << std::endl;
-    if (window)
-        SDL_SetWindowTitle(window, "LightTouch — starting guest");
+    set_window_title("LightTouch — starting guest");
     struct Mapping {
         const void *p;
         size_t n;
@@ -1115,7 +1121,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                                                                       : s.state == LT_STOPPING ? "stopping"
                                                                       : s.state == LT_STARTING ? "starting"
                                                                                                : "stopped");
-                    SDL_SetWindowTitle(window, title.c_str());
+                    set_window_title(title);
                 }
                 if (s.state == LT_STOPPED || s.state == LT_FAILED) {
                     terminal = true;
