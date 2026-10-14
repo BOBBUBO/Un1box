@@ -413,7 +413,12 @@ class EngineService : Service() {
         val cancellations = displayCancellations.snapshot
         putBundle("displayInputCancellations", Bundle().apply {
             putLong("count", cancellations.count)
-            putStringArray("reasons", cancellations.reasons.toTypedArray())
+            putString("lastReason", cancellations.reasons.lastOrNull() ?: "")
+            // Nested Bundle encoding is shared by status receipts and durable
+            // observations. Indexed strings avoid an opaque raw-array value.
+            putBundle("reasons", Bundle().apply {
+                cancellations.reasons.forEachIndexed { index, reason -> putString(index.toString(), reason) }
+            })
             putInt("historyLimit", DisplayCancellationHistory.LIMIT)
             putBoolean("guestConsumptionInferred", false)
         })

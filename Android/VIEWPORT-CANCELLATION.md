@@ -26,8 +26,9 @@ errors and never blindly clears them after an admitted touch. Native mapping
 continues to use the same viewport math and accepted coordinate bounds.
 
 Worker observations add `displayInputCancellations`: total host cancellation
-count and the last8 closed reasons, plus historyLimit and guestConsumptionInferred
-false. The snapshot survives View recreation. Readers take a volatile immutable
+count, lastReason and the last8 closed reasons as an indexed nested Bundle,
+plus historyLimit and guestConsumptionInferred false. Nested strings retain
+readable reasons in both status and the existing durable JSON encoder. The snapshot survives View recreation. Readers take a volatile immutable
 snapshot without waiting on native/touch admission; record serializes only the
 small bounded history, after control admission. This is cancellation history,
 not proof that a contact batch reached or was released by the guest.
