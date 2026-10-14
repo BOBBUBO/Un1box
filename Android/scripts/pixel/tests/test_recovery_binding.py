@@ -106,6 +106,24 @@ class Recovery(unittest.TestCase):
                 attempt.stop();stop.assert_called_once()
             self.assertEqual(attempt.worker_pid,'42');self.assertEqual(attempt.record_id,'a'*32)
 
+    def test_prestart_reads_actual_padded_role_and_rejects_real_identity_change(self):
+        b=self.bound()
+        stat=('42 (engine) '+' '.join(['S']+['0']*18+['1234'])).encode()
+        class Controller:
+            values={'boot_id':b['bootId'].encode(),'selected':b['recordId'].encode(),
+                'stat':stat,'status':b'Uid: 10215 10215 10215 10215\n',
+                'cmdline':b'org.lighttouch.android:engine'.ljust(99,b'\0')}
+            def run(self,label,argv,*a):return self.values[argv[-1].rsplit('/',1)[-1]]
+        c=Controller()
+        result=bind_recovery.recheck_before_start(c,b)
+        self.assertEqual(result['cmdlineBytes'],99);self.assertTrue(result['identityMatched'])
+        self.assertFalse(result['guestAcceptancePassed'])
+        for name,value in (('cmdline',b'org.lighttouch.android\0'),('status',b'Uid: 10216 10216 10216 10216\n'),('selected',b'other')):
+            with self.subTest(name=name):
+                old=c.values[name];c.values[name]=value
+                with self.assertRaises(ValueError):bind_recovery.recheck_before_start(c,b)
+                c.values[name]=old
+
     def test_late_origin_dispatches_no_adb(self):
         with tempfile.TemporaryDirectory() as d:
             out=Path(d);record,token,pins,run,data=self.fixture(out);runner=mock.Mock()

@@ -23,6 +23,29 @@ def match_ready(prior, ready):
         raise ValueError('Ready did not use declared dirty recovery')
 
 
+def recheck_before_start(controller, binding):
+    """Read actual proc bytes immediately before Start; NUL padding is normal."""
+    validate_binding(binding)
+    for path, expected in (("/proc/sys/kernel/random/boot_id", binding["bootId"]),
+                           ("files/library/selected", binding["recordId"])):
+        data = controller.run("pre-start-"+path.rsplit("/",1)[-1],
+            ["exec-out","run-as",PACKAGE,"cat",path],1,490)
+        if data.strip() != expected.encode():
+            raise ValueError("Original pre-Start boot/selection changed")
+    data = {}
+    for name in ("stat", "status", "cmdline", "stat"):
+        data[name] = controller.run("pre-start-"+name,
+            ["exec-out","run-as",PACKAGE,"cat",f"/proc/{binding['workerPid']}/{name}"],1,490)
+        if name == "stat" and "firstStat" not in data:
+            data["firstStat"] = data[name]
+    # Never compare cmdline with a guessed argv-buffer length or strip whitespace.
+    for stat in (data["firstStat"], data["stat"]):
+        if not worker_identity(stat.decode(), data["status"].decode(), data["cmdline"].decode(), binding):
+            raise ValueError("Original pre-Start worker PID/start/UID/role changed")
+    return {"workerPid": binding["workerPid"], "workerStartTicks": binding["workerStartTicks"],
+            "cmdlineBytes": len(data["cmdline"]), "identityMatched": True, "guestAcceptancePassed": False}
+
+
 def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monotonic_ns):
     out = Path(attempt)
     context_raw = (out/'clock-context.json').read_bytes(); context=json.loads(context_raw)
