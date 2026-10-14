@@ -204,17 +204,18 @@ struct lt_runtime {
                 if (engine->ready()) {
                     const bool actual_paused = engine->paused();
                     lt::VmPauseControl::Action pause_action = lt::VmPauseControl::Action::none;
+                    bool shutdown_ready = false;
                     {
                         std::lock_guard<std::mutex> lock(mutex);
-                        if (!stopping)
-                            pause_action = vm_pause.step(actual_paused, true); // Inside engine->ready() boundary.
+                        pause_action = vm_pause.step(actual_paused, true); // Inside engine->ready() boundary.
+                        shutdown_ready = stopping && vm_pause.capture_allowed(actual_paused);
                     }
                     if (pause_action == lt::VmPauseControl::Action::pause)
                         engine->pause();
                     else if (pause_action == lt::VmPauseControl::Action::resume)
                         engine->resume();
                     agent_state = uint32_t(engine->agent_status());
-                    if (shutdown_requested.exchange(false)) {
+                    if (shutdown_ready && shutdown_requested.exchange(false)) {
                         shutdown_phase = 2;
                         engine->cancel();
                         std::string cancelled;
@@ -557,6 +558,7 @@ lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {
         r->engine->cancel();
         {
             std::lock_guard<std::mutex> lock(r->mutex);
+            lt::require(!r->stopping, "runtime is stopping", LT_AGAIN);
             r->motion_clock.reset();
             r->pcm.transition(paused != 0);
             r->vm_pause.request(paused != 0);
@@ -566,7 +568,10 @@ lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {
 lt_status lt_runtime_request_shutdown(lt_runtime *r, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && r->started && !r->done, "runtime not active", LT_AGAIN);
+        std::lock_guard<std::mutex> lock(r->mutex);
         if (!r->stopping.exchange(true)) {
+            r->pcm.transition(true);
+            r->vm_pause.shutdown_target();
             r->shutdown_phase = 1;
             r->shutdown_requested = true;
         }

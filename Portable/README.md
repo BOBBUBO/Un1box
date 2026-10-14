@@ -105,6 +105,13 @@ they are not host monotonic frame timestamps. Native dropped-frame counters coun
 known queued/in-flight discarded frames, not unread bytes cleared inside the
 backend capture ring. No public ABI signatures change.
 
+Stop immediately closes the PCM epoch/queue under that mutex. It discards an
+unsubmitted Pause, but waits for a submitted Pause to become PAUSED, submits
+Resume, and waits for RUNNING before dispatching guest shutdown. The original
+shutdown request clock and frontend/worker budgets are unchanged; missing VM
+acknowledgement cannot extend the deadline or clear dirty state. A buffer copied
+before Stop still needs the frontend's own write fence.
+
 A buffer already returned to a frontend by `lt_runtime_pcm` cannot be revoked.
 Each frontend must pause/flush its sink and fence reader/transport packets at its
 own lifecycle boundary. Linux uses private command/epoch receipts; Android must

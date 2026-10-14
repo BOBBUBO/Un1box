@@ -92,4 +92,29 @@ int main() {
     control.request(false);
     assert(control.step(true, true) == Action::resume);
     assert(control.step(false, true) == Action::none && control.capture_allowed(false));
+
+    lt::VmPauseControl shutdown;
+    shutdown.request(true);
+    assert(shutdown.step(false, true) == Action::pause); // Action returned/queued, VM still running.
+    shutdown.shutdown_target();
+    assert(shutdown.step(false, true) == Action::none && !shutdown.capture_allowed(false));
+    assert(shutdown.step(true, true) == Action::resume && !shutdown.capture_allowed(true));
+    assert(shutdown.step(true, true) == Action::none && !shutdown.capture_allowed(true));
+    assert(shutdown.step(false, true) == Action::none && shutdown.capture_allowed(false));
+    // Production consumes shutdown_requested only after this same ready gate.
+    lt::VmPauseControl early_stop;
+    early_stop.request(true);
+    early_stop.shutdown_target(); // No backend Pause submitted, safe to discard.
+    assert(early_stop.step(true, false) == Action::none); // Default pre-init PAUSED cannot acknowledge.
+    assert(early_stop.step(false, true) == Action::none && early_stop.capture_allowed(false));
+    lt::VmPauseControl unrelated;
+    assert(unrelated.step(true, true) == Action::none); // No automatic resume before Stop.
+    unrelated.shutdown_target();
+    assert(unrelated.step(true, true) == Action::resume);
+    assert(unrelated.step(false, true) == Action::none && unrelated.capture_allowed(false));
+
+    const auto stop_read_epoch = queue.epoch;
+    queue.transition(true); // request_shutdown clears under the same queue lock.
+    assert(queue.packets.empty());
+    assert(!queue.append(stop_read_epoch, {4, 99})); // Check→append gap crosses Stop.
 }

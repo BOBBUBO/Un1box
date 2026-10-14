@@ -15,6 +15,12 @@ class VmPauseControl {
         if (paused)
             pause_barrier = true;
     }
+    void shutdown_target() {
+        engaged = true; // Stop explicitly authorizes waking a paused VM.
+        desired_pause = false;
+        if (!pause_sent)
+            pause_barrier = false; // Only an unsubmitted Pause may be discarded.
+    }
     Action step(bool actual_paused, bool engine_ready) {
         if (!engine_ready || !engaged)
             return Action::none; // Do not resume an unrelated/guest-owned pause.
