@@ -80,7 +80,7 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
         control { worker ->
             // Preserve the source time; the dedicated worker orders millisecond ties
             // across Views without hiding a genuinely backwards input timestamp.
-            val admission = worker.touch(event.eventTime * 1_000_000, ids, phases, xy, width, height, display.rotation * 90)
+            val admission = worker.touch(event.eventTime * 1_000_000, ids, phases, xy, width, height, display?.rotation?.times(90) ?: 0)
             forwardedBatches++
             if (admission.isNotEmpty()) { rejectedBatches++; rejectedGesture = true; contactIds.clear(); onError(admission) }
             else {
