@@ -53,6 +53,20 @@ static std::string sha_file(const fs::path &p) {
     return h;
 }
 int main() {
+    {
+        std::array<int16_t, 8192> output{};
+        output[0] = 123;
+        lt_pcm_info info{sizeof(info), 1, 9, 8, 7, 0, 6, 5};
+        const auto before = info;
+        lt_error error{sizeof(error), 1, 0, {}};
+        assert(lt_runtime_pcm(nullptr, output.data(), 4096, &info, &error) == LT_INVALID);
+        assert(error.code == LT_INVALID && std::string(error.message) == "invalid PCM output");
+        assert(output[0] == 123 && memcmp(&info, &before, sizeof(info)) == 0);
+        // The invalid runtime/output check keeps precedence over invalid info/capacity.
+        assert(lt_runtime_pcm(nullptr, nullptr, 0, nullptr, &error) == LT_INVALID);
+        assert(std::string(error.message) == "invalid PCM output");
+        assert(lt_runtime_pcm(nullptr, output.data(), 4096, &info, nullptr) == LT_INVALID);
+    }
     struct ReplayEntry {
         int id;
         bool replay;
