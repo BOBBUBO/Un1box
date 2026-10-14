@@ -173,22 +173,24 @@ class EngineService : Service() {
     }
     private fun disposeAfterShutdown(receipt: ShutdownReceipt) {
         alive.set(false)
-        error = when {
+        val message = when {
             receipt.reason == "deadline-unconfirmed" -> "Guest shutdown was not confirmed within ${BuildConfig.SHUTDOWN_GRACE_MS / 1000} seconds; worker disposed and writable state retained. ${receipt.progress.error}"
             receipt.terminalState == "failed" -> "Guest worker reported failure; writable state retained: ${receipt.progress.error}"
             else -> receipt.progress.error
         }.take(4096)
-        try {
-            if (error.isNotEmpty()) persistStopError(error)
+        error = message
+        disposeWithoutWaitingForReceipt(writeReceipt = {
+            if (message.isNotEmpty()) persistStopError(message)
             // Cached facts only. Native.status/observations and audio/framework
             // cleanup can block; none may precede this process disposal.
             val record = JSONObject().put("reason", receipt.reason).put("admissionStage", receipt.progress.stage)
-                .put("error", error).put("nativeTerminalState", receipt.terminalState ?: JSONObject.NULL)
+                .put("error", message).put("nativeTerminalState", receipt.terminalState ?: JSONObject.NULL)
                 .put("acceptedAtHostMs", receipt.acceptedAtMs).put("deadlineHostMs", receipt.deadlineMs).put("observedAtHostMs", receipt.observedAtMs)
                 .put("workerPid", Process.myPid()).put("shutdownConfirmationInferred", false).put("nativeStateMarkersModified", false)
+                .put("receiptPersistenceBestEffort", true)
             try { File(filesDir, "worker-shutdown-${Process.myPid()}.json").writeText(record.toString(2)) }
             catch (_: java.io.IOException) { /* Retained state markers stay authoritative. */ }
-        } finally { Process.killProcess(Process.myPid()) }
+        }, terminate = { Process.killProcess(Process.myPid()) })
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { foreground(); return START_NOT_STICKY }
     override fun onBind(intent: Intent): IBinder = binder
