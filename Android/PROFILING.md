@@ -25,8 +25,13 @@ python3 Android/scripts/profile-existing-guest.py \
 ```
 
 Use `--scope app` for a separate whole-app recording of the exact running app,
-engine and firmware process identities. Both modes collect all threads of the
-selected processes; they do not use system-wide collection. Recording is fixed
+engine and firmware process identities. These process modes select `-p` and
+collect threads of the selected processes. The separate `--scope engine-threads`
+mode enumerates `/proc/ENGINE_PID/task` under the app UID, verifies each task's
+Uid/Tgid/Pid, start ticks and actual comm, and passes **only `-t VERIFIED_TIDS`**.
+It does not add `-p` or collect system-wide. The same selected TIDs must retain
+their owner/start ticks/comm afterward; an exiting or reused TID invalidates the
+recording. Threads created later are outside that explicit selection. Recording is fixed
 at10s/99Hz, with an8KiB DWARF stack,16MiB user buffer and32MiB file limit. The
 binary/output directory is a fresh `/data/local/tmp/lt-perf-<uuid>`; unrelated
 profiler outputs are untouched. `receipt.json` retains all commands, selected
@@ -56,10 +61,22 @@ The first actual21b recording used `task-clock:u` while a static Photo was
 selected. Recording/report commands succeeded but produced0 samples/event
 periods. The engine's process CPU counters advanced across the wider
 preparation/record bracket, so this means inconclusive sampling, not CPU idle.
-A controlled next recording can keep the same duration/rate/PID selector and
-select `cpu-cycles:u`, while the operator performs a repeatable menu/Photos
-workload during the10s window. Unsupported hardware events remain a retained
-permission/event failure; never change settings to make them work.
+The next `cpu-cycles:u` process recording also produced zero samples, but that
+guest was paused after ActivityScenario.close; it is not an active benchmark.
+A controlled explicit-thread variant is:
+
+```sh
+python3 Android/scripts/profile-existing-guest.py \
+  --ndk "$LT_NDK" --serial "$LT_SERIAL" --engine-pid "$LT_ENGINE_PID" \
+  --scope engine-threads --event cpu-cycles:u --out "$LT_PROFILE"
+# Review the plan, then add --execute. Use a new evidence directory each time.
+```
+
+The operator must explicitly resume the same guest after any SDK scenario
+closes, then perform the declared live menu/Photos workload during recording.
+Neither zero-sample result identifies a kernel or profiler defect. Unsupported
+hardware events remain a retained permission/event failure; never change
+settings to make them work.
 
 ## Paired counters and responsiveness
 

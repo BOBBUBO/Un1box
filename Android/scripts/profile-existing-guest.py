@@ -23,13 +23,26 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def record_options(pids, percent, output, event="task-clock:u"):
+def record_options(ids, percent, output, event="task-clock:u", threads=False):
     # Keep existing cpu-percent exactly; use tiny rings and bounded stack/data.
-    return ["record", "--app", PACKAGE, "-p", ",".join(map(str, sorted(pids))),
+    return ["record", "--app", PACKAGE, "-t" if threads else "-p", ",".join(map(str, sorted(ids))),
             "-f", "99", "-e", event, "--duration", "10",
             "--clockid", "monotonic", "--call-graph", "dwarf,8192", "-m", "1",
             "--user-buffer-size", "16M", "--size-limit", "32M",
             "--cpu-percent", str(percent), "--exit-with-parent", "--no-dump-kernel-symbols", "-o", output]
+
+
+def thread_identity(status, stat, comm, engine_pid, tid, uid):
+    fields = {line.split(":", 1)[0]: line.split(":", 1)[1].split()
+              for line in status.splitlines() if ":" in line}
+    if (int(fields["Uid"][0]) != uid or int(fields["Tgid"][0]) != engine_pid
+            or int(fields["Pid"][0]) != tid):
+        raise ValueError("Selected TID is not owned by the verified engine/UID")
+    if int(stat.split("(", 1)[0]) != tid:
+        raise ValueError("Thread stat identity changed")
+    values = stat.rsplit(")", 1)[1].split()
+    return {"tid": tid, "tgid": engine_pid, "uid": uid,
+            "start_ticks": int(values[19]), "comm": comm.rstrip("\n")}
 
 
 def report_counts(text):
@@ -47,7 +60,7 @@ def main():
     parser.add_argument("--serial", required=True)
     parser.add_argument("--engine-pid", type=int, required=True)
     parser.add_argument("--arch", choices=["arm64", "x86_64"], default="arm64")
-    parser.add_argument("--scope", choices=["engine", "app"], default="engine")
+    parser.add_argument("--scope", choices=["engine", "engine-threads", "app"], default="engine")
     parser.add_argument("--event", choices=["task-clock:u", "cpu-cycles:u"], default="task-clock:u")
     parser.add_argument("--out", type=Path, required=True, help="New private host evidence directory")
     parser.add_argument("--adb", default="adb")
@@ -73,7 +86,10 @@ def main():
     if not args.execute:
         receipt["status"] = "PLAN_ONLY_NO_DEVICE_ACCESS"
         receipt["example_record_argv"] = [remote + "/simpleperf"] + record_options(
-            [args.engine_pid], "EXISTING_CPU_PERCENT", remote + "/perf.data", args.event)
+            [args.engine_pid], "EXISTING_CPU_PERCENT", remote + "/perf.data", args.event,
+            threads=args.scope == "engine-threads")
+        if args.scope == "engine-threads":
+            receipt["example_selector_note"] = "Example TID is illustrative; execution enumerates and verifies every existing engine task before -t selection."
         print(json.dumps(receipt, indent=2))
         return 0
     args.out.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -122,6 +138,22 @@ def main():
             f'for t in /proc/{pid}/task/*; do printf "%s " "${{t##*/}}"; cat "$t/comm"; done'], required=False)
         return {"pid": pid, "uid": user, "process": process, "start_ticks": ticks}
 
+    def selected_threads(stage, tids=None):
+        if tids is None:
+            _, listing = own("selected-task-list", ["ls", "-1", f"/proc/{args.engine_pid}/task"])
+            names = listing.decode().splitlines()
+            if not names or any(not name.isdecimal() or int(name) <= 0 for name in names):
+                raise RuntimeError("Invalid or empty engine task listing")
+            tids = sorted({int(name) for name in names})
+        result = []
+        for tid in tids:
+            path = f"/proc/{args.engine_pid}/task/{tid}"
+            _, status = own(f"{stage}-tid-{tid}-status", ["cat", path + "/status"])
+            _, stat = own(f"{stage}-tid-{tid}-stat", ["cat", path + "/stat"])
+            _, comm = own(f"{stage}-tid-{tid}-comm", ["cat", path + "/comm"])
+            result.append(thread_identity(status.decode(), stat.decode(), comm.decode(), args.engine_pid, tid, uid))
+        return result
+
     try:
         _, shell_uid = shell("shell-uid", ["id", "-u"])
         if int(shell_uid) == 0:
@@ -137,6 +169,11 @@ def main():
         if next(i for i in before if i["pid"] == args.engine_pid)["process"] != PACKAGE + ":engine":
             raise RuntimeError("Expected an already running dedicated engine worker")
         receipt["identities_before"] = before
+        selected_ids = pids
+        if args.scope == "engine-threads":
+            receipt["selected_thread_identities_before"] = selected_threads("before")
+            selected_ids = {i["tid"] for i in receipt["selected_thread_identities_before"]}
+            receipt["thread_selection_note"] = "Existing verified tasks only; later-created threads are not included. Missing/reused selected tasks invalidate this recording."
         limits = {}
         for name in ["perf_event_paranoid", "perf_event_max_sample_rate", "perf_cpu_time_max_percent", "perf_event_mlock_kb"]:
             _, value = shell(name, ["cat", "/proc/sys/kernel/" + name])
@@ -158,10 +195,16 @@ def main():
         shell("device-record-help", [remote + "/simpleperf", "record", "--help"])
         # Prefer the NDK dispatcher; --app is the supported non-root app route.
         # No app_profiler wrapper, launch command, Java compilation or property write.
-        command = [remote + "/simpleperf"] + record_options(pids, limits["perf_cpu_time_max_percent"], remote + "/perf.data", args.event)
+        command = [remote + "/simpleperf"] + record_options(selected_ids, limits["perf_cpu_time_max_percent"], remote + "/perf.data", args.event,
+                                                          threads=args.scope == "engine-threads")
         code, _ = shell("record", command, timeout=35, required=False)
         receipt["identities_after"] = [identity(pid, "after") for pid in sorted(pids)]
         receipt["worker_identity_preserved"] = receipt["identities_after"] == before
+        if args.scope == "engine-threads":
+            receipt["selected_thread_identities_after"] = selected_threads("after", sorted(selected_ids))
+            receipt["selected_thread_identities_preserved"] = receipt["selected_thread_identities_after"] == receipt["selected_thread_identities_before"]
+            if not receipt["selected_thread_identities_preserved"]:
+                raise RuntimeError("Selected TID owner/start ticks/comm changed; profile remains unqualified")
         if code or not receipt["worker_identity_preserved"]:
             raise RuntimeError("Sampling failed or selected worker changed; profile remains unqualified")
         invoke("pull-owned-profile", ["pull", remote + "/perf.data", str(args.out / "perf.data")])
@@ -187,7 +230,7 @@ def main():
         save()
         print(json.dumps(receipt, indent=2))
         return 0
-    except (RuntimeError, ValueError, StopIteration, OSError, subprocess.TimeoutExpired) as error:
+    except (RuntimeError, ValueError, KeyError, IndexError, StopIteration, OSError, subprocess.TimeoutExpired) as error:
         receipt["status"] = "UNAVAILABLE_OR_INCOMPLETE_NO_SETTINGS_CHANGED"
         receipt["error"] = str(error)
         receipt["fallback"] = "Retain own process/thread snapshots and independent same-worker frame/audio/status deltas; no sampling or guest pass inferred."
