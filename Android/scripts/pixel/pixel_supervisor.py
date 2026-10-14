@@ -126,12 +126,17 @@ class PixelAttempt(base.Attempt):
         try:
             raw = (self.output / "clock-context.json").read_bytes()
             context = json.loads(raw)
-            binding = validate_binding(json.loads((self.output / "pixel-bound.json").read_text()))
+            binding_path = self.output/"pixel-bound.json"
+            if not binding_path.exists():
+                candidates = [self.output/name for name in ("recovery-record-bound.json", "normal-record-bound.json") if (self.output/name).exists()]
+                if len(candidates) != 1: raise ValueError("No unique scoped record binding for failure capture")
+                binding_path = candidates[0]
+            binding = validate_binding(json.loads(binding_path.read_text()))
             if binding["originToken"] != hashlib.sha256(raw).hexdigest() or binding["originNs"] != context["originNs"]:
                 raise ValueError("Bound original clock differs")
             if context["supervisorStartTicks"] * 1_000_000_000 // context["clockTicksPerSecond"] != context["originNs"]:
                 raise ValueError("Original process clock was backdated/reset")
-            prior_path = self.output / "recovery-record-bound.json"
+            prior_path = self.output / ("recovery-record-bound.json" if binding.get("coldRecoveryUsed") is True else "normal-record-bound.json")
             if binding.get("coldRecoveryUsed") is True or prior_path.exists():
                 from bind_recovery import match_ready
                 prior = json.loads(prior_path.read_text())
@@ -142,6 +147,8 @@ class PixelAttempt(base.Attempt):
                 self.worker_pid = str(binding["workerPid"])
                 self.write("recovery-stop-binding.json", {"recordId": self.record_id, "workerPid": self.worker_pid,
                     "workerStartTicks": binding["workerStartTicks"], "originalWorkerBound": True,
+                    "postStartBindingAvailable": binding_path.name == "pixel-bound.json",
+                    "coldRecoveryUsed": binding["coldRecoveryUsed"],
                     "cleanInitialAdmissionClaimed": False, "guestShutdownConfirmed": False})
             outcome = bounded_capture(self.args.adb, binding, self.output / "pixel-precleanup")
             self.write("pixel-precleanup-process.json", outcome)
@@ -153,11 +160,12 @@ class PixelAttempt(base.Attempt):
                 pass  # Receipt failure cannot suppress owned disposal.
 
     def recovery_stop_allowed(self):
-        if not (self.output / "recovery-record-bound.json").exists():
-            return True
+        paths = [self.output/name for name in ("recovery-record-bound.json", "normal-record-bound.json") if (self.output/name).exists()]
+        if not paths: return True
         try:
-            prior = validate_binding(json.loads((self.output / "recovery-record-bound.json").read_text()))
-            if prior.get("priorDirty") is not True or prior.get("pinsVerified") is not True:
+            if len(paths) != 1: raise ValueError("Conflicting record Start mode bindings")
+            prior = validate_binding(json.loads(paths[0].read_text()))
+            if type(prior.get("priorDirty")) is not bool or prior.get("coldRecoveryUsed") is not prior["priorDirty"] or prior.get("pinsVerified") is not True:
                 raise ValueError("No actual recovery binding")
             raw = (self.output / "clock-context.json").read_bytes()
             if prior["originToken"] != hashlib.sha256(raw).hexdigest():

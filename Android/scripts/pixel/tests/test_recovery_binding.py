@@ -16,7 +16,7 @@ class Recovery(unittest.TestCase):
         root='files/library/records/'+record
         data={'/proc/self/status':uid,'/proc/42/stat':stat,'/proc/42/status':uid,'/proc/42/cmdline':b'org.lighttouch.android:engine\0',
             '/proc/sys/kernel/random/boot_id':b'11111111-2222-3333-4444-555555555555','files/library/selected':record.encode(),
-            root+'/record.json':meta,root+'/base/device.lock.json':base,root+'/assets/bootrom.bin':rom,root+'/assets/guest.itpack':guest,root+'/state/.dirty':b'actual interrupted'}
+            root+'/record.json':meta,root+'/base/device.lock.json':base,root+'/assets/bootrom.bin':rom,root+'/assets/guest.itpack':guest,root+'/state/.dirty':b'actual interrupted',root+'/state/.base-identity':b'existing base identity'}
         if change:data.update(change)
         context={'originNs':10**12,'supervisorPid':777,'supervisorStartTicks':100000,'clockTicksPerSecond':100}
         (out/'clock-context.json').write_text(json.dumps(context));(out/'memory-monitor.json').write_text(json.dumps({'originNs':10**12,'ownerPid':999,'ownerStartTicks':789}))
@@ -28,7 +28,7 @@ class Recovery(unittest.TestCase):
             content=data.get(path)
             marker='__LT_PIXEL_REMOTE_EXIT__' if '__LT_PIXEL_REMOTE_EXIT__' in script else '__LT_MEMORY_EXIT__'
             stdout=(content or b'')+f'\n{marker}={0 if content is not None else 1}\n'.encode()
-            return subprocess.CompletedProcess(argv,0,stdout,b'' if content is not None else b'Permission denied')
+            return subprocess.CompletedProcess(argv,0,stdout,b'' if content is not None else b'No such file or directory')
         return record,token,pins,run,data
 
     def bound(self):
@@ -66,6 +66,20 @@ class Recovery(unittest.TestCase):
                 with mock.patch.object(bind_recovery,'process_ticks',side_effect=lambda p:{777:100000,999:789}[p]),mock.patch.object(bind_recovery,'Sampler',side_effect=lambda *a,**kw:original(*a,identity=lambda p:789,**kw)):
                     with self.assertRaises(ValueError):bind_recovery.bind('/synthetic/adb',out,token,record,pins,run=run,now=lambda:10**12+100*10**9)
                 self.assertFalse((out/'recovery-record-bound.json').exists())
+
+    def test_precleanup_falls_back_to_prestart_binding_when_admission_failed(self):
+        with tempfile.TemporaryDirectory() as d:
+            args=type('Args',(),{'output':d+'/attempt','adb':'/synthetic/adb'})()
+            attempt=pixel_supervisor.PixelAttempt(args)
+            context={'originNs':10**12,'supervisorStartTicks':100000,'clockTicksPerSecond':100}
+            raw=json.dumps(context).encode();bound=self.bound();bound['originToken']=hashlib.sha256(raw).hexdigest()
+            (attempt.output/'clock-context.json').write_bytes(raw)
+            (attempt.output/'recovery-record-bound.json').write_text(json.dumps(bound))
+            with mock.patch.object(pixel_supervisor,'bounded_capture',return_value={'captureStarted':True}) as capture:
+                attempt.pixel_readback();capture.assert_called_once()
+                self.assertEqual(capture.call_args.args[1]['attemptToken'],bound['attemptToken'])
+            receipt=json.loads((attempt.output/'recovery-stop-binding.json').read_text())
+            self.assertFalse(receipt['postStartBindingAvailable']);self.assertFalse(receipt['guestShutdownConfirmed'])
 
     def test_stop_rejects_replaced_worker_without_admitting_gui_stop_and_cleanup_runs(self):
         with tempfile.TemporaryDirectory() as d:
@@ -105,6 +119,26 @@ class Recovery(unittest.TestCase):
             with mock.patch.object(pixel_supervisor.base.Attempt,'stop') as stop:
                 attempt.stop();stop.assert_called_once()
             self.assertEqual(attempt.worker_pid,'42');self.assertEqual(attempt.record_id,'a'*32)
+
+    def test_normal_clean_binding_requires_absent_marker_not_permission_denial(self):
+        for denied in (False,True):
+            with self.subTest(denied=denied),tempfile.TemporaryDirectory() as d:
+                out=Path(d);record,token,pins,run,data=self.fixture(out)
+                data['files/library/records/'+record+'/state/.dirty']=None
+                def invoke(argv,**kw):
+                    r=run(argv,**kw)
+                    if denied and '/state/.dirty' in argv[-1]:r.stderr=b'Permission denied'
+                    return r
+                original=bind_recovery.Sampler
+                with mock.patch.object(bind_recovery,'process_ticks',side_effect=lambda p:{777:100000,999:789}[p]),mock.patch.object(bind_recovery,'Sampler',side_effect=lambda *a,**kw:original(*a,identity=lambda p:789,**kw)):
+                    if denied:
+                        with self.assertRaises(ValueError):bind_recovery.bind('/synthetic/adb',out,token,record,pins,run=invoke,now=lambda:10**12+100*10**9,cold_recovery=False)
+                        self.assertFalse((out/'normal-record-bound.json').exists())
+                    else:
+                        result=bind_recovery.bind('/synthetic/adb',out,token,record,pins,run=invoke,now=lambda:10**12+100*10**9,cold_recovery=False)
+                        self.assertFalse(result['priorDirty']);self.assertFalse(result['coldRecoveryUsed']);self.assertTrue(result['dirtyReceipt']['confirmedAbsent'])
+                        bind_recovery.match_ready(result,result)
+                        self.assertTrue((out/'normal-record-bound.json').exists());self.assertFalse((out/'recovery-record-bound.json').exists())
 
     def test_prestart_reads_actual_padded_role_and_rejects_real_identity_change(self):
         b=self.bound()

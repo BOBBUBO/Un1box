@@ -135,7 +135,9 @@ def monitor(adb, output, owner_pid, owner_ticks, origin_ns, deadline_ns, stop_ev
             sample['hostSwapDelta'] = swap_delta(previous['text'], current['text'], sample['host']['hostPageBytes'])
         previous = current
         try:
-            binding = json.loads((output / 'pixel-bound.json').read_text())
+            paths=[output/name for name in ('pixel-bound.json','recovery-record-bound.json','normal-record-bound.json') if (output/name).exists()]
+            binding = json.loads(paths[0].read_text()) if paths else None
+            if binding is None: raise ValueError('No actual worker binding yet')
             if binding['originNs'] != origin_ns:
                 raise ValueError('Worker binding original origin differs')
         except (OSError, ValueError, KeyError):
