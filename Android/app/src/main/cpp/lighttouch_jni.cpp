@@ -21,6 +21,7 @@
 #include <optional>
 #include "presentation_lifetime.h"
 #include "display_lease.h"
+#include "frame_cache.h"
 
 namespace {
 std::mutex guard;
@@ -30,8 +31,9 @@ std::string library_root;
 lt_runtime *runtime = nullptr;
 lt_device *device = nullptr;
 ANativeWindow *window = nullptr;
-std::vector<uint8_t> pixels(LT_FRAME_CAPACITY);
-lt_frame_info frame = LT_INIT(lt_frame_info);
+FrameCopyCache frame_cache;
+auto &pixels = frame_cache.pixels;
+auto &frame = frame_cache.frame;
 lt_pcm_info pcm = LT_INIT(lt_pcm_info);
 lt_board_info board = LT_INIT(lt_board_info);
 uint64_t sequence = 0;
@@ -174,7 +176,14 @@ void present() {
             if (runtime && window) {
                 present_stage(PresentPhase::FrameCopy,phase_generation,phase_epoch);
                 lt_error error = LT_INIT(lt_error);
-                lt_status status = lt_runtime_copy_frame(runtime, pixels.data(), pixels.size(), &sequence, &frame, &error);
+                const auto status = frame_cache.latest(sequence, error,
+                    [&](uint64_t since, lt_frame_info &out, lt_error &failure) {
+                        return lt_runtime_frame_metadata(runtime, since, &out, &failure);
+                    },
+                    [&](void *storage, uint64_t capacity, uint64_t &next, lt_frame_info &out, lt_error &failure) {
+                        return lt_runtime_copy_frame(runtime, storage, capacity, &next, &out, &failure);
+                    },
+                    [&] { frame_sample_pixels=frame_nonzero_rgb_samples=frame_rgb_sample_sum=0; });
                 if (status == LT_OK && frame.width && frame.height && frame.stride >= frame.width * 4 && frame.bytes <= pixels.size()) {
                     begin=monotonic_ns();
                     source=frame;
@@ -221,8 +230,8 @@ void present() {
                 if(valid_buffer) {
                     present_stage(PresentPhase::Scale,phase_generation,phase_epoch);
                     const auto view=viewport(target.width,target.height,source);
-                    // This thread is the sole pixels/frame writer and never
-                    // resizes pixels. Capture reads under guard. Those concurrent
+                    // This thread is the sole pixels/frame writer and only
+                    // grows storage in its next guarded iteration. Capture reads under guard. Those concurrent
                     // reads are safe; the next write waits until this iteration
                     // and any guarded capture have finished. No runtime escapes.
                     for(int y=0;y<target.height;++y) {
