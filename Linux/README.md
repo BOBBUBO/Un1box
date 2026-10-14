@@ -93,3 +93,7 @@ it survives shutdown timeout/worker failure. A live S capture uses the configure
 path or state/screenshot-SEQ.bmp. Atomic BMP encoding is in the shared native domain,
 so it needs no Photos or SDL image encoder. Capture requires an actual complete
 published frame and never invents one.
+
+Gyro/motion qualification is DEFERRED and unqualified by user scope update. The
+preserved APIs/manual replay do not advertise gyro as working and do not require
+SDK/probe acquisition or further gyro integration for initial completion.
