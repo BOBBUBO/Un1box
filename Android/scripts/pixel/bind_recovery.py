@@ -14,12 +14,12 @@ from memory_monitor import Sampler, process_ticks, worker_identity
 
 def match_ready(prior, ready):
     validate_binding(prior)
-    if prior.get('schema') != 1 or prior.get('priorDirty') is not True or prior.get('coldRecoveryUsed') is not True or prior.get('pinsVerified') is not True:
+    if prior.get('schema') != 1 or type(prior.get('priorDirty')) is not bool or prior.get('coldRecoveryUsed') is not prior['priorDirty'] or prior.get('pinsVerified') is not True:
         raise ValueError('Explicit actual dirty recovery binding required')
     for key in ('appUid', 'workerPid', 'workerStartTicks', 'bootId', 'recordId', 'attemptToken', 'originToken'):
         if ready.get(key) != prior[key]:
             raise ValueError('Recovery Start changed original bound identity: ' + key)
-    if ready.get('priorDirty') is not True or ready.get('coldRecoveryUsed') is not True:
+    if ready.get('priorDirty') is not prior['priorDirty'] or ready.get('coldRecoveryUsed') is not prior['coldRecoveryUsed']:
         raise ValueError('Ready did not use declared dirty recovery')
 
 
@@ -46,7 +46,7 @@ def recheck_before_start(controller, binding):
             "cmdlineBytes": len(data["cmdline"]), "identityMatched": True, "guestAcceptancePassed": False}
 
 
-def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monotonic_ns):
+def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monotonic_ns, cold_recovery=True):
     out = Path(attempt)
     context_raw = (out/'clock-context.json').read_bytes(); context=json.loads(context_raw)
     monitor=json.loads((out/'memory-monitor.json').read_text())
@@ -95,23 +95,34 @@ def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monoton
         if suffix=='record.json': metadata=json.loads(data)
     if metadata.get('schema')!=1 or metadata.get('id')!=record or metadata.get('base_sha256')!=pins['base/device.lock.json'] or metadata.get('bootrom_sha256')!=pins['assets/bootrom.bin'] or metadata.get('guest_package_sha256')!=pins['assets/guest.itpack']:
         raise ValueError('Record metadata pins differ')
-    dirty=read(root+'/state/.dirty',65536)  # Successful regular-file read; never deletes it.
+    if type(cold_recovery) is not bool: raise ValueError('Explicit boolean Start mode required')
+    if cold_recovery:
+        dirty=read(root+'/state/.dirty',65536)  # Successful regular-file read; never deletes it.
+        dirty_receipt={'bytes':len(dirty),'sha256':hashlib.sha256(dirty).hexdigest(),'remoteReadSucceeded':True}
+    else:
+        read(root+'/state/.base-identity',65536)  # Prove actual traversable initialized state.
+        data, meta=capture.read(root+'/state/.dirty',65536)
+        if meta['remoteExit']!=1 or 'No such file' not in meta['stderr']:
+            raise ValueError('Normal Start requires confirmed absent dirty marker; denied is unavailable')
+        dirty_receipt={'confirmedAbsent':True,'remoteReadExit':meta['remoteExit'],'stderr':meta['stderr']}
+
     status=read(f'/proc/{pid}/status').decode()
     role=read(f'/proc/{pid}/cmdline').decode()
     after_stat=read(f'/proc/{pid}/stat').decode()
     if not worker_identity(after_stat,status,role,binding): raise ValueError('Original worker identity changed')
     if read('/proc/sys/kernel/random/boot_id').strip()!=binding['bootId'].encode() or read('files/library/selected').strip()!=record.encode(): raise ValueError('Boot/selection changed during preflight')
-    binding.update(priorDirty=True,coldRecoveryUsed=True,pinsVerified=True,pins=actual,
-        dirtyReceipt={'bytes':len(dirty),'sha256':hashlib.sha256(dirty).hexdigest(),'remoteReadSucceeded':True},
+    binding.update(priorDirty=cold_recovery,coldRecoveryUsed=cold_recovery,pinsVerified=True,pins=actual,
+        dirtyReceipt=dirty_receipt,
         beforeStart=True,guestAcceptancePassed=False,cleanInitialAdmissionClaimed=False,
         captureCommands=capture.commands,completedNs=now())
-    with (out/'recovery-record-bound.json').open('x') as stream: stream.write(json.dumps(binding,indent=2)+'\n')
+    with (out/('recovery-record-bound.json' if cold_recovery else 'normal-record-bound.json')).open('x') as stream: stream.write(json.dumps(binding,indent=2)+'\n')
     return binding
 
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     for flag in ('adb','attempt','token','record','record-sha256','lock-sha256','rom-sha256','guest-sha256'):p.add_argument('--'+flag,required=True)
+    p.add_argument('--cold-recovery',choices=('true','false'),default='true')
     a=p.parse_args()
     pins={'record.json':a.record_sha256,'base/device.lock.json':a.lock_sha256,'assets/bootrom.bin':a.rom_sha256,'assets/guest.itpack':a.guest_sha256}
-    print(json.dumps(bind(a.adb,a.attempt,a.token,a.record,pins),indent=2))
+    print(json.dumps(bind(a.adb,a.attempt,a.token,a.record,pins,cold_recovery=a.cold_recovery=='true'),indent=2))
