@@ -25,6 +25,13 @@ class EngineService : Service() {
     @Volatile private var audioError = ""
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val binder = object : IEngine.Stub() {
+        private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
+        override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
+        override fun debugQmpSnapshot(): Bundle {
+            requireDebugDiagnosis()
+            val result = Native.debugQmpSnapshot()
+            return Bundle().apply { putString("error", result[0]); putString("path", result[1]) }
+        }
         override fun importBase(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath,
             displayName, File(filesDir, "bootrom.bin").absolutePath, File(filesDir, "guest.itpack").absolutePath)
         override fun importPrepared(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath, displayName, File(filesDir, "bootrom.bin").absolutePath, "")
@@ -65,6 +72,7 @@ class EngineService : Service() {
                 putString("state", s.getOrElse(0) { "stopped" })
                 putString("detail", s.getOrElse(1) { "" })
                 putString("engineLog", s.getOrElse(3) { "" })
+                putString("debugQmpPath", s.getOrElse(4) { "" })
                 putString("error", error.ifEmpty { audioError })
                 putInt("pid", Process.myPid())
                 putInt("uid", Process.myUid())
@@ -72,7 +80,12 @@ class EngineService : Service() {
                 putBundle("observations", observations())
             }
         }
-        override fun surface(surface: Surface) { Native.surface(surface) }
+        override fun surface(surface: Surface) {
+            // The :engine Binder parcel is a worker-owned Java reference. Native
+            // retains its own ANativeWindow ref; release this copy promptly so an
+            // old CPU-connected Surface is destroyed when Native replaces it.
+            try { Native.surface(surface) } finally { surface.release() }
+        }
         override fun clearSurface() { Native.cancelInput(); Native.surface(null) }
         override fun pause(paused: Boolean) {
             userPaused = paused
@@ -227,7 +240,8 @@ class EngineService : Service() {
         val keys = listOf("hostMonotonicNs", "presentedFrames", "firstPresentHostNs", "lastPresentHostNs", "maxPresentGapNs", "maxPresentWorkNs",
             "windowFailures", "frameCopyFailures", "surfaceGeneration", "guestFrameSequence", "guestFrameTimestampNs", "nativePcmFailures", "pcmDroppedFrames",
             "presentIntervalsTo16ms", "presentIntervalsTo33ms", "presentIntervalsTo50ms", "presentIntervalsTo100ms", "presentIntervalsTo250ms", "presentIntervalsOver250ms", "producedFrames", "producerFrameSequence", "producerFrameTimestampNs",
-            "framePublishedHostNs", "pcmCapturedFrames", "pcmPulledFrames", "sharedPcmDroppedFrames", "inputRequests", "pcmQueuedPackets")
+            "framePublishedHostNs", "pcmCapturedFrames", "pcmPulledFrames", "sharedPcmDroppedFrames", "inputRequests", "pcmQueuedPackets", "firstWindowLockError", "lastWindowLockError", "firstWindowPostError", "lastWindowPostError", "lastWindowGeometryError",
+            "windowGeometryFailures", "windowBufferFormat", "windowBufferWidth", "windowBufferHeight", "windowBufferStride", "invalidWindowBuffers", "firstWindowErrorHostNs")
         for ((index, key) in keys.withIndex()) putLong(key, values[index])
         putBundle("audio", synchronized(audioGuard) { audioObservations.snapshot() })
         putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioFocusHeld", focus != null)

@@ -3,6 +3,8 @@ import android.os.Bundle;
 import android.view.Surface;
 interface IEngine {
     Bundle start(String recordId);
+    String debugArmQmp();
+    Bundle debugQmpSnapshot();
     Bundle[] records();
     String select(String recordId);
     String importBase(String source, String displayName);

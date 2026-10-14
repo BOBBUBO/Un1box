@@ -286,3 +286,17 @@ emulator/frontend dependency or establish complete distribution clearance.
 The semantic Licenses dialog verifies each selected notice hash and offers the
 manifest's source link. Root must verify source availability/completeness and
 add selected engine/frontend notices before final distribution.
+
+Debug builds alone can arm derived private QMP before a fresh worker start.
+`GuestQmpSnapshotTest` requires `-e debugGuestQmp true` and a fresh unused worker;
+optional recordId identifies a native library record. It invokes only the fixed
+backend client (capabilities/status/CPUs/info registers), with parent-FD aliases
+for Unix pathname limits, same-UID peer verification, bounded responses/timeouts,
+and no caller commands or socket paths. The native frame/control lock is released
+before socket I/O. Diagnosis and private log paths are retained, never guest-boot
+qualification. Release builds disable the endpoint and native client.
+Worker-owned Java Surface parcel copies are released after native acquisition;
+replacement now releases the previous CPU producer deterministically. Window
+observations retain precise geometry/lock/post codes, format/size/stride and the
+first-error host timestamp; at most8 error lines per worker enter its native log.
+Target execution must confirm recovery; source corrections alone prove no frames.
