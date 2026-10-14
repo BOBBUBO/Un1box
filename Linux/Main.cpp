@@ -694,7 +694,8 @@ static int frontend(const Options &o, int argc, char **argv) {
         check(lt_frame_write_bmp(&frame, pixels.data(), pixels.size(), path.c_str(), &error), error);
         if (path == o.screenshot)
             screenshot_written = true;
-        std::cout << "screenshot sequence=" << frame.sequence << " sleeping=" << diagnostics.display_sleeping
+        std::cout << "screenshot sequence=" << frame.sequence << " observed_monotonic_ns=" << now_ns()
+                  << " frame_monotonic_ns=" << frame.timestamp_ns << " sleeping=" << diagnostics.display_sleeping
                   << " backlight=" << diagnostics.backlight_level << " agent=" << diagnostics.agent_status
                   << " path=" << path << "\n";
     };
