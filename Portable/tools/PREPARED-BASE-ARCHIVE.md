@@ -59,12 +59,16 @@ Compile only in an allocated compiler slot:
 
 ```sh
 c++ -std=c++17 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined \
-  -fno-omit-frame-pointer -I Portable/include \
+  -fno-omit-frame-pointer -ffunction-sections -fdata-sections -I Portable/include \
   Portable/tools/tests/import_prepared_archive.cpp Portable/src/Storage.cpp \
-  -lz -pthread -o /absolute/private/test-output/import-prepared-archive
+  -Wl,--gc-sections -lz -pthread -o /absolute/private/test-output/import-prepared-archive
 python3 Portable/tools/tests/test_write_prepared_base.py \
   --importer /absolute/private/test-output/import-prepared-archive -v
 ```
+
+Section garbage collection excludes unused device-boot entry points from this
+Storage-only test executable; those entry points depend on the separate guest
+package implementation. No storage/import symbol is stubbed or replaced.
 
 Coverage includes accepted multi-chunk output and source/receipt integrity;
 production rejection of truncated streams, wrong archive hashes, traversal and

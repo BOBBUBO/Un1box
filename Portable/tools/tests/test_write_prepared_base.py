@@ -89,7 +89,11 @@ class PreparedBaseWriter(unittest.TestCase):
         destination = self.root / label
         run = subprocess.run([str(IMPORTER), str(archive), str(destination), expected or sha(archive.read_bytes())],
                              capture_output=True, text=True, timeout=30)
+        # ASAN also exits1: an expected API rejection must never hide a
+        # sanitizer failure captured on the adapter's stderr.
+        self.assertEqual("", run.stderr, run.stderr)
         self.assertEqual(0 if success else 1, run.returncode, run.stdout + run.stderr)
+        self.assertRegex(run.stdout, r"^0 \n$" if success else r"^[1-8] .+\n$")
         self.assertEqual(success, destination.exists())
         self.assertFalse(any(self.root.glob(".lt-import-*")), "Production importer left partial staging")
         return destination, run.stdout
