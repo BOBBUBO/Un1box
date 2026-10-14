@@ -268,3 +268,12 @@ To retrieve a specific prior native crash without reproducing it, run only
 `OwnWorkerExitTest` with `-e workerPid PID`. It requests this app's exact :engine
 PID, records the platform exit reason/status and retains available bounded raw trace bytes
 for integration-owner tombstone/protobuf decoding. Default suites skip it.
+Android instrumentation uses nonsequential pointer IDs7/23 within the platform
+0..31 range ([AOSP Input.h](https://android.googlesource.com/platform/frameworks/native/+/master/include/input/Input.h)).
+A cancelled/focus-lost/surface-lost gesture ignores subsequent moves until a new
+DOWN. Worker death during Surface/input Binder calls reports recovery text and
+does not throw through the activity event dispatcher. Touch evidence is written
+incrementally so failures preserve the preceding trajectory.
+Shutdown disposal uses the native shared LT_SHUTDOWN_GRACE_MS (35seconds),
+allowing the 30second confirmation window and cleanup; actual confirmed cleanup
+may finish earlier. Expiry still preserves dirty state and reports failure.

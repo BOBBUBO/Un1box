@@ -104,12 +104,14 @@ class GuestInputTest {
                     for (contact in contacts) entries.put(JSONObject().put("id", contact.first).put("viewX", contact.second).put("viewY", contact.third))
                     trace.put(JSONObject().put("gesture", kind).put("index", eventIndex++).put("action", action).put("uptimeMs", time).put("contacts", entries))
                 }
+                File(evidence, "touch.json").writeText(JSONObject().put("events", trace).put("guestOutcomeRequiresReview", true).put("guestAcceptancePassed", false).toString(2))
                 Thread.sleep(20)
             }
             fun screenshot(label: String) {
                 val target = File(instrumentation.targetContext.filesDir, "screenshots/input-$kind-$label-${System.currentTimeMillis()}.png")
                 assertEquals("", worker.screenshot(target.absolutePath))
                 trace.put(JSONObject().put("screenshot", target.absolutePath))
+                File(evidence, "touch.json").writeText(JSONObject().put("events", trace).put("guestOutcomeRequiresReview", true).put("guestAcceptancePassed", false).toString(2))
             }
             screenshot("before")
             send(MotionEvent.ACTION_DOWN, listOf(Triple(7, .42f, .50f)))
