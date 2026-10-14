@@ -16,12 +16,10 @@
 #include <zlib.h>
 extern "C" {
 #include "unzip.h"
-#include <dmg/dmg.h>
-#include <dmg/filevault.h>
 #include "CActivation.h"
 int lt_fw_guard_hfs(int, char **);
 int lt_fw_guard_dmg(const char *, const char *, const char *);
-extern char endianness;
+void lt_fw_init_byte_order(void);
 int lt_fw_xpwn_poisoned(void);
 }
 namespace ltf {
@@ -29,7 +27,7 @@ static std::atomic_flag busy = ATOMIC_FLAG_INIT;
 static bool safe(const std::string &n) {
     if (n.empty() || n[0] == '/' || n.find('\\') != std::string::npos || n.find('\0') != std::string::npos)
         return false;
-    for (auto &p : fs::path(n))
+    for (const auto &p : fs::path(n))
         if (p == ".." || p == ".")
             return false;
     return true;
@@ -454,8 +452,7 @@ static void fsync_path(const fs::path &p, bool dir = false) {
         throw Error(LT_FW_IO, "fsync " + p.string());
 }
 static void prepare(const lt_fw_request &r) {
-    short endian = 1;
-    endianness = *(char *)&endian ? IS_LITTLE_ENDIAN : IS_BIG_ENDIAN;
+    lt_fw_init_byte_order();
     auto catalog = Json::parse(read(r.catalog_path, 16 * 1024 * 1024));
     Json entry;
     for (auto &e : catalog.at("entries"))
