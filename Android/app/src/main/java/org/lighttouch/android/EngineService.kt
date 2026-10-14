@@ -32,7 +32,8 @@ class EngineService : Service() {
     private val buttonRejections = java.util.concurrent.atomic.AtomicLong(0)
     private val shutdownWatchdog = ShutdownWatchdog(BuildConfig.SHUTDOWN_GRACE_MS, SystemClock::elapsedRealtime,
         requestNativeStop = { Native.stop() }, cancelNativeContacts = { Native.cancelInput() },
-        nativeStatus = { Native.status() }, dispose = { receipt -> disposeAfterShutdown(receipt) })
+        nativeStatus = { Native.status() }, dispose = { receipt -> disposeAfterShutdown(receipt) },
+        persistTerminal = { receipt -> persistTerminalReceipt(receipt) })
     private val binder = object : IEngine.Stub() {
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
         override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
@@ -103,6 +104,12 @@ class EngineService : Service() {
                 putString("graphicsProviderChoice", s.getOrElse(5) { "platform" })
                 putBoolean("graphicsProviderFixed", s.getOrElse(6) { "0" } == "1")
                 putBoolean("touchTraceConfigured", s.getOrElse(7) { "0" } == "1")
+                val shutdown = ShutdownNativeSnapshot.from(s)
+                putBoolean("nativePollSnapshotValid", shutdown.valid)
+                putBoolean("guestShutdownConfirmed", shutdown.confirmed)
+                shutdown.dirty?.let { putBoolean("nativeStateDirty", it) }
+                shutdown.storageFailed?.let { putBoolean("nativeStorageFailed", it) }
+                shutdown.engineExit?.let { putInt("nativeEngineExit", it) }
                 putString("error", error.ifEmpty { audioError })
                 putInt("pid", Process.myPid())
                 putInt("uid", Process.myUid())
@@ -207,24 +214,52 @@ class EngineService : Service() {
         try { File(filesDir, "worker-stop-error-${Process.myPid()}.txt").writeText(message) } catch (_: java.io.IOException) { /* State markers remain authoritative. */ }
         try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Legacy private diagnostic only, not another worker's live status. */ }
     }
-    private fun disposeAfterShutdown(receipt: ShutdownReceipt) {
-        alive.set(false)
-        val message = when {
+    private fun shutdownMessage(receipt: ShutdownReceipt): String = when {
             receipt.reason == "deadline-unconfirmed" -> "Guest shutdown was not confirmed within ${BuildConfig.SHUTDOWN_GRACE_MS / 1000} seconds; worker disposed and writable state retained. ${receipt.progress.error}"
             receipt.terminalState == "failed" -> "Guest worker reported failure; writable state retained: ${receipt.progress.error}"
+            !receipt.cleanConfirmed -> "Native terminal shutdown was not explicitly confirmed clean; writable state and diagnostics retained. ${receipt.progress.error}"
             else -> receipt.progress.error
         }.take(4096)
+    private fun shutdownRecord(receipt: ShutdownReceipt): JSONObject {
+        val native = receipt.nativeSnapshot
+        return JSONObject().put("reason", receipt.reason).put("admissionStage", receipt.progress.stage)
+            .put("error", shutdownMessage(receipt)).put("nativeTerminalState", receipt.terminalState ?: JSONObject.NULL)
+            .put("acceptedAtHostMs", receipt.acceptedAtMs).put("deadlineHostMs", receipt.deadlineMs).put("observedAtHostMs", receipt.observedAtMs)
+            .put("workerPid", Process.myPid()).put("workerUid", Process.myUid())
+            .put("nativePollSnapshotValid", native?.valid == true).put("guestShutdownConfirmed", native?.confirmed == true)
+            .put("nativeStateDirty", native?.dirty ?: JSONObject.NULL).put("nativeStorageFailed", native?.storageFailed ?: JSONObject.NULL)
+            .put("nativeEngineExit", native?.engineExit ?: JSONObject.NULL).put("cleanShutdownConfirmed", receipt.cleanConfirmed)
+            .put("shutdownConfirmationInferred", false).put("nativeStateMarkersModified", false)
+    }
+    /** Admission-thread IO only; the native-free deadline stays armed throughout. */
+    private fun persistTerminalReceipt(receipt: ShutdownReceipt) {
+        val target = File(filesDir, "worker-shutdown-${Process.myPid()}.json")
+        val temporary = File(filesDir, ".worker-shutdown-${Process.myPid()}.pending")
+        java.io.FileOutputStream(temporary).use { output ->
+            android.system.Os.chmod(temporary.absolutePath, 0x180) // 0600, own app only.
+            output.write(shutdownRecord(receipt).put("receiptPersistenceBestEffort", false).toString(2).toByteArray(Charsets.UTF_8))
+            output.fd.sync()
+        }
+        android.system.Os.rename(temporary.absolutePath, target.absolutePath)
+        val directory = android.system.Os.open(filesDir.absolutePath,
+            android.system.OsConstants.O_RDONLY or android.system.OsConstants.O_DIRECTORY or android.system.OsConstants.O_CLOEXEC, 0)
+        try { android.system.Os.fsync(directory) } finally { android.system.Os.close(directory) }
+    }
+    private fun disposeAfterShutdown(receipt: ShutdownReceipt) {
+        alive.set(false)
+        val message = shutdownMessage(receipt)
         error = message
+        if (receipt.reason == "native-terminal") {
+            // Its immutable receipt was persisted before the coordinator's CAS.
+            Process.killProcess(Process.myPid())
+            return
+        }
         disposeWithoutWaitingForReceipt(writeReceipt = {
             if (message.isNotEmpty()) persistStopError(message)
-            // Cached facts only. Native.status/observations and audio/framework
-            // cleanup can block; none may precede this process disposal.
-            val record = JSONObject().put("reason", receipt.reason).put("admissionStage", receipt.progress.stage)
-                .put("error", message).put("nativeTerminalState", receipt.terminalState ?: JSONObject.NULL)
-                .put("acceptedAtHostMs", receipt.acceptedAtMs).put("deadlineHostMs", receipt.deadlineMs).put("observedAtHostMs", receipt.observedAtMs)
-                .put("workerPid", Process.myPid()).put("shutdownConfirmationInferred", false).put("nativeStateMarkersModified", false)
-                .put("receiptPersistenceBestEffort", true)
-            try { File(filesDir, "worker-shutdown-${Process.myPid()}.json").writeText(record.toString(2)) }
+            // Deadline evidence is separate: it cannot overwrite terminal facts.
+            // No Native, audio/framework cleanup or synchronous IO precedes kill.
+            val record = shutdownRecord(receipt).put("receiptPersistenceBestEffort", true)
+            try { File(filesDir, "worker-shutdown-deadline-${Process.myPid()}.json").writeText(record.toString(2)) }
             catch (_: java.io.IOException) { /* Retained state markers stay authoritative. */ }
         }, terminate = { Process.killProcess(Process.myPid()) })
     }
