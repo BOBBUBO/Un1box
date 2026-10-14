@@ -161,8 +161,10 @@ void present() {
                                 diagnostic += "; contact release requested";
                                 if(lt_runtime_cancel_input(runtime,&error)!=LT_OK)diagnostic += "; input release failed: "+std::string(error.message);
                                 else display_lease.contactsReleased();
-                            } else diagnostic += "; no owned contacts require release";
-                            display_lease.inputCompleted(delivered.request_id);
+                            } else {
+                                diagnostic += "; no owned contacts require release";
+                                display_lease.inputCompleted(delivered.request_id);
+                            }
                         } else {
                             ++ignored_input_rejections;last_ignored_input_request=delivered.request_id;
                         }
@@ -574,12 +576,17 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     const jsize count=env->GetArrayLength(ids);
     if(count<1 || count>jsize(LT_MAX_CONTACTS) || env->GetArrayLength(phases)!=count || env->GetArrayLength(xy)!=count*2) return string(env,"Invalid contact batch");
     if(!runtime) return string(env,"No active guest session; touch was not admitted");
-    if(!frame.width || !frame.height) {
+    auto release_input=[&]() -> std::string {
+        if(lease)return cancel_display_contacts();
         lt_error cancelled=LT_INIT(lt_error);
-        const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&cancelled));
+        const auto cancellation=lt_runtime_cancel_input(runtime,&cancelled);
         if(cancellation==LT_OK)display_lease.contactsReleased();
+        return result(cancellation,cancelled);
+    };
+    if(!frame.width || !frame.height) {
+        const auto cancellation=release_input();
         std::string failure="No active guest frame; gesture cancelled";
-        if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
+        if(!cancellation.empty())failure += "; input release failed: "+cancellation;
         return string(env,failure);
     }
     jint id[LT_MAX_CONTACTS], phase[LT_MAX_CONTACTS];jfloat coords[LT_MAX_CONTACTS*2];
@@ -590,10 +597,9 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
         batch.contacts[i]=lt_contact LT_INIT(lt_contact);batch.contacts[i].id=id[i];batch.contacts[i].phase=phase[i];
         auto status=lt_map_contact(coords[i*2],coords[i*2+1],view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
         if(status!=LT_OK) {
-            const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&error));
-            if(cancellation==LT_OK)display_lease.contactsReleased();
+            const auto cancellation=release_input();
             std::string failure="Touch left guest viewport; gesture cancelled";
-            if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,error);
+            if(!cancellation.empty())failure += "; input release failed: "+cancellation;
             return string(env,failure);
         }
     }
@@ -604,10 +610,8 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     auto status=lt_runtime_touch(runtime,&batch,&error);
     std::string failure=result(status,error);
     if(status!=LT_OK) {
-        lt_error cancelled=LT_INIT(lt_error);
-        const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&cancelled));
-        if(cancellation==LT_OK)display_lease.contactsReleased();
-        if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
+        const auto cancellation=release_input();
+        if(!cancellation.empty())failure += "; input release failed: "+cancellation;
     } else {
         if(lease)for(jsize i=0;i<count;++i)display_lease.admittedContact(id[i],phase[i]);
         // Read the real submitted ID while this JNI guard still serializes all

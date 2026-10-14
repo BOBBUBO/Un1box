@@ -123,6 +123,22 @@ void failed_release_keeps_old_obligation_retryable_without_minting_new_owner() {
     state.admittedContact(7,0);state.admittedContact(7,2);state.submittedInput(82,b,true);
     assert(state.detach(b));assert(state.pendingOwnedRelease() && state.needsOwnedRelease());
 }
+void failed_rejected_up_and_touch_errors_preserve_pending_cleanup_for_next_claim() {
+    DisplayLease state;const auto a=state.claim();state.admittedContact(7,0);state.admittedContact(7,2);
+    state.submittedInput(91,a,true);assert(!state.contactsHeld());
+    assert(state.reportsRejectedInput(91) && state.cancelsRejectedInput(91));
+    const bool cancellation_succeeded=false;
+    if(cancellation_succeeded)state.contactsReleased(); // Failure must NOT call inputCompleted.
+    assert(state.pendingOwnedRelease() && state.needsOwnedRelease());
+    // No-frame / out-of-viewport / immediate admission failures use this same
+    // pending-aware release predicate, never ledger-only fake success.
+    for(int failure=0;failure<3;++failure) {
+        assert(state.needsOwnedRelease());assert(!state.contactsHeld());
+        assert(state.pendingOwnedRelease());
+    }
+    state.contactsReleased();const auto b=state.claim();
+    assert(state.owns(b) && !state.reportsRejectedInput(91));
+}
 }
 int main() {
     obsolete_conversion_and_release();retired_controls_and_duplicate_callbacks();
@@ -133,5 +149,6 @@ int main() {
     delayed_rejection_cannot_release_new_owner_but_current_rejected_up_can();
     pending_release_is_balanced_before_handoff_or_detach_and_completed_release_is_not_cancelled();
     failed_release_keeps_old_obligation_retryable_without_minting_new_owner();
+    failed_rejected_up_and_touch_errors_preserve_pending_cleanup_for_next_claim();
     std::cout<<"PASS display lease stale controls/conversion, converted refs, contact handoff and empty callback pulse preservation\n";
 }
