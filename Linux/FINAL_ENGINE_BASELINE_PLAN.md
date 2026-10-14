@@ -160,6 +160,14 @@ reject full-image continuity; retain the rejection and inspect the new image onl
 within the original129/179 deadlines. The admission time is not a new model-view
 time. A read worker needs a separately reviewed, honestly named saved-marker gate.
 
+If Root must personally verify a timed scene, Root is the sole writer of that
+gate: its next tool call after viewing the actual image must invoke the recorder
+directly, using the actual capture and transition paths. Report or hand off only
+after that command finishes. A view→message→other-agent command round trip can
+miss the original deadline; it does not authorize backdating a gate, resetting
+the clock or discarding the failed watchdog receipt. Retain a visually confirmed
+readback separately from any failed mechanical admission.
+
 ```text
 140 guest launch com.apple.mobilenotes
 145 guest frontmost
