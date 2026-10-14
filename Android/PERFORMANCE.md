@@ -66,8 +66,11 @@ invented guest-pause semantics, cadence/single-flight, observer handoff, blocked
 read closure, duplicate completions, and an unfilled void-memory-read result.
 Those eleven passed in candidate 25's actual 41-test JVM run. Three additional
 source cases cover first-read cumulative time before a valid rate, missing or
-wrong-PID counters, and cumulative time across observer/rate resets. The three
-new cases and updated Compose UI have **not** been compiled or executed yet.
+wrong-PID counters, and cumulative time across observer/rate resets. All fourteen
+passed a separate cached Kotlin 2.1.20/JUnit 4.13.2 host run using the exact
+production counter helper and test sources. The updated Compose UI remains
+**uncompiled**; host counter tests do not qualify the rendered UI or target CPU
+measurements.
 No new sampler, Binder/Native API or guest-tools operation is introduced. The
 current protocol exposes no genuine iOS CPU/RAM measurement; host QEMU worker
 CPU time already provides the available VM-process view without a guest-tools
