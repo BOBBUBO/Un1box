@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Read and bind an existing selected dirty record; no import, Start or state writes."""
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import time
+from pathlib import Path
+from diagnostic_control import Capture, validate_binding, PACKAGE, SERIAL
+from memory_monitor import Sampler, process_ticks, worker_identity
+
+
+def match_ready(prior, ready):
+    validate_binding(prior)
+    if prior.get('schema') != 1 or prior.get('priorDirty') is not True or prior.get('coldRecoveryUsed') is not True or prior.get('pinsVerified') is not True:
+        raise ValueError('Explicit actual dirty recovery binding required')
+    for key in ('appUid', 'workerPid', 'workerStartTicks', 'bootId', 'recordId', 'attemptToken', 'originToken'):
+        if ready.get(key) != prior[key]:
+            raise ValueError('Recovery Start changed original bound identity: ' + key)
+    if ready.get('priorDirty') is not True or ready.get('coldRecoveryUsed') is not True:
+        raise ValueError('Ready did not use declared dirty recovery')
+
+
+def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monotonic_ns):
+    out = Path(attempt)
+    context_raw = (out/'clock-context.json').read_bytes(); context=json.loads(context_raw)
+    monitor=json.loads((out/'memory-monitor.json').read_text())
+    origin=context['originNs']
+    if context['supervisorStartTicks'] * 1_000_000_000 // context['clockTicksPerSecond'] != origin:
+        raise ValueError('Original process clock was reset/backdated')
+    if monitor['originNs'] != origin or process_ticks(context['supervisorPid']) != context['supervisorStartTicks']:
+        raise ValueError('Original supervisor/monitor identity differs')
+    if not re.fullmatch('[0-9a-f]{32}', record) or not re.fullmatch('[0-9a-f]{32}', token):
+        raise ValueError('Declared record/token required')
+    if set(pins) != {'record.json','base/device.lock.json','assets/bootrom.bin','assets/guest.itpack'} or any(not re.fullmatch('[0-9a-f]{64}', p) for p in pins.values()):
+        raise ValueError('All record/base/bootrom/guest pins required')
+    deadline=min(now()+10_000_000_000, origin+490_000_000_000)
+    if deadline <= now(): raise TimeoutError('Original pre-Start budget expired')
+    sampler=Sampler(adb, monitor['ownerPid'], monitor['ownerStartTicks'], deadline, run=run, now=now)
+    def first(path, app=False):
+        result=sampler.remote(path, app)
+        if not result['available']: raise ValueError('Identity read unavailable: '+path)
+        return result['text']
+    uid_text=first('/proc/self/status', True)
+    uid=re.search(r'^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)$', uid_text, re.M)
+    if not uid or len(set(uid.groups()))!=1 or int(uid[1])<=10000: raise ValueError('App UID unavailable')
+    if process_ticks(monitor['ownerPid'])!=monitor['ownerStartTicks']: raise ValueError('Owned AVD gone/reused')
+    command=[adb,'-s',SERIAL,'exec-out','pidof',PACKAGE+':engine']
+    result=run(command,capture_output=True,timeout=min(.75,(deadline-now())/1e9))
+    if result.returncode or not re.fullmatch(rb'[0-9]+\s*',result.stdout): raise ValueError('Exactly one original worker required')
+    pid=int(result.stdout)
+    stat=first(f'/proc/{pid}/stat',True)
+    binding={'schema':1,'appUid':int(uid[1]),'workerPid':pid,'workerStartTicks':int(stat.rsplit(')',1)[1].split()[19]),
+        'bootId':first('/proc/sys/kernel/random/boot_id',True).strip(),'recordId':record,'attemptToken':token,
+        'originNs':origin,'originToken':hashlib.sha256(context_raw).hexdigest()}
+    validate_binding(binding)
+    capture=Capture(adb,binding,out/'recovery-preflight',now=now,run=run)
+    capture.deadline=deadline
+    def read(path, cap=4*1024*1024):
+        data, receipt=capture.read(path,cap)
+        if receipt['adbExit'] or receipt['remoteExit']!=0 or receipt['truncated']: raise ValueError('Actual scoped record read failed: '+path)
+        return data
+    root='files/library/records/'+record
+    if read('files/library/selected').strip()!=record.encode(): raise ValueError('Actual record not selected')
+    actual={}
+    for suffix,pin in pins.items():
+        data=read(root+'/'+suffix)
+        if hashlib.sha256(data).hexdigest()!=pin: raise ValueError('Actual record pin differs: '+suffix)
+        actual[suffix]={'sha256':pin,'bytes':len(data)}
+        if suffix=='record.json': metadata=json.loads(data)
+    if metadata.get('schema')!=1 or metadata.get('id')!=record or metadata.get('base_sha256')!=pins['base/device.lock.json'] or metadata.get('bootrom_sha256')!=pins['assets/bootrom.bin'] or metadata.get('guest_package_sha256')!=pins['assets/guest.itpack']:
+        raise ValueError('Record metadata pins differ')
+    dirty=read(root+'/state/.dirty',65536)  # Successful regular-file read; never deletes it.
+    status=read(f'/proc/{pid}/status').decode()
+    role=read(f'/proc/{pid}/cmdline').decode()
+    after_stat=read(f'/proc/{pid}/stat').decode()
+    if not worker_identity(after_stat,status,role,binding): raise ValueError('Original worker identity changed')
+    if read('/proc/sys/kernel/random/boot_id').strip()!=binding['bootId'].encode() or read('files/library/selected').strip()!=record.encode(): raise ValueError('Boot/selection changed during preflight')
+    binding.update(priorDirty=True,coldRecoveryUsed=True,pinsVerified=True,pins=actual,
+        dirtyReceipt={'bytes':len(dirty),'sha256':hashlib.sha256(dirty).hexdigest(),'remoteReadSucceeded':True},
+        beforeStart=True,guestAcceptancePassed=False,cleanInitialAdmissionClaimed=False,
+        captureCommands=capture.commands,completedNs=now())
+    with (out/'recovery-record-bound.json').open('x') as stream: stream.write(json.dumps(binding,indent=2)+'\n')
+    return binding
+
+
+if __name__=='__main__':
+    p=argparse.ArgumentParser(description=__doc__)
+    for flag in ('adb','attempt','token','record','record-sha256','lock-sha256','rom-sha256','guest-sha256'):p.add_argument('--'+flag,required=True)
+    a=p.parse_args()
+    pins={'record.json':a.record_sha256,'base/device.lock.json':a.lock_sha256,'assets/bootrom.bin':a.rom_sha256,'assets/guest.itpack':a.guest_sha256}
+    print(json.dumps(bind(a.adb,a.attempt,a.token,a.record,pins),indent=2))

@@ -53,6 +53,14 @@ def admit(adb, attempt, token, now=time.monotonic_ns, run=subprocess.run):
     binding = {key: ready[key] for key in ("appUid", "workerPid", "workerStartTicks", "bootId", "recordId", "attemptToken", "originToken")}
     binding["originNs"] = origin
     validate_binding(binding)
+    recovery_path = out / "recovery-record-bound.json"
+    if ready.get("coldRecoveryUsed") is True or recovery_path.exists():
+        from bind_recovery import match_ready
+        prior = json.loads(recovery_path.read_text())
+        if prior["originNs"] != origin:
+            raise ValueError("Recovery binding original origin differs")
+        match_ready(prior, ready)
+        binding.update(priorDirty=True, coldRecoveryUsed=True)
     # Publish before budget calculation so early rejection still has scoped capture.
     pending = out / ".pixel-bound.pending"
     pending.write_text(json.dumps(binding, indent=2) + "\n")
