@@ -8,9 +8,11 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 
 /** Pointer IDs survive crossing and index changes. Pixel mapping belongs to native domain. */
-class GuestDisplay(context: Context, private val onError: (String) -> Unit = {}, private val engine: () -> IEngine?) : SurfaceView(context), SurfaceHolder.Callback {
+class GuestDisplay(context: Context, private val onError: (String) -> Unit = {}, private val isActiveOwner: () -> Boolean = { true }, private val ownerTicket: () -> Long = { 1L }, private val engine: () -> IEngine?) : SurfaceView(context), SurfaceHolder.Callback {
     // A newly created view cannot continue contacts owned by the previous Surface.
     private var rejectedGesture = true
+    private val lease = WorkerDisplayLease()
+    private var leasedWorker: IEngine? = null
     private var surfaceWidth = 0
     private var surfaceHeight = 0
     private var forwardedBatches = 0L
@@ -32,37 +34,75 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
         holder.addCallback(this)
         isFocusable = true
     }
-    private fun control(operation: (IEngine) -> Unit) {
-        try { engine()?.let(operation) } catch (failure: RemoteException) {
-            rejectedGesture = true
-            contactIds.clear()
-            onError("Guest worker unavailable; input was cancelled. Start a fresh worker.")
-        }
+    private fun ownedWorker(): Pair<IEngine, Long>? {
+        val worker = leasedWorker ?: return null
+        val current = engine() ?: return null
+        val token = lease.forWorker(current.asBinder())
+        if (token == 0L || current.asBinder() !== worker.asBinder()) return null
+        return worker to token
     }
+    private fun dropLocalGesture() { rejectedGesture = true; contactIds.clear() }
     private fun cancelGesture(releaseWorkerInput: Boolean = true) {
-        rejectedGesture = true; contactIds.clear()
-        if (releaseWorkerInput) control { cancellationRequests++; it.cancelInput() }
-    }
-    /** A user Pause ends the Android gesture as well as the native contact lease. */
-    internal fun cancelOwnedGesture() = cancelGesture()
-    override fun surfaceCreated(holder: SurfaceHolder) { control { it.surface(holder.surface) } }
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        // A retained contact cannot cross into a different pixel-to-guest viewport.
-        // First attach and duplicate callbacks preserve the current ownership state.
-        if (surfaceWidth > 0 && surfaceHeight > 0 && (surfaceWidth != width || surfaceHeight != height)) {
-            // Native cancellation also releases hardware buttons. A resize with no
-            // View-owned contacts must not interrupt an unrelated Home/Power pulse.
-            cancelGesture(releaseWorkerInput = contactIds.isNotEmpty())
+        dropLocalGesture()
+        if (releaseWorkerInput) ownedWorker()?.let { (worker, token) ->
+            try { cancellationRequests++; worker.cancelDisplayInput(token) } catch (_: RemoteException) { lease.clear() }
         }
-        surfaceWidth = width; surfaceHeight = height
-        control { it.surface(holder.surface) }
     }
-    override fun surfaceDestroyed(holder: SurfaceHolder) { cancelGesture(); control { it.clearSurface() } }
+    /** Only an explicit current foreground/focused owner can acquire a lease. */
+    internal fun attachActiveSurface() {
+        if (!isActiveOwner() || !hasWindowFocus()) return
+        val worker = engine() ?: return
+        try {
+            val ticket = ownerTicket()
+            var token = lease.forOwner(worker.asBinder(), ticket)
+            if (token == 0L) {
+                // Only a genuine UI authority epoch/new worker may reset this
+                // binding. A callback with the same epoch never remints a lease.
+                releaseOwnedSurface()
+                dropLocalGesture()
+                token = worker.claimDisplay()
+                if (token <= 0) { onError("Guest display ownership was not admitted"); return }
+                leasedWorker = worker; lease.bind(worker.asBinder(), token, ticket)
+            }
+            if (!holder.surface.isValid) return // Authority survives Surface loss.
+            val error = worker.attachDisplay(token, holder.surface)
+            if (error.isNotEmpty()) { dropLocalGesture(); onError(error) }
+        } catch (failure: RemoteException) {
+            dropLocalGesture(); lease.clear(); onError("Guest worker unavailable; display was detached")
+        }
+    }
+    private fun releaseOwnedSurface() {
+        dropLocalGesture()
+        ownedWorker()?.let { (worker, token) -> try { worker.releaseDisplay(token) } catch (_: RemoteException) { } }
+        leasedWorker = null; lease.clear()
+    }
+    /** A late old Activity stop cannot pause the new native owner. */
+    internal fun backgroundOwnedDisplay() {
+        dropLocalGesture()
+        ownedWorker()?.let { (worker, token) -> try { worker.backgroundDisplay(token) } catch (_: RemoteException) { } }
+        releaseOwnedSurface()
+    }
+    internal fun retireDisplay() = releaseOwnedSurface()
+    internal fun cancelOwnedGesture() = cancelGesture()
+    override fun surfaceCreated(holder: SurfaceHolder) { attachActiveSurface() }
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        if (surfaceWidth > 0 && surfaceHeight > 0 && (surfaceWidth != width || surfaceHeight != height))
+            cancelGesture(releaseWorkerInput = contactIds.isNotEmpty())
+        surfaceWidth = width; surfaceHeight = height
+        // A callback never claims for a retired Activity/View.
+        attachActiveSurface()
+    }
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        dropLocalGesture()
+        ownedWorker()?.let { (worker, token) -> try { worker.detachDisplay(token) } catch (_: RemoteException) { } }
+        // Keep the captured authority so a following onStop can still pause.
+    }
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
-        if (!hasWindowFocus) cancelGesture()
+        if (!hasWindowFocus) cancelGesture() else attachActiveSurface()
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!isActiveOwner() || ownedWorker() == null) { dropLocalGesture(); suppressedContinuations++; return true }
         if (event.actionMasked == MotionEvent.ACTION_CANCEL) { cancelGesture(); return true }
         if (event.actionMasked == MotionEvent.ACTION_DOWN) rejectedGesture = false
         if (rejectedGesture) { suppressedContinuations++; return true }
@@ -81,10 +121,11 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> phases[event.actionIndex] = 0
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> phases[event.actionIndex] = 2
         }
-        control { worker ->
+        ownedWorker()?.let { (worker, token) ->
             // Preserve the source time; the dedicated worker orders millisecond ties
             // across Views without hiding a genuinely backwards input timestamp.
-            val admission = worker.touch(event.eventTime * 1_000_000, ids, phases, xy, width, height, display?.rotation?.times(90) ?: 0)
+            val admission = try { worker.touchDisplay(token, event.eventTime * 1_000_000, ids, phases, xy, width, height, display?.rotation?.times(90) ?: 0) }
+                catch (_: RemoteException) { "Guest worker unavailable; input was cancelled" }
             forwardedBatches++
             if (admission.isNotEmpty()) { rejectedBatches++; rejectedGesture = true; contactIds.clear(); onError(admission) }
             else {

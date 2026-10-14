@@ -18,6 +18,30 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 
+/** Frame evidence only: a coherent lit logo is not a verified guest scene. */
+internal fun angleFrameReady(state: Bundle, requireNonzero: Boolean): Boolean {
+    val io = state.getBundle("observations") ?: return false
+    val now = io.getLong("hostMonotonicNs")
+    val published = io.getLong("framePublishedHostNs")
+    return state.getString("state") == "running" &&
+        io.getBoolean("runtimeDiagnosticsAvailable") && io.getLong("engineReady") == 1L &&
+        io.getLong("displaySleeping") == 0L && io.getLong("backlightLevel") > 0L &&
+        io.getLong("guestFrameWidth") > 0L && io.getLong("guestFrameHeight") > 0L &&
+        io.getLong("guestFrameSamplePixels") > 0L &&
+        (!requireNonzero || io.getLong("guestFrameNonzeroRgbSamples") > 0L) &&
+        io.getLong("guestFrameSequence") > 0L &&
+        io.getLong("guestFrameSequence") == io.getLong("producerFrameSequence") &&
+        io.getLong("guestFrameTimestampNs") > 0L &&
+        io.getLong("guestFrameTimestampNs") == io.getLong("producerFrameTimestampNs") &&
+        published > 0L && now >= published && now - published <= 5_000_000_000L
+}
+
+internal fun anglePollSleep(deadlineMs: Long, nowMs: Long, intervalMs: Long): Long =
+    if (nowMs >= deadlineMs) 0L else minOf(intervalMs, deadlineMs - nowMs)
+
+internal fun angleFrameReadyInTime(state: Bundle, requireNonzero: Boolean, observedAtMs: Long, deadlineMs: Long): Boolean =
+    observedAtMs < deadlineMs && angleFrameReady(state, requireNonzero)
+
 /** A real normal-app-UID provider exercise; no arbitrary environment or library path. */
 @RunWith(AndroidJUnit4::class)
 class GuestAngleProviderTest {
@@ -76,6 +100,8 @@ class GuestAngleProviderTest {
                     val log = File(requireNotNull(started.getString("engineLog")))
                     val seconds = arguments.getString("angleObserveSeconds", "180").toLong().coerceIn(10, 1200)
                     val deadline = SystemClock.elapsedRealtime() + seconds * 1000
+                    val requireNonzero = arguments.getString("requireNonzeroGuestFrame") == "true"
+                    receipt.put("observationDeadlineElapsedMs", deadline).put("nonzeroFrameRequired", requireNonzero)
                     val logPrefix = ByteArrayOutputStream()
                     fun prefix(): String {
                         // Read each retained byte at most once, including during
@@ -95,11 +121,12 @@ class GuestAngleProviderTest {
                     do {
                         val state = worker.status()
                         assertEquals("Worker changed", started.getInt("pid"), state.getInt("pid"))
-                        timeline.put(JSONObject().put("hostElapsedMs", SystemClock.elapsedRealtime()).put("status", encode(state))); persist()
+                        timeline.put(JSONObject().put("stage", "provider").put("hostElapsedMs", SystemClock.elapsedRealtime()).put("status", encode(state))); persist()
                         check(state.getString("state") !in listOf("failed", "stopped")) { state.toString() }
                         providerLog = prefix()
                         if (providerLog.contains("[gles-egl] provider=angle-gl; verified public EGL/GLES dispatch")) break
-                        Thread.sleep(2000)
+                        val sleep = anglePollSleep(deadline, SystemClock.elapsedRealtime(), 2000)
+                        if (sleep > 0) Thread.sleep(sleep)
                     } while (SystemClock.elapsedRealtime() < deadline)
                     File(evidence, "provider-log-prefix.txt").writeText(providerLog)
                     receipt.put("engineLog", log.absolutePath).put("logPrefixLimitBytes", 4 * 1024 * 1024)
@@ -108,12 +135,72 @@ class GuestAngleProviderTest {
                     receipt.put("entryOwnerLines", JSONArray(ownerLines))
                     assertTrue("Actual engine did not confirm the fixed provider; old engine candidates are insufficient", providerLog.contains("[gles-egl] provider=angle-gl; verified public EGL/GLES dispatch"))
                     assertTrue("Actual public address-owner checks missing", ownerLines.size >= 197)
+                    receipt.put("providerDispatchObserved", true).put("providerVerifiedElapsedMs", SystemClock.elapsedRealtime())
+                    persist()
+
+                    // Reuse the original deadline. A current coherent static frame
+                    // is sufficient; no new serial or guest scene is manufactured.
+                    var frameReady = false
+                    var lastFrameState: Bundle? = null
+                    var frameFailure = ""
+                    var nextPersist = 0L
+                    while (SystemClock.elapsedRealtime() < deadline) {
+                        try {
+                            val state = worker.status()
+                            lastFrameState = state
+                            val observedAt = SystemClock.elapsedRealtime()
+                            check(state.getInt("pid") == started.getInt("pid")) { "Worker changed during frame readiness" }
+                            check(state.getString("state") !in listOf("failed", "stopped")) { state.toString() }
+                            frameReady = angleFrameReadyInTime(state, requireNonzero, observedAt, deadline)
+                            if (observedAt >= nextPersist || frameReady || observedAt >= deadline) {
+                                timeline.put(JSONObject().put("stage", "frame-ready").put("hostElapsedMs", observedAt).put("status", encode(state)))
+                                persist()
+                                nextPersist = observedAt + 2000
+                            }
+                            if (frameReady) break
+                            if (observedAt >= deadline) {
+                                frameFailure = "Original observation deadline elapsed during status"
+                                break
+                            }
+                        } catch (failure: Throwable) {
+                            frameFailure = failure.toString()
+                            break
+                        }
+                        val sleep = anglePollSleep(deadline, SystemClock.elapsedRealtime(), 250)
+                        if (sleep > 0) Thread.sleep(sleep)
+                    }
+                    receipt.put("frameReadyObserved", frameReady).put("frameReadinessEndedElapsedMs", SystemClock.elapsedRealtime())
+                        .put("frameReadinessFailure", frameFailure).put("framePublishMaximumAgeNs", 5_000_000_000L)
+                    lastFrameState?.let { receipt.put("frameReadinessWorker", encode(it)) }
+                    persist()
+
+                    // Preserve the actual capture/error even when readiness failed.
+                    // Capture diagnostics do not start another readiness interval.
                     val image = File(context.filesDir, "screenshots/${evidence.name}/provider.png")
-                    val captureError = worker.screenshot(image.absolutePath)
-                    receipt.put("capture", image.absolutePath).put("captureError", captureError)
-                        .put("terminalWorker", encode(worker.status())).put("providerDispatchObserved", true)
+                    receipt.put("capture", image.absolutePath).put("captureStartedElapsedMs", SystemClock.elapsedRealtime())
+                        .put("postCaptureFrameReadyObserved", false)
+                    persist()
+                    val captureError = try { worker.screenshot(image.absolutePath) } catch (failure: Throwable) {
+                        receipt.put("captureThrowable", failure.toString())
+                        failure.toString()
+                    }
+                    receipt.put("captureError", captureError).put("captureEndedElapsedMs", SystemClock.elapsedRealtime())
+                    if (image.isFile) receipt.put("captureBytes", image.length()).put("captureSha256", acceptanceSha256(image))
+                    var postCaptureFrameReady = false
+                    try {
+                        val terminal = worker.status()
+                        val observedAt = SystemClock.elapsedRealtime()
+                        receipt.put("terminalWorker", encode(terminal)).put("postCaptureObservedElapsedMs", observedAt)
+                        postCaptureFrameReady = terminal.getInt("pid") == started.getInt("pid") &&
+                            angleFrameReadyInTime(terminal, requireNonzero, observedAt, deadline)
+                    } catch (failure: Throwable) {
+                        receipt.put("terminalWorkerFailure", failure.toString())
+                    }
+                    receipt.put("postCaptureFrameReadyObserved", postCaptureFrameReady)
+                    persist()
+                    assertTrue("Provider verified, but no fresh coherent copied lit frame within the original observation deadline: $frameFailure", frameReady)
                     assertEquals("Actual copied guest frame capture", "", captureError)
-                    if (arguments.getString("requireNonzeroGuestFrame") == "true") assertTrue("Chosen guest frame sample stayed black", worker.status().getBundle("observations")!!.getLong("guestFrameNonzeroRgbSamples") > 0)
+                    assertTrue("Copied frame was not current, coherent and lit after capture within the original observation deadline; raw capture retained", postCaptureFrameReady)
                 }
             }
         } catch (failure: Throwable) { receipt.put("failure", failure.toString()); throw failure }

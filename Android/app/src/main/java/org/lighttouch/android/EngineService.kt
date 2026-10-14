@@ -21,6 +21,7 @@ class EngineService : Service() {
     @Volatile private var audio: AudioTrack? = null
     @Volatile private var focus: AudioFocusRequest? = null
     private val touchAdmissionGuard = Any()
+    private val lifecycleAdmission = WorkerLifecycleAdmission()
     private val touchTimestampOrder = TouchTimestampOrder()
     private val audioGuard = Any()
     private val audioObservations = AudioObservations()
@@ -109,17 +110,26 @@ class EngineService : Service() {
                 putBundle("observations", observations())
             }
         }
-        override fun surface(surface: Surface) {
-            // The :engine Binder parcel is a worker-owned Java reference. Native
-            // retains its own ANativeWindow ref; release this copy promptly so an
-            // old CPU-connected Surface is destroyed when Native replaces it.
-            try { Native.surface(surface) } finally { surface.release() }
-        }
-        override fun clearSurface() { Native.cancelInput(); Native.surface(null) }
-        override fun pause(paused: Boolean) {
+        override fun claimDisplay(): Long = Native.claimDisplay()
+        override fun attachDisplay(lease: Long, surface: Surface): String = try {
+            Native.attachDisplay(lease, surface)
+        } finally { surface.release() } // Includes rejected stale parcels.
+        override fun releaseDisplay(lease: Long) { Native.releaseDisplay(lease) }
+        override fun detachDisplay(lease: Long) { Native.detachDisplay(lease) }
+        override fun cancelDisplayInput(lease: Long) { Native.cancelDisplayInput(lease) }
+        override fun backgroundDisplay(lease: Long) { lifecycleAdmission.run {
+            if (stopping.get()) return@run
+            val result = Native.backgroundDisplay(lease)
+            if (result == "Display ownership retired") return@run
+            if (result.isNotEmpty()) { error = result; return@run }
+            userPaused = true
+            synchronized(audioGuard) { audioObservations.pauses++ }
+            abandonAudioFocus(); pauseAudio()
+        } }
+        override fun pause(paused: Boolean) { lifecycleAdmission.run {
             // A background callback can race the stop button. Shutdown already
             // cancels input; an inactive pause must not replace its diagnostic.
-            if (stopping.get()) return
+            if (stopping.get()) return@run
             userPaused = paused
             if (!paused) focusPaused = false
             Native.cancelInput()
@@ -128,7 +138,7 @@ class EngineService : Service() {
             synchronized(audioGuard) { if (paused) audioObservations.pauses++ else audioObservations.resumes++ }
             if (paused) { abandonAudioFocus(); pauseAudio() }
             else requestAudioFocus()
-        }
+        } }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
             shutdownWatchdog.request()
@@ -138,21 +148,25 @@ class EngineService : Service() {
             if (result.isNotEmpty()) { error = result; buttonRejections.incrementAndGet() }
             else if (button in 0..1) (if (down) buttonDownAdmissions else buttonUpAdmissions).incrementAndGet(button)
         }
-        override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String {
-            // Keep selection and native admission in the same worker-owned order.
-            // Cancel/pause/surface replacement deliberately do not reset this clock.
-            return synchronized(touchAdmissionGuard) {
-                val ordered = try { touchTimestampOrder.select(timestampNanos) }
-                catch (failure: IllegalArgumentException) {
-                    val rejected = "${failure.message}; gesture cancelled. Start a new gesture."
-                    error = rejected
-                    Native.cancelInput()
-                    return@synchronized rejected
-                }
-                val result = Native.touch(ordered, ids, phases, coordinates, width, height, rotation)
-                if (result.isNotEmpty()) error = result
-                result
+        override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String =
+            admitTouch(null, timestampNanos, ids, phases, coordinates, width, height, rotation)
+        override fun touchDisplay(lease: Long, timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String =
+            admitTouch(lease, timestampNanos, ids, phases, coordinates, width, height, rotation)
+        private fun admitTouch(lease: Long?, timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String = synchronized(touchAdmissionGuard) {
+            // Native admission rechecks the owner under the control guard. This
+            // early check only avoids advancing the clock for already stale Views.
+            if (lease != null && !Native.ownsDisplay(lease)) return@synchronized "Display ownership retired"
+            val ordered = try { touchTimestampOrder.select(timestampNanos) }
+            catch (failure: IllegalArgumentException) {
+                val rejected = "${failure.message}; gesture cancelled. Start a new gesture."
+                if (lease == null) { error = rejected; Native.cancelInput() }
+                else Native.cancelDisplayInput(lease)
+                return@synchronized rejected
             }
+            val result = if (lease == null) Native.touch(ordered, ids, phases, coordinates, width, height, rotation)
+                else Native.touchDisplay(lease, ordered, ids, phases, coordinates, width, height, rotation)
+            if (result.isNotEmpty() && result != "Display ownership retired") error = result
+            result
         }
         override fun cancelInput() { Native.cancelInput() }
         override fun motion(kind: Int, timestampNanos: Long, xyz: FloatArray, rotation: Int) {
@@ -288,8 +302,11 @@ class EngineService : Service() {
             "presentIntervalsTo16ms", "presentIntervalsTo33ms", "presentIntervalsTo50ms", "presentIntervalsTo100ms", "presentIntervalsTo250ms", "presentIntervalsOver250ms", "producedFrames", "producerFrameSequence", "producerFrameTimestampNs",
             "framePublishedHostNs", "pcmCapturedFrames", "pcmPulledFrames", "sharedPcmDroppedFrames", "inputRequests", "pcmQueuedPackets", "firstWindowLockError", "lastWindowLockError", "firstWindowPostError", "lastWindowPostError", "lastWindowGeometryError",
             "windowGeometryFailures", "windowBufferFormat", "windowBufferWidth", "windowBufferHeight", "windowBufferStride", "invalidWindowBuffers", "firstWindowErrorHostNs", "runtimeDiagnosticsStatus", "engineReady", "displaySleeping", "backlightLevel",
-            "guestAgentSampleStatus", "guestAgentState", "shutdownPhase", "shutdownRoute", "shutdownReplyStatus", "shutdownReplyReceived", "guestFrameWidth", "guestFrameHeight", "guestFrameSamplePixels", "guestFrameNonzeroRgbSamples", "guestFrameRgbSampleSum")
+            "guestAgentSampleStatus", "guestAgentState", "shutdownPhase", "shutdownRoute", "shutdownReplyStatus", "shutdownReplyReceived", "guestFrameWidth", "guestFrameHeight", "guestFrameSamplePixels", "guestFrameNonzeroRgbSamples", "guestFrameRgbSampleSum",
+            "windowAttached", "presentationEpoch", "presenterPhase", "presenterPhaseEntryHostNs", "presenterPhaseGeneration", "presenterPhaseEpoch", "presenterPhaseRevision", "presenterPhaseSampleStable",
+            "ignoredInputRejections", "lastIgnoredInputRequest")
         for ((index, key) in keys.withIndex()) putLong(key, values[index])
+        putBoolean("presenterTelemetryGuestEvidence", false)
         val diagnosticAvailable = getLong("runtimeDiagnosticsStatus") == 0L
         val agentAvailable = getLong("guestAgentSampleStatus") == 0L
         putBoolean("runtimeDiagnosticsAvailable", diagnosticAvailable)
@@ -317,10 +334,11 @@ class EngineService : Service() {
         })
     }
     private fun audioAttributes() = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
-    private fun requestAudioFocus() {
-        if (focus != null) { synchronized(audioGuard) { audio?.play() }; return }
+    private fun requestAudioFocus() { lifecycleAdmission.run {
+        if (userPaused || stopping.get()) return@run
+        if (focus != null) { synchronized(audioGuard) { audio?.play() }; return@run }
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(audioAttributes())
-            .setOnAudioFocusChangeListener({ change ->
+            .setOnAudioFocusChangeListener({ change -> lifecycleAdmission.run {
                 if (change < 0) {
                     focusPaused = true
                     synchronized(audioGuard) { audioObservations.focusLosses++ }
@@ -331,15 +349,15 @@ class EngineService : Service() {
                     synchronized(audioGuard) { audioObservations.focusGains++ }
                     Native.pause(false); synchronized(audioGuard) { audio?.play() }
                 }
-            }, Handler(mainLooper)).build()
+            } }, Handler(mainLooper)).build()
         if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focus = request
         else {
             synchronized(audioGuard) { audioObservations.focusDenied++ }
             focusPaused = true; Native.cancelInput(); Native.pause(true)
             audioError = "Audio focus unavailable. Pause and resume after other audio stops."
         }
-    }
-    private fun abandonAudioFocus() { focus?.let { audioManager.abandonAudioFocusRequest(it) }; focus = null }
+    } }
+    private fun abandonAudioFocus() { lifecycleAdmission.run { focus?.let { audioManager.abandonAudioFocusRequest(it) }; focus = null } }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("guest", "Running guest", NotificationManager.IMPORTANCE_LOW))
