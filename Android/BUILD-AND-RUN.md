@@ -1,5 +1,9 @@
 # Build and run the Android development candidate
 
+The current compiled candidate is [candidate22](CANDIDATE22.md). Its exact source
+pins, tested recipe, APK hashes and runtime qualification limits are documented
+there. The candidate20 recipe below remains a historical reproducibility record.
+
 This guide follows the verified candidate20 build. It is a Debug development APK, with arm64-v8a and x86_64, API29 minimum and API35 compile/target. The main/test APKs are built together; running Android instrumentation is a separate step.
 
 | Source | Candidate20 revision |
