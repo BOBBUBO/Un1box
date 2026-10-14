@@ -17,6 +17,10 @@ import kotlinx.coroutines.withContext
 
 internal data class NoticeGroup(val folder: String, val files: List<Pair<String, String>>, val source: String)
 
+internal fun checkedNoticePath(path: String): Boolean = path.split('/').all {
+    it.isNotEmpty() && it != "." && it != ".." && it.matches(Regex("[A-Za-z0-9._-]+"))
+}
+
 @Composable
 internal fun LicenseDialog(onClose: () -> Unit) {
     val context = LocalContext.current
@@ -28,13 +32,14 @@ internal fun LicenseDialog(onClose: () -> Unit) {
         try {
             groups = withContext(Dispatchers.IO) {
                 (context.assets.list("licenses") ?: emptyArray()).map { folder ->
+                    require(checkedNoticePath(folder) && !folder.contains('/'))
                     val manifest = JSONObject(context.assets.open("licenses/$folder/manifest.json").bufferedReader().use { it.readText() })
                     require(manifest.getInt("schema") == 1)
                     val files = manifest.getJSONArray("files")
                     NoticeGroup(folder, (0 until files.length()).map { index ->
                         val entry = files.getJSONObject(index)
                         val path = entry.getString("path"); val hash = entry.getString("sha256")
-                        require(path.matches(Regex("[A-Za-z0-9._-]+")) && path != "." && path != "..")
+                        require(checkedNoticePath(path))
                         require(hash.matches(Regex("[0-9a-f]{64}")))
                         path to hash
                     }, manifest.getString("source_reference"))
@@ -60,7 +65,7 @@ internal fun LicenseDialog(onClose: () -> Unit) {
                 if (failure.isNotEmpty()) item { Text(failure, color = MaterialTheme.colorScheme.error) }
                 if (selected == null) {
                     for (group in groups) {
-                        item { Text(if (group.folder == "firmware") "Firmware preparation" else group.folder, style = MaterialTheme.typography.titleSmall) }
+                        item { Text(when (group.folder) { "firmware" -> "Firmware preparation"; "engine-arm64-v8a" -> "Engine (ARM64)"; "engine-x86_64" -> "Engine (x86-64)"; else -> group.folder }, style = MaterialTheme.typography.titleSmall) }
                         items(group.files) { file -> TextButton(onClick = { failure = ""; selected = group to file }) { Text(file.first) } }
                         item { TextButton(onClick = { openSource(context, group.source) { failure = it } }) { Text("Source code") } }
                     }

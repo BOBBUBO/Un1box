@@ -281,11 +281,18 @@ may finish earlier. Expiry still preserves dirty state and reports failure.
 Gradle consumes the shared firmware `package-notices.py` generator and pinned
 NDK notice into offline assets. `sourceRevision`/`sourceReference` override the
 publisher's corresponding-source identity; local default checkout references
-record development provenance only. Firmware notices do not yet cover every
-emulator/frontend dependency or establish complete distribution clearance.
-The semantic Licenses dialog verifies each selected notice hash and offers the
-manifest's source link. Root must verify source availability/completeness and
-add selected engine/frontend notices before final distribution.
+record development provenance only. Backend-owned engine bundles are consumed
+with `-PengineNoticeArm64=/verified/bundle/arm64-v8a` and
+`-PengineNoticeX86=/verified/bundle/x86_64`; supply every packaged ABI when using
+these properties. `stage-engine-notices.py` checks each manifest against the
+actual unstripped engine and libc++ input hashes, verifies all listed notice
+hashes, rejects traversal/symlink paths, and copies only declared files into
+separate offline engine groups. Verification finishes before replacing prior
+generated groups. The Licenses dialog accepts checked nested relative paths,
+verifies each selected notice hash, and offers the manifest's source link.
+These firmware/engine grants do not establish complete APK distribution
+clearance. Frontend dependencies, complete corresponding source availability,
+and applicable static LGPL relink materials still need publisher review.
 
 Debug builds alone can arm derived private QMP before a fresh worker start.
 `GuestQmpSnapshotTest` requires `-e debugGuestQmp true` and a fresh unused worker;
