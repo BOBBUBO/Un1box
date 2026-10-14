@@ -326,3 +326,17 @@ matching vendor mappings do not prove app GraphicsEnvironment equivalence.
 These feature probes motivate a capability-based renderer fix; only a new real
 guest run can qualify it. Private receipts and images remain in the workspace
 under `builds/pixel/physical-pixel10-01/`; none are committed here.
+
+The physical APK26 retest used the updated renderer on the same existing record,
+without recopying assets. Its platform PowerVR path selected D24 with separate
+stencil8. Model-inspected raw frames and Android surfaces showed the Lock Screen,
+Home and Settings/About; the user navigated during observation. The actual
+foreground QMP interval was 304026ms, followed by a strict native clean shutdown,
+original-worker retirement, observed lease-free state and positive dirty-marker
+absence. The engine logged zero incomplete-FBO or refused-context occurrences.
+The late final status read still produced a separately retained JUnit
+DeadObjectException after normal Stop. This run qualifies the observed rendering
+fix and shutdown sequence; it does not establish a performance improvement,
+deterministic input timing, Pixel audio/multi-touch/lifecycle acceptance or a
+subsequent guest restart. Private evidence is under
+`builds/pixel/physical-pixel10-apk26-02/`.
