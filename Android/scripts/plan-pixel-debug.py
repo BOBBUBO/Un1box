@@ -39,6 +39,10 @@ def main():
     checkout = Path(__file__).resolve().parents[2]
     if root == checkout or root in checkout.parents or checkout in root.parents:
         parser.error("Private AVD root must be outside this Git checkout")
+    # Other checkouts/worktrees are also source repositories. A linked worktree
+    # uses a .git file, so do not restrict this check to directories.
+    if any((ancestor / ".git").exists() for ancestor in (root, *root.parents)):
+        parser.error("Private AVD root must be outside every Git checkout or worktree")
     if not apk.is_file() or sha256(apk) != args.apk_sha256:
         parser.error("Frozen APK is absent or differs from the supplied SHA-256")
     avdmanager = sdk / "cmdline-tools/latest/bin/avdmanager"
