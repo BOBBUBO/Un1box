@@ -4,7 +4,9 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -40,6 +42,36 @@ def clock(at):
 
 
 class KeyboardFenceTest(unittest.TestCase):
+    def test_actual_remote_shell_guards_precede_input(self):
+        # Execute the production shell string with only its two Android
+        # endpoints replaced by local fixtures; no ADB/phone is reachable.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            endpoint = root/'run-as'
+            endpoint.write_text('#!/bin/sh\ncase "$2" in cat) cat "$STAT_FIXTURE";; tail) cat "$PHASE_FIXTURE";; *) exit 99;; esac\n')
+            endpoint.chmod(0o700)
+            sink = root/'input'
+            sink.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$INPUT_LOG"\n')
+            sink.chmod(0o700)
+            fields = ['S'] + ['0']*23; fields[19] = '555'
+            (root/'stat').write_text('71 (engine (thread)) ' + ' '.join(fields))
+            (root/'phase').write_text('{"label":"running"}\n')
+            env = {**os.environ, 'PATH': str(root) + ':/usr/bin:/bin', 'STAT_FIXTURE': str(root/'stat'),
+                   'PHASE_FIXTURE': str(root/'phase'), 'INPUT_LOG': str(root/'events')}
+            def execute(start=555, cutoff=10**15):
+                return subprocess.run(['/bin/sh', '-c', k.tap_script(71, start, cutoff, 10, 20, 'media-evidence-1792015989831')],
+                                      env=env, capture_output=True, timeout=2).returncode
+            self.assertEqual(execute(start=556), 21)
+            self.assertFalse((root/'events').exists())
+            self.assertEqual(execute(cutoff=500), 22)
+            self.assertFalse((root/'events').exists())
+            (root/'phase').write_text('{"label":"measurement-end"}\n')
+            self.assertEqual(execute(), 24)
+            self.assertFalse((root/'events').exists())
+            (root/'phase').write_text('{"label":"running"}\n')
+            self.assertEqual(execute(), 0)
+            self.assertEqual((root/'events').read_text(), 'touchscreen tap 10 20\n')
+
     def test_quiet_cutoff_and_no_late_pair(self):
         b, p = binding(); f = k.Fence(b, p)
         self.assertEqual(f.cutoff, 127000)
