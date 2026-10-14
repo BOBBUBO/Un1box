@@ -338,7 +338,10 @@ and trace availability remain actual platform evidence, not a service-failure cl
 against an already booted legitimate guest. It uses the production activity and
 Surface, recreates the activity, requests landscape then portrait (restoring its
 original own-activity request in `finally`), backgrounds/returns the Surface,
-and cancels held contacts before reusing valid IDs7/23. Android-side admission
+and cancels two held contacts before reusing valid IDs7/23. Semantic Pause/Resume
+also ends the production Android gesture, suppresses stale MOVE and exercises a
+fresh two-contact move, independent lift, cancellation and ID reuse after every
+interruption. Android-side admission
 and cancellation counters are separate from guest delivery/outcome evidence.
 The test clicks semantic production Home/Power controls, checks paired native
 admissions, retains exact worker/media/window observations and actual guest
@@ -360,6 +363,9 @@ image bounds. They fail when actual dimensions are unavailable; whole-View
 fractions could otherwise silently reach landscape letterbox margins and cause
 native cancellation. This test geometry does not replace the production native
 input mapper or prove guest consumption.
+If this already booted worker configured the fixed trace, `touchWireTrace=true`
+retains bounded wire records around these interruptions. The orientation test
+does not start or reconfigure an existing worker.
 
 [The APK notice/source matrix](DEPENDENCY-NOTICES.md) separates conveyed components,
 verified per-ABI notice coverage, selected frontend runtime inputs and outstanding

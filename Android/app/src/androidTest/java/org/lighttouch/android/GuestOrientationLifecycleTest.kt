@@ -63,6 +63,7 @@ class GuestOrientationLifecycleTest {
                     val worker = binding.get()
                     val initial = worker.status()
                     assertTrue("A real guest must already be running", initial.getString("state") in listOf("running", "paused"))
+                    val wire = if (arguments.getString("touchWireTrace") == "true") GuestTouchWireEvidence(context.filesDir, initial, evidence) else null
                     val workerPid = initial.getInt("pid")
                     assertEquals(Process.myUid(), initial.getInt("uid")); assertNotEquals(Process.myPid(), workerPid)
                     result.put("workerPid", workerPid).put("appUid", Process.myUid()).put("originalRequestedOrientation", originalOrientation)
@@ -92,6 +93,7 @@ class GuestOrientationLifecycleTest {
                         error("Production Surface/orientation was not ready; OS orientation policy may have rejected this request")
                     }
                     fun snapshot(label: String, screenshot: Boolean = true): Bundle {
+                        wire?.drain(events.length() - 1)
                         val status = worker.status()
                         assertEquals("Worker identity", workerPid, status.getInt("pid"))
                         assertEquals("Actionable worker error", "", status.getString("error"))
@@ -112,23 +114,42 @@ class GuestOrientationLifecycleTest {
                         return requireNotNull(status.getBundle("observations"))
                     }
                     var gestureDown = SystemClock.uptimeMillis()
-                    fun send(action: Int, id: Int = 7, x: Float = .5f, y: Float = .5f) {
-                        if (action == MotionEvent.ACTION_DOWN) gestureDown = SystemClock.uptimeMillis()
+                    fun sendContacts(action: Int, contacts: List<Triple<Int, Float, Float>>) {
+                        if ((action and MotionEvent.ACTION_MASK) == MotionEvent.ACTION_DOWN) gestureDown = SystemClock.uptimeMillis()
                         val status = worker.status()
                         scenario.onActivity { activity ->
                             val display = requireNotNull(findDisplay(activity.window.decorView))
                             val viewport = GuestTestViewport(status, display.width, display.height)
-                            val point = viewport.point(x, y)
-                            val property = MotionEvent.PointerProperties().apply { this.id = id; toolType = MotionEvent.TOOL_TYPE_FINGER }
-                            val coordinate = MotionEvent.PointerCoords().apply { this.x = point.first; this.y = point.second; pressure = 1f; size = .05f }
+                            require(contacts.all { it.first in 0..31 })
+                            val points = contacts.map { viewport.point(it.second, it.third) }
+                            val properties = contacts.map { MotionEvent.PointerProperties().apply { id = it.first; toolType = MotionEvent.TOOL_TYPE_FINGER } }.toTypedArray()
+                            val coordinates = points.map { MotionEvent.PointerCoords().apply { x = it.first; y = it.second; pressure = 1f; size = .05f } }.toTypedArray()
                             val eventTime = SystemClock.uptimeMillis()
-                            val event = MotionEvent.obtain(gestureDown, eventTime, action, 1, arrayOf(property), arrayOf(coordinate), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+                            val event = MotionEvent.obtain(gestureDown, eventTime, action, contacts.size, properties, coordinates, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
                             try { assertTrue(display.dispatchTouchEvent(event)) } finally { event.recycle() }
-                            events.put(JSONObject().put("action", action).put("id", id).put("guestX", x).put("guestY", y)
-                                .put("viewXPx", point.first).put("viewYPx", point.second).put("viewport", viewport.receipt())
+                            val entries = JSONArray()
+                            for ((index, contact) in contacts.withIndex()) entries.put(JSONObject().put("id", contact.first).put("guestX", contact.second).put("guestY", contact.third)
+                                .put("viewXPx", points[index].first).put("viewYPx", points[index].second))
+                            events.put(JSONObject().put("action", action).put("contacts", entries).put("viewport", viewport.receipt())
                                 .put("uptimeMs", eventTime).put("displayRotation", display.display.rotation).put("input", encode(display.inputObservations())))
                         }
-                        persist(); Thread.sleep(30)
+                        persist(); Thread.sleep(30); wire?.drain(events.length() - 1)
+                    }
+                    fun send(action: Int, id: Int = 7, x: Float = .5f, y: Float = .5f) = sendContacts(action, listOf(Triple(id, x, y)))
+                    fun holdPair() {
+                        send(MotionEvent.ACTION_DOWN, 7, .45f)
+                        sendContacts(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), listOf(Triple(7, .45f, .5f), Triple(23, .55f, .5f)))
+                        scenario.onActivity { assertArrayEquals("Both Android contacts must be held before interruption", intArrayOf(7, 23), requireNotNull(findDisplay(it.window.decorView)).inputObservations().getIntArray("androidContactIds")) }
+                    }
+                    fun clickControl(text: String) {
+                        val deadline = SystemClock.elapsedRealtime() + 5_000
+                        do {
+                            val node = instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text)
+                                ?.firstOrNull { it.packageName?.toString() == context.packageName && it.text?.toString() == text && it.isClickable && it.isEnabled }
+                            if (node != null && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
+                            Thread.sleep(100)
+                        } while (SystemClock.elapsedRealtime() < deadline)
+                        error("Semantic production control unavailable: $text")
                     }
                     fun resume() { worker.pause(false); awaitState("running"); readyDisplay(); Thread.sleep(300) }
                     fun reuseAndRelease(label: String) {
@@ -143,6 +164,15 @@ class GuestOrientationLifecycleTest {
                         send(MotionEvent.ACTION_DOWN, 23); send(MotionEvent.ACTION_CANCEL, 23)
                         send(MotionEvent.ACTION_MOVE, 23)
                         send(MotionEvent.ACTION_DOWN, 23); send(MotionEvent.ACTION_UP, 23)
+                        holdPair()
+                        sendContacts(MotionEvent.ACTION_MOVE, listOf(Triple(7, .4f, .5f), Triple(23, .6f, .5f)))
+                        sendContacts(MotionEvent.ACTION_POINTER_UP, listOf(Triple(7, .4f, .5f), Triple(23, .6f, .5f)))
+                        send(MotionEvent.ACTION_MOVE, 23, .62f); send(MotionEvent.ACTION_UP, 23, .62f)
+                        holdPair()
+                        sendContacts(MotionEvent.ACTION_CANCEL, listOf(Triple(7, .45f, .5f), Triple(23, .55f, .5f)))
+                        holdPair()
+                        sendContacts(MotionEvent.ACTION_POINTER_UP, listOf(Triple(7, .45f, .5f), Triple(23, .55f, .5f)))
+                        send(MotionEvent.ACTION_UP, 23, .55f)
                         scenario.onActivity { assertArrayEquals("Android contacts retained", intArrayOf(), requireNotNull(findDisplay(it.window.decorView)).inputObservations().getIntArray("androidContactIds")) }
                         snapshot(label)
                     }
@@ -150,7 +180,17 @@ class GuestOrientationLifecycleTest {
                         resume(); scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
                         readyDisplay(Configuration.ORIENTATION_PORTRAIT); resume()
                         val baseline = snapshot("portrait-baseline")
-                        send(MotionEvent.ACTION_DOWN)
+                        holdPair()
+                        clickControl("Pause"); awaitState("paused")
+                        scenario.onActivity {
+                            val view = requireNotNull(findDisplay(it.window.decorView))
+                            assertArrayEquals("Pause retained Android contacts", intArrayOf(), view.inputObservations().getIntArray("androidContactIds"))
+                            assertTrue("Pause allowed continuation without a fresh DOWN", view.inputObservations().getBoolean("awaitingNewDown"))
+                        }
+                        snapshot("explicit-pause")
+                        clickControl("Resume"); awaitState("running"); readyDisplay(); Thread.sleep(300)
+                        reuseAndRelease("explicit-pause-return")
+                        holdPair()
                         val oldDisplay = readyDisplay()
                         var beforeCancel = 0L
                         instrumentation.runOnMainSync { beforeCancel = oldDisplay.inputObservations().getLong("cancellationRequests") }
@@ -164,7 +204,7 @@ class GuestOrientationLifecycleTest {
                         for ((orientation, configuration, label) in listOf(
                             Triple(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, Configuration.ORIENTATION_LANDSCAPE, "landscape"),
                             Triple(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, Configuration.ORIENTATION_PORTRAIT, "portrait-return"))) {
-                            send(MotionEvent.ACTION_DOWN)
+                            holdPair()
                             val prior = readyDisplay(); var cancels = 0L
                             instrumentation.runOnMainSync { cancels = prior.inputObservations().getLong("cancellationRequests") }
                             scenario.onActivity { it.requestedOrientation = orientation }
@@ -172,22 +212,12 @@ class GuestOrientationLifecycleTest {
                             instrumentation.runOnMainSync { assertTrue("Orientation failed to cancel held contacts", prior.inputObservations().getLong("cancellationRequests") > cancels) }
                             resume(); reuseAndRelease(label)
                         }
-                        send(MotionEvent.ACTION_DOWN)
+                        holdPair()
                         scenario.moveToState(Lifecycle.State.CREATED); awaitState("paused")
                         snapshot("background-surface-loss", false)
                         scenario.moveToState(Lifecycle.State.RESUMED); readyDisplay(); awaitState("paused")
                         resume(); reuseAndRelease("foreground-surface-return")
                         val beforeButtons = snapshot("before-buttons")
-                        fun clickControl(text: String) {
-                            val deadline = SystemClock.elapsedRealtime() + 5_000
-                            do {
-                                val node = instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text)
-                                    ?.firstOrNull { it.packageName?.toString() == context.packageName && it.text?.toString() == text && it.isClickable && it.isEnabled }
-                                if (node != null && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
-                                Thread.sleep(100)
-                            } while (SystemClock.elapsedRealtime() < deadline)
-                            error("Semantic production control unavailable: $text")
-                        }
                         clickControl("Home"); Thread.sleep(300)
                         clickControl("Power"); Thread.sleep(500); snapshot("power-sleep")
                         clickControl("Power"); Thread.sleep(500); snapshot("power-wake")
@@ -208,6 +238,7 @@ class GuestOrientationLifecycleTest {
                         // Best effort releases never turn a failed test into a pass.
                         try {
                             worker.cancelInput(); worker.button(0, false); worker.button(1, false)
+                            wire?.drain(events.length() - 1)
                             result.put("cleanupWorkerStatus", encode(worker.status()))
                         }
                         catch (failure: Exception) { result.put("releaseFailure", failure.toString()) }

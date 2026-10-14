@@ -41,6 +41,8 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
         rejectedGesture = true; contactIds.clear()
         control { cancellationRequests++; it.cancelInput() }
     }
+    /** A user Pause ends the Android gesture as well as the native contact lease. */
+    internal fun cancelOwnedGesture() = cancelGesture()
     override fun surfaceCreated(holder: SurfaceHolder) { control { it.surface(holder.surface) } }
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { control { it.surface(holder.surface) } }
     override fun surfaceDestroyed(holder: SurfaceHolder) { cancelGesture(); control { it.clearSurface() } }
