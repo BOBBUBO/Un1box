@@ -344,6 +344,7 @@ static int worker(const Options &o) {
         }
         lt_runtime_status status{sizeof(status), 1, 0, 0, 0, 0, 0, 0};
         lt_status result = lt_runtime_poll(r, &status, &error);
+        const lt_error poll_error = error;
         uint64_t now = now_ns();
         if (now - last_status >= 250000000 || status.state == LT_STOPPED || status.state == LT_FAILED) {
             Packet update;
@@ -356,7 +357,7 @@ static int worker(const Options &o) {
             update.io.version = 1;
             lt_runtime_io_statistics(r, &update.io, &error);
             if (result != LT_OK)
-                update.error = error;
+                update.error = poll_error;
             send_packet(o.control, update);
             last_status = now;
         }
@@ -366,7 +367,7 @@ static int worker(const Options &o) {
             return status.guest_shutdown_confirmed ? 0 : 2;
         }
         if (status.state == LT_FAILED) {
-            std::cerr << "runtime failed: " << error.message << "; dirty state retained\n";
+            std::cerr << "runtime failed: " << poll_error.message << "; dirty state retained\n";
             return 2;
         }
         if (o.audio) {
