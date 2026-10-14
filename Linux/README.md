@@ -160,6 +160,30 @@ python3 Linux/scripts/run-photos-concurrency.py --window 2097173 \
   --output-dir /private/photos-concurrent --execute
 ```
 
+For calibrated readiness, start one bounded private worker with `--trace-io`,
+`--seconds 200` and a private `--screenshot` path. At about60s, run a single wake
+cycle, leaving time to inspect the actual pixels before100s:
+
+```sh
+DISPLAY=:99 XAUTHORITY=/private/xauthority \
+python3 Linux/scripts/calibrate-wake-unlock.py --window 2097173 \
+  --viewport 480 800 --log /private/session.log \
+  --output-dir /private/wake-cycle --execute
+```
+
+The cycle balances Home150ms, observes2s, retains a native wake checkpoint,
+performs the verified slider and observes2s again. The viewport must be measured
+from the actual portrait SDL window; guest dimensions come from the native BMP.
+It makes no readiness assertion and does not select state or launch a guest.
+Inspect its fresh native PNGs and their receipts before opening Photos. Repeat a
+bounded cycle only when the actual pixels require it, retaining failed attempts.
+`capture-native-checkpoint.py` can retain additional native checkpoints using the
+same window/log/output arguments. It copies the unchanged native BMP and its
+flushed capture receipt, source-frame and worker-diagnostic CLOCK_MONOTONIC times,
+then creates a viewable PNG. A stale or sleeping observation cannot admit Photos.
+After inspecting a current Photos image viewer, admit the concurrency controller;
+the launch owner still requires the final clean receipt.
+
 Launch with `--trace-io` to retain worker touch admission request IDs/phases,
 engine application timestamps/results, actual frame-copy sequence/source times,
 and individual nonzero PCM packet receipt times/sample indices. These are host
@@ -349,3 +373,16 @@ and use its own short FD alias; Java LocalSocket on the long path can fail. Use 
 backend fixed bounded read-only snapshot client (status/CPU/register reads), retain
 its private JSONL, and omit the feature from release builds. Debug snapshots do not
 qualify guest boot/render/input by themselves.
+
+A calibrated private run06 on2026-10-14 retained wake LockScreen→slider Home
+checkpoints, then visually confirmed Photos1of3 before controller admission.
+Trace requests19–31 and32–44 each applied both stable contacts101/102 and their
+balanced lifts with engine_result0/state2. First replay had nonzero guest PCM
+receipt points over163.511ms within its applied interval; the second had points
+over103.381ms (8656 nonzero samples in those received packets), with actual frame
+sources/copies in the same observed window. Paired native sequence249 and GUI
+before/during/after show further enlargement of the same Home photograph. The
+worker finished confirmed1/dirty0/exit0. This is bounded Linux trace/pixel/raw-PCM
+evidence awaiting independent review; sustained concurrency, physical audibility
+on auto_null, Android and full G3-I remain unqualified. Earlier calibration
+failures and contrary screenshots remain retained.
