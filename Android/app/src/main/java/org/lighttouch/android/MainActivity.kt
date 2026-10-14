@@ -245,7 +245,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             val target = File(filesDir, "verified-tools-${System.nanoTime()}")
             try {
                 val source = DocumentFile.fromTreeUri(this, uri) ?: error("Cannot read trusted tools folder")
-                copyTree(source, target)
+                val inventory = source.findFile("inventory.json") ?: error("Verified inventory.json missing")
+                val guest = source.findFile("release-guest-unpacked")?.findFile("guest-tools") ?: error("Verified guest-tools folder missing")
+                check(target.mkdirs())
+                contentResolver.openInputStream(inventory.uri)?.use { input -> File(target, "inventory.json").outputStream().use { input.copyTo(it) } } ?: error("Cannot read verified inventory")
+                val exported = File(target, "release-guest-unpacked").apply { check(mkdir()) }
+                copyTree(guest, File(exported, "guest-tools"))
+                // Copy required tooling only. Keep fixtures, SDKs and captures in
+                // their original location; supplemental n81 NAND can be 18 GiB.
                 handler.post { toolsPath = target.absolutePath; toolsSelected = true; busy = false; getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("tools", toolsPath).apply() }
             } catch (e: Exception) { target.deleteRecursively(); handler.post { error = e.message ?: "Tools import failed"; busy = false } }
         }, "trusted-tools-import").start()
