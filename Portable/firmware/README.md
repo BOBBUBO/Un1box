@@ -90,7 +90,11 @@ unrooted preparation are acceptance requirements beyond host compilation.
 - OpenSSL and zlib are supplied by the target toolchain. Their source versions and
   licenses must be included in the release dependency manifest. XPwn distribution
   requires its complete corresponding source, generated fixes and GPL-3.0 license.
-  Keep GPL-3.0 firmware components separate from GPL-2.0-only emulator linkage.
+  LightTouch's GPL-2.0-or-later grant permits the GPLv3 option for this firmware
+  combination. Keep GPL-3.0 firmware components separate from GPL-2.0-only emulator
+  linkage. The [selected-source audit](LICENSE-AUDIT.md) records exact inputs,
+  retained notices and the unresolved Apple TN1150 sample provenance; it does not
+  claim complete APK distribution clearance.
 
 Synthetic format/transaction tests are source-only evidence. The format test
 compares all 50 NAND metadata pages against the independent upstream legacy
