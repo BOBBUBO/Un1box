@@ -19,6 +19,10 @@ ctest --test-dir /private/build/firmware --output-on-failure
   /private/verified/inventory.json /private/new-prepared-device
 ```
 
+CMake also accepts the hash-verified selected XPwn source export described in
+[source distribution](SOURCE-DISTRIBUTION.md). Both routes verify all 35 pinned
+original source/header/license inputs before generating modified workers.
+
 Stock input must match the catalog's SHA1 **and** exact byte count. The guest
 inventory is a trusted local handoff inventory with `entries` containing `path`,
 `type` and `sha256`; paths use `release-guest-unpacked/guest-tools/` or
