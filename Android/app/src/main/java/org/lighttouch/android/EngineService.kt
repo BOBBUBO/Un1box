@@ -242,7 +242,7 @@ class EngineService : Service() {
         }
         android.system.Os.rename(temporary.absolutePath, target.absolutePath)
         val directory = android.system.Os.open(filesDir.absolutePath,
-            android.system.OsConstants.O_RDONLY or android.system.OsConstants.O_DIRECTORY or android.system.OsConstants.O_CLOEXEC, 0)
+            android.system.OsConstants.O_RDONLY or android.system.OsConstants.O_CLOEXEC, 0)
         try { android.system.Os.fsync(directory) } finally { android.system.Os.close(directory) }
     }
     private fun disposeAfterShutdown(receipt: ShutdownReceipt) {
