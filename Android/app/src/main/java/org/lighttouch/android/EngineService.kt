@@ -385,7 +385,14 @@ class EngineService : Service() {
                     Native.pause(false); synchronized(audioGuard) { audio?.play() }
                 }
             } }, Handler(mainLooper)).build()
-        if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focus = request
+        if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            synchronized(audioGuard) {
+                // Resume the retained track before the audio thread sees focus.
+                // Backgrounding pauses it without changing the PCM format.
+                audio?.play()
+                focus = request
+            }
+        }
         else {
             synchronized(audioGuard) { audioObservations.focusDenied++ }
             focusPaused = true; Native.cancelInput(); Native.pause(true)
