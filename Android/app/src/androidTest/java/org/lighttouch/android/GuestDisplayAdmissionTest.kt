@@ -15,17 +15,50 @@ import java.lang.reflect.Proxy
 class GuestDisplayAdmissionTest {
     private class Endpoint {
         val calls = mutableListOf<String>()
+        val heldButtons = mutableSetOf<Int>()
         var rejection = ""
-        val worker = Proxy.newProxyInstance(IEngine::class.java.classLoader, arrayOf(IEngine::class.java)) { _, method, _ ->
+        val worker = Proxy.newProxyInstance(IEngine::class.java.classLoader, arrayOf(IEngine::class.java)) { _, method, args ->
             when (method.name) {
                 "touch" -> { calls += "touch"; rejection }
-                "cancelInput" -> { calls += "cancel"; null }
+                "cancelInput" -> { calls += "cancel"; heldButtons.clear(); null }
+                "button" -> {
+                    val button = args!![0] as Int
+                    if (args[1] as Boolean) heldButtons.add(button) else heldButtons.remove(button)
+                    null
+                }
                 "surface" -> { calls += "surface"; null }
                 "asBinder" -> Binder()
                 "toString" -> "Fake View admission endpoint"
                 else -> error("Unexpected View control: ${method.name}")
             }
         } as IEngine
+    }
+    @Test fun unownedResizePreservesUnrelatedButtonAndRequiresFreshDown() = onMain {
+        val endpoint = Endpoint()
+        val display = GuestDisplay(InstrumentationRegistry.getInstrumentation().targetContext) { endpoint.worker }
+        display.layout(0, 0, 320, 480)
+        display.surfaceChanged(display.holder, 1, 320, 480)
+        endpoint.worker.button(0, true)
+        try {
+            val before = endpoint.calls.size
+            display.layout(0, 0, 320, 414)
+            display.surfaceChanged(display.holder, 1, 320, 414)
+            assertEquals("An unowned resize released unrelated worker input", listOf("surface"), endpoint.calls.drop(before))
+            assertEquals(setOf(0), endpoint.heldButtons)
+            assertEquals(0L, display.inputObservations().getLong("cancellationRequests"))
+            assertTrue(display.inputObservations().getBoolean("awaitingNewDown"))
+            val resized = endpoint.calls.size
+            send(display, MotionEvent.ACTION_MOVE); send(display, MotionEvent.ACTION_UP)
+            assertEquals(resized, endpoint.calls.size)
+            send(display, MotionEvent.ACTION_DOWN); send(display, MotionEvent.ACTION_UP)
+            assertEquals(listOf("touch", "touch"), endpoint.calls.drop(resized))
+            val released = endpoint.calls.size
+            display.layout(0, 0, 320, 480)
+            display.surfaceChanged(display.holder, 1, 320, 480)
+            assertEquals("Completed contacts confer no remaining ownership", listOf("surface"), endpoint.calls.drop(released))
+            assertEquals(setOf(0), endpoint.heldButtons)
+        } finally { endpoint.worker.button(0, false) }
+        assertTrue(endpoint.heldButtons.isEmpty())
     }
     private fun send(display: GuestDisplay, action: Int) {
         val now = SystemClock.uptimeMillis()
