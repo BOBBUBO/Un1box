@@ -24,4 +24,5 @@ interface IEngine {
     Bundle guestPoll(long requestId);
     void guestCancel(long requestId);
     String debugEnableTouchTrace();
+    Bundle recoverStart(String recordId);
 }
