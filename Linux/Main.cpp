@@ -624,8 +624,10 @@ static int frontend(const Options &o, int argc, char **argv) {
             p.touch.timestamp_ns = now_ns();
         if (p.kind == Motion)
             p.motion.timestamp_ns = now_ns();
-        if (!send_packet(sockets[0], p))
-            std::cerr << "control backpressure: command rejected; cancel input\n";
+        bool sent = send_packet(sockets[0], p);
+        if (!sent)
+            std::cerr << "control backpressure: command " << p.kind << " rejected\n";
+        return sent;
     };
     bool screenshot_written = false;
     lt_runtime_diagnostics diagnostics{sizeof(lt_runtime_diagnostics), 1, 0, 0, -1, 0, 0, 0, 0, 0};
@@ -662,7 +664,7 @@ static int frontend(const Options &o, int argc, char **argv) {
             }
             Packet p;
             p.kind = Stop;
-            submit(p);
+            require(submit(p), "shutdown command was not delivered; worker state remains dirty");
             stopping = true;
             stop_since = now_ns();
         }
