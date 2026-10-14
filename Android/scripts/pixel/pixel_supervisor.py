@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Pixel adapter: bounded scoped readback before the unchanged owned cleanup."""
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -9,6 +10,8 @@ import os
 from pathlib import Path
 import signal
 import time
+import sys
+import memory_monitor
 from diagnostic_control import Capture
 
 spec = importlib.util.spec_from_file_location("base_retry", Path(__file__).resolve().parents[1] / "supervise_16k_retry.py")
@@ -49,10 +52,71 @@ def bounded_capture(adb, binding, output, now=time.monotonic_ns, process_factory
             "beginNs": begin, "limitNs": end, "endedNs": now(), "guestAcceptancePassed": False}
 
 
+PIXEL_MEMORY_MB = None
+
+
+def pixel_options(argv):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--pixel-memory-mb", type=int, choices=(4096, 8192))
+    args, remaining = parser.parse_known_args(argv)
+    if args.pixel_memory_mb is not None and any(x == "--memory-mb" or x.startswith("--memory-mb=") for x in remaining):
+        raise ValueError("Use only one memory allocation flag")
+    return args.pixel_memory_mb, remaining
+
+
 class PixelAttempt(base.Attempt):
     def __init__(self, args):
         super().__init__(args)
         self.pixel_readback_done = False
+        self.pixel_monitor = None
+        self.pixel_monitor_stop = multiprocessing.get_context("fork").Event()
+        self.pixel_monitor_identity = None
+        self.pixel_guest_disable = multiprocessing.get_context("fork").Event()
+        self.pixel_guest_idle = multiprocessing.get_context("fork").Event()
+        if PIXEL_MEMORY_MB is not None:
+            args.memory_mb = PIXEL_MEMORY_MB
+
+    def launch(self):
+        super().launch()
+        self.memory_phase("launch")
+        ticks = memory_monitor.process_ticks(self.avd.pid)
+        if ticks is None:
+            raise RuntimeError("Owned AVD wrapper identity unavailable for monitor")
+        # Binding uses the same original process origin as capture_origin.py.
+        origin = memory_monitor.process_ticks(os.getpid()) * 1_000_000_000 // os.sysconf("SC_CLK_TCK")
+        deadline = min(int(self.deadline * 1e9), origin + 900_000_000_000)
+        self.pixel_monitor = multiprocessing.get_context("fork").Process(target=memory_monitor.monitor,
+            args=(self.args.adb, str(self.output), self.avd.pid, ticks, origin, deadline, self.pixel_monitor_stop, self.pixel_guest_disable, self.pixel_guest_idle))
+        self.pixel_monitor.start()
+        self.pixel_monitor_identity = base.process_identity(self.pixel_monitor.pid)
+        self.write("memory-monitor.json", {"pid": self.pixel_monitor.pid, "ownerPid": self.avd.pid,
+            "ownerStartTicks": ticks, "originNs": origin, "deadlineNs": deadline,
+            "requestedCadenceSeconds": 2, "guestAcceptancePassed": False})
+
+    def memory_phase(self, phase):
+        try:
+            (self.output / "memory-phase.txt").write_text(phase)
+            with (self.output / "memory-lifecycle.jsonl").open("a") as stream:
+                stream.write(json.dumps({"phase": phase, "host": memory_monitor.host_sample()}) + "\n")
+        except OSError:
+            pass  # Observations cannot suppress semantic Stop or owned disposal.
+
+    def retire_monitor(self):
+        self.pixel_monitor_stop.set()
+        if self.pixel_monitor is None:
+            return
+        self.pixel_monitor.join(timeout=min(1, max(0, self.deadline - time.monotonic())))
+        if self.pixel_monitor.is_alive() and self.pixel_monitor_identity is not None and base.process_identity(self.pixel_monitor.pid) == self.pixel_monitor_identity:
+            try:
+                if os.getpgid(self.pixel_monitor.pid) == self.pixel_monitor.pid:
+                    os.killpg(self.pixel_monitor.pid, signal.SIGKILL)
+                else:
+                    self.pixel_monitor.kill()
+            except ProcessLookupError:
+                pass
+        self.pixel_monitor.join(timeout=min(.2, max(0, self.deadline - time.monotonic())))
+        self.write("memory-monitor-terminal.json", {"exit": self.pixel_monitor.exitcode,
+            "stillAlive": self.pixel_monitor.is_alive(), "guestAcceptancePassed": False})
 
     def pixel_readback(self):
         if self.pixel_readback_done or self.avd is None:
@@ -76,6 +140,7 @@ class PixelAttempt(base.Attempt):
                 pass  # Receipt failure cannot suppress owned disposal.
 
     def stop(self):
+        self.memory_phase("stop-requested")
         try:
             self.pixel_readback()
         finally:
@@ -85,9 +150,25 @@ class PixelAttempt(base.Attempt):
         try:
             self.pixel_readback()
         finally:
-            super().cleanup()
+            try:
+                self.memory_phase("cleanup-before-owned-disposal")
+                self.pixel_guest_disable.set()
+                if self.pixel_monitor is not None and not self.pixel_guest_idle.wait(
+                        timeout=min(.9, max(0, self.deadline - time.monotonic()))):
+                    self.retire_monitor()  # Stalled observation cannot hold disposal.
+                    self.write("memory-monitor-gap.json", {"continuousHostDuringCleanup": False,
+                        "reason": "Guest observation did not acknowledge bounded cleanup barrier"})
+            finally:
+                try:
+                    super().cleanup()
+                finally:
+                    try:
+                        self.memory_phase("cleanup-after-owned-disposal")
+                    finally:
+                        self.retire_monitor()
 
 
 if __name__ == "__main__":
+    PIXEL_MEMORY_MB, sys.argv[1:] = pixel_options(sys.argv[1:])
     base.Attempt = PixelAttempt
     raise SystemExit(base.main())

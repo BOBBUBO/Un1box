@@ -15,9 +15,11 @@ check, not a guest acceptance claim. Existing sealed artifacts remain untouched.
 
 After a separate compiler/AVD allocation, use `pixel_supervisor.py`, the Pixel
 adapter around the unchanged bounded supervisor, with the same allocation
-arguments and a new Pixel10/API36/16KiB record. Reuse verified imported read-only
-assets only through the reviewed state route; do not silently recover a dirty
-record. Capture the actual supervisor's original process clock once immediately
+arguments and a new Pixel10/API36/16KiB attempt. Reuse the encrypted imported base through
+the reviewed external-COW route in COMPARISON.md. A retained dirty record requires
+explicit `-e pixelColdRecovery true`; otherwise the overlay requires a clean
+record. It checks actual selected metadata and records priorDirty/recovery mode.
+Recovery does not claim clean initial admission. Capture the actual supervisor's original process clock once immediately
 after launch:
 
 ```sh
@@ -111,3 +113,21 @@ python3 -B -m unittest discover -s Android/scripts/pixel/tests -v
 No helper/test receipt declares Home, physical Pixel equivalence, audible output,
 persistence or a speedup. x86 SwiftShader cannot qualify Tensor ARM64/vendor GPU
 compatibility. Gyro remains deferred.
+
+## Memory comparison and observation
+
+Use `--pixel-memory-mb 4096` or `8192` on the Pixel adapter (never combine with
+`--memory-mb`). Both use the original fixed deadlines. `memory_monitor.py` records
+host meminfo/vmstat/swap/PSI and zram provenance from launch through Stop and
+owned cleanup; it samples guest memory/swap/PSI individually, with unavailable
+reads explicitly null. Worker status/PSS is bounded by UID/start-ticks/role checks
+before and after the read; denied PSS remains unavailable. Host swap counter
+deltas include actual host page bytes. Requested cadence is2s; actual command
+times and gaps are retained, so this is not a promise of gapless sampling.
+
+Before owned cleanup, guest reads are disabled and acknowledged; host monitoring
+continues. A stalled acknowledgement forces bounded monitor retirement and
+records the resulting coverage gap. The sampler never retries/restarts an AVD,
+changes swap/memory settings, or accepts a guest. A final host-only lifecycle
+snapshot is recorded even after emulator disposal. Monitor failure cannot
+suppress the original cleanup. COMPARISON.md defines the controlled experiment.
