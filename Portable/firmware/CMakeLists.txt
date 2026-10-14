@@ -11,6 +11,13 @@ if(NOT XPWN_GIT_RESULT EQUAL 0 OR NOT XPWN_REV STREQUAL "20c32e5c12d1b22a9d55a59
   message(FATAL_ERROR "XPwn source pin mismatch")
 endif()
 find_package(ZLIB REQUIRED)
+# NDK root-only discovery otherwise re-roots an absolute private dependency
+# prefix under its sysroot. These are target-built static libraries, never host.
+if(ANDROID AND OPENSSL_ROOT_DIR)
+  set(OPENSSL_INCLUDE_DIR "${OPENSSL_ROOT_DIR}/include" CACHE PATH "Target OpenSSL headers")
+  set(OPENSSL_CRYPTO_LIBRARY "${OPENSSL_ROOT_DIR}/lib/libcrypto.a" CACHE FILEPATH "Target OpenSSL crypto")
+  set(OPENSSL_SSL_LIBRARY "${OPENSSL_ROOT_DIR}/lib/libssl.a" CACHE FILEPATH "Target OpenSSL SSL")
+endif()
 find_package(OpenSSL REQUIRED)
 add_compile_definitions(HAVE_CRYPT _FILE_OFFSET_BITS=64 _LARGEFILE_SOURCE)
 include_directories(${XPWN_SOURCE}/includes)
