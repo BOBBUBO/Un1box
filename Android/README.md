@@ -118,7 +118,7 @@ emulation; notification permits return to the app. See
 No Google services, root privileges or isolated-UID storage exceptions are needed.
 The foreground notification permission can be denied without affecting user input.
 
-Stop requests guest shutdown and polls native confirmation for at most 15 seconds.
+Stop requests guest shutdown under the shared 35-second disposal budget.
 The domain alone decides clean versus dirty storage. A rejected shutdown request or timeout is preserved in private
 `files/worker-stop-error.txt` and shown after reconnect, while native dirty metadata
 remains authoritative. The process exits after Stop;
@@ -289,9 +289,24 @@ A cancelled/focus-lost/surface-lost gesture ignores subsequent moves until a new
 DOWN. Worker death during Surface/input Binder calls reports recovery text and
 does not throw through the activity event dispatcher. Touch evidence is written
 incrementally so failures preserve the preceding trajectory.
-Shutdown disposal uses the native shared LT_SHUTDOWN_GRACE_MS (35seconds),
-allowing the 30second confirmation window and cleanup; actual confirmed cleanup
-may finish earlier. Expiry still preserves dirty state and reports failure.
+Shutdown disposal uses shared LT_SHUTDOWN_GRACE_MS (35seconds), copied from the
+authoritative header into BuildConfig at configuration time. The service arms an
+independent timer before any Stop JNI call and admits native shutdown off Binder;
+the UI also sends Stop off its main thread. The deadline reads only cached
+progress and writes a bounded private `worker-shutdown-PID.json` receipt/error
+before disposing its own worker process. It never queries Native status or
+observations, waits for AudioTrack cleanup or changes native state markers.
+Terminal native status may dispose earlier; the single winner does not infer
+clean shutdown when no native confirmation was observed. Expiry reports
+unconfirmed shutdown and retained writable state, including startup that never
+marked a device dirty. The policy deadline begins at service Stop admission;
+it does not prove that Binder dispatch, OS scheduling or storage writes have a
+hard realtime guarantee. Existing presenter/platform blocking needs separate
+target evidence and is not identified by this source change.
+Host `ShutdownWatchdogTest` blocks each native callback in turn and checks timer
+disposal and late-completion single-winner behavior without loading/killing QEMU
+or operating a phone. Run with the configured native/source input properties and
+`:app:testDebugUnitTest --tests org.lighttouch.android.ShutdownWatchdogTest`.
 
 Gradle consumes the shared firmware `package-notices.py` generator and pinned
 NDK notice into offline assets. `sourceRevision`/`sourceReference` override the

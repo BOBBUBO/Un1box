@@ -1,6 +1,11 @@
 import java.security.MessageDigest
 
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
+val shutdownPolicyHeader = file(providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get() + "/include/lighttouch.h")
+val shutdownGraceMs = Regex("(?m)^#define\\s+LT_SHUTDOWN_GRACE_MS\\s+([0-9]+)u?\\s*$")
+    .find(shutdownPolicyHeader.readText())?.groupValues?.get(1)?.toLong()
+    ?: error("Shared LT_SHUTDOWN_GRACE_MS policy is unavailable")
+require(shutdownGraceMs > 0)
 android {
     namespace = "org.lighttouch.android"
     compileSdk = 35
@@ -12,11 +17,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1-port"
+        buildConfigField("long", "SHUTDOWN_GRACE_MS", "${shutdownGraceMs}L")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",") }
         externalNativeBuild { cmake { arguments += listOf("-DLT_NATIVE_JOBS=" + providers.gradleProperty("nativeJobs").orElse("2").get(), "-DANDROID_STL=c++_shared", "-DLT_FIRMWARE_DIR=" + providers.gradleProperty("firmwareDir").orElse(file("../../Portable/firmware").absolutePath).get(), "-DXPWN_SOURCE=" + providers.gradleProperty("xpwnSource").orElse("").get(), "-DLT_NATIVE_DEPS_ROOT=" + providers.gradleProperty("nativeDepsRoot").orElse("").get(), "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get()) } }
     }
-    buildFeatures { compose = true; aidl = true }
+    buildFeatures { compose = true; aidl = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
@@ -30,6 +36,7 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    testImplementation("junit:junit:4.13.2")
 }
 
 providers.gradleProperty("buildRoot").orNull?.let { output ->
