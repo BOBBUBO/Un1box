@@ -30,6 +30,25 @@ different bytes rejects admission and requires another actual image inspection.
 No scene classifier or new Home/editor label is produced. Use one native screenshot
 writer during this check so another observer cannot overwrite the receipt's file.
 
+For the reviewed n72 portrait320x480 route, the private adapter can explicitly
+select `scripts/lock-continuity.py` instead of full-BMP equality. It compares exact
+raw bytes in three fixed caller-inspected anchors: the Earth wallpaper
+`(28,120)-(292,399)`, slider knob `(20,407)-(94,459)` and lock symbol
+`(150,1)-(170,18)`. Clock digits and animated slider caption are excluded; all
+other pixels outside those declared anchors are also not compared. Retain the
+complete original/current images and per-anchor hashes. This is continuity with
+an actual prior Lock inspection, not recognition of a new scene or a generic
+device/layout detector. Other shapes/formats reject. No tolerances, resized
+images or learned pixel masks are used.
+
+During rewake, unmatched transitional anchors remain evidence while the loop
+boundedly awaits exact matching anchors at at most two captures per second. It
+never admits unmatched Earth, knob or lock pixels; an unrelated/different scene
+times out safely. The original60s inspection reuse,12s capture budget, owning
+PID/window/viewport checks and fresh source/diagnostic limits remain unchanged.
+Neither this Lock-specific mask nor its timestamp semantics apply to Home or
+editor labels; their separately inspected continuity gates remain explicit.
+
 Arm observation before this sequence or use the admission captures themselves;
 do not wait for an observer, image conversion or another model roundtrip after
 admission and before input. Inspect a separate capture after balanced release.
@@ -71,6 +90,7 @@ Run the target-free policy regression with:
 python3 Linux/scripts/test-inspected-continuity.py
 python3 Linux/scripts/test-visual-gates.py
 python3 Linux/scripts/test-sleep-wake.py
+python3 Linux/scripts/test-lock-continuity.py
 ```
 
 It exercises the production admission policy with a controlled clock and retained
