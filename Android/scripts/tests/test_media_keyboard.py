@@ -1,0 +1,136 @@
+import argparse
+import contextlib
+import copy
+import importlib.util
+import io
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location('keyboard', Path(__file__).resolve().parents[1] / 'drive-media-keyboard.py')
+k = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(k)
+
+
+def binding():
+    prior = {'package': k.PACKAGE, 'serial': 'serial', 'workerStartTicks': 123,
+             'spec': {'workerPid': 71, 'workerUid': 10179, 'recordId': 'a'*32,
+                      'artifactPins': {'mainApkSha256': 'b'*64}}}
+    b = {'schema': 1, 'serial': 'serial', 'scratchNoteApproved': True, 'preservesExistingTestNote': True,
+         'durationSeconds': 30, 'mediaFolder': 'media-evidence-1792015989831',
+         'measurementStartDeviceBootTimeMs': 100000, 'mainApkSha256': 'b'*64, 'testApkSha256': 'c'*64,
+         'rawGuestImageSha256': 'd'*64, 'androidImageSha256': 'e'*64, 'recordId': 'a'*32,
+         'scratchNoteIdentity': 'new-media-scratch', 'androidDimensions': [100, 200],
+         'guestViewportBounds': [5, 20, 95, 180], 'letterKeyRegion': [10, 100, 20, 110],
+         'backspaceKeyRegion': [80, 100, 90, 110], 'stableKeyboardRegions': [[10, 120, 30, 125], [50, 120, 70, 125]],
+         'surfaceGeneration': 8, 'inputCancellationRequests': 3}
+    return b, prior
+
+
+def sample(at=101000):
+    return {'label': 'running', 'hostElapsedMs': at, 'surfaceValid': True, 'viewFocused': True,
+            'status': {'pid': 71, 'uid': 10179, 'state': 'running', 'error': '', 'observations': {'surfaceGeneration': 8}},
+            'androidInput': {'cancellationRequests': 3, 'rejectedBatches': 0, 'androidContactIds': []}}
+
+
+def clock(at):
+    return {'lowerMs': at, 'upperMs': at+9}
+
+
+class KeyboardFenceTest(unittest.TestCase):
+    def test_quiet_cutoff_and_no_late_pair(self):
+        b, p = binding(); f = k.Fence(b, p)
+        self.assertEqual(f.cutoff, 127000)
+        f.start_pair(clock(124900)); f.finish_pair(clock(125900))
+        self.assertEqual(f.pairs, 1)
+        with self.assertRaises(ValueError): f.start_pair(clock(125000))
+        with self.assertRaises(ValueError): f.finish_pair(clock(126995))
+
+    def test_device_clock_only_cadence_and_no_catchup(self):
+        b, p = binding(); f = k.Fence(b, p)
+        f.start_pair(clock(101000)); f.finish_pair(clock(101500))
+        for at in (102999, 104501):
+            with self.assertRaises(ValueError): f.start_pair(clock(at))
+        f.start_pair(clock(103000)); self.assertEqual(f.last_pair_ms, 103000)
+
+    def test_phase_and_identity_surface_ownership_changes_abort(self):
+        b, p = binding()
+        edits = [('label', 'measurement-end'), ('surfaceValid', False), ('viewFocused', False)]
+        for key, value in edits:
+            s = sample(); s[key] = value
+            with self.assertRaises(ValueError): k.Fence(b, p).sample(s, clock(101100))
+        for key, value in [('pid', 72), ('uid', 10180), ('state', 'paused'), ('error', 'actual failure')]:
+            s = sample(); s['status'][key] = value
+            with self.assertRaises(ValueError): k.Fence(b, p).sample(s, clock(101100))
+        s = sample(); s['status']['observations']['surfaceGeneration'] = 9
+        with self.assertRaises(ValueError): k.Fence(b, p).sample(s, clock(101100))
+        for key, value in [('cancellationRequests', 4), ('rejectedBatches', 1), ('androidContactIds', [7])]:
+            s = sample(); s['androidInput'][key] = value
+            with self.assertRaises(ValueError): k.Fence(b, p).sample(s, clock(101100))
+
+    def test_stale_future_old_and_regressing_trace_rejected(self):
+        b, p = binding(); f = k.Fence(b, p)
+        f.sample(sample(), clock(101100))
+        for at, now in [(99999, 100000), (100999, 101100), (104000, 101100), (101000, 104000)]:
+            with self.assertRaises(ValueError): f.sample(sample(at), clock(now))
+
+    def test_proc_uptime_print_precision_is_a_bracket(self):
+        b, p = binding()
+        k.Fence(b, p).sample(sample(101005), clock(101000))
+        with self.assertRaises(ValueError):
+            k.Fence(b, p).sample(sample(101010), clock(101000))
+
+    def test_bounded_trace_tail_requires_complete_last_record(self):
+        data = b'partial old record\n' + json.dumps(sample()).encode() + b'\n'
+        self.assertEqual(k.latest_sample(data)['status']['pid'], 71)
+        for invalid in (data[:-1], b'', b'[]\n', b'{broken}\n', b'x'*65537+b'\n'):
+            with self.assertRaises((ValueError, json.JSONDecodeError)): k.latest_sample(invalid)
+
+    def test_only_fresh_scratch_binding_with_separate_keys(self):
+        b, p = binding(); k.binding_check(b, p)
+        for key, value in [('scratchNoteApproved', False), ('preservesExistingTestNote', False),
+                           ('durationSeconds', 1800), ('mainApkSha256', 'f'*64), ('recordId', 'f'*32),
+                           ('mediaFolder', 'latest'), ('letterKeyRegion', [80, 100, 90, 110]),
+                           ('guestViewportBounds', [0, 0, 5, 10]), ('surfaceGeneration', 0)]:
+            changed = copy.deepcopy(b); changed[key] = value
+            with self.assertRaises(ValueError): k.binding_check(changed, p)
+
+    def test_pair_count_bound_cannot_be_extended_by_observer(self):
+        b, p = binding(); f = k.Fence(b, p)
+        f.pairs = 15
+        with self.assertRaises(ValueError): f.start_pair(clock(101000))
+        b['durationSeconds'] = 1200
+        self.assertEqual(k.Fence(b, p).maximum_pairs, 600)
+        self.assertEqual(k.Fence(b, p).cutoff, 1297000)
+
+    def test_actual_png_roi_detects_layout_and_pixel_change(self):
+        from PIL import Image
+        b, _ = binding()
+        def png(image):
+            out = io.BytesIO(); image.save(out, format='PNG'); return out.getvalue()
+        image = Image.new('RGB', (100, 200), (20, 30, 40))
+        before = k.image_regions(png(image), b)
+        image.putpixel((10, 120), (1, 2, 3))
+        self.assertNotEqual(before, k.image_regions(png(image), b))
+        with self.assertRaises(ValueError): k.image_regions(png(Image.new('RGB', (101, 200))), b)
+
+    def test_plan_only_never_constructs_target_collector(self):
+        b, p = binding(); android, raw = b'approved-android', b'approved-raw'
+        b['androidImageSha256'] = k.sha(android); b['rawGuestImageSha256'] = k.sha(raw)
+        helper = type('Helper', (), {'validate_spec': lambda self, x: None, 'Collector': lambda *args, **kwargs: self.fail('target access')})()
+        monitor = type('Monitor', (), {'load_collector': lambda self: helper})()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name, data in [('keyboard.json', json.dumps(b).encode()), ('before.json', json.dumps(p).encode()), ('android.png', android), ('raw.png', raw)]:
+                (root/name).write_bytes(data)
+            args = argparse.Namespace(keyboard=root/'keyboard.json', binding=root/'before.json', android_image=root/'android.png', raw_guest_image=root/'raw.png', serial='serial', execute=False, out=root/'never-created')
+            with patch.object(k, 'load_monitor', return_value=monitor), patch.object(k, 'image_regions', return_value=['pin1', 'pin2']), contextlib.redirect_stdout(io.StringIO()) as output:
+                k.run(args)
+            self.assertEqual(json.loads(output.getvalue())['status'], 'PLAN_ONLY_NO_ADB')
+            self.assertFalse(args.out.exists())
+
+
+if __name__ == '__main__':
+    unittest.main()
