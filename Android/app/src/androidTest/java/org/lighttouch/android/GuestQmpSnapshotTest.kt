@@ -54,7 +54,10 @@ class GuestQmpSnapshotTest {
                         scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
                         worker.start(requireNotNull(record))
                     }
-                    receipt.put("snapshotOnly", snapshotOnly).put("holdSeconds", arguments.getString("qmpHoldSeconds", "0").toLong())
+                    val requestedHoldSeconds = arguments.getString("qmpHoldSeconds", "0").toLong()
+                    val holdSeconds = requestedHoldSeconds.coerceIn(0, 3600)
+                    receipt.put("snapshotOnly", snapshotOnly).put("requestedHoldSeconds", requestedHoldSeconds)
+                        .put("holdSeconds", holdSeconds)
                     assertEquals(started.toString(), "", started.getString("error"))
                     val endpoint = File(requireNotNull(started.getString("debugQmpPath")))
                     val deadline = SystemClock.elapsedRealtime() + 120_000
@@ -85,7 +88,7 @@ class GuestQmpSnapshotTest {
                     repeat(count) { capture(it, "snapshot"); Thread.sleep(3000) }
                     receipt.put("recordId", record).put("diagnosisCaptured", true).put("workerPid", initial.getInt("pid"))
                         .put("appUid", Process.myUid()).put("privateEndpoint", endpoint.absolutePath).put("snapshots", snapshots)
-                    val holdMs = arguments.getString("qmpHoldSeconds", "0").toLong().coerceIn(0, 3600) * 1000
+                    val holdMs = holdSeconds * 1000
                     receipt.put("stage", if (holdMs > 0) "holding-foreground" else "complete")
                     File(evidence, "result.json").writeText(receipt.toString(2))
                     val holdDeadline = SystemClock.elapsedRealtime() + holdMs
