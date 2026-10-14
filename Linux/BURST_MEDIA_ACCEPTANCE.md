@@ -1,4 +1,8 @@
-# Planned 20-minute stock burst-audio measurement
+# Planned Poco 20-minute stock burst-audio measurement
+
+The required1200s sustained workload is the Poco G7 gate. Linux uses a separately
+reviewed bounded workload and reports actual duration; this document does not
+add a mandatory20-minute Linux test or extend its outer deadline.
 
 This plan makes no guest acceptance claim. Root owns any phone/GUI/controller
 allocation, actual calibration and final evidence review. The offline reviewer
