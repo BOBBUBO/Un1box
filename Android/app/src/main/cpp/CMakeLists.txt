@@ -16,6 +16,19 @@ else()
 endif()
 add_subdirectory("${LT_PORTABLE_DIR}" "${CMAKE_BINARY_DIR}/portable")
 add_library(lighttouch_jni SHARED lighttouch_jni.cpp)
+# Optimize frame conversion and the shared publisher/control loop in Debug
+# without replacing its symbols/assertion flags or changing release policy.
+# Runtime.cpp belongs to the Portable target's source-property directory.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR
+   (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
+    CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "GNU"))
+    set(LT_ANDROID_DEBUG_OPTIMIZATION "$<$<CONFIG:Debug>:-O2>")
+    set_property(SOURCE lighttouch_jni.cpp APPEND PROPERTY
+                 COMPILE_OPTIONS "${LT_ANDROID_DEBUG_OPTIMIZATION}")
+    set_property(SOURCE "${LT_PORTABLE_DIR}/src/Runtime.cpp"
+                 TARGET_DIRECTORY lighttouch_runtime APPEND PROPERTY
+                 COMPILE_OPTIONS "${LT_ANDROID_DEBUG_OPTIMIZATION}")
+endif()
 target_include_directories(lighttouch_jni PRIVATE "${LT_PORTABLE_DIR}/include")
 target_link_libraries(lighttouch_jni PRIVATE lighttouch_runtime android log jnigraphics)
 target_link_options(lighttouch_jni PRIVATE "-Wl,-z,max-page-size=16384")
