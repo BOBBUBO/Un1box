@@ -537,3 +537,20 @@ prevent later screenshots from being presented as a different contact phase.
 Clean shutdown was confirmed with exit0. Raw images, exact controller snapshots,
 request/source timing, wire traces and concurrent load remain private evidence;
 this is bounded Linux behavior evidence, not physical input or overall gate closure.
+
+For a lifecycle or recovery retest, include input boundaries as distinct
+observations. Begin inside the displayed image, move outside its letterbox,
+then return inside while the pointer remains held. If the adapter cancels the
+native contacts, subsequent MOVE/UP events must be suppressed until a fresh
+DOWN. A viewport resize or Surface replacement with held contacts likewise
+needs a balanced cancellation and a separately inspected fresh gesture. Retain
+logical contact IDs, cancellation/rejection observations and actual wire/frame
+receipts; an empty adapter error or a handled event is not guest admission.
+
+Keep raw input source time, ordered admission time, frame-source time and capture
+time separate. Millisecond source ties may receive bounded nanosecond ordinals;
+a genuinely backwards source time remains a rejected gesture. Never reset a
+worker's ordering merely because a View was recreated or contacts were cancelled.
+A fresh process starts a new ordering scope. Host ordering tests and pending
+FRAME_READ counts are useful regressions, while current pixels, complete transfer
+inferences and confirmed lifecycle receipts remain separate target observations.
