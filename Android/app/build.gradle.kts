@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 android {
     namespace = "org.lighttouch.android"
@@ -116,7 +118,7 @@ tasks.register("recordApkRuntimeArtifacts") {
         val artifacts = configurations.getByName(configurationName.get()).resolvedConfiguration.resolvedArtifacts
             .sortedBy { "${it.moduleVersion.id}:${it.name}:${it.classifier ?: ""}" }
             .map { artifact ->
-                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                val digest = MessageDigest.getInstance("SHA-256")
                 artifact.file.inputStream().use { input ->
                     val block = ByteArray(1024 * 1024)
                     while (true) { val size = input.read(block); if (size < 0) break; digest.update(block, 0, size) }
