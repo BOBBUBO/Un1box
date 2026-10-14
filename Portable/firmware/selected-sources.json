@@ -111,7 +111,18 @@
         "path": "hfs/fastunicodecompare.c",
         "reason": "Apple TN1150 original sample grant unresolved; unused binary HFSX baseline"
       }
-    ]
+    ],
+    "selected_source_export": {
+      "manifest": "xpwn-selected.SHA256SUMS",
+      "manifest_sha256": "d959b407c202b904c7ec1f18dad4f2282f8f5886b306440064afbe44236db9b3",
+      "verified_original_files": 35,
+      "exported_files": 41,
+      "required_headers": 8,
+      "metadata": "XPWN-COMMIT (not fabricated Git identity)",
+      "original_and_exported_generation_parity": "PASS",
+      "corrupt_header_rejected": "PASS",
+      "export_build": "NOT_TESTED; configure and generated source parity verified"
+    }
   },
   "original_activation": {
     "path": "Packages/FirmwareKit/Sources/CActivation/activation.c",
@@ -159,7 +170,6 @@
   },
   "validated_exclusion": {
     "tested_source": "0799c2ec72a16acba02cc2ec431cbadfd5ff1f75",
-    "generated_recipe_sha256": "6c39f63696958597ea96665b59055120b8ef80983d0e0360d241d265590a539d",
     "linux_dso": {
       "sha256": "0ece9d6c814b4294e5e8c1bd1e7bf18583e607506d2bde7606489360bb172e65",
       "apple_symbols_absent": true,
@@ -178,6 +188,7 @@
       "page_alignment": 16384
     },
     "android_preparation_after_exclusion": "NOT_TESTED",
-    "guest_boot_after_exclusion": "NOT_TESTED"
+    "guest_boot_after_exclusion": "NOT_TESTED",
+    "generation_recipe_at_tested_source_sha256": "6c39f63696958597ea96665b59055120b8ef80983d0e0360d241d265590a539d"
   }
 }

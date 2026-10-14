@@ -32,9 +32,43 @@ source export needs the CMake-read originals btree.c, rawfile.c, catalog.c and
 volume.c, all compiled common/HFS/DMG/minizip inputs, required headers and license
 texts. `selected-sources.json` documents the compilation inputs and historical
 before/after exclusion artifacts; compiler dependency files establish the header
-closure. A curated export must also preserve a verified upstream identity and
-support the source pin check used by CMake. The current Git-checkout build route
-uses the exact upstream commit; a source export must not invent Git identity.
+closure. The public `xpwn-selected.SHA256SUMS` pins 35 original files, including
+all eight required headers plus upstream GPL/license documentation. CMake
+authenticates their content in both the Git-checkout and plain-export routes.
+The exporter records the real upstream pin in XPWN-COMMIT; it creates no Git
+repository or fabricated commit identity. Its 41 files exclude unused folding
+source, Git objects, applications and unrelated inputs. Generate the source
+export from an existing pinned public-source checkout:
+
+```sh
+python3 Portable/firmware/tools/export-xpwn-source.py \
+  /sources/xpwn-20c32e5 /build/public-source/xpwn-selected
+cmake -S Portable/firmware -B /build/firmware \
+  -DXPWN_SOURCE=/build/public-source/xpwn-selected
+cmake --build /build/firmware -j1
+ctest --test-dir /build/firmware --output-on-failure
+```
+
+The export and original routes were configured independently; all four generated
+worker sources are byte-identical. A corrupted selected header is rejected.
+Configuration/generation parity is verified; compilation from the exported
+directory has not been separately run. The original-checkout host/ARM64 library
+qualification is recorded in the manifest.
+
+For a deterministic public source archive, include the project revision and this
+export, dependency source/license manifests and instructions. Git archive omits
+untracked local inputs; export only the public project revision being conveyed:
+
+```sh
+git archive --format=tar --prefix=LightTouch/ ACTUAL_SOURCE_REVISION > LightTouch.tar
+tar -C /build/public-source --sort=name --mtime=@0 --owner=0 --group=0 \
+  --numeric-owner -cf xpwn-selected.tar xpwn-selected
+gzip -n xpwn-selected.tar
+```
+
+Include or provide matching dependency source as required by its terms; the
+notice generator's publisher URL must identify this complete correspondence,
+not just the project archive with its external XPwn inputs omitted.
 
 Use the target dependency manifest and toolchain recipe for OpenSSL 3.6.3,
 including its unmodified Apache license and retained source notices. Only libcrypto
