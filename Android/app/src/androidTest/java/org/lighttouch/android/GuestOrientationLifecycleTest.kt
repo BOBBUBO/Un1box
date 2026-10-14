@@ -143,22 +143,78 @@ class GuestOrientationLifecycleTest {
                     }
                     fun clickControl(text: String) {
                         val deadline = SystemClock.elapsedRealtime() + 5_000
+                        val attempts = JSONArray()
+                        val lookup = JSONObject().put("text", text).put("deadlineElapsedMs", deadline)
+                            .put("nodeLimit", 2048).put("depthLimit", 64).put("attempts", attempts)
+                            .put("clicked", false)
+                        val lookups = result.optJSONArray("semanticControlLookups")
+                            ?: JSONArray().also { result.put("semanticControlLookups", it) }
+                        check(lookups.length() < 32) { "Semantic control lookup receipt limit" }
+                        lookups.put(lookup)
+                        var attemptCount = 0
                         do {
-                            val matches = instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text)
-                                ?.filter { it.packageName?.toString() == context.packageName && it.text?.toString() == text }
-                                .orEmpty()
-                            val controls = matches.mapNotNull { label ->
-                                var node: AccessibilityNodeInfo? = label
-                                while (node != null && node.packageName?.toString() == context.packageName) {
-                                    if (node.isClickable && node.isEnabled) return@mapNotNull node
-                                    node = node.parent
+                            val ownedNodes = java.util.IdentityHashMap<AccessibilityNodeInfo, Boolean>()
+                            fun retain(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? = node?.also { ownedNodes[it] = true }
+                            val attempt = JSONObject().put("elapsedMs", SystemClock.elapsedRealtime())
+                            attemptCount++; lookup.put("attemptCount", attemptCount)
+                            if (attempts.length() == 8) attempts.remove(0)
+                            attempts.put(attempt)
+                            try {
+                                val root = retain(instrumentation.uiAutomation.rootInActiveWindow)
+                                val window = root?.windowId
+                                attempt.put("rootPackage", root?.packageName?.toString() ?: JSONObject.NULL)
+                                    .put("rootWindowId", window ?: JSONObject.NULL)
+                                val controls = mutableListOf<AccessibilityNodeInfo>()
+                                var labels = 0; var visited = 0
+                                if (root != null && root.packageName?.toString() == context.packageName) {
+                                    // Compose 1.7.8's virtual provider inherits a null text-search
+                                    // implementation. Traverse its actual virtual children instead.
+                                    val pending = java.util.ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+                                    pending.add(root to 0)
+                                    while (pending.isNotEmpty() && SystemClock.elapsedRealtime() < deadline) {
+                                        val (node, depth) = pending.removeLast()
+                                        check(++visited <= 2048 && depth <= 64) { "Semantic tree traversal limit" }
+                                        if (node.packageName?.toString() != context.packageName || node.windowId != window) continue
+                                        if (node.text?.toString() == text && node.isVisibleToUser) {
+                                            labels++
+                                            var ancestor: AccessibilityNodeInfo? = node
+                                            var distance = 0
+                                            while (ancestor != null && distance++ <= 64 && SystemClock.elapsedRealtime() < deadline &&
+                                                ancestor.packageName?.toString() == context.packageName && ancestor.windowId == window) {
+                                                if (ancestor.isClickable && ancestor.isEnabled && ancestor.isVisibleToUser) {
+                                                    controls.add(ancestor); break
+                                                }
+                                                ancestor = retain(ancestor.parent)
+                                            }
+                                        }
+                                        check(node.childCount <= 2048) { "Semantic child-count limit" }
+                                        for (index in 0 until node.childCount) {
+                                            if (SystemClock.elapsedRealtime() >= deadline) break
+                                            check(visited + pending.size < 2048) { "Semantic node budget exhausted" }
+                                            retain(node.getChild(index))?.let { pending.add(it to depth + 1) }
+                                        }
+                                    }
                                 }
-                                null
-                            }.distinct()
-                            check(controls.size <= 1) { "Ambiguous semantic production control: $text" }
-                            if (controls.singleOrNull()?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return
-                            Thread.sleep(100)
+                                val unique = controls.distinct()
+                                attempt.put("visitedNodes", visited).put("exactVisibleLabels", labels).put("enabledClickableCandidates", unique.size)
+                                check(unique.size <= 1) { "Ambiguous semantic production control: $text" }
+                                val current = retain(instrumentation.uiAutomation.rootInActiveWindow)
+                                val sameWindow = root != null && current?.windowId == window && current?.packageName?.toString() == context.packageName
+                                attempt.put("currentRootPackage", current?.packageName?.toString() ?: JSONObject.NULL)
+                                    .put("currentRootWindowId", current?.windowId ?: JSONObject.NULL).put("sameActiveWindow", sameWindow)
+                                val clicked = SystemClock.elapsedRealtime() < deadline && sameWindow &&
+                                    unique.singleOrNull()?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+                                attempt.put("actionReturnedTrue", clicked)
+                                if (clicked) { lookup.put("clicked", true); persist(); return }
+                            } catch (failure: Throwable) {
+                                attempt.put("failure", failure.toString()); persist(); throw failure
+                            } finally {
+                                @Suppress("DEPRECATION")
+                                for (node in ownedNodes.keys) node.recycle()
+                            }
+                            Thread.sleep(minOf(100, maxOf(0, deadline - SystemClock.elapsedRealtime())))
                         } while (SystemClock.elapsedRealtime() < deadline)
+                        persist()
                         error("Semantic production control unavailable: $text")
                     }
                     fun resume() { worker.pause(false); awaitState("running"); readyDisplay(); Thread.sleep(300) }
