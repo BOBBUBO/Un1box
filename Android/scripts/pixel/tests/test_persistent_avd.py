@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-import hashlib,json,subprocess,sys,tempfile,time,unittest
+import contextlib,hashlib,io,json,subprocess,sys,tempfile,time,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -9,6 +9,44 @@ import pixel_supervisor
 
 
 class Persistent(unittest.TestCase):
+    def owner_readiness_case(self,never_ready):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);out=root/'owner';launcher=root/'launcher';launcher.write_text('# synthetic')
+            plan={'output':str(out),'avd':'LightTouch_pixel_10_API36_16384_24_8192','ramMB':8192,'pageBytes':16384,
+                'launcher':str(launcher),'launcherSha256':hashlib.sha256(launcher.read_bytes()).hexdigest(),'adb':'/synthetic/adb'}
+            path=root/'plan.json';path.write_text(json.dumps(plan));(root/'ROOT-PERSISTENT-AVD-GRANT.json').write_text(json.dumps({'owner':'/root/pixel','persistentAvdAuthorized':True}))
+            avd=mock.Mock(pid=123);avd.poll.return_value=None
+            avd.wait.side_effect=lambda timeout:setattr(avd.poll,'return_value',0)
+            ticks=[0];probes=[0];calls=[]
+            def now():ticks[0]+=1;return ticks[0]
+            def sleep(seconds):
+                if (out/'owner.json').exists() or (out/'readiness-unconfirmed.json').exists():
+                    self.assertIsNone(avd.poll());(out/'REQUEST-STOP-AVD').write_text('explicit synthetic user stop')
+            def run(argv,**kw):
+                calls.append(argv)
+                if argv[-1]=='devices':return subprocess.CompletedProcess(argv,0,b'List of devices\n',b'')
+                if argv[-2:]==['emu','kill']:
+                    self.assertTrue((out/'REQUEST-STOP-AVD').exists());return subprocess.CompletedProcess(argv,0,b'OK',b'')
+                self.assertLessEqual(kw['timeout'],2);probes[0]+=1
+                if never_ready or probes[0]==1:raise subprocess.TimeoutExpired(argv,kw['timeout'],output=b'partial',stderr=b'probe timeout')
+                if probes[0]==2:raise OSError('transient adb unavailable')
+                value=b'1\n' if argv[-1]=='sys.boot_completed' else b'16384\n' if argv[-1]=='PAGE_SIZE' else b'11111111-2222-3333-4444-555555555555\n'
+                return subprocess.CompletedProcess(argv,0,value,b'')
+            q=mock.Mock(side_effect=[({},[]),({123:10,124:11},[(124,11)])])
+            with mock.patch.object(persistent.subprocess,'run',side_effect=run),mock.patch.object(persistent.subprocess,'Popen',return_value=avd) as spawn, \
+                 mock.patch.object(persistent,'identity',return_value=10),mock.patch.object(persistent,'owned_qemu',q), \
+                 mock.patch.object(persistent.time,'monotonic',side_effect=now),mock.patch.object(persistent.time,'sleep',side_effect=sleep),contextlib.redirect_stdout(io.StringIO()):
+                persistent.launch_owner(path)
+            spawn.assert_called_once();avd.kill.assert_not_called();avd.terminate.assert_not_called()
+            errors=[json.loads(line) for line in (out/'readiness-probe-errors.jsonl').read_text().splitlines()]
+            self.assertTrue(all(e['emulatorPreserved'] for e in errors));self.assertTrue((out/'owner-terminal.json').exists())
+            if never_ready:self.assertTrue((out/'readiness-unconfirmed.json').exists());self.assertFalse((out/'owner.json').exists())
+            else:self.assertTrue((out/'owner.json').exists());self.assertEqual(q.call_count,2)
+
+    def test_transient_adb_timeouts_errors_and_zero_qemu_retry_same_owner(self):self.owner_readiness_case(False)
+
+    def test_original210_expiry_keeps_owner_alive_unconfirmed_until_explicit_stop(self):self.owner_readiness_case(True)
+
     def test_attach_flag_is_separate_from_original_guest_memory_and_clock(self):
         owner,rest=pixel_supervisor.attach_options(['--attach-avd-owner','/private/owner.json','--avd','same'])
         self.assertEqual(owner,'/private/owner.json');self.assertEqual(rest,['--avd','same'])
