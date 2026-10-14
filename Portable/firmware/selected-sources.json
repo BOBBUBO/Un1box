@@ -1,7 +1,6 @@
 {
   "schema": 1,
   "scope": "firmware selected compilation inputs, not complete APK clearance",
-  "tested_source": "9d09845a56c19ec03905ef846a73b1f202deb7cf",
   "xpwn": {
     "commit": "20c32e5c12d1b22a9d55a59a0ff6267f539b77f4",
     "project_license": "GPL-3.0-only",
@@ -33,10 +32,6 @@
       {
         "path": "hfs/xattr.c",
         "sha256": "febf3cd7957f28517a653e62d43de7082df9d67c9a6281dc4091dc648dd71380"
-      },
-      {
-        "path": "hfs/fastunicodecompare.c",
-        "sha256": "f7e8ad5a53c67ef2c1e1196ec4483f0a690a032faba635b23796454da1a66292"
       },
       {
         "path": "hfs/flatfile.c",
@@ -110,6 +105,12 @@
         "path": "minizip/ioapi.h",
         "sha256": "29a7577979218e952bb10ea179a90bd59d70805b334161f9ef34598fc0636142"
       }
+    ],
+    "excluded_inputs": [
+      {
+        "path": "hfs/fastunicodecompare.c",
+        "reason": "Apple TN1150 original sample grant unresolved; unused binary HFSX baseline"
+      }
     ]
   },
   "original_activation": {
@@ -123,7 +124,16 @@
     "linked_archive_sha256": "63f61e845e1cb6051976dfbb99ee79bbe095b606db69c1979be625f46f0a408f",
     "libssl_linked": false
   },
-  "android_arm64_dso": {
+  "apple_sample": {
+    "url": "https://developer.apple.com/library/archive/technotes/tn/downloads/tn1150.1.hqx",
+    "hqx_sha256": "c1ed4db42b31458221e6d77cea8237a151111e3ca625231348e76e75105f3929",
+    "source_sha256": "fa6c4908fe8b3cc4d1bf3ca9b1e9e5543d52ef61dde5c8eff3ae1231f3744432",
+    "retained_table_entries_identical": 2816,
+    "license_grant_found": false,
+    "excluded_from_current_compilation": true
+  },
+  "audit_before_exclusion_source": "9d09845a56c19ec03905ef846a73b1f202deb7cf",
+  "android_arm64_before_exclusion_dso": {
     "sha256": "e47c5a8630e9baf0445a842cc1af7b77b079bd9cb8fdc417f596ccdee4482e17",
     "needed": [
       "libz.so",
@@ -134,11 +144,17 @@
     ],
     "page_alignment": 16384
   },
-  "apple_sample": {
-    "url": "https://developer.apple.com/library/archive/technotes/tn/downloads/tn1150.1.hqx",
-    "hqx_sha256": "c1ed4db42b31458221e6d77cea8237a151111e3ca625231348e76e75105f3929",
-    "source_sha256": "fa6c4908fe8b3cc4d1bf3ca9b1e9e5543d52ef61dde5c8eff3ae1231f3744432",
-    "retained_table_entries_identical": 2816,
-    "license_grant_found": false
+  "baseline_filesystem": {
+    "signature": "0x4858",
+    "version": 5,
+    "catalog_key_compare_type": "0xbc",
+    "binary_comparator_unchanged": true,
+    "unsupported": [
+      "HFS+",
+      "case-folded HFSX",
+      "unknown catalog comparison mode",
+      "non-v5 HFSX"
+    ],
+    "post_exclusion_build_validation": "PENDING resource allocation"
   }
 }

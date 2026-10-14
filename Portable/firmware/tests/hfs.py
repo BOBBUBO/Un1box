@@ -1,5 +1,5 @@
 # Build-time synthetic HFSX corpus. Contains no Apple firmware or SDK files.
-import pathlib, struct, subprocess, tempfile, sys
+import hashlib, pathlib, struct, subprocess, tempfile, sys
 
 def fixture(path):
     block, blocks = 4096, 512
@@ -108,6 +108,24 @@ if __name__ == '__main__':
         run('put', '/test/case', lower, '644', '0')
         run('get', '/test/Case', copy); assert copy.read_bytes() == upper.read_bytes()
         run('get', '/test/case', copy); assert copy.read_bytes() == lower.read_bytes()
+        # Folding implementations are intentionally excluded from this baseline
+        # library. Reject incompatible headers without writes or a poisoned
+        # parser: do not silently apply binary ordering to their sorted trees.
+        for label, signature, version, compare in [
+            ('hfsplus', 0x482b, 4, 0xcf),
+            ('hfsx-folded', 0x4858, 5, 0xcf),
+            ('hfsx-unknown', 0x4858, 5, 0x00),
+            ('hfsx-version', 0x4858, 4, 0xbc),
+        ]:
+            unsupported = root / (label + '.img'); fixture(unsupported)
+            with unsupported.open('r+b') as f:
+                f.seek(1024); f.write(struct.pack('>HH', signature, version))
+                f.seek(4 * 4096 + 14 + 37); f.write(bytes([compare]))
+            before = hashlib.sha256(unsupported.read_bytes()).digest()
+            result = subprocess.run([str(tool), str(unsupported), 'mkdir', '/rejected', '755', '0'],
+                                    timeout=30, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            assert result.returncode == 1, label + ' was admitted'
+            assert hashlib.sha256(unsupported.read_bytes()).digest() == before, label + ' was modified'
         # A known XPwn exit(0) path must return failure instead of terminating.
         broken = root / 'no-free-space.img'; fixture(broken)
         with broken.open('r+b') as f:

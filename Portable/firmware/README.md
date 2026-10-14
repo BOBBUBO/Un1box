@@ -93,8 +93,14 @@ unrooted preparation are acceptance requirements beyond host compilation.
   LightTouch's GPL-2.0-or-later grant permits the GPLv3 option for this firmware
   combination. Keep GPL-3.0 firmware components separate from GPL-2.0-only emulator
   linkage. The [selected-source audit](LICENSE-AUDIT.md) records exact inputs,
-  retained notices and the unresolved Apple TN1150 sample provenance; it does not
+  retained notices and the exclusion of Apple TN1150 folding material; it does not
   claim complete APK distribution clearance.
+
+Only binary-comparison HFSX version 5 is accepted by the filesystem worker.
+The n72 stock and prepared catalog both use comparison type `0xBC`; the existing
+binary comparator is preserved unchanged. HFS+, case-folded HFSX and unknown
+comparison modes fail rather than receiving a different ordering. Their unused
+Apple-derived folding implementation/table is excluded from compilation.
 
 Synthetic format/transaction tests are source-only evidence. The format test
 compares all 50 NAND metadata pages against the independent upstream legacy
