@@ -28,10 +28,37 @@ Only genuine Home/editor observations can authorize Notes typing. A later read
 worker requires the visible unique marker, confirmed clean shutdown, actual clean
 frontend exit and an available lease.
 
+For Home or a focused Notes editor, invoke `scripts/record-inspected-gate.py`
+immediately after actually inspecting that scene. It keeps the honest original
+inspection time and scene assertion, obtains a separate fresh native screenshot,
+checks full byte equality, current owner/focus/viewport and awake guest status, and
+records its verification time separately. It never calls the verification a new
+model inspection. Both inspection and verification must precede the original
+129/179-second deadline; the original inspection can be reused for at most 60
+seconds at admission. Current source age is bounded at two seconds and diagnostics
+at one second when verification finishes. Changed pixels reject the gate and stay
+as evidence for a new actual inspection. This additive continuity route avoids an
+accidental five-second image-to-tool roundtrip requirement; legacy gates keep
+their existing validation. A previously admitted gate remains a receipt of that
+admission when the guest later intentionally opens another app.
+
+```sh
+python3 Linux/scripts/record-inspected-gate.py --run /private/run \
+  --capture /private/run/ACTUALLY_VIEWED_CAPTURE --scene home \
+  --output home-continuity-01 --model-inspected --execute
+```
+
+Use `--scene editor` only after actually viewing the focused new Notes editor.
+The command defaults to a plan without `--execute`. It neither starts nor stops
+a worker. Its gate is permission for the already scheduled bounded action, not
+guest acceptance; actual typed text, durable save and a fresh-worker reread must
+still be inspected independently.
+
 Run the target-free policy regression with:
 
 ```sh
 python3 Linux/scripts/test-inspected-continuity.py
+python3 Linux/scripts/test-visual-gates.py
 ```
 
 It exercises the production admission policy with a controlled clock and retained

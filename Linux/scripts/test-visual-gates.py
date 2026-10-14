@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Offline watchdog receipt checks; no processes, engine or guest acceptance."""
 import importlib.util
+import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -113,6 +115,114 @@ class Gates(unittest.TestCase):
 
     def test_home_gate_cannot_restart_missing_editor_deadline(self):
         self.watch_fixture(True)
+
+
+class ContinuityGates(unittest.TestCase):
+    def setUp(self):
+        self.identity = dict(frontend_pid=12, start_ticks='34', hello_monotonic_ns=1_000_000_000)
+        self.original = dict(observed_monotonic_ns=100_000_000_000, sequence=10,
+                             frame_monotonic_ns=99_900_000_000, diagnostics_monotonic_ns=99_950_000_000,
+                             sleeping=0, agent=1, backlight=245)
+        self.current = dict(self.original, observed_monotonic_ns=115_000_000_000, sequence=11,
+                            frame_monotonic_ns=114_900_000_000, diagnostics_monotonic_ns=114_950_000_000)
+        self.proof = dict(self.identity, owner_checked_monotonic_ns=115_010_000_000,
+                          worker_pid=13, worker_start_ticks='35',
+                          verified_monotonic_ns=115_020_000_000, window=42, viewport=[480, 800],
+                          status=dict(state=2, observed_monotonic_ns=115_000_000_000,
+                                      sleeping=0, agent=1, backlight=245))
+        self.gate = dict(self.identity, model_inspected=True, scene='Home Screen',
+                         worker_pid=13, worker_start_ticks='35',
+                         inspected_monotonic_ns=110_000_000_000, window=42, viewport=[480, 800],
+                         continuity=self.proof)
+        self.before = copy.deepcopy(self.gate)
+        self.current_bytes = b'full native BMP host fixture, not a guest'
+
+    def check(self, now=180_000_000_000):
+        return module.valid_continuity_gate(
+            self.gate, self.original, self.current, b'full native BMP host fixture, not a guest',
+            self.current_bytes, self.identity, 'Home Screen', 130_000_000_000, now)
+
+    def test_true_inspection_ten_seconds_after_original_capture_has_current_proof(self):
+        self.assertFalse(module.valid_gate(self.gate, self.original, self.identity,
+                                          'Home Screen', 130_000_000_000, 180_000_000_000))
+        self.assertTrue(self.check())
+        self.assertEqual(self.gate, self.before)
+        # A past admitted Home gate stays valid when Notes intentionally opens;
+        # later polls do not reset an epoch or demand the guest remain Home.
+        self.assertTrue(self.check(now=300_000_000_000))
+
+    def test_changed_clock_or_any_byte_rejects(self):
+        self.current_bytes += b'one clock pixel changed'
+        self.assertFalse(self.check())
+
+    def test_fake_scene_or_missing_model_observation_rejects(self):
+        self.gate['model_inspected'] = False
+        self.assertFalse(self.check())
+        self.gate['model_inspected'] = True
+        self.gate['scene'] = 'Lock Screen'
+        self.assertFalse(self.check())
+
+    def test_current_capture_must_follow_actual_inspection(self):
+        self.gate['inspected_monotonic_ns'] = 116_000_000_000
+        self.assertFalse(self.check())
+
+    def test_current_verification_cannot_extend_original_deadline(self):
+        self.proof['verified_monotonic_ns'] = 130_000_000_001
+        self.assertFalse(self.check())
+        self.proof['verified_monotonic_ns'] = 115_020_000_000
+        self.gate['hello_monotonic_ns'] += 1
+        self.assertFalse(self.check())
+
+    def test_original_inspection_reuse_bounded_at_admission(self):
+        self.gate['inspected_monotonic_ns'] = 54_000_000_000
+        self.original['observed_monotonic_ns'] = 53_000_000_000
+        self.original['frame_monotonic_ns'] = self.original['diagnostics_monotonic_ns'] = 53_000_000_000
+        self.assertFalse(self.check())
+
+    def test_stale_source_diagnostics_or_running_state_rejects(self):
+        for field, value in [('frame_monotonic_ns', 100_000_000_000),
+                             ('diagnostics_monotonic_ns', 110_000_000_000), ('sleeping', 1), ('agent', 2)]:
+            before = self.current[field]
+            self.current[field] = value
+            self.assertFalse(self.check(), field)
+            self.current[field] = before
+        self.proof['status']['state'] = 4
+        self.assertFalse(self.check())
+
+    def test_owner_window_viewport_and_future_times_reject(self):
+        for field, value in [('start_ticks', 'reused'), ('window', 43), ('viewport', [800, 480]),
+                             ('worker_start_ticks', 'reused-guest'),
+                             ('owner_checked_monotonic_ns', 115_030_000_000)]:
+            before = self.proof[field]
+            self.proof[field] = value
+            self.assertFalse(self.check(), field)
+            self.proof[field] = before
+        self.assertFalse(self.check(now=114_000_000_000))
+
+    def test_loader_reads_both_bounded_hashed_captures_and_checks_actual_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / 'worker.json').write_text(json.dumps({'pid': 13, 'start_ticks': '35'}))
+            for name, receipt in [('original', self.original), ('fresh', self.current)]:
+                path = root / name
+                path.mkdir()
+                (path / 'receipt.json').write_text(json.dumps(receipt))
+                (path / 'native.bmp').write_bytes(self.current_bytes)
+                description = dict(capture_directory=str(path),
+                                   receipt_sha256=hashlib.sha256((path / 'receipt.json').read_bytes()).hexdigest(),
+                                   bmp_sha256=hashlib.sha256((path / 'native.bmp').read_bytes()).hexdigest())
+                (self.gate if name == 'original' else self.proof).update(description)
+            (root / 'home-gate.json').write_text(json.dumps(self.gate))
+            self.assertTrue(module.load_gate(root, 'home-gate.json', self.identity,
+                                             'Home Screen', 130_000_000_000, 180_000_000_000))
+            # Even after the fresh hash is updated, different actual pixels
+            # cannot reuse the prior scene observation.
+            path = root / 'fresh' / 'native.bmp'
+            path.write_bytes(b'changed clock pixels')
+            self.proof['bmp_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+            (root / 'home-gate.json').write_text(json.dumps(self.gate))
+            self.assertFalse(module.load_gate(root, 'home-gate.json', self.identity,
+                                              'Home Screen', 130_000_000_000, 180_000_000_000))
 
 
 if __name__ == '__main__':

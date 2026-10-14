@@ -29,22 +29,75 @@ def valid_gate(gate, receipt, identity, scene, deadline_ns, now_ns):
         return False
 
 
+def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
+                          identity, scene, deadline_ns, now_ns):
+    """An actual prior scene inspection plus separately timed exact continuity.
+
+    This records a past admission, not a new model inspection. Its verification
+    must precede the original deadline; later watchdog polls do not age or reset
+    that already-admitted gate. The loader supplies actual bounded file bytes.
+    """
+    try:
+        proof = gate['continuity']
+        inspected = int(gate['inspected_monotonic_ns'])
+        verified = int(proof['verified_monotonic_ns'])
+        captured = int(current['observed_monotonic_ns'])
+        checked = int(proof['owner_checked_monotonic_ns'])
+        status = proof['status']
+        viewport = proof['viewport']
+        return (gate['model_inspected'] is True and gate['scene'] == scene and
+                all(gate[k] == proof[k] == identity[k] for k in identity) and
+                gate['worker_pid'] == proof['worker_pid'] and
+                gate['worker_start_ticks'] == proof['worker_start_ticks'] and
+                isinstance(proof['worker_pid'], int) and proof['worker_pid'] > 0 and
+                proof['worker_pid'] != identity['frontend_pid'] and bool(proof['worker_start_ticks']) and
+                identity['hello_monotonic_ns'] <= int(original['observed_monotonic_ns']) <=
+                inspected <= captured <= checked <= verified <= deadline_ns and verified <= now_ns and
+                0 <= verified - inspected <= 60_000_000_000 and
+                bool(original_bmp) and original_bmp == current_bmp and
+                all(int(r['sequence']) > 1 and int(r['sleeping']) == 0 and
+                    int(r['agent']) == 1 and int(r['backlight']) > 0 for r in (original, current)) and
+                0 <= int(original['observed_monotonic_ns']) - int(original['frame_monotonic_ns']) <= 2_000_000_000 and
+                0 <= int(original['observed_monotonic_ns']) - int(original['diagnostics_monotonic_ns']) <= 1_000_000_000 and
+                0 <= verified - captured <= 2_000_000_000 and
+                0 <= verified - int(current['frame_monotonic_ns']) <= 2_000_000_000 and
+                0 <= verified - int(current['diagnostics_monotonic_ns']) <= 1_000_000_000 and
+                0 <= verified - int(status['observed_monotonic_ns']) <= 1_000_000_000 and
+                int(status['state']) == 2 and int(status['sleeping']) == 0 and
+                int(status['agent']) == 1 and int(status['backlight']) > 0 and
+                isinstance(proof['window'], int) and proof['window'] > 0 and
+                gate['window'] == proof['window'] and gate['viewport'] == viewport and
+                len(viewport) == 2 and all(isinstance(v, int) and 0 < v <= 16384 for v in viewport))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def read_capture(root, description):
+    path = Path(description['capture_directory']).resolve()
+    if root not in path.parents:
+        raise ValueError('capture outside run')
+    if (path / 'receipt.json').stat().st_size > 16_384 or (path / 'native.bmp').stat().st_size > 64 * 1024 * 1024 + 54:
+        raise ValueError('capture bounds')
+    receipt_bytes = (path / 'receipt.json').read_bytes()
+    bitmap = (path / 'native.bmp').read_bytes()
+    if (hashlib.sha256(receipt_bytes).hexdigest() != description['receipt_sha256'] or
+            hashlib.sha256(bitmap).hexdigest() != description['bmp_sha256']):
+        raise ValueError('capture hashes changed')
+    receipt = json.loads(receipt_bytes)
+    return receipt.get('receipt', receipt), bitmap
+
+
 def load_gate(root, name, identity, scene, deadline_ns, now_ns):
     try:
         gate = json.loads((root / name).read_text())
-        path = Path(gate['capture_directory']).resolve()
-        if root not in path.parents:
-            return False
-        if (path / 'receipt.json').stat().st_size > 16_384 or (path / 'native.bmp').stat().st_size > 64 * 1024 * 1024 + 54:
-            return False
-        receipt_bytes = (path / 'receipt.json').read_bytes()
-        bitmap = (path / 'native.bmp').read_bytes()
-        if (
-                hashlib.sha256(receipt_bytes).hexdigest() != gate['receipt_sha256'] or
-                hashlib.sha256(bitmap).hexdigest() != gate['bmp_sha256']):
-            return False
-        receipt = json.loads(receipt_bytes)
-        receipt = receipt.get('receipt', receipt)
+        receipt, bitmap = read_capture(root, gate)
+        if 'continuity' in gate:
+            worker = json.loads((root / 'worker.json').read_text())
+            if gate['worker_pid'] != worker['pid'] or gate['worker_start_ticks'] != worker['start_ticks']:
+                return False
+            current, current_bitmap = read_capture(root, gate['continuity'])
+            return valid_continuity_gate(gate, receipt, current, bitmap, current_bitmap,
+                                         identity, scene, deadline_ns, now_ns)
         return valid_gate(gate, receipt, identity, scene, deadline_ns, now_ns)
     except (OSError, ValueError, TypeError, KeyError):
         return False
