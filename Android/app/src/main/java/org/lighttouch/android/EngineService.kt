@@ -110,7 +110,12 @@ class EngineService : Service() {
                     val state = observed.firstOrNull()
                     if (state == "stopped" || state == "failed") {
                         terminal = true
-                        if (state == "failed") error = "Guest worker failed; writable state retained: ${observed.getOrElse(1) { "" }}"
+                        if (state == "failed") {
+                            val nativeFailure = observed.getOrNull(2)?.takeIf { it.isNotEmpty() }
+                                ?: error.takeIf { it.isNotEmpty() }
+                                ?: observed.getOrElse(1) { "Shutdown was not confirmed" }
+                            error = "Guest worker failed; writable state retained: $nativeFailure"
+                        }
                         break
                     }
                     Thread.sleep(100)
