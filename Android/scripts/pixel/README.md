@@ -195,6 +195,13 @@ command lines are not a way to identify the parent. The generated
 the live original PID/start/argv and preserves the clock bytes and binding hash.
 An unknown tool handle is recorded as null in the original clock, never invented.
 
+Normal Start's marker gate requires the exact positive `LT_MARKER_ABSENT` shell
+status after proving the initialized state is readable. It rejects inaccessible,
+missing or symlinked state directories and present/dangling markers. It retains
+both actual streams and exit in `normal-marker-presence.json`; merged exec-out
+diagnostics, permission errors and timeouts never mean clean state. The check
+does not read, clear or rewrite a dirty marker.
+
 Parent SIGTERM/SIGHUP handlers perform no file IO: they retain signal/time fields
 in memory and unwind into the existing cleanup. Cleanup records
 `host-signals.json`, attempts the existing scoped Stop, then disposes owned

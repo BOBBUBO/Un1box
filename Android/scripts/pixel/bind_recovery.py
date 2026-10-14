@@ -5,11 +5,43 @@ import argparse
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
 from diagnostic_control import Capture, validate_binding, PACKAGE, SERIAL
 from memory_monitor import Sampler, process_ticks, worker_identity
+
+
+def normal_marker_absence(capture, root, output):
+    """Require a positive scoped status; exec-out may merge remote diagnostics."""
+    if not re.fullmatch(r'files/library/records/[0-9a-f]{32}', root):
+        raise ValueError('Invalid record presence scope')
+    state=root+'/state';path=state+'/.dirty'
+    checks=''
+    parts=state.split('/')
+    for i in range(1,len(parts)+1):
+        checks += f"if [ -L {shlex.quote('/'.join(parts[:i]))} ]; then printf 'LT_MARKER_UNKNOWN\\n'; exit 0; fi; "
+    script=(checks+f"if [ ! -d {state} ] || [ ! -x {state} ]; then printf 'LT_MARKER_UNKNOWN\\n'; "
+        f"elif [ -e {path} ] || [ -L {path} ]; then printf 'LT_MARKER_PRESENT\\n'; "
+        "else printf 'LT_MARKER_ABSENT\\n'; fi")
+    argv=[capture.adb,'-s',SERIAL,'exec-out',shlex.join(['run-as',PACKAGE,'sh','-c',script])]
+    before=capture.now()
+    if before>=capture.deadline:raise TimeoutError('Original preflight deadline expired')
+    try:
+        result=capture.run(argv,capture_output=True,timeout=min(1.5,(capture.deadline-before)/1e9))
+    except subprocess.TimeoutExpired as error:
+        result=subprocess.CompletedProcess(argv,124,error.stdout or b'',error.stderr or b'')
+    ended=capture.now()
+    receipt={'argv':argv,'beginNs':before,'endNs':ended,'adbExit':result.returncode,
+        'stdout':result.stdout.decode(errors='replace'),'stderr':result.stderr.decode(errors='replace'),
+        'confirmedAbsent':ended<=capture.deadline and result.returncode==0 and result.stdout==b'LT_MARKER_ABSENT\n' and not result.stderr,
+        'guestAcceptancePassed':False}
+    with (Path(output)/'normal-marker-presence.json').open('x') as stream:
+        stream.write(json.dumps(receipt,indent=2)+'\n')
+    if not receipt['confirmedAbsent']:
+        raise ValueError('Normal Start requires positive scoped marker absence; denied/unknown is unavailable')
+    return receipt
 
 
 def match_ready(prior, ready):
@@ -101,10 +133,7 @@ def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monoton
         dirty_receipt={'bytes':len(dirty),'sha256':hashlib.sha256(dirty).hexdigest(),'remoteReadSucceeded':True}
     else:
         read(root+'/state/.base-identity',65536)  # Prove actual traversable initialized state.
-        data, meta=capture.read(root+'/state/.dirty',65536)
-        if meta['remoteExit']!=1 or 'No such file' not in meta['stderr']:
-            raise ValueError('Normal Start requires confirmed absent dirty marker; denied is unavailable')
-        dirty_receipt={'confirmedAbsent':True,'remoteReadExit':meta['remoteExit'],'stderr':meta['stderr']}
+        dirty_receipt=normal_marker_absence(capture,root,out)
 
     status=read(f'/proc/{pid}/status').decode()
     role=read(f'/proc/{pid}/cmdline').decode()
