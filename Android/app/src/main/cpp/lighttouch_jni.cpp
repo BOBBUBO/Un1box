@@ -424,21 +424,28 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     lt_runtime_status s=LT_INIT(lt_runtime_status);lt_error poll_error=LT_INIT(lt_error);
     // Poll errors belong to this operation; observations uses its own lt_error.
     // A later successful native call must never clear the actionable poll message.
-    std::string detail=diagnostic;
-    if(runtime) { auto status=lt_runtime_poll(runtime,&s,&poll_error);if(status!=LT_OK) { diagnostic=result(status,poll_error);detail=diagnostic; }
+    std::string detail=diagnostic;bool poll_snapshot_valid=false;
+    if(runtime) { auto status=lt_runtime_poll(runtime,&s,&poll_error);poll_snapshot_valid=status==LT_OK;if(status!=LT_OK) { diagnostic=result(status,poll_error);detail=diagnostic; }
         else {
             if(s.state==LT_STOPPED && (s.dirty || !s.guest_shutdown_confirmed))s.state=LT_FAILED;
             if(s.state==LT_FAILED && diagnostic.empty())diagnostic="Guest exited without a confirmed clean shutdown (code "+std::to_string(s.engine_exit)+"); writable state retained. Stop this worker, then explicitly recover in a fresh worker. Diagnostics are retained.";
             detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
         }
     }
-    auto arr=env->NewObjectArray(8,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(13,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
     env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));
     env->SetObjectArrayElement(arr,5,string(env,graphics_provider_name()));
     env->SetObjectArrayElement(arr,6,string(env,graphics_provider_fixed?"1":"0"));
-    env->SetObjectArrayElement(arr,7,string(env,debug_touch_trace_configured?"1":"0"));return arr;
+    env->SetObjectArrayElement(arr,7,string(env,debug_touch_trace_configured?"1":"0"));
+    // Append facts from this same poll snapshot. Invalid/default fields never
+    // establish a clean shutdown; the consumer must require index 8 == "1".
+    env->SetObjectArrayElement(arr,8,string(env,poll_snapshot_valid?"1":"0"));
+    env->SetObjectArrayElement(arr,9,string(env,std::to_string(s.guest_shutdown_confirmed)));
+    env->SetObjectArrayElement(arr,10,string(env,std::to_string(s.dirty)));
+    env->SetObjectArrayElement(arr,11,string(env,std::to_string(s.storage_failed)));
+    env->SetObjectArrayElement(arr,12,string(env,std::to_string(s.engine_exit)));return arr;
 }
 // Must hold guard. Routine attachment/detachment with no View-owned contacts
 // never cancels an unrelated Home/Power pulse. A real held-contact handoff uses
