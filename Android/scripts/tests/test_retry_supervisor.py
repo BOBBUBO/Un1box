@@ -35,6 +35,32 @@ class Supervision(unittest.TestCase):
             argv = popen.call_args.args[0]
             self.assertEqual(argv[argv.index("-port"):argv.index("-port")+2],["-port","5554"])
             self.assertEqual(argv[argv.index("-gpu"):argv.index("-gpu")+2],["-gpu","swiftshader"])
+            self.assertEqual(argv[argv.index("-memory"):argv.index("-memory")+2],["-memory","2048"])
+
+    def test_reviewed_4096_request_is_recorded_without_heap_override(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(retry.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout=b"List of devices attached\n")), \
+             mock.patch.object(retry.subprocess,"Popen") as popen, \
+             mock.patch.object(retry.PROCESS_CONTEXT,"Process"):
+            popen.return_value.pid=987654
+            args=self.arguments(directory);args.memory_mb=4096
+            attempt=retry.Attempt(args);attempt.launch()
+            argv=popen.call_args.args[0]
+            self.assertEqual(argv[argv.index("-memory"):argv.index("-memory")+2],["-memory","4096"])
+            self.assertEqual(argv[argv.index("-cores"):argv.index("-cores")+2],["-cores","2"])
+            self.assertFalse(any("heap" in a for a in argv))
+            self.assertEqual(json.loads((attempt.output/"launch.json").read_text())["requestedRamMB"],4096)
+
+    def test_unreviewed_memory_value_fails_before_any_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args=[sys.executable,str(Path(retry.__file__)),"--allocation-granted","--user","synthetic",
+                  "--adb","/synthetic/adb","--emulator","/synthetic/emulator","--fresh-library",
+                  "--lock-sha256","a"*64,"--rom-sha256","b"*64,"--guest-sha256","c"*64,
+                  "--output",str(Path(directory)/"attempt"),"--memory-mb","3072"]
+            result=subprocess.run(args,capture_output=True)
+            self.assertEqual(result.returncode,2)
+            self.assertIn(b"invalid choice",result.stderr)
+            self.assertFalse((Path(directory)/"attempt").exists())
 
     def test_existing_serial_refuses_launch_in_every_adb_state(self):
         for state in ("device","offline","unauthorized","no permissions"):
