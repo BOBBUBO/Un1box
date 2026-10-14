@@ -1,38 +1,41 @@
-# Android branch policy
+# Integration and branch policy
 
-`port/android` is the canonical Android and Linux integration branch. Reviewed
-worker changes land there, usually by cherry-pick. `main` preserves the original
-desktop lineage. Worker branches are source ownership lanes, not separate APKs or
-alternative supported products.
+`main` is the consolidated development branch for the desktop, Android and Linux
+source. This reconciliation preserves the original desktop history and the
+reviewed Android/Linux implementation; it is not a release or a claim that every
+initial acceptance gate has passed.
 
-## Lane status
+## Reconciled lanes
 
-| Branch | Purpose and status |
+The 2026-10-14 reconciliation accounts for every existing fork branch. Worker
+histories are merged as ancestry after reviewing their remaining differences;
+adapted cherry-picks and superseded experiments retain the canonical final
+implementation rather than being applied again. Exact producer commits stay
+reachable. No active worker branch or worktree was deleted or reset.
+
+| Branch | Status after reconciliation |
 | --- | --- |
-| `port/android` | Canonical integration; use this for current port development. |
-| `work/android-product` | Active Android frontend, build and device-test work. |
-| `work/android-runtime` | Active shared runtime and Linux acceptance work. |
-| `work/android-pixel` | Active Android compatibility tests and fixes. |
-| `work/android-firmware` | Retained firmware source history. Current patches have integration equivalents; preserve exact producer references before retirement. |
-| `work/android-presentation` | Retained presentation history pending final patch and producer-reference review. |
+| `main` | Consolidated integration branch; base new reviewed work here. |
+| `port/android` | Retained port checkpoint and compatibility entry; the integrator keeps it synchronized with `main`, not a separate product. |
+| `work/android-product` | Active Android source and target-test lane; reviewed checkpoint `a80142ca` reconciled. Historical frame-cache overlay instructions were superseded by current build/run documentation. |
+| `work/android-runtime` | Active shared runtime/Linux lane; `c687df78` reconciled. Older diagnosis/operator variants were replaced by reviewed canonical workflows. |
+| `work/android-pixel` | Active compatibility lane; `50d299ac` reconciled, including scoped physical Pixel renderer/shutdown evidence and the private 4 KiB importer-retirement correction. |
+| `work/android-firmware` | Retained producer/provenance lane; `57a019fa` reconciled. Its patches have integration equivalents. Reuse only after explicit assignment. |
+| `work/android-presentation` | Superseded presentation lane; `800f14e0` reconciled through adapted integration equivalents. Retained for history; do not base new independent work here. |
+| `work/android-viewport-cancel` | Active graphics/input ownership lane; `2ae48cc0` reconciled. Current canonical cancellation code supersedes old variants; current acceptance plans replace the historical candidate25-only allocation text. |
 
-The 2026-10-14 remote audit found seven branches including `main`, with no
-backup or scratch branches. Retained branches are not additional integration
-targets. Reuse an assigned lane instead of creating a branch for each attempt or
-APK. Reactivate a retained lane explicitly before making new source changes.
+The Android/native source at this reconciliation equals port checkpoint
+`7a28b743` (frozen app implementation `f80def4a`). The additional Pixel text and
+this policy are documentation only. APK26 target evidence belongs to its exact
+recorded producer, not to all future descendants. The private 4 KiB snapshot is
+not a completed AVD qualification. Gyro remains deferred and unqualified.
 
-## Closing a lane
+Reuse assigned lanes rather than creating a branch for each build. Periodically
+push reviewed source checkpoints. Before retiring a redundant branch, confirm
+its owner has no pending work and preserve exact shipped source references.
+Do not force push, prune active worktrees or upload private firmware, SDKs,
+credentials, captures or device evidence. New experimental work after the
+checkpoints above requires its own review; ancestry reconciliation does not
+automatically approve later lane commits.
 
-Review all intended changes against `port/android`, including any unmatched
-patches. A matching patch ID is useful evidence, not proof of complete semantic
-integration. Confirm that the owner has no pending work, and preserve every exact
-source revision used by published build/source receipts through canonical
-ancestry or an intentional producer tag. Then retire the redundant remote branch
-and its local worktree when safe. Do not reset or prune unrelated dirty worktrees.
-
-Periodically push reviewed integration and active-lane checkpoints. Push no
-private firmware, SDKs, credentials, screenshots or device evidence. Default
-branch changes, force pushes and release claims require separate review.
-
-The QEMU fork follows the same policy with `port/android-backend` as its
-canonical integration branch; see its `BRANCHES.md`.
+The QEMU fork follows the same policy; see its `BRANCHES.md`.
