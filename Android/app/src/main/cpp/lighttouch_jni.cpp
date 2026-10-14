@@ -447,7 +447,7 @@ void refresh_display_release() {
     // An admitted UP/CANCEL can empty the local ledger while its guest release
     // is still queued. Refresh terminal success before deciding whether that
     // outstanding obligation needs cancellation; do so before minting/retiring.
-    if(runtime && !display_lease.contactsHeld() && display_lease.pendingOwnedRelease()) {
+    if(runtime && display_lease.pendingOwnedRelease()) {
         lt_input_status completed=LT_INIT(lt_input_status);lt_error observed=LT_INIT(lt_error);
         if(lt_runtime_input_status(runtime,&completed,&observed)==LT_OK && completed.state==2)
             display_lease.inputCompleted(completed.request_id);
@@ -610,20 +610,20 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     // view-local pixels; applying display rotation again would rotate contacts twice.
     (void)rotation;
     refresh_display_release();
-    const bool had_owned_release=lease && display_lease.needsOwnedRelease();
     auto status=lt_runtime_touch(runtime,&batch,&error);
     std::string failure=result(status,error);
     if(status!=LT_OK) {
         const auto cancellation=release_input();
         if(!cancellation.empty())failure += "; input release failed: "+cancellation;
     } else {
+        display_lease.beginAdmittedBatch();
         if(lease)for(jsize i=0;i<count;++i)display_lease.admittedContact(id[i],phase[i]);
         // Read the real submitted ID while this JNI guard still serializes all
         // touch admissions. A separate error buffer cannot erase touch failures.
         lt_input_status submitted=LT_INIT(lt_input_status);lt_error identity_error=LT_INIT(lt_error);
         const auto identity=lt_runtime_input_status(runtime,&submitted,&identity_error);
         if(identity==LT_OK && submitted.request_id) {
-            display_lease.submittedInput(submitted.request_id,lease,had_owned_release || display_lease.contactsHeld());
+            display_lease.submittedInput(submitted.request_id,lease);
             if(submitted.state==2)display_lease.inputCompleted(submitted.request_id);
         } else {
             failure="Touch request identity unavailable; gesture cancelled";

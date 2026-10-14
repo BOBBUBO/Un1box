@@ -27,7 +27,7 @@ public:
     struct Request { uint64_t owner=0, order=0; };
     uint64_t claim() {
         if(serial_==uint64_t(std::numeric_limits<int64_t>::max()))return 0;
-        owner_=++serial_;++order_;contacts_.clear();return owner_;
+        owner_=++serial_;++order_;clearContacts();return owner_;
     }
     bool owns(uint64_t token) const { return token && token==owner_; }
     Request begin(uint64_t token) { return owns(token)?Request{token,++order_}:Request{}; }
@@ -38,34 +38,68 @@ public:
     }
     bool release(uint64_t token) {
         if(!owns(token))return false;
-        owner_=0;++order_;contacts_.clear();return true;
+        owner_=0;++order_;clearContacts();return true;
     }
     bool contactsHeld() const { return !contacts_.empty(); }
     bool pendingOwnedRelease() const {
-        return input_pending_ && input_owner_!=0 && owns(input_owner_) && input_release_needed_;
+        return owner_!=0 && (!uncertain_releases_.empty() || release_overflow_);
     }
     bool needsOwnedRelease() const { return contactsHeld() || pendingOwnedRelease(); }
-    void contactsReleased() { contacts_.clear(); input_pending_=false; }
-    void submittedInput(uint64_t request,uint64_t owner,bool release_needed) {
-        input_request_=request;input_owner_=owner;input_release_needed_=release_needed;
-        input_pending_=request!=0;
+    void contactsReleased() { clearContacts(); input_pending_=false; }
+    // Start each admitted batch before updating its IDs. Completion coverage is
+    // separate from accumulated release debt: latest-only runtime status cannot
+    // prove the outcome of a request overwritten by a later admission.
+    void beginAdmittedBatch() { batch_releases_.clear(); }
+    void submittedInput(uint64_t request,uint64_t owner) {
+        input_request_=request;input_owner_=owner;input_pending_=request!=0;
+        input_releases_=batch_releases_;batch_releases_.clear();
     }
     bool reportsRejectedInput(uint64_t request) const {
         return input_pending_ && request==input_request_ && (input_owner_==0 || owns(input_owner_));
     }
     bool cancelsRejectedInput(uint64_t request) const {
-        return reportsRejectedInput(request) && (input_owner_==0 || input_release_needed_);
+        return reportsRejectedInput(request) && (input_owner_==0 || needsOwnedRelease());
     }
-    void inputCompleted(uint64_t request) { if(request==input_request_)input_pending_=false; }
+    void inputCompleted(uint64_t request) {
+        if(request!=input_request_)return;
+        if(input_owner_!=0 && owns(input_owner_)) {
+            // Successful UP23 cannot discharge an unobserved earlier UP7.
+            for(const auto id:input_releases_)
+                uncertain_releases_.erase(std::remove(uncertain_releases_.begin(),uncertain_releases_.end(),id),uncertain_releases_.end());
+        }
+        input_pending_=false;
+    }
     void admittedContact(int32_t id,int32_t phase) {
         auto existing=std::find(contacts_.begin(),contacts_.end(),id);
-        // Successfully admitted public UP (2) and CANCEL (3) both release IDs.
-        if(phase>=2) { if(existing!=contacts_.end())contacts_.erase(existing); }
-        else if(existing==contacts_.end())contacts_.push_back(id);
+        // Successfully admitted public UP (2) and CANCEL (3) remove the local
+        // held ID, but their guest release remains uncertain until this exact
+        // batch completes successfully or a full cancellation is admitted.
+        if(phase>=2) {
+            const bool known=existing!=contacts_.end() || contains(uncertain_releases_,id);
+            if(existing!=contacts_.end())contacts_.erase(existing);
+            if(known && !appendBounded(uncertain_releases_,id))release_overflow_=true;
+            if(!appendBounded(batch_releases_,id))release_overflow_=true;
+        } else if(existing==contacts_.end())contacts_.push_back(id);
     }
+
 private:
     uint64_t serial_=0,owner_=0,order_=0;
     uint64_t input_request_=0,input_owner_=0;
-    bool input_pending_=false,input_release_needed_=false;
-    std::vector<int32_t> contacts_;
+    bool input_pending_=false,release_overflow_=false;
+    // UI contact IDs are small; generic JNI callers may use arbitrary IDs.
+    // Bound accumulated unobserved releases; overflow needs a full cancellation
+    // rather than unbounded allocation or an unjustified terminal-success clear.
+    static constexpr size_t release_limit_=64;
+    static bool contains(const std::vector<int32_t> &ids,int32_t id) {
+        return std::find(ids.begin(),ids.end(),id)!=ids.end();
+    }
+    static bool appendBounded(std::vector<int32_t> &ids,int32_t id) {
+        if(contains(ids,id))return true;
+        if(ids.size()==release_limit_)return false;
+        ids.push_back(id);return true;
+    }
+    void clearContacts() {
+        contacts_.clear();uncertain_releases_.clear();batch_releases_.clear();input_releases_.clear();release_overflow_=false;
+    }
+    std::vector<int32_t> contacts_,uncertain_releases_,batch_releases_,input_releases_;
 };
