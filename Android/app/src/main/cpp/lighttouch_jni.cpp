@@ -51,6 +51,7 @@ const char *graphics_provider_name() { return graphics_provider_choice==1?"angle
 std::string engine_log_path;
 std::string debug_qmp_path;
 bool debug_qmp_armed=false;
+bool debug_touch_trace_armed=false,debug_touch_trace_closed=false,debug_touch_trace_configured=false;
 #ifdef LT_ANDROID_DEBUG
 extern "C" int lighttouch_debug_qmp_snapshot(const char *,int);
 #endif
@@ -220,10 +221,12 @@ JNI(select) jstring JNICALL Java_org_lighttouch_android_Native_select(JNIEnv *en
 }
 JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,jobject,jstring root,jstring id) {
     bool qmp_requested=false;
+    bool touch_trace_requested=false;
     {
         std::lock_guard<std::mutex> lock(guard);
         if(runtime || starting)return string(env,"Worker already consumed; stop and start a fresh worker");
         starting=true;diagnostic.clear();qmp_requested=debug_qmp_armed;debug_qmp_armed=false;
+        touch_trace_requested=debug_touch_trace_armed;debug_touch_trace_closed=true;
         graphics_provider_fixed=true;
         if(!graphics_provider_failure.empty()) {
             starting=false;diagnostic=graphics_provider_failure;return string(env,diagnostic);
@@ -261,6 +264,14 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
     engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;
     engine.boot.guest_package_path=selected.guest_package_path;engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
     if(status==LT_OK)status=lt_runtime_create(&engine,&prepared_runtime,&error);
+#ifdef LT_ANDROID_DEBUG
+    if(status==LT_OK && touch_trace_requested) {
+        status=lt_runtime_debug_touch_trace_enable(prepared_runtime,&error);
+        if(status==LT_OK){std::lock_guard<std::mutex> lock(guard);debug_touch_trace_configured=true;}
+    }
+#else
+    (void)touch_trace_requested;
+#endif
     if(status==LT_OK && qmp_requested) {
         status=lt_runtime_debug_qmp_enable(prepared_runtime,&error);
         char endpoint[1024]={};
@@ -305,12 +316,13 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
             detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
         }
     }
-    auto arr=env->NewObjectArray(7,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(8,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
     env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));
     env->SetObjectArrayElement(arr,5,string(env,graphics_provider_name()));
-    env->SetObjectArrayElement(arr,6,string(env,graphics_provider_fixed?"1":"0"));return arr;
+    env->SetObjectArrayElement(arr,6,string(env,graphics_provider_fixed?"1":"0"));
+    env->SetObjectArrayElement(arr,7,string(env,debug_touch_trace_configured?"1":"0"));return arr;
 }
 JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env,jobject,jobject surface) {
     std::lock_guard<std::mutex> lock(guard);
@@ -497,6 +509,15 @@ JNI(debugSelectGraphicsProvider) jstring JNICALL Java_org_lighttouch_android_Nat
 #endif
 }
 
+JNI(debugEnableTouchTrace) jstring JNICALL Java_org_lighttouch_android_Native_debugEnableTouchTrace(JNIEnv *env,jobject) {
+#ifdef LT_ANDROID_DEBUG
+    std::lock_guard<std::mutex> lock(guard);
+    if(runtime || starting || debug_touch_trace_closed)return string(env,"Touch trace selection requires a fresh unused worker");
+    debug_touch_trace_armed=true;return string(env,"");
+#else
+    return string(env,"Debug diagnosis is unavailable in this build");
+#endif
+}
 JNI(debugArmQmp) jstring JNICALL Java_org_lighttouch_android_Native_debugArmQmp(JNIEnv *env,jobject) {
 #ifdef LT_ANDROID_DEBUG
     std::lock_guard<std::mutex> lock(guard);

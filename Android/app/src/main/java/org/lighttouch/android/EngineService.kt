@@ -30,6 +30,11 @@ class EngineService : Service() {
     private val binder = object : IEngine.Stub() {
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
         override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
+        override fun debugEnableTouchTrace(): String {
+            requireDebugDiagnosis()
+            if (started.get()) return "Touch trace selection requires a fresh unused worker"
+            return Native.debugEnableTouchTrace()
+        }
         override fun debugSelectGraphicsProvider(choice: Int): String {
             requireDebugDiagnosis()
             if (started.get()) return "Graphics provider selection requires a fresh unused worker"
@@ -83,6 +88,7 @@ class EngineService : Service() {
                 putString("debugQmpPath", s.getOrElse(4) { "" })
                 putString("graphicsProviderChoice", s.getOrElse(5) { "platform" })
                 putBoolean("graphicsProviderFixed", s.getOrElse(6) { "0" } == "1")
+                putBoolean("touchTraceConfigured", s.getOrElse(7) { "0" } == "1")
                 putString("error", error.ifEmpty { audioError })
                 putInt("pid", Process.myPid())
                 putInt("uid", Process.myUid())

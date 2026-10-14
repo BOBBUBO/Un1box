@@ -15,6 +15,7 @@ internal object Native {
     external fun stop(): String
     external fun shutdownGraceMillis(): Int
     external fun debugArmQmp(): String
+    external fun debugEnableTouchTrace(): String
     external fun debugSelectGraphicsProvider(choice: Int): String
     external fun debugQmpSnapshot(): Array<String>
     external fun button(button: Int, down: Boolean): String

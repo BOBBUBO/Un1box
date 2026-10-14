@@ -174,6 +174,21 @@ build is performed. The production adapter remains disabled by default.
 Both harness manifests explicitly require guest-response review; successful host
 execution is not accepted as a guest-visible gesture/gyro result.
 
+For a fresh debug worker, `GuestInputTest` accepts `-e touchWireTrace true` with
+the normal `exerciseGuest` opt-in. The production Binder/JNI method selects only
+the approved native `ipod_touch_multitouch_log` event before start; it accepts no
+event name, path or command. Selection is closed at the first start attempt,
+and release builds reject it. An already running guest must have configured this
+trace before boot; the test never silently restarts it. The optional trace hook
+requires the shared native implementation of `lt_runtime_debug_touch_trace_enable`.
+Bounded private `touch-wire.log`/JSON reads retain FRAME_READ, serialized contact
+and finger-edge records alongside indexed host MotionEvents. Raw output is capped
+at4MiB and selected records at8192. Host uptime/read intervals and guest virtual
+timestamps have separate epochs; pending reads plus nonempty contact records
+do not establish per-batch collection, release ordering or visible response.
+The test requests cancellation in `finally` even when a held-contact screenshot
+fails, retaining cleanup errors without erasing the original failure.
+
 ## Local userspace preparation
 
 The preparation dialog reads firmware IDs from the original upstream catalog,
