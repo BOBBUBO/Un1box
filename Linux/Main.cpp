@@ -71,7 +71,7 @@ struct Packet {
     uint32_t guest_operation = 0;
     char guest_argument[1024]{};
     uint64_t guest_id = 0;
-    uint64_t pcm_socket_dropped = 0;
+    uint64_t pcm_socket_dropped = 0, diagnostics_monotonic_ns = 0;
     uint32_t button = 0, value = 0;
     uint64_t mapping_bytes = 0;
 };
@@ -385,6 +385,7 @@ static int worker(const Options &o) {
             update.pcm_socket_dropped = pcm_socket_dropped;
             update.diagnostics = {sizeof(lt_runtime_diagnostics), 1, 0, 0, 0, 0, 0, 0, 0, 0};
             lt_runtime_diagnose(r, &update.diagnostics, &error);
+            update.diagnostics_monotonic_ns = now_ns();
             update.io.size = sizeof(update.io);
             update.io.version = 1;
             lt_runtime_io_statistics(r, &update.io, &error);
@@ -687,6 +688,7 @@ static int frontend(const Options &o, int argc, char **argv) {
         return sent;
     };
     bool screenshot_written = false;
+    uint64_t diagnostics_monotonic_ns = 0;
     lt_runtime_diagnostics diagnostics{sizeof(lt_runtime_diagnostics), 1, 0, 0, -1, 0, 0, 0, 0, 0};
     auto capture = [&](const std::string &path) {
         require(frame.sequence && pixels.size(), "no actual guest frame for screenshot");
@@ -695,9 +697,10 @@ static int frontend(const Options &o, int argc, char **argv) {
         if (path == o.screenshot)
             screenshot_written = true;
         std::cout << "screenshot sequence=" << frame.sequence << " observed_monotonic_ns=" << now_ns()
-                  << " frame_monotonic_ns=" << frame.timestamp_ns << " sleeping=" << diagnostics.display_sleeping
-                  << " backlight=" << diagnostics.backlight_level << " agent=" << diagnostics.agent_status
-                  << " path=" << path << "\n";
+                  << " frame_monotonic_ns=" << frame.timestamp_ns
+                  << " diagnostics_monotonic_ns=" << diagnostics_monotonic_ns
+                  << " sleeping=" << diagnostics.display_sleeping << " backlight=" << diagnostics.backlight_level
+                  << " agent=" << diagnostics.agent_status << " path=" << path << std::endl;
     };
     struct CaptureOnExit {
         std::function<void()> function;
@@ -764,6 +767,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                 if (s.state == LT_PAUSED || s.state == LT_RUNNING)
                     paused = s.state == LT_PAUSED;
                 diagnostics = update.diagnostics;
+                diagnostics_monotonic_ns = update.diagnostics_monotonic_ns;
                 pcm_socket_dropped = update.pcm_socket_dropped;
                 std::cout << "status observed_monotonic_ns=" << now_ns() << " state=" << s.state
                           << " confirmed=" << s.guest_shutdown_confirmed << " dirty=" << s.dirty
