@@ -163,8 +163,20 @@ transient-copy rejection is retained; admission requires full BMP equality to
 the actual inspected image, fresh coherent copy/diagnostics and current owner.
 It never masks the caret, refreshes the honest inspection time or classifies a
 new scene. The earlier Lock/source-freshness and direct legacy gates are unchanged.
-These source changes need a new frontend build; prior sealed binaries and failed
-run09 receipts do not gain the new proof retroactively.
+Sealed frontend3a738/native sourceb690 includes this proof; its ten sanitized
+host CTests passed. Prior sealed binaries and failed run09 receipts do not gain
+the new proof retroactively, and no new guest behavior is inferred from host tests.
+
+The optional fixed `--saved-marker` watchdog profile uses Home129 then a
+truthfully named saved-marker179 gate for a separately authorized read worker.
+The recorder's `written-marker` observation is bounded by write Stop260;
+`saved-marker` is bounded by read179. Both require `--observed-marker` equal to
+the run's full unique marker after actual model inspection, exact coherent
+full-image continuity and a changed post-input image/newer sequence. A title,
+list or previously saved body is never labelled a new focused editor. No helper
+reads text automatically or marks guest acceptance. A fresh read manager must
+verify the actual write's hashed full-marker/clean process/lease/state proof and
+receive a separate grant; it never resets state, adds --recover or types again.
 
 Status logs report native produced frames and their host-monotonic timestamp,
 captured/pulled/dropped PCM frames, bounded native queued packets, socket drops,
