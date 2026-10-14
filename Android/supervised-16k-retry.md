@@ -164,8 +164,12 @@ requires a coherent copied and producer sequence/timestamp, a lit awake panel
 and a publish age of at most five seconds on the same native clock; the nonzero
 pixel requirement remains explicit. A static coherent frame may qualify this
 frame evidence. Raw capture attempts and errors are retained even when the wait
-fails. Capture diagnostics do not grant another readiness interval. None of
-these receipts verifies a particular guest scene or extends the external budget.
+fails. After capture, the same worker must still have a fresh coherent copied
+frame before the original deadline; an earlier ready observation cannot qualify
+a subsequently stale cache. Capture diagnostics do not grant another readiness
+interval. Status and bitmap capture are separate calls: these observations do
+not attach an atomic frame serial to the PNG. None of these receipts verifies a
+particular guest scene or extends the external budget.
 
 An independent forked OS process tracks only this emulator launcher's
 descendants and their Linux start ticks. At 898 seconds it requests termination;

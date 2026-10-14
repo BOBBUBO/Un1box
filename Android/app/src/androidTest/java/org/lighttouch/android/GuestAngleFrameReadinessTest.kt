@@ -69,4 +69,15 @@ class GuestAngleFrameReadinessTest {
         assertFalse(angleFrameReadyInTime(currentFrame(), true, 1000, 1000))
         assertFalse(angleFrameReadyInTime(currentFrame(), true, 1100, 1000))
     }
+
+    @Test fun postCaptureCannotRelyOnEarlierReadiness() {
+        val before = currentFrame()
+        assertTrue(angleFrameReadyInTime(before, true, 900, 1000))
+        val after = currentFrame()
+        after.getBundle("observations")!!.putLong("producerFrameSequence", 8)
+        assertFalse(angleFrameReadyInTime(after, true, 950, 1000))
+        after.getBundle("observations")!!.putLong("guestFrameSequence", 8)
+        assertTrue(angleFrameReadyInTime(after, true, 950, 1000))
+        assertFalse(angleFrameReadyInTime(after, true, 1000, 1000))
+    }
 }
