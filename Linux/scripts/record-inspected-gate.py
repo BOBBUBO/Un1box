@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record an actual caller-inspected Home/editor with exact fresh continuity.
+"""Record an actual caller-inspected scene with exact fresh continuity.
 
 Call immediately after view_image. --model-inspected is the caller's explicit
 observation, never a scene classifier. No engine, worker or clock is started.
@@ -25,8 +25,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', type=Path, required=True)
     parser.add_argument('--capture', type=Path, required=True)
-    parser.add_argument('--scene', choices=('home', 'editor'), required=True)
+    parser.add_argument('--scene', choices=tuple(gates.SCENES), required=True)
     parser.add_argument('--output', required=True, help='new relative evidence directory')
+    parser.add_argument('--observed-marker', help='full unique text personally read in the current image')
     transitions = parser.add_mutually_exclusive_group()
     transitions.add_argument('--transition-from', type=Path, help='actual pre-action native capture')
     transitions.add_argument('--transition-record', type=Path, help='paired unlock content-continuity.json')
@@ -36,7 +37,10 @@ def main():
     if not args.execute:
         print(json.dumps({'plan_only': True, 'actual_model_inspection_required': True,
                           'full_BMP_continuity_required': True, 'max_reuse_seconds': 60,
-                          'deadlines_unchanged_seconds': [129, 179], 'guest_acceptance': False}))
+                          'deadlines_unchanged_seconds': [129, 179],
+                          'selected_scene': args.scene, 'scene_deadline_seconds': gates.SCENES[args.scene][2],
+                          'requires_full_observed_marker': args.scene in ('written-marker', 'saved-marker'),
+                          'guest_acceptance': False}))
         return
     if not (args.transition_from or args.transition_record):
         raise RuntimeError('actual pre-action capture required; counters do not classify scenes')
@@ -73,13 +77,19 @@ def main():
         raise RuntimeError('missing/changed original HELLO')
     hello = hello_values.pop()
     identity = dict(frontend_pid=pid, start_ticks=ticks, hello_monotonic_ns=hello)
-    deadline = hello + (129 if args.scene == 'home' else 179) * 1_000_000_000
+    name, scene, seconds = gates.SCENES[args.scene]
+    deadline = hello + seconds * 1_000_000_000
     operation_deadline = min(deadline, inspected + 12_000_000_000)
-    scene = 'Home Screen' if args.scene == 'home' else 'Notes focused new editor'
+    if args.scene in ('written-marker', 'saved-marker'):
+        expected = json.loads((root / 'inputs.json').read_text())['marker']
+        if not expected or args.observed_marker != expected:
+            raise RuntimeError('actual full observed marker must match this owned run exactly')
     gate = dict(identity, model_inspected=True, scene=scene, inspected_monotonic_ns=inspected,
                 worker_pid=worker['pid'], worker_start_ticks=worker['start_ticks'],
                 capture_directory=str(original_path), bmp_sha256=sha(original_path / 'native.bmp'),
                 receipt_sha256=sha(original_path / 'receipt.json'))
+    if args.scene in ('written-marker', 'saved-marker'):
+        gate['observed_marker'] = args.observed_marker
     save('original-inspection.json', gate)  # Never replace/backdate this receipt.
     fd = os.pidfd_open(pid)
     poll = select.poll()
@@ -205,7 +215,6 @@ def main():
         verify_owner()
         if time.monotonic_ns() > operation_deadline:
             raise RuntimeError('fixed deadline elapsed before gate publication')
-        name = 'home-gate.json' if args.scene == 'home' else 'editor-gate.json'
         if (root / name).exists():
             raise RuntimeError('existing admission gate is retained; refusing replacement')
         temporary = out / 'accepted-gate.json'

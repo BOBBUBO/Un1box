@@ -10,6 +10,13 @@ import signal
 import time
 
 
+SCENES = {
+    'home': ('home-gate.json', 'Home Screen', 129),
+    'editor': ('editor-gate.json', 'Notes focused new editor', 179),
+    'written-marker': ('written-marker-gate.json', 'Notes written marker', 260),
+    'saved-marker': ('saved-marker-gate.json', 'Notes saved marker', 179),
+}
+
 def valid_gate(gate, receipt, identity, scene, deadline_ns, now_ns):
     """Human/model scene inspection is supplied; counters never create a gate."""
     try:
@@ -139,9 +146,13 @@ def read_capture(root, description):
     return receipt.get('receipt', receipt), bitmap
 
 
-def load_gate(root, name, identity, scene, deadline_ns, now_ns):
+def load_gate(root, name, identity, scene, deadline_ns, now_ns, expected_marker=None):
     try:
         gate = json.loads((root / name).read_text())
+        if scene in ('Notes written marker', 'Notes saved marker'):
+            if (not expected_marker or gate.get('observed_marker') != expected_marker or
+                    'continuity' not in gate):
+                return False
         receipt, bitmap = read_capture(root, gate)
         if 'continuity' in gate:
             worker = json.loads((root / 'worker.json').read_text())
@@ -162,12 +173,14 @@ def load_gate(root, name, identity, scene, deadline_ns, now_ns):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', type=Path, required=True)
+    parser.add_argument('--saved-marker', action='store_true', help='read worker: inspected saved marker, never new editor')
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
     if not args.execute:
         print(json.dumps({'plan_only': True, 'home_deadline_seconds': 129,
                           'editor_deadline_seconds': 179, 'clock': 'first verified HELLO, never reset',
-                          'signal': 'ordinary SIGINT through owned pidfd', 'automatic_scene_assertion': False}))
+                          'signal': 'ordinary SIGINT through owned pidfd', 'automatic_scene_assertion': False,
+                          'second_scene': 'saved-marker' if args.saved_marker else 'editor'}))
         return
     root = args.run.resolve()
     started = json.loads((root / 'started.json').read_text())
@@ -184,7 +197,9 @@ def main():
     poll = select.poll()
     poll.register(fd, select.POLLIN)
     hello = None
-    gates = [('home-gate.json', 'Home Screen', 129), ('editor-gate.json', 'Notes focused new editor', 179)]
+    second = 'saved-marker' if args.saved_marker else 'editor'
+    gates = [SCENES['home'], SCENES[second]]
+    expected_marker = json.loads((root / 'inputs.json').read_text())['marker'] if args.saved_marker else None
     try:
         while not poll.poll(0):
             # Only newline-terminated records can establish the one session epoch.
@@ -202,7 +217,7 @@ def main():
             now = time.monotonic_ns()
             for name, scene, seconds in gates:
                 deadline = hello + seconds * 1_000_000_000
-                if now >= deadline and not load_gate(root, name, identity, scene, deadline, now):
+                if now >= deadline and not load_gate(root, name, identity, scene, deadline, now, expected_marker):
                     if not poll.poll(0):
                         signal.pidfd_send_signal(fd, signal.SIGINT)
                     result = {'ordinary_stop_requested': True, 'missing_gate': name,

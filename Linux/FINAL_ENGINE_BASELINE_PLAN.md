@@ -1,11 +1,11 @@
 # Planned final-engine n72 verification
 
 This next plan has not launched a guest. The prospective write controller is
-`builds/runtime/final-upstream-n72/run-08-stock-staged/manager.py` in the private
+`builds/runtime/final-upstream-n72/run-10-stock-staged/manager.py` in the private
 workspace. Its producer pins are complete; execution remains disabled until Root
 reviews this exact plan and grants one GUI. Do not substitute older engine or
-frontend bytes. Source592 includes the tested contact/audio lifecycle fixes plus
-lazy publisher frame storage and coherent metadata. Nine ASAN/UBSAN CTests passed;
+frontend bytes. Native sourceb690 includes the tested contact/audio lifecycle fixes plus
+lazy publisher frame storage and coherent metadata. Ten ASAN/UBSAN CTests passed;
 this is host regression and SDL compile evidence, not guest input, audio,
 persistence, teardown or measured memory evidence.
 
@@ -17,19 +17,19 @@ NAND hash: allocated production admission validates every required byte.
 
 | Input | Path under the port workspace | Identity |
 | --- | --- | --- |
-| Frontend | `builds/runtime/linux-frame-storage-source-11/debug-sanitized/lighttouch-linux` | SHA256 `ea78673b10978304f358af4bf3d3c167973a29f005580670d5c8dd705ec5df3b`, source592b4fc3; mode0500 |
+| Frontend | `builds/runtime/linux-screenshot-source-12/debug-sanitized/lighttouch-linux` | SHA256 `3a738a5f1fb4905714b1a5bc4542e9716c35eb778ea6efe662e567ca7d5a1c0e`, sourceb6905b78; mode0500 |
 | Read-only generated base | `private-assets/native-prepared-n72-trial6` | n72ap/7E18/iboot; DeviceLock SHA256 `eec93b0c9c9d33fe65e760d747d5a47d9bf1e0bca659dca280ba4c8b53ffb2f2` |
 | Matched ROM | `private-assets/runtime-inputs/bootrom_240_4` | SHA256 `55f4d8ea2791ba51dd89934168f38f0fb21ce8762ff614c1e742407c0d3ca054` |
 | Matched package | `private-assets/native-prepared-n72-trial6/guest.itpack` | Declared raw armv6 package; SHA256 `fe25b1406b1153837075c56944fadbac7406840667215f232d16fafca079f45b` |
-| New write state | `builds/runtime/final-upstream-n72/stock-state-08` | Must not exist; never reset retained prior state |
+| New write state | `builds/runtime/final-upstream-n72/stock-state-10` | Must not exist; never reset retained prior state |
 | Engine | `builds/backend/frozen/a85e640b791aa8e1260ed2c2349e7807a14cf71e3864805b5bd3fd03717c5737/libqemu-arm.so` | SHA256 `a85e640b791aa8e1260ed2c2349e7807a14cf71e3864805b5bd3fd03717c5737`, clean source259e4ad3 |
 | Complete engine manifest | Same frozen directory, `portable-manifest.json` | SHA256 `5ef1ab85eddf22b43d3183ba443bea697c79ba874248a863ef105fcbfeae046e` |
-| Frontend producer receipt | `builds/runtime/linux-frame-storage-source-11/producer-receipt.json` | SHA256 `42d1f9625f1c9a934265868a62e26214c89a378ae35c315ae2c2d12f29d53970` |
-| Runtime dependency pins | `builds/runtime/final-upstream-n72/run-08-stock-staged/dependencies-pins.json` | SHA256 `b0203797cb4c64fb5e1a6a39574e81b26f83320ece9b6c12b2cac74d869eb582`; 65 exact file identities |
+| Frontend producer receipt | `builds/runtime/linux-screenshot-source-12/producer-receipt.json` | SHA256 `bdf6ac6030fc001e8b2a76e9036a063d719cdccaaa089501ccf7934e294c1c7f` |
+| Runtime dependency pins | `builds/runtime/final-upstream-n72/run-10-stock-staged/dependencies-pins.json` | SHA256 `66505e1012096a6bf0c2dca2b430fbf7f2db7fbb9cd0daa7f92618018136cdf9`; 65 exact file identities |
 
 The domain creates its own lease/base pin, sparse NAND overlay and small private
 NOR. The frontend producer receipt is retained at
-`builds/runtime/linux-frame-storage-source-11/producer-receipt.json`; the failed prior
+`builds/runtime/linux-screenshot-source-12/producer-receipt.json`; the failed prior
 Homebrew SDL2 compatibility binding remains separately retained. The new native
 producer's actual guest/SDL teardown is still untested. The source-plan update
 read hashes only for frontend/engine/receipts/dependencies; it did not read NAND
@@ -43,7 +43,7 @@ Execution-ready entrypoints are retained in the staged directory. After Root
 sets its explicit execution authorization and grants one GUI, launch only:
 
 ```sh
-xvfb-run -a -s '-screen 0 1000x1000x24 -nolisten tcp' python3 /home/blake/Documents/LightTouch-Development/port-workspace/builds/runtime/final-upstream-n72/run-08-stock-staged/manager.py --execute
+xvfb-run -a -s '-screen 0 1000x1000x24 -nolisten tcp' python3 /home/blake/Documents/LightTouch-Development/port-workspace/builds/runtime/final-upstream-n72/run-10-stock-staged/manager.py --execute
 ```
 
 Keep the manager session live. In that same awaited tool execution, wait for its
@@ -149,7 +149,7 @@ inspected post-action image must differ from the retained pre-action image and
 have a newer sequence; those facts do not classify its scene. Do not hand-write a gate, copy another worker's
 gate or relabel a Notes list/saved note as a new editor. Its current image must be
 awake/agent1 with capture2s/diagnostic1s freshness and exact current worker
-sequence/timestamp readback. An unchanged source sequence/publication timestamp
+metadata/pixel equal-even-generation copy proof (the Status sample can lag). An unchanged source sequence/publication timestamp
 is allowed; this is current retained scene observation, not redraw-performance
 evidence. Publication timestamps are host CLOCK_MONOTONIC. The worker sends HELLO
 then starts the engine while the parent later receives HELLO, so a first engine
@@ -164,7 +164,7 @@ time. A read worker needs a separately reviewed, honestly named saved-marker gat
 140 guest launch com.apple.mobilenotes
 145 guest frontmost
 160 screenshot <write-run>/notes-open.bmp
-190 guest type LightTouch generated-stock Linux persistence run08
+190 guest type LightTouch generated-stock Linux persistence run10
 220 guest sync
 225 guest frontmost
 230 screenshot <write-run>/saved-notes.bmp
@@ -234,3 +234,48 @@ Its exit1 frontend LeakSanitizer report and missing final confirmed status remai
 unqualified despite absent dirty marker and available lease. Source changes to
 script suppression, flushed final receipts and scoped SDL cleanup require a new
 build/test allocation; they have not been exercised by that original run.
+
+Actual generated-stock run08 on frontend ea786/cleanup259 a85 reached a visibly
+colored Lock Screen and then a knob-right transitional Lock image. It did not
+admit Home before the original129s watchdog, so no Notes typing or read worker
+ran. The attempt's native FINAL confirmed clean Stop/dirty0/workerexit0, actual
+frontendexit0/no sanitizer failure and available lease are a bounded teardown
+subset only. Captures, original clocks and failed prerequisite remain retained.
+The colored Lock capture preceded its honest after-view receipt by32.17s.
+
+Run09 changes operator orchestration, not acceptance policy or native code:
+await capture and emit the image in the same exec; after actual Lock inspection,
+the next tool fully awaits balanced unlock and immediately emits a current
+post-release capture. No Root-message/status hop belongs inside that image/action
+sequence. A transitional current image gets a direct new capture/image next; it
+is never relabelled Home. Exact producer pins and all deadlines remain unchanged,
+with a new small state09. Execution remains disabled until the next Root GUI grant.
+
+The prospective next plan is run10A/B. Both are source-staged with execution
+disabled. A uses the new small state10; B retains that same state only after a
+genuine write. Private `run-10-stock-staged/LIVE_PLAN.md` and
+`run-10-stock-read-staged/LIVE_PLAN.md` contain the exact separate launch commands
+and model-observation steps. No A→B automatic start exists.
+
+After type190 completes and the operator personally reads the full unique
+`LightTouch generated-stock Linux persistence run10`, the recorder uses
+`--scene written-marker --observed-marker '<exact full marker>'` before Stop260,
+with the actual pre-typing editor capture as `--transition-from`. Save through
+the actually seen Done/list control before sync220 and preserve complete type,
+sync and visible full-body evidence. This marker observation does not replace
+Home129/new-editor179 or infer text from a counter.
+
+B uses watchdog `--saved-marker`: Home129 then `saved-marker-gate.json`179,
+recorded with `--scene saved-marker --observed-marker '<exact full marker>'`
+from the actually reopened full saved body, with actual pre-launch Home pixels
+as transition baseline. It never calls an existing body a new editor or types
+again. Its script has only launch140/frontmost145, captures160/230, frontmost225
+and Stop260.
+
+B manager refuses until Root separately authorizes it and pins A result,
+started/worker identities, written-marker proof and metadata-after JSON hashes
+plus the unchanged state `.base-identity` hash. It verifies actual native/
+frontend clean exit0/no sanitizer/forced disposal/dirty, retired A owners,
+available lease, same producer/state and hashed raw full-marker proof. All
+original native/session/Stop budgets remain. State resets, recovery, copies and
+manual forged gates are outside this plan.

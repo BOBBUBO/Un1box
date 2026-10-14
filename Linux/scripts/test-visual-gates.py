@@ -58,7 +58,7 @@ class Gates(unittest.TestCase):
         self.receipt['frame_monotonic_ns'] = 100_000_000_000
         self.assertFalse(self.check())
 
-    def watch_fixture(self, home):
+    def watch_fixture(self, home, saved=False):
         # A disposable Python process, not SDL/QEMU/a guest. This exercises
         # production PID/startticks/argv/pidfd and deadline handling directly.
         script = ('import signal,time\n'
@@ -94,14 +94,16 @@ class Gates(unittest.TestCase):
                                 receipt_sha256=hashlib.sha256((capture / 'receipt.json').read_bytes()).hexdigest(),
                                 bmp_sha256=hashlib.sha256((capture / 'native.bmp').read_bytes()).hexdigest())
                     (root / 'home-gate.json').write_text(json.dumps(gate))
-                result = subprocess.run([sys.executable, str(Path(module.__file__)), '--run', str(root), '--execute'],
+                (root / 'inputs.json').write_text(json.dumps({'marker': 'HOST fixture marker, not a guest'}))
+                result = subprocess.run([sys.executable, str(Path(module.__file__)), '--run', str(root), '--execute',
+                                         *(['--saved-marker'] if saved else [])],
                                         capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 receipt = json.loads((root / 'visual-gate-stop.json').read_text())
                 self.assertEqual(receipt['identity']['frontend_pid'], fixture.pid)
                 self.assertEqual(receipt['identity']['start_ticks'], ticks)
                 self.assertEqual(receipt['deadline_monotonic_ns'], hello + (179 if home else 129) * 1_000_000_000)
-                self.assertEqual(receipt['missing_gate'], 'editor-gate.json' if home else 'home-gate.json')
+                self.assertEqual(receipt['missing_gate'], ('saved-marker-gate.json' if saved else 'editor-gate.json') if home else 'home-gate.json')
                 self.assertFalse(receipt['guest_acceptance'])
                 self.assertEqual(fixture.wait(timeout=5), 0)
         finally:
@@ -115,6 +117,9 @@ class Gates(unittest.TestCase):
 
     def test_home_gate_cannot_restart_missing_editor_deadline(self):
         self.watch_fixture(True)
+
+    def test_read_worker_uses_saved_marker_deadline_not_new_editor(self):
+        self.watch_fixture(True, saved=True)
 
 
 class ContinuityGates(unittest.TestCase):
@@ -326,6 +331,21 @@ class ContinuityGates(unittest.TestCase):
             (root / 'home-gate.json').write_text(json.dumps(self.gate))
             self.assertTrue(module.load_gate(root, 'home-gate.json', self.identity,
                                              'Home Screen', 130_000_000_000, 180_000_000_000))
+            for key in ('written-marker', 'saved-marker'):
+                name, scene, seconds = module.SCENES[key]
+                marker = 'HOST full unique marker, no guest evidence'
+                self.gate.update(scene=scene, observed_marker=marker)
+                (root / name).write_text(json.dumps(self.gate))
+                deadline = self.identity['hello_monotonic_ns'] + seconds * 1_000_000_000
+                self.assertTrue(module.load_gate(root, name, self.identity, scene, deadline, 300_000_000_000, marker))
+                self.assertFalse(module.load_gate(root, name, self.identity, scene, deadline, 300_000_000_000))
+                self.assertFalse(module.load_gate(root, name, self.identity, scene, deadline, 300_000_000_000, marker + 'wrong'))
+                self.gate['model_inspected'] = False
+                (root / name).write_text(json.dumps(self.gate))
+                self.assertFalse(module.load_gate(root, name, self.identity, scene, deadline, 300_000_000_000, marker))
+                self.gate['model_inspected'] = True
+            self.gate['scene'] = 'Home Screen'
+            self.gate.pop('observed_marker')
             # Even after the fresh hash is updated, different actual pixels
             # cannot reuse the prior scene observation.
             path = root / 'fresh' / 'native.bmp'
