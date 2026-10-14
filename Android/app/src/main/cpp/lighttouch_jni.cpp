@@ -442,7 +442,15 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
 // never cancels an unrelated Home/Power pulse. A real held-contact handoff uses
 // the existing full cancellation API, which also releases hardware buttons.
 std::string cancel_display_contacts() {
-    if(!display_lease.contactsHeld())return "";
+    // An admitted UP/CANCEL can empty the local ledger while its guest release
+    // is still queued. Refresh terminal success before deciding whether that
+    // outstanding obligation needs cancellation; do so before minting/retiring.
+    if(runtime && !display_lease.contactsHeld() && display_lease.pendingOwnedRelease()) {
+        lt_input_status completed=LT_INIT(lt_input_status);lt_error observed=LT_INIT(lt_error);
+        if(lt_runtime_input_status(runtime,&completed,&observed)==LT_OK && completed.state==2)
+            display_lease.inputCompleted(completed.request_id);
+    }
+    if(!display_lease.needsOwnedRelease())return "";
     lt_error error=LT_INIT(lt_error);
     const auto status=runtime?lt_runtime_cancel_input(runtime,&error):LT_OK;
     if(status==LT_OK)display_lease.contactsReleased();
