@@ -416,3 +416,52 @@ established. Those labels are not assertions. All failed preparation/pixels and
 clean shutdown evidence remain retained. F5 pinch-in and the generic staged
 controller are the corrected preparation proposal; they have not yet qualified
 fresh-pinch-after-interruption on a guest.
+
+Linux CLI `--debug-touch-trace` opts into only the fixed existing engine event
+`ipod_touch_multitouch_log` before worker start. The Linux CLI switch is off by default and calls the approved typed optional
+`lt_runtime_debug_touch_trace_enable` behind `LIGHTTOUCH_ENABLE_DEBUG_QMP`.
+It accepts no caller event/path/argv and changes no struct/version. It adds the fixed engine
+`-trace enable=ipod_touch_multitouch_log`; old frozen83 already has this event,
+so diagnostic use needs no engine rebuild. Retain `[MT guest-virtual-seconds]`
+FRAME_READ/release/begin records alongside host-monotonic replay/application and
+capture receipts. Those epochs are distinct. APPLIED confirms the host LCD/MT
+call path, not that the guest collected a release over SPI. Do not infer collection
+from80ms host pacing or a subsequent successful admission.
+
+Run08 showed a fresh visible pinch response after explicit cancel from an
+inspected fit image. Its later F5 shrink attempt applied requests48–60 but had no
+new guest frames (source sequence267 unchanged); focus preparation/admission was
+invalid, focus recovery remained unqualified, and pause/rotation were withheld.
+The200s fallback shut down cleanly. Provisional admission text was corrected in
+retained evidence, and the attempted post-exit Escape failed and is disclosed.
+
+The staged controller now offers a separate inspected reopen route. From Photos,
+`--stage reopen-albums --viewport 480 800` uses bounded150ms Back taps and captures
+its result. Inspect the actual Photo Albums screen before `--stage reopen-grid`,
+then inspect Saved Photos before `--stage reopen-viewer`. Inspect the new viewer
+and its scale below maximum before admitting one interruption stage. Each command
+uses the actual private window/log, a new output directory and `--execute`; all
+screens and failures remain retained. The viewport must match the measured
+portrait SDL window. This route is a source-ready proposal awaiting guest use;
+its navigation timing and fit state are not assumed successful.
+
+An exact private diagnostic launch, after hashing the cached binary/frozen engine
+and verifying the prior own-state clean receipt, is:
+
+```sh
+EGL_PLATFORM=surfaceless LIBGL_ALWAYS_SOFTWARE=1 SDL_RENDER_DRIVER=software \
+SDL_AUDIODRIVER=pulseaudio /private/lighttouch-linux \
+  --base /private/read-only-n72/base --state /private/own-clean-state \
+  --engine /private/libqemu-arm-1ffcb57d.so --rom /private/bootrom_240_4 \
+  --package /private/armv6.itpack --trace-io --debug-touch-trace \
+  --seconds 200 --screenshot /private/run/live.bmp > /private/run/session.log 2>&1
+```
+
+Run inside the assigned private Xvfb display. First perform/inspect the calibrated
+wake/slider checkpoints, then inspect each Back/grid/reopen checkpoint. Admit
+`run-multitouch-interruption.py --stage cancel --window 2097173
+--log /private/run/session.log --output-dir /private/run/cancel --execute` only
+from the inspected current viewer below maximum zoom. Review actual guest release
+and fresh begin FRAME_READ collection, paired pixels and fresh scale response;
+finish with Escape and the confirmed1/dirty0 receipt. This fixed trace/reopen plan
+is source-only until a new bounded GUI allocation is authorized.
