@@ -95,3 +95,18 @@ Engine sensor bits describe modeled hardware and never advertise qualified gyro.
 name a checksum-proven raw guest.itpack; library import and boot assembly select it
 natively when no explicit package is supplied, so firmware UI does not choose an
 architecture or recipe.
+The runtime's internal PCM queue advances an epoch and discards queued samples
+on pause/resume admission. The publisher owns capture stop/start and rejects an
+old read's append under the same queue mutex. The publisher withholds Resume until actual PAUSED is observed, even for
+a quick Pause→Resume sequence, then waits for RUNNING. Capture starts again only
+after that barrier; its new backend generation clears the backend ring. PCM timestamps
+remain relative to that active capture generation, so a restart may reset them;
+they are not host monotonic frame timestamps. Native dropped-frame counters count
+known queued/in-flight discarded frames, not unread bytes cleared inside the
+backend capture ring. No public ABI signatures change.
+
+A buffer already returned to a frontend by `lt_runtime_pcm` cannot be revoked.
+Each frontend must pause/flush its sink and fence reader/transport packets at its
+own lifecycle boundary. Linux uses private command/epoch receipts; Android must
+independently reject its reader's in-flight packets before AudioTrack writes.
+These source invariants do not establish physical playback or target acceptance.

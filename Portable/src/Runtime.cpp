@@ -1,6 +1,8 @@
 #include "Internal.hpp"
 #include "MotionClock.hpp"
 #include "Lifecycle.hpp"
+#include "PcmEpoch.hpp"
+#include "VmPauseControl.hpp"
 #include "Base64.hpp"
 #include "qemu-ios-ui.h"
 #include "qemu-macos-extras.h"
@@ -167,13 +169,15 @@ struct lt_runtime {
     std::vector<char *> argv;
     bool debug_touch_trace = false;
     std::vector<uint8_t> scratch;
-    uint64_t serial = 0, audio_generation = 0, input_id = 0, pcm_dropped = 0;
+    uint64_t serial = 0, input_id = 0;
+    lt::PcmCaptureEpoch audio_capture;
     lt::MotionClock motion_clock;
     uint64_t guest_sequence = 0, guest_deadline = 0;
     std::string guest_wire_id;
     lt_guest_result guest_result{sizeof(lt_guest_result), 1, 0, 0, 0, 0, 0, {}};
     uint64_t guest_capabilities = 0;
-    std::deque<lt::PcmPacket> pcm;
+    lt::PcmEpochQueue<lt::PcmPacket> pcm;
+    lt::VmPauseControl vm_pause;
     bool audio_enabled = false;
     std::string fault;
     explicit lt_runtime(lt_device *d) : device(d) {}
@@ -198,6 +202,17 @@ struct lt_runtime {
         while (!done) {
             try {
                 if (engine->ready()) {
+                    const bool actual_paused = engine->paused();
+                    lt::VmPauseControl::Action pause_action = lt::VmPauseControl::Action::none;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if (!stopping)
+                            pause_action = vm_pause.step(actual_paused, true); // Inside engine->ready() boundary.
+                    }
+                    if (pause_action == lt::VmPauseControl::Action::pause)
+                        engine->pause();
+                    else if (pause_action == lt::VmPauseControl::Action::resume)
+                        engine->resume();
                     agent_state = uint32_t(engine->agent_status());
                     if (shutdown_requested.exchange(false)) {
                         shutdown_phase = 2;
@@ -270,14 +285,36 @@ struct lt_runtime {
                     } else if (r != QEMU_IOS_NO_FRAME && r != QEMU_IOS_NOT_READY)
                         lt::result(r);
                     if (audio_enabled) {
-                        if (!audio_generation)
-                            audio_generation = engine->audio_start();
-                        if (audio_generation) {
+                        uint64_t read_epoch;
+                        bool suspended;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex);
+                            read_epoch = pcm.epoch;
+                            suspended = pcm.suspended || stopping || !vm_pause.capture_allowed(actual_paused);
+                        }
+                        // Stop/start belongs to this publisher alone. A new
+                        // capture generation synchronously clears the engine
+                        // ring; stopping alone leaves its queued packets intact.
+                        const bool vm_paused = actual_paused;
+                        audio_capture.synchronize(read_epoch, suspended, vm_paused,
+                                                  [&](uint64_t generation) { engine->audio_stop(generation); },
+                                                  [&] { return engine->audio_start(); });
+                        if (!suspended && !vm_paused && audio_capture.generation) {
                             for (int i = 0; i < 8; i++) {
                                 lt::PcmPacket p;
                                 double seconds = 0;
-                                int bytes = engine->audio_read(audio_generation, p.samples.data(),
+                                int bytes = engine->audio_read(audio_capture.generation, p.samples.data(),
                                                                int(sizeof p.samples), &seconds);
+                                {
+                                    std::lock_guard<std::mutex> lock(mutex);
+                                    if (read_epoch != pcm.epoch || pcm.suspended || stopping) {
+                                        if (bytes > 0 && bytes <= int(sizeof p.samples) && bytes % 4 == 0) {
+                                            pcm_captured += bytes / 4;
+                                            pcm.dropped += bytes / 4;
+                                        }
+                                        break;
+                                    }
+                                }
                                 if (bytes < 0) {
                                     throw lt::Failure(LT_ENGINE, "engine PCM capture overflow/failure");
                                 }
@@ -289,11 +326,7 @@ struct lt_runtime {
                                 pcm_captured += p.bytes / 4;
                                 p.timestamp = uint64_t(std::max(0.0, seconds) * 1e9);
                                 std::lock_guard<std::mutex> lock(mutex);
-                                if (pcm.size() == 16) {
-                                    pcm_dropped += pcm.front().bytes / 4;
-                                    pcm.pop_front();
-                                }
-                                pcm.push_back(std::move(p));
+                                pcm.append(read_epoch, std::move(p));
                             }
                         }
                     }
@@ -525,11 +558,9 @@ lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {
         {
             std::lock_guard<std::mutex> lock(r->mutex);
             r->motion_clock.reset();
+            r->pcm.transition(paused != 0);
+            r->vm_pause.request(paused != 0);
         }
-        if (paused)
-            r->engine->pause();
-        else
-            r->engine->resume();
     });
 }
 lt_status lt_runtime_request_shutdown(lt_runtime *r, lt_error *e) {
@@ -568,9 +599,9 @@ lt_status lt_runtime_io_statistics(lt_runtime *r, lt_runtime_io_stats *out, lt_e
                 r->frame_published,
                 r->pcm_captured,
                 r->pcm_pulled,
-                r->pcm_dropped,
+                r->pcm.dropped,
                 r->input_id,
-                uint32_t(r->pcm.size()),
+                uint32_t(r->pcm.packets.size()),
                 0};
     });
 }
@@ -769,12 +800,12 @@ lt_status lt_runtime_pcm(lt_runtime *r, int16_t *out, uint32_t capacity, lt_pcm_
         lt::require(r->audio_enabled, "audio disabled", LT_UNSUPPORTED);
         lt::require(capacity >= 4096, "PCM capacity needs 4096 stereo frames");
         std::lock_guard<std::mutex> lock(r->mutex);
-        lt::require(!r->pcm.empty(), "no PCM ready", LT_AGAIN);
-        auto &p = r->pcm.front();
+        lt::require(!r->pcm.packets.empty(), "no PCM ready", LT_AGAIN);
+        auto &p = r->pcm.packets.front();
         memcpy(out, p.samples.data(), p.bytes);
-        *info = {sizeof(*info), 1, 44100, 2, p.bytes / 4, 0, p.timestamp, r->pcm_dropped};
+        *info = {sizeof(*info), 1, 44100, 2, p.bytes / 4, 0, p.timestamp, r->pcm.dropped};
         r->pcm_pulled += p.bytes / 4;
-        r->pcm.pop_front();
+        r->pcm.packets.pop_front();
     });
 }
 lt_status lt_runtime_guest_status(lt_runtime *r, uint32_t *out, lt_error *e) {
