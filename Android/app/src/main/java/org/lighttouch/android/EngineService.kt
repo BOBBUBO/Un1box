@@ -91,6 +91,9 @@ class EngineService : Service() {
         }
         override fun clearSurface() { Native.cancelInput(); Native.surface(null) }
         override fun pause(paused: Boolean) {
+            // A background callback can race the stop button. Shutdown already
+            // cancels input; an inactive pause must not replace its diagnostic.
+            if (stopping.get()) return
             userPaused = paused
             if (!paused) focusPaused = false
             Native.cancelInput()

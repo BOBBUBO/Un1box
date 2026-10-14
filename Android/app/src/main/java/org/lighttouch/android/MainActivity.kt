@@ -540,7 +540,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             engine?.cancelInput()
             // The UI status poll can still say paused immediately after Resume.
             // Session ownership preserves the background-pause policy in that gap.
-            if (sessionOwned || status in listOf("running", "starting")) engine?.pause(true)
+            if ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting")) engine?.pause(true)
         } catch (_: RemoteException) { error = "Guest worker exited while the activity stopped; writable state retained." }
         handler.removeCallbacks(poll); super.onStop()
     }
