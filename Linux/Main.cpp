@@ -712,9 +712,9 @@ static int frontend(const Options &o, int argc, char **argv) {
                 const auto &s = update.status;
                 diagnostics = update.diagnostics;
                 pcm_socket_dropped = update.pcm_socket_dropped;
-                std::cout << "status state=" << s.state << " confirmed=" << s.guest_shutdown_confirmed
-                          << " dirty=" << s.dirty << " frames=" << s.frames
-                          << " sleeping=" << diagnostics.display_sleeping
+                std::cout << "status observed_monotonic_ns=" << now_ns() << " state=" << s.state
+                          << " confirmed=" << s.guest_shutdown_confirmed << " dirty=" << s.dirty
+                          << " frames=" << s.frames << " sleeping=" << diagnostics.display_sleeping
                           << " backlight=" << diagnostics.backlight_level << " agent=" << diagnostics.agent_status
                           << " shutdown_phase=" << diagnostics.shutdown_phase
                           << " shutdown_route=" << diagnostics.shutdown_route

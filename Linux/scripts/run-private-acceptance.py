@@ -19,6 +19,7 @@ for name in ('engine', 'rom', 'package', 'import-source'):
 p.add_argument('--source-sha256')
 p.add_argument('--marker', default='LightTouch Linux persistence 2026-10-14')
 p.add_argument('--reopen', nargs=2, type=float, help='Notes row coordinates measured from saved-list pixels')
+p.add_argument('--previous-write', type=pathlib.Path, help='read mode links actual prior clean write receipt')
 p.add_argument('--recover', action='store_true', help='explicit dirty recovery for first write only')
 p.add_argument('--no-audio', action='store_true')
 p.add_argument('--execute', action='store_true', help='otherwise only generate private scripts/commands')
@@ -41,6 +42,23 @@ if '\n' in a.marker or len(a.marker.encode()) >= 1024:
     p.error('marker must be one bounded UTF-8 script argument')
 if a.reopen and not all(0 <= x <= 1 for x in a.reopen):
     p.error('reopen coordinates must be normalized 0..1')
+prior = None
+if a.previous_write:
+    if a.mode != 'read':
+        p.error('--previous-write is only for a fresh-worker read')
+    previous = a.previous_write.resolve()
+    previous_command = json.loads((previous / 'command.json').read_text())
+    previous_inputs = json.loads((previous / 'inputs.json').read_text())
+    if previous_inputs['mode'] != 'write':
+        p.error('previous receipt must be from a write attempt')
+    if previous_inputs['marker'] != a.marker:
+        p.error('fresh read must name the same expected marker as its linked write')
+    prior = json.loads((previous / 'result.json').read_text())
+    if not prior.get('confirmed_clean_receipt') or prior.get('exit_code') != 0 or prior['state_after']['dirty']:
+        p.error('previous write has no actual confirmed clean exit')
+    for flag, value in (('--base', a.base), ('--state', a.state)):
+        if flag not in previous_command or previous_command[previous_command.index(flag) + 1] != str(value):
+            p.error('previous write must use exactly the same immutable base and writable state')
 a.output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
 
 def dump(name, value):
@@ -117,6 +135,8 @@ else:
 dump('command.json', command)
 (a.output_dir / 'command.txt').write_text(shlex.join(command) + '\n')
 dump('inputs.json', {'mode': a.mode, 'marker': a.marker, 'state_before': state(),
+                    'evidence_class': 'planned_prepared_import' if a.mode == 'prepare' else 'planned_native_guest_session',
+                    'previous_write': str(a.previous_write.resolve()) if a.previous_write else None,
                     'sha256': {str(x): sha(x) for x in (a.binary, a.engine, a.rom, a.package,
                                                        a.base / 'device.lock.json') if x}})
 if not a.execute:
@@ -127,7 +147,8 @@ dump('environment.json', {k: env[k] for k in ('EGL_PLATFORM', 'LIBGL_ALWAYS_SOFT
 start = time.monotonic()
 workers = {}
 timed_out = False
-with (a.output_dir / 'session.log').open('wb') as log:
+last_sample = 0
+with (a.output_dir / 'session.log').open('wb') as log, (a.output_dir / 'samples.jsonl').open('w') as samples:
     proc = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
     while proc.poll() is None:
         children = pathlib.Path(f'/proc/{proc.pid}/task/{proc.pid}/children')
@@ -135,11 +156,37 @@ with (a.output_dir / 'session.log').open('wb') as log:
             for child in children.read_text().split():
                 if child not in workers:
                     raw = pathlib.Path(f'/proc/{child}/cmdline').read_bytes()
+                    argv = raw.decode(errors='replace').split('\0')[:-1]
+                    if '--worker' not in argv:
+                        continue
                     stat = pathlib.Path(f'/proc/{child}/stat').read_text().rpartition(')')[2].split()
-                    workers[child] = {'argv': raw.decode(errors='replace').split('\0')[:-1],
+                    workers[child] = {'argv': argv,
                                       'start_ticks': stat[19], 'state': state()}
         except (FileNotFoundError, ProcessLookupError):
             pass
+        if time.monotonic() - last_sample >= 1:
+            for child in workers:
+                try:
+                    proc_dir = pathlib.Path('/proc') / child
+                    fields = (proc_dir / 'stat').read_text().rpartition(')')[2].split()
+                    # Check start ticks so a recycled PID never becomes this worker.
+                    if fields[19] != workers[child]['start_ticks']:
+                        continue
+                    sample = {'observed_monotonic_ns': time.monotonic_ns(), 'pid': int(child),
+                              'start_ticks': fields[19], 'cpu_user_ticks': int(fields[11]),
+                              'cpu_system_ticks': int(fields[12]), 'clock_ticks_per_second': os.sysconf('SC_CLK_TCK'),
+                              'rss_bytes': int(fields[21]) * os.sysconf('SC_PAGE_SIZE'), 'threads': int(fields[17])}
+                    try:
+                        pss = next(line for line in (proc_dir / 'smaps_rollup').read_text().splitlines()
+                                   if line.startswith('Pss:'))
+                        sample['pss_bytes'] = int(pss.split()[1]) * 1024
+                    except (OSError, StopIteration):
+                        sample['pss_bytes'] = None
+                    samples.write(json.dumps(sample) + '\n')
+                    samples.flush()
+                except (OSError, IndexError, ValueError):
+                    continue
+            last_sample = time.monotonic()
         if time.monotonic() - start > 190:
             timed_out = True
             os.killpg(proc.pid, signal.SIGTERM)
@@ -153,12 +200,22 @@ with (a.output_dir / 'session.log').open('wb') as log:
 text = (a.output_dir / 'session.log').read_text(errors='replace')
 after = state()
 clean_receipt = any('state=0 confirmed=1 dirty=0' in line for line in text.splitlines())
+fresh_worker = None
+if prior:
+    old_ids = {(str(pid), item['start_ticks']) for pid, item in prior['workers'].items()}
+    new_ids = {(str(pid), item['start_ticks']) for pid, item in workers.items()}
+    fresh_worker = bool(new_ids) and not bool(old_ids & new_ids)
 dump('result.json', {'frontend_pid': proc.pid, 'workers': workers, 'exit_code': proc.returncode,
                      'elapsed_seconds': time.monotonic() - start, 'driver_timeout': timed_out,
                      'state_after': after, 'confirmed_clean_receipt': clean_receipt,
+                     'evidence_class': 'prepared_import_attempt' if a.mode == 'prepare' else 'native_guest_attempt',
+                     'same_state_fresh_worker_observed': fresh_worker,
+                     'guest_visual_acceptance': 'requires integrator inspection; never inferred from host probes',
                      'visual_text_verified': False, 'visual_review_required': True})
 print('Result recorded. Inspect actual Notes pixels; driver never asserts marker persistence.')
 ok = proc.returncode == 0 and not timed_out
 if a.mode != 'prepare':
     ok = ok and clean_receipt and not after['dirty'] and bool(workers)
+    if prior:
+        ok = ok and fresh_worker
 raise SystemExit(0 if ok else 1)

@@ -173,6 +173,10 @@ Notes screen differs. `--recover` is an explicit first-write option for a prior 
 state. After a confirmed clean exit, run `--mode read` on the same base/state with
 a different output directory, deliberately without recovery. Inspect its Notes list,
 then supply `--reopen X Y` from the actual saved row pixels to capture the marker.
+Link a prior driver write using `--previous-write /private/write-evidence`; this
+requires its actual clean receipt, same base/state paths and marker, then compares
+worker PID/start ticks to establish a distinct fresh process. Without the link,
+fresh-worker lineage is recorded as unknown, never inferred from a screenshot.
 The script records frontend/worker PIDs and process start ticks, exact argv, selected
 source hashes, initial/final dirty and base-pin observations, log, screenshots, and
 the actual confirmed-clean status receipt. A nonzero exit, missing receipt or dirty
@@ -186,3 +190,19 @@ the resulting base in the same write/read sessions; native open independently ch
 all base hashes and acquires the exclusive writer lease. The driver never deletes,
 repairs, or substitutes state, and its supervisor only terminates its own spawned
 process group on a bounded timeout.
+
+During execution, samples.jsonl records each observed native worker's monotonic
+time, CPU user/system ticks and tick frequency, RSS, readable PSS and thread count
+once per second. Process start ticks protect against PID reuse. No threshold or
+phone measurement is fabricated from these Linux observations. Retain actual
+duration/workload and concurrent screenshots/replies with the samples.
+
+The read-only `scripts/summarize-acceptance.py --run-dir /private/write-evidence
+--evidence-kind native-guest-attempt --output /private/write-summary.json` records
+artifact hashes, clean-state receipts, cumulative I/O ranges, measured producer/PCM
+rates where new logs have observation timestamps, CPU and memory observations.
+Use `--evidence-kind host-probe` for legal ARM guests, synthetic inputs or engine
+adapter checks; they cannot qualify real iOS graphics/input/audio/persistence. Both
+classes retain `initial_gate_claims: none`. Inspect actual guest pixels, contact IDs,
+audible output, persisted text, target identity and lifecycle transitions before the
+integrator marks a gate. No data here qualifies deferred gyro work.
