@@ -395,3 +395,29 @@ actual app-UID loading and normal guest operation remain target acceptance work.
 Source and selected-license notices do not establish complete application
 compatibility or source/relink coverage. Root chooses the qualified library
 candidate and controls the subsequent build/device execution.
+
+`GuestFrontmostDiagnosisTest` uses only attempt10's existing interface and accepts
+`diagnoseGuestFrontmost=true`. It explicitly resumes an existing worker, waits at
+most15seconds for observed agentALIVE, and requests only fixed FRONTMOST1 with an
+empty argument. It retains the entire native reply/status and paired captures
+under `files/screenshots/<evidence>/`; no launch/button/start/stop query occurs.
+Root can isolate this one test file on the frozen attempt10 source for a test-only
+APK. Foreground the normal activity before each `--no-restart` invocation.
+Launch guestStatus3 is preserved directly from SpringBoardServices' nonzero launch
+return, distinct from native request-state3. The matched source provides no named
+code3 enum. Existing Swift launch handling checks lock status separately; this
+read-only FRONTMOST response reports `com.apple.springboard`/`Lock Screen` only
+when the actual guest lock-status API says locked. Do not infer locked from3 alone.
+
+The frontend extractor remains separately owned. Its verified schema1 bundle can
+be consumed using `-PfrontendNotices=/verified/frontend-bundle` and
+`-PfrontendNoticesSha256=ACTUAL_64_HEX_SHA`. The consumer exports the intended
+`auditConfiguration` main runtime graph (debug default; choose release explicitly
+for release), rehashes selected artifact bytes, validates the portable graph hash,
+manifest pin/source metadata/complete declared payloads, and stages only public
+manifest-listed bytes. Private artifact/cache paths never enter assets. Old assets
+are replaced after full verification. No license text is generated or inferred
+by the consumer. Preserve the bundle's own source identity unchanged; the publisher
+may need a freshly generated bundle for the complete conveyed source reference.
+Notice inclusion alone does not establish source availability or application
+license/relink clearance.
