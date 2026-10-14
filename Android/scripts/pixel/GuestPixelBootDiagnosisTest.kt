@@ -29,8 +29,12 @@ class GuestPixelBootDiagnosisTest {
         val record = requireNotNull(args.getString("recordId"))
         require(Regex("[0-9a-f]{32}").matches(record))
         val seconds = args.getString("pixelObserveSeconds", "300").toLong()
-        require(seconds in 30..300) { "pixelObserveSeconds must be30 through300" }
-        val evidence = File(context.filesDir, "pixel-boot-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
+        require(seconds == 300L) { "The declared observation is exactly300 seconds; no shortening" }
+        val token = requireNotNull(args.getString("pixelAttemptToken"))
+        val originToken = requireNotNull(args.getString("pixelOriginToken"))
+        require(Regex("[0-9a-f]{32}").matches(token))
+        require(Regex("[0-9a-f]{64}").matches(originToken))
+        val evidence = File(context.filesDir, "pixel-boot-$token").apply { check(mkdir()) }
         val timeline = JSONArray()
         val receipt = JSONObject().put("diagnosisCaptured", false).put("guestAcceptancePassed", false).put("visibleGuestVerified", false)
             .put("physicalPixelEquivalent", false).put("audiblePlaybackVerified", false)
@@ -44,9 +48,14 @@ class GuestPixelBootDiagnosisTest {
                 else -> put(key, value)
             }
         }
+        fun atomic(name: String, data: String) {
+            val pending = File(evidence, ".$name.pending")
+            pending.writeText(data)
+            check(pending.renameTo(File(evidence, name))) { "Atomic diagnostic publication failed" }
+        }
         fun persist() {
-            File(evidence, "result.json").writeText(receipt.toString(2))
-            File(evidence, "timeline.json").writeText(timeline.toString(2))
+            atomic("result.json", receipt.toString(2))
+            atomic("timeline.json", timeline.toString(2))
         }
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -60,16 +69,46 @@ class GuestPixelBootDiagnosisTest {
                     assertEquals("", worker.debugSelectGraphicsProvider(1))
                     assertEquals("", worker.debugArmQmp())
                     scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
+                    val beforeStartMs = SystemClock.elapsedRealtime()
                     val started = worker.start(record)
+                    val afterStartMs = SystemClock.elapsedRealtime()
                     assertEquals(started.toString(), "", started.getString("error"))
                     val pid = started.getInt("pid")
                     assertEquals(initial.getInt("pid"), pid)
                     val log = File(requireNotNull(started.getString("engineLog")))
-                    val deadline = SystemClock.elapsedRealtime() + seconds * 1000
+                    val bootId = File("/proc/sys/kernel/random/boot_id").readText().trim()
+                    val stat = File("/proc/$pid/stat").readText().substringAfterLast(") ").trim().split(Regex("\\s+"))
+                    val startTicks = stat[19].toLong()
+                    val ready = JSONObject().put("schema", 1).put("workerPid", pid).put("appUid", Process.myUid())
+                        .put("workerStartTicks", startTicks).put("bootId", bootId).put("recordId", record)
+                        .put("attemptToken", token).put("originToken", originToken)
+                        .put("beforeStartElapsedMs", beforeStartMs).put("afterStartElapsedMs", afterStartMs)
+                        .put("nativeAfterStartMonotonicNs", started.getBundle("observations")?.getLong("hostMonotonicNs"))
+                        .put("guestAcceptancePassed", false)
+                    atomic("ready.json", ready.toString(2))
                     receipt.put("workerPid", pid).put("appUid", Process.myUid())
                         .put("engineLog", log.absolutePath).put("initialWorker", encode(started))
-                        .put("observationDeadlineElapsedMs", deadline).put("stage", "foreground-observation")
+                        .put("workerStartTicks", startTicks).put("bootId", bootId)
+                        .put("attemptToken", token).put("originToken", originToken)
+                        .put("beforeStartElapsedMs", beforeStartMs).put("afterStartElapsedMs", afterStartMs)
+                        .put("stage", "awaiting-host-after-start-admission")
                         .put("qmpMayPerturbTiming", true)
+                    persist()
+                    val gatePath = File(evidence, "admission.json")
+                    val waitDeadline = SystemClock.elapsedRealtime() + 20_000
+                    while (!gatePath.exists() && SystemClock.elapsedRealtime() < waitDeadline) Thread.sleep(100)
+                    check(gatePath.exists()) { "No timely host after-Start admission; interval not shortened" }
+                    val gate = JSONObject(gatePath.readText())
+                    for (key in listOf("workerPid", "appUid", "workerStartTicks", "bootId", "recordId", "attemptToken", "originToken"))
+                        check(gate.get(key).toString() == ready.get(key).toString()) { "Admission identity differs: $key" }
+                    check(gate.getLong("observationMs") == 300_000L)
+                    val observationStartMs = SystemClock.elapsedRealtime()
+                    val absoluteLimitMs = gate.getLong("deviceObservationLimitMs")
+                    check(absoluteLimitMs - observationStartMs >= 300_000L) { "Insufficient original device budget after Start/admission" }
+                    val deadline = observationStartMs + 300_000L
+                    receipt.put("observationStartedElapsedMs", observationStartMs)
+                        .put("observationDeadlineElapsedMs", deadline).put("deviceOriginalObservationLimitMs", absoluteLimitMs)
+                        .put("hostClockAdmission", gate).put("stage", "foreground-observation")
                     persist()
                     var index = 0
                     var wokeOnce = false
