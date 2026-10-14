@@ -6,6 +6,7 @@
 #include "../src/Elapsed.hpp"
 #include "../src/Lifecycle.hpp"
 #include "../../Linux/TouchScript.hpp"
+#include "../../Linux/ControlDelivery.hpp"
 #include <zlib.h>
 #include <cassert>
 #include <cmath>
@@ -47,6 +48,32 @@ static std::string sha_file(const fs::path &p) {
     return h;
 }
 int main() {
+    lt::ControlDelivery delivery;
+    using ControlKind = lt::ControlDelivery::Kind;
+    unsigned calls = 0;
+    assert(delivery.send(ControlKind::input, [&] {
+        calls++;
+        return true;
+    })); // contact/button down queued
+    assert(!delivery.send(ControlKind::input, [&] {
+        calls++;
+        return false;
+    })); // release dropped by full socket
+    assert(delivery.needs_cancel());
+    assert(!delivery.send(ControlKind::input, [&] {
+        calls++;
+        return true;
+    }));
+    assert(calls == 2); // newer input never overtakes pending cancellation
+    delivery.retry_cancel([] { return false; });
+    assert(delivery.needs_cancel());
+    delivery.retry_cancel([] { return true; });
+    assert(!delivery.needs_cancel());
+    assert(delivery.send(ControlKind::input, [] { return true; }));
+    assert(!delivery.send(ControlKind::pause, [] { return false; }));
+    assert(delivery.needs_cancel());
+    assert(delivery.send(ControlKind::cancel, [] { return true; }));
+    assert(!delivery.needs_cancel());
     // A zero engine return is not a guest shutdown receipt. Finalization may
     // briefly retain dirty while the confirmed publisher is still cleaning up.
     assert(lt::terminal_issue(true, true, false, true, 0) == lt::TerminalIssue::unconfirmed_shutdown);

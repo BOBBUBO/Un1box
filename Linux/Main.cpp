@@ -1,6 +1,7 @@
 #include "lighttouch.h"
 #include "../Portable/src/Elapsed.hpp"
 #include "TouchScript.hpp"
+#include "ControlDelivery.hpp"
 #include <SDL.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
@@ -309,6 +310,7 @@ static int worker(const Options &o) {
             if (result != LT_OK) {
                 Packet reply;
                 reply.kind = Reply;
+                reply.reserved = p.kind;
                 reply.error = error;
                 send_packet(o.control, reply);
             }
@@ -631,12 +633,21 @@ static int frontend(const Options &o, int argc, char **argv) {
     uint32_t next_finger = 10000, display_rotation = 0;
     auto script = script_file(o.script);
     size_t next_script = 0;
+    lt::ControlDelivery delivery;
     auto submit = [&](Packet p) {
         if (p.kind == Touch)
             p.touch.timestamp_ns = now_ns();
         if (p.kind == Motion)
             p.motion.timestamp_ns = now_ns();
-        bool sent = send_packet(sockets[0], p);
+        auto kind = p.kind == Touch || p.kind == Button || p.kind == Motion ? lt::ControlDelivery::Kind::input
+                    : p.kind == Cancel                                      ? lt::ControlDelivery::Kind::cancel
+                    : p.kind == Pause                                       ? lt::ControlDelivery::Kind::pause
+                                                                            : lt::ControlDelivery::Kind::lifecycle;
+        bool sent = delivery.send(kind, [&] { return send_packet(sockets[0], p); });
+        if (delivery.needs_cancel() || p.kind == Cancel || p.kind == Pause) {
+            contacts.clear();
+            fingers.clear();
+        }
         if (!sent)
             std::cerr << "control backpressure: command " << p.kind << " rejected\n";
         return sent;
@@ -686,9 +697,14 @@ static int frontend(const Options &o, int argc, char **argv) {
         p.kind = Touch;
         p.touch = {sizeof(p.touch), 1, now_ns(), 1, 0, {}};
         p.touch.contacts[0] = {sizeof(lt_contact), 1, id, phase, x, y};
-        submit(p);
+        return submit(p);
     };
     while (!terminal) {
+        delivery.retry_cancel([&] {
+            Packet cancel;
+            cancel.kind = Cancel;
+            return send_packet(sockets[0], cancel);
+        });
         uint64_t now = now_ns();
         double elapsed = double(now - start) / 1e9;
         while (next_script < script.size() && elapsed >= script[next_script].at) {
@@ -710,6 +726,8 @@ static int frontend(const Options &o, int argc, char **argv) {
         while (receive(sockets[0], update)) {
             if (update.kind == Status) {
                 const auto &s = update.status;
+                if (s.state == LT_PAUSED || s.state == LT_RUNNING)
+                    paused = s.state == LT_PAUSED;
                 diagnostics = update.diagnostics;
                 pcm_socket_dropped = update.pcm_socket_dropped;
                 std::cout << "status observed_monotonic_ns=" << now_ns() << " state=" << s.state
@@ -746,7 +764,10 @@ static int frontend(const Options &o, int argc, char **argv) {
                 fingers.clear();
                 Packet cancel;
                 cancel.kind = Cancel;
-                submit(cancel);
+                // Cancellation can be rejected before the engine becomes ready.
+                // Do not create an endless Reply/Cancel loop during startup.
+                if (update.reserved != Cancel)
+                    submit(cancel);
             } else if (update.kind == GuestResult) {
                 const auto &result = update.guest_result;
                 std::cout << "guest request=" << result.request_id << " state=" << result.state
@@ -933,10 +954,14 @@ static int frontend(const Options &o, int argc, char **argv) {
                 lt_status mapped = lt_map_contact(px, py, left, top, display_width * scale, display_height * scale,
                                                   display_rotation, &x, &y);
                 if (event.type == SDL_MOUSEMOTION) {
-                    for (auto &c : contacts) {
+                    // A failed send clears local ownership. Iterate a snapshot
+                    // so cancellation cannot invalidate this traversal.
+                    const auto held = contacts;
+                    for (const auto &c : held) {
                         if (mapped == LT_OK) {
-                            c.second = {x, y};
-                            touch(c.first, 1, x, y);
+                            contacts[c.first] = {x, y};
+                            if (!touch(c.first, 1, x, y))
+                                break;
                         }
                     }
                 } else {

@@ -8,6 +8,11 @@ extern "C" {
 #define LT_ABI_VERSION 1u
 #define LT_MAX_CONTACTS 8u
 #define LT_FRAME_CAPACITY (4096u * 4096u * 4u)
+/* Host deadlines begin after requesting semantic guest shutdown, separately
+ * from import/startup. Callers may extend observation; never shorten to infer a
+ * clean exit. Confirmed cleanup may finish sooner. Kill/timeout retains dirty. */
+#define LT_SHUTDOWN_CONFIRMATION_TIMEOUT_MS 30000u
+#define LT_SHUTDOWN_GRACE_MS 35000u
 #define LT_INIT(type) {sizeof(type), LT_ABI_VERSION}
 typedef enum {
     LT_OK = 0,
