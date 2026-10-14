@@ -1,4 +1,5 @@
 #include "lighttouch.h"
+#include "../Portable/src/Elapsed.hpp"
 #include <SDL.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
@@ -370,7 +371,7 @@ static int worker(const Options &o) {
                 send(o.pcm, &pcm, sizeof pcm, MSG_DONTWAIT | MSG_NOSIGNAL);
             }
         }
-        if (stopping_since && now - stopping_since > 30000000000ull) {
+        if (stopping_since && lt::elapsed_exceeds(now_ns(), stopping_since, lt::worker_shutdown_timeout_ns)) {
             std::cerr << "guest shutdown timeout; dirty state retained\n";
             return 3;
         }
@@ -923,7 +924,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                 }
             }
         }
-        if (stopping && now - stop_since > 35000000000ull) {
+        if (stopping && lt::elapsed_exceeds(now_ns(), stop_since, lt::parent_shutdown_timeout_ns)) {
             throw std::runtime_error("shutdown timeout; worker terminated, dirty state preserved");
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));

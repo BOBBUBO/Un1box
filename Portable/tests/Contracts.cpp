@@ -3,6 +3,7 @@
 #include "../src/Json.hpp"
 #include "../src/MotionClock.hpp"
 #include "../src/Base64.hpp"
+#include "../src/Elapsed.hpp"
 #include <zlib.h>
 #include <cassert>
 #include <cmath>
@@ -44,6 +45,20 @@ static std::string sha_file(const fs::path &p) {
     return h;
 }
 int main() {
+    // Stop is admitted after the loop timestamp is sampled. Unsigned subtraction
+    // with that stale snapshot used to kill a real worker in the same iteration.
+    const uint64_t loop_snapshot = 90000000000ull;
+    const uint64_t stop_admitted = loop_snapshot + 1000000;
+    assert(loop_snapshot - stop_admitted > lt::parent_shutdown_timeout_ns);
+    assert(!lt::elapsed_exceeds(loop_snapshot, stop_admitted, lt::parent_shutdown_timeout_ns));
+    assert(!lt::elapsed_exceeds(stop_admitted + 1, stop_admitted, lt::parent_shutdown_timeout_ns));
+    const uint64_t worker_deadline = stop_admitted + lt::worker_shutdown_timeout_ns;
+    assert(!lt::elapsed_exceeds(worker_deadline, stop_admitted, lt::worker_shutdown_timeout_ns));
+    assert(lt::elapsed_exceeds(worker_deadline + 1, stop_admitted, lt::worker_shutdown_timeout_ns));
+    assert(!lt::elapsed_exceeds(worker_deadline + 1, stop_admitted, lt::parent_shutdown_timeout_ns));
+    const uint64_t parent_deadline = stop_admitted + lt::parent_shutdown_timeout_ns;
+    assert(!lt::elapsed_exceeds(parent_deadline, stop_admitted, lt::parent_shutdown_timeout_ns));
+    assert(lt::elapsed_exceeds(parent_deadline + 1, stop_admitted, lt::parent_shutdown_timeout_ns));
     char temp[] = "/tmp/lighttouch-contract-XXXXXX";
     assert(mkdtemp(temp));
     fs::path root = temp;
