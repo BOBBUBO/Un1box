@@ -56,8 +56,8 @@ internal class WorkerPerformanceSampler(context: Context) {
         try {
             val memory = Debug.MemoryInfo()
             Debug.getMemoryInfo(memory)
-            val pss = memory.totalPss.toLong()
-            if (pss >= 0) {
+            val pss = PerformanceMemoryReading.workerPssKiB(memory.totalPss.toLong())
+            if (pss != null) {
                 values.putLong("workerPssKiB", pss)
                 values.putLong("pssSampleElapsedMs", SystemClock.elapsedRealtime())
             }
