@@ -13,6 +13,8 @@ import time
 import sys
 import memory_monitor
 import bind_recovery
+import capture_origin
+import host_lifecycle
 from diagnostic_control import Capture, validate_binding
 
 spec = importlib.util.spec_from_file_location("base_retry", Path(__file__).resolve().parents[1] / "supervise_16k_retry.py")
@@ -73,6 +75,9 @@ class PixelAttempt(base.Attempt):
         # Include CLI validation/import time; no later constructor clock may extend gates.
         self.start = (ticks * 1_000_000_000 // os.sysconf("SC_CLK_TCK")) / 1e9
         self.deadline = self.start + base.HARD_LIMIT
+        # Persist actual identity before creating any AVD/helper process. Tool
+        # handles arrive later and are attached separately without clock edits.
+        self.pixel_host_signals = []
         self.pixel_readback_done = False
         self.pixel_monitor = None
         self.pixel_monitor_stop = multiprocessing.get_context("fork").Event()
@@ -81,6 +86,11 @@ class PixelAttempt(base.Attempt):
         self.pixel_guest_idle = multiprocessing.get_context("fork").Event()
         if PIXEL_MEMORY_MB is not None:
             args.memory_mb = PIXEL_MEMORY_MB
+        self.initialize_host_lifecycle(args)
+
+    def initialize_host_lifecycle(self, args):
+        capture_origin.capture(self.output, os.getpid(), None, args.avd)
+        host_lifecycle.install(self.pixel_host_signals)
 
     def launch(self):
         super().launch()
@@ -214,6 +224,13 @@ class PixelAttempt(base.Attempt):
 
     def cleanup(self):
         try:
+            if getattr(self, "pixel_host_signals", []):
+                try:
+                    self.write("host-signals.json", {"signals": self.pixel_host_signals,
+                        "senderKnown": False, "guestAcceptancePassed": False})
+                finally:
+                    if self.avd is not None and not self.stop_attempted:
+                        self.stop()
             self.pixel_readback()
         finally:
             try:

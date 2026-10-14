@@ -46,7 +46,7 @@ def build(seed, prepared, attempt, source, launcher, cold_recovery=False, token=
     prefix=['python3',p['controller'],'--attempt',p['attempt']]
     p['preflightCommands']=[prefix+[stage] for stage in ('prepare-ui','bind-existing','diagnose')]
     p['approvalCommand']=prefix+['approve-ui','--image','ACTUAL_CAPTURE_BASENAME_OR_SAME_ATTEMPT_ABSOLUTE_PATH','--sha256','ACTUAL_MODEL_INSPECTED_SHA256']
-    p['clockCaptureCommand']=['python3',str(source/'capture_origin.py'),'--attempt',p['attempt'],'--supervisor-pid','ACTUAL_SUPERVISOR_PID','--exec-session','ACTUAL_EXEC_SESSION','--avd',p['avd']]
+    p['clockCaptureCommand']=['python3',str(source/'capture_origin.py'),'--attempt',p['attempt'],'--supervisor-pid','ACTUAL_SUPERVISOR_PID','--exec-session','ACTUAL_EXEC_SESSION','--avd',p['avd'],'--attach-exec-session']
     p['afterStartAdmissionCommand']=['python3',str(source/'admit_observation.py'),'--adb',option(old,'--adb'),'--attempt',p['attempt'],'--token',p['attemptToken']]
     p['instrumentationArgs']=instrumentation(p)
     manifest=str(prepared/'launch-command.json')
@@ -91,12 +91,13 @@ def validate(p, files=False):
     if p['clockCaptureCommand'][:2]!=['python3',str(Path(p['sourceRoot'])/'capture_origin.py')]:raise ValueError('Clock executable differs')
     if p['approvalCommand'][:5]!=['python3',p['controller'],'--attempt',p['attempt'],'approve-ui']:raise ValueError('Approval action differs')
     if option(p['clockCaptureCommand'],'--avd')!=p['avd']:raise ValueError('Clock AVD differs')
+    if p['clockCaptureCommand'].count('--attach-exec-session')!=1:raise ValueError('Original clock must be captured before AVD, then tool session attached separately')
     if option(p['afterStartAdmissionCommand'],'--token')!=p['attemptToken']:raise ValueError('Stale admission token')
     main=next(a for a in p['assets'] if Path(a['path']).name=='app-debug.apk')
     for key,expected in (('pixelAttemptToken',p['attemptToken']),('recordId',p['recordId']),('pixelColdRecovery',str(p['coldRecovery']).lower()),
                          ('pixelObserveSeconds','300'),('expectedMainApkSha256',main['sha256']),('pixelOriginToken','ACTUAL_ORIGINAL_CLOCK_SHA256')):
         if extra(p['instrumentationArgs'],key)!=expected:raise ValueError('Instrumentation identity differs: '+key)
-    required={'pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py'}
+    required={'pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py','host_lifecycle.py'}
     if not required.issubset(p['sourceHashes']):raise ValueError('Required stage/helper source hashes unavailable')
     hashes=list(p['recordPins'].values())+list(p['sourceHashes'].values())+[a['sha256'] for a in p['assets']]+[p['controllerSha256'],p['newLauncherSha256']]
     if any(not re.fullmatch('[0-9a-f]{64}',h) for h in hashes):raise ValueError('Invalid frozen hash')

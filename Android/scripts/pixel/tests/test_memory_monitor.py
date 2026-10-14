@@ -11,6 +11,11 @@ import cow_plan
 
 
 class Memory(unittest.TestCase):
+    def setUp(self):
+        self.host_init = mock.patch.object(pixel_supervisor.PixelAttempt, 'initialize_host_lifecycle')
+        self.host_init.start()
+        self.addCleanup(self.host_init.stop)
+
     def sampler(self, run=None, identity=lambda p: 123, now=lambda: 1):
         return memory.Sampler('/synthetic/adb', 99, 123, 10**9, run=run or mock.Mock(), now=now, identity=identity)
 
