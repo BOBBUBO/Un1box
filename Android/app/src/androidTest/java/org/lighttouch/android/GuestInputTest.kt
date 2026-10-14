@@ -137,7 +137,7 @@ class GuestInputTest {
         File(evidence, "touch.json").writeText(JSONObject().put("events", trace).put("workerPid", worker.status().getInt("pid"))
             .put("guestOutcomeRequiresReview", true).put("guestAcceptancePassed", false).toString(2))
     }
-    @Test fun realMotionIsRecordedWhileProductionSensorAdapterRuns() {
+    @Test fun deferredPhysicalMotionRecordingHarness() {
         assumeTrue("Motion is deferred/unqualified by user scope D12", arguments.getString("experimentalMotion") == "true")
         withGuest { _, worker, evidence ->
         val context = instrumentation.targetContext
