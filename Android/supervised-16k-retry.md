@@ -50,6 +50,54 @@ parent. A zero host exit from `adb exec-out` is not a remote command-success
 guarantee: retained target evidence returned zero alongside a missing-marker
 stat error. Missing, unknown and present are separate outcomes.
 
+## Explicit fresh-library staging
+
+For a new isolated AVD, replace `--record-id` with `--fresh-library` and provide
+its explicit `--avd` name. These modes are mutually exclusive. Keep the verified
+source lock/ROM/package hashes. The fresh mode's 240-second gate verifies only
+16384 pages, boot complete and one stable system_server with package/activity
+services for 30 seconds. It makes no run-as, installed-app or record assumption.
+`ready.json` records `freshLibrary=true`, `recordGatePassed=false`, `appUid=null`
+and `recordId=null`; UI and guest flags also remain false.
+
+The controller must verify/install the frozen main/test pair and capture/view
+the new application's UI within the original 240 seconds. Then provision the
+legitimate private baseline inputs only to this new Android target and run the
+existing opt-in production import test. The fresh import counts against the
+original 900-second budget; neither completing import nor binding its record
+resets the start, Stop or hard deadline. The supervisor does not import, select,
+start or recover a guest automatically.
+
+After the actual import test terminates successfully, extract its app-private
+`files/import-evidence-MILLIS/result.json` bytes and SHA256. Atomically publish
+`import-record.json` in the private output directory with these fields:
+
+```json
+{
+  "schema": 1,
+  "recordId": "HEX32_FROM_ACTUAL_IMPORT_RECEIPT",
+  "appUid": 10200,
+  "importReceiptPath": "files/import-evidence-MILLIS/result.json",
+  "importReceiptSha256": "SHA256_OF_ACTUAL_RECEIPT_BYTES"
+}
+```
+
+The UID shown is illustrative; use the actual receipt/target UID. Receipt paths
+are restricted to that fixed app-private import-evidence pattern. The
+supervisor reads the actual receipt through run-as, compares its bytes to the
+pin, and requires `pass=true` with the same record and UID. It then independently
+checks selected record identity, source lock/ROM/package pins and actual bytes,
+readable state and absent dirty marker, and compares the live app UID. Only
+after those checks does it write `record-bound.json` and `import-binding.json`.
+Wait for both before guest startup. Import binding after 240 seconds is allowed
+until the existing 840-second Stop boundary; it is not delayed UI acceptance.
+The bound ID/UID/pins are fixed. Replacing the controller record fails closed.
+
+If no record was verified and bound, Stop explicitly records that its marker
+path is unknown instead of inspecting a guessed record. Missing binding or a
+timeout does not establish clean shutdown. The existing-record mode retains its
+240-second selected-record and clean-state admission checks.
+
 `ready.json` records only this service/record gate, with `uiGatePassed=false`,
 `visualUIInspectionRequired=true` and `uiGateDeadlineSeconds=240`. It does not
 launch a previously installed application. After that handoff the controller
