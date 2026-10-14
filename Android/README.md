@@ -293,8 +293,8 @@ Shutdown disposal uses shared LT_SHUTDOWN_GRACE_MS (35seconds), copied from the
 authoritative header into BuildConfig at configuration time. The service arms an
 independent timer before any Stop JNI call and admits native shutdown off Binder;
 the UI also sends Stop off its main thread. The deadline reads only cached
-progress and writes a bounded private `worker-shutdown-PID.json` receipt/error
-before disposing its own worker process. It never queries Native status or
+progress and queues a bounded private `worker-shutdown-PID.json` receipt/error
+to a nonwaiting daemon writer before disposing its own worker process. It never queries Native status or
 observations, waits for AudioTrack cleanup or changes native state markers.
 Terminal native status may dispose earlier; the single winner does not infer
 clean shutdown when no native confirmation was observed. Expiry reports
@@ -303,6 +303,10 @@ marked a device dirty. The policy deadline begins at service Stop admission;
 it does not prove that Binder dispatch, OS scheduling or storage writes have a
 hard realtime guarantee. Existing presenter/platform blocking needs separate
 target evidence and is not identified by this source change.
+Receipt/error persistence is best effort: a blocked filesystem cannot delay
+process disposal, and the process can die before the writer completes. The UI
+reports unconfirmed shutdown when a valid terminal receipt is unavailable;
+missing/partial bytes are never taken as clean shutdown proof.
 Host `ShutdownWatchdogTest` blocks each native callback in turn and checks timer
 disposal and late-completion single-winner behavior without loading/killing QEMU
 or operating a phone. Run with the configured native/source input properties and

@@ -9,6 +9,15 @@ internal data class ShutdownProgress(val stage: String, val error: String = "")
 internal data class ShutdownReceipt(val reason: String, val progress: ShutdownProgress, val terminalState: String?,
     val acceptedAtMs: Long, val deadlineMs: Long, val observedAtMs: Long)
 
+/** Receipt persistence is best effort; filesystem waits cannot postpone disposal. */
+internal fun disposeWithoutWaitingForReceipt(writeReceipt: () -> Unit, terminate: () -> Unit) {
+    try {
+        Thread({
+            try { writeReceipt() } catch (_: Exception) { /* No confirmation is inferred from missing receipt bytes. */ }
+        }, "guest-stop-receipt").apply { isDaemon = true }.start()
+    } finally { terminate() }
+}
+
 /** The deadline never invokes native code and never waits for the admission thread. */
 internal class ShutdownWatchdog(
     private val graceMs: Long,

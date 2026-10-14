@@ -405,10 +405,20 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
         status = if (unexpected) "failed" else "stopped"
         if (unexpected) error = "Guest worker exited unexpectedly; writable state retained. Start creates a fresh worker. Private diagnostics are retained."
+        else if (engineExpectedExit) error = "Guest worker disposed; writable state retained. Shutdown confirmation receipt is unavailable."
         Thread({
             WorkerExitEvidence.capture(applicationContext, exitedPid)
             val retained = try { File(filesDir, "worker-stop-error.txt").takeIf { it.exists() }?.readText() } catch (_: java.io.IOException) { null }
             retained?.takeIf { it.isNotEmpty() }?.let { handler.post { error = it } }
+            if (retained.isNullOrEmpty() && !unexpected) {
+                val terminal = try {
+                    val file = File(filesDir, "worker-shutdown-$exitedPid.json")
+                    file.takeIf { it.exists() }?.readText()?.let { JSONObject(it) }
+                } catch (_: Exception) { null }
+                if (terminal != null && terminal.optString("reason") == "native-terminal" && terminal.optString("nativeTerminalState") == "stopped" && terminal.optString("error").isEmpty()) {
+                    handler.post { error = "" } // Native terminal report only; not an inferred clean marker.
+                }
+            }
         }, "worker-retained-error").start()
     }
     private fun startGuest() {

@@ -63,4 +63,38 @@ class ShutdownWatchdogTest {
         Thread.sleep(300)
         assertEquals("Cancelled timer disposed twice", 1, count.get())
     }
+
+    @Test fun blockedReceiptWriterCannotDelayDeadlineTermination() {
+        val nativeEntered = CountDownLatch(1)
+        val releaseNative = CountDownLatch(1)
+        val nativeReturned = CountDownLatch(1)
+        val writerEntered = CountDownLatch(1)
+        val releaseWriter = CountDownLatch(1)
+        val writerReturned = CountDownLatch(1)
+        val terminated = CountDownLatch(1)
+        val terminationCount = AtomicInteger(0)
+        val observed = AtomicReference<ShutdownReceipt>()
+        val coordinator = ShutdownWatchdog(150, ::nowMillis,
+            requestNativeStop = {
+                nativeEntered.countDown()
+                try { assertTrue(releaseNative.await(3, TimeUnit.SECONDS)); "" } finally { nativeReturned.countDown() }
+            }, cancelNativeContacts = {}, nativeStatus = { arrayOf("stopped", "", "") }, dispose = { receipt ->
+                disposeWithoutWaitingForReceipt(writeReceipt = {
+                    writerEntered.countDown()
+                    try { assertTrue(releaseWriter.await(3, TimeUnit.SECONDS)) } finally { writerReturned.countDown() }
+                }, terminate = { observed.set(receipt); terminationCount.incrementAndGet(); terminated.countDown() })
+            })
+        try {
+            assertTrue(coordinator.request()); assertTrue(nativeEntered.await(1, TimeUnit.SECONDS))
+            assertTrue("Termination waited for receipt IO", terminated.await(2, TimeUnit.SECONDS))
+            assertTrue("Receipt writer was not actually exercised", writerEntered.await(1, TimeUnit.SECONDS))
+            assertEquals("Writer released before termination proof", 1L, releaseWriter.count)
+            assertEquals("deadline-unconfirmed", observed.get().reason)
+            assertTrue(observed.get().observedAtMs >= observed.get().deadlineMs)
+            assertEquals(1, terminationCount.get())
+        } finally { releaseNative.countDown(); releaseWriter.countDown() }
+        assertTrue(nativeReturned.await(1, TimeUnit.SECONDS)); assertTrue(writerReturned.await(1, TimeUnit.SECONDS))
+        Thread.sleep(200)
+        assertEquals("Late native/writer completion terminated twice", 1, terminationCount.get())
+    }
 }
