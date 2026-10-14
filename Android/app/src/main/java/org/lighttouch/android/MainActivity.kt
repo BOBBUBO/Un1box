@@ -434,7 +434,16 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             finally { try { binder.unlinkToDeath(recipient, 0) } catch (_: java.util.NoSuchElementException) { } }
         }, "guest-worker-restart").start()
     }
-    private fun pulse(button: Int) { engine?.button(button, true); handler.postDelayed({ engine?.button(button, false) }, 100) }
+    private fun pulse(button: Int) {
+        val worker = engine ?: return
+        try {
+            worker.button(button, true)
+            handler.postDelayed({
+                try { worker.button(button, false) }
+                catch (_: RemoteException) { error = "Guest worker exited during button release; Start a fresh worker." }
+            }, 100)
+        } catch (_: RemoteException) { error = "Guest worker unavailable; Start a fresh worker." }
+    }
     private fun capture() {
         val path = File(filesDir, "screenshots/guest-${System.currentTimeMillis()}.png").absolutePath
         Thread({

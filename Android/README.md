@@ -318,3 +318,23 @@ force-stop ([AOSP Android16 policy](https://android.googlesource.com/platform/fr
 the target main process must already run. ActivityScenario closure still invokes
 background pause, so reopen and Resume for continued foreground use. Exit reason
 and trace availability remain actual platform evidence, not a service-failure claim.
+
+`GuestOrientationLifecycleTest` is opt-in (`-e exerciseOrientationLifecycle true`)
+against an already booted legitimate guest. It uses the production activity and
+Surface, recreates the activity, requests landscape then portrait (restoring its
+original own-activity request in `finally`), backgrounds/returns the Surface,
+and cancels held contacts before reusing valid IDs7/23. Android-side admission
+and cancellation counters are separate from guest delivery/outcome evidence.
+The test clicks semantic production Home/Power controls, checks paired native
+admissions, retains exact worker/media/window observations and actual guest
+screenshots, and releases contacts/buttons on failure. It fails if the platform
+does not apply the requested orientation or if the worker changes; it never
+changes system rotation settings. `hostChecksPassed` does not qualify a visible
+guest, gesture response, or audible playback; manual flags remain false.
+The presenter keeps guest portrait pixels upright, aspect-fitted to the current
+Surface. Native touch maps view-local coordinates using the same viewport and
+rotation0; display rotation is not applied a second time. Sensors have their
+separate deferred rotation mapping. A fresh or cancelled view ignores MOVE/UP
+until a new DOWN, including after recreation. For continuation root uses the
+instrumentation `--no-restart` policy described above; closing the scenario
+normally pauses the session and ordinary instrumentation may force-stop it.

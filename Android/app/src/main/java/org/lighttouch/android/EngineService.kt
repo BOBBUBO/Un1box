@@ -24,6 +24,9 @@ class EngineService : Service() {
     private val audioObservations = AudioObservations()
     @Volatile private var audioError = ""
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
+    private val buttonDownAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
+    private val buttonUpAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
+    private val buttonRejections = java.util.concurrent.atomic.AtomicLong(0)
     private val binder = object : IEngine.Stub() {
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
         override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
@@ -131,7 +134,11 @@ class EngineService : Service() {
                 Process.killProcess(Process.myPid())
             }, "guest-stop").start()
         }
-        override fun button(button: Int, down: Boolean) { Native.button(button, down).also { if (it.isNotEmpty()) error = it } }
+        override fun button(button: Int, down: Boolean) {
+            val result = Native.button(button, down)
+            if (result.isNotEmpty()) { error = result; buttonRejections.incrementAndGet() }
+            else if (button in 0..1) (if (down) buttonDownAdmissions else buttonUpAdmissions).incrementAndGet(button)
+        }
         override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String {
             val result = Native.touch(timestampNanos, ids, phases, coordinates, width, height, rotation)
             if (result.isNotEmpty()) error = result
@@ -250,6 +257,9 @@ class EngineService : Service() {
         for ((index, key) in keys.withIndex()) putLong(key, values[index])
         putBundle("audio", synchronized(audioGuard) { audioObservations.snapshot() })
         putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioFocusHeld", focus != null)
+        putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
+        putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
+        putLong("buttonRejections", buttonRejections.get())
     }
     private fun audioAttributes() = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
     private fun requestAudioFocus() {
