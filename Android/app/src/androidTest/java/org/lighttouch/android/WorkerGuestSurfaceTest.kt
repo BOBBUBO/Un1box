@@ -90,8 +90,11 @@ class WorkerGuestSurfaceTest {
                         selected.value = b.worker
                         // This callback runs before Compose can replace A. It must
                         // not attach A's old holder/queue to newly selected B.
+                        val oldBefore = a.calls.size
                         first.attachActiveSurface()
                         first.cancelOwnedGesture()
+                        first.surfaceDestroyed(first.holder)
+                        assertEquals("Cleanup must retain A's captured worker", listOf("cancel", "detach"), a.calls.drop(oldBefore))
                         assertTrue(b.calls.isEmpty())
                     }
                     val second = awaitSurface(first)
@@ -100,6 +103,7 @@ class WorkerGuestSurfaceTest {
                         assertNotSame(first.holder, second.holder)
                         assertEquals(2, created.size)
                         assertTrue("A must be disposed, not pooled/reused", first in released)
+                        assertEquals("Disposal must release only A's captured lease exactly once", 1, a.calls.count { it == "release" })
                         assertTrue(second.holder.surface.isValid)
                         val before = b.calls.toList()
                         first.surfaceDestroyed(first.holder)
