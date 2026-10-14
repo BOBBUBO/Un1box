@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Check all APK native entries: no compression and ELF PT_LOAD 16KiB alignment."""
 import argparse
+import hashlib
+import json
 import struct
 import zipfile
 
@@ -33,5 +35,23 @@ with zipfile.ZipFile(args.apk) as archive:
                     assert alignment >= 16384, f"4KiB ELF LOAD in {entry.filename}: {alignment}"
                     assert (virtual - file_offset) % 16384 == 0, f"Unaligned ELF LOAD: {entry.filename}"
             print(entry.filename, "uncompressed, APK/ELF aligned 16KiB")
+    angle_names = {"libEGL_lighttouch_angle.so", "libGLESv1_CM_lighttouch_angle.so", "libGLESv2_lighttouch_angle.so"}
+    present_angle = {name.rsplit("/", 1)[-1] for name in archive.namelist() if name.startswith("lib/") and name.rsplit("/", 1)[-1] in angle_names}
+    if present_angle:
+        assert present_angle == angle_names, "Partial packaged ANGLE provider"
+        provider = json.loads(archive.read("assets/providers/angle-runtime.json"))
+        assert provider["schema"] == 1 and provider["abi"] == "x86_64"
+        assert set(provider["libraries"]) == angle_names
+        notice = json.loads(archive.read("assets/licenses/angle/manifest.json"))
+        assert notice["schema"] == 1
+        for name, record in provider["libraries"].items():
+            assert not any(f"lib/{abi}/{name}" in archive.namelist() for abi in ("arm64-v8a", "armeabi-v7a")), "Experimental provider packaged on ARM"
+            data = archive.read(f"lib/x86_64/{name}")
+            assert hashlib.sha256(data).hexdigest() == record["sha256"] == notice["libraries"][name], f"Packaged provider identity changed: {name}"
+        for record in notice["files"]:
+            name = record["path"]
+            assert all(part not in ("", ".", "..") and "\\" not in part for part in name.split("/")), "Invalid provider notice path"
+            assert hashlib.sha256(archive.read("assets/licenses/angle/" + name)).hexdigest() == record["sha256"]
+        print("Verified all three x86 ANGLE packaged identities and declared notice hashes; actual app-UID provider remains unqualified")
 assert count, "APK has no native libraries"
 print(f"Checked {count} shared libraries; runtime/device acceptance still required")

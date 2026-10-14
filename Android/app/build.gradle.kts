@@ -135,3 +135,39 @@ tasks.register("recordApkRuntimeArtifacts") {
         println("Recorded ${artifacts.size} selected runtime artifacts: ${output.name}")
     }
 }
+
+// The optional provider is staged only in debug APKs, never linked directly or
+// included in release. Its selection remains a closed worker-only debug enum.
+val angleLibraries = providers.gradleProperty("angleLibraries")
+val angleManifest = providers.gradleProperty("angleManifest")
+val angleNotices = providers.gradleProperty("angleNotices")
+val angleManifestSha = providers.gradleProperty("angleManifestSha256")
+val angleNoticesSha = providers.gradleProperty("angleNoticesSha256")
+val angleStage = layout.buildDirectory.dir("generated/angleRuntime")
+val prepareAngleRuntime = tasks.register<Exec>("prepareAngleRuntime") {
+    val selected = listOf(angleLibraries, angleManifest, angleNotices, angleManifestSha, angleNoticesSha)
+    require(selected.all { it.isPresent } || selected.none { it.isPresent }) {
+        "Supply angleLibraries, angleManifest, angleNotices and their two manifest SHA256 pins together"
+    }
+    inputs.file(rootProject.file("scripts/stage-angle-runtime.py"))
+    inputs.property("angleEnabled", angleLibraries.isPresent)
+    if (angleLibraries.isPresent) {
+        require("x86_64" in providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(","))
+        inputs.dir(angleLibraries.map { file(it) }); inputs.file(angleManifest.map { file(it) }); inputs.dir(angleNotices.map { file(it) })
+        inputs.property("angleManifestSha", angleManifestSha); inputs.property("angleNoticesSha", angleNoticesSha)
+    }
+    outputs.dir(angleStage)
+    doFirst {
+        val arguments = mutableListOf("python3", rootProject.file("scripts/stage-angle-runtime.py").absolutePath, angleStage.get().asFile.absolutePath)
+        if (angleLibraries.isPresent) {
+            arguments += listOf("--libraries", angleLibraries.get(), "--manifest", angleManifest.get(), "--notices", angleNotices.get(),
+                "--manifest-sha256", angleManifestSha.get(), "--notices-sha256", angleNoticesSha.get(),
+                "--readelf", androidComponents.sdkComponents.ndkDirectory.get().file("toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf").asFile.absolutePath)
+        }
+        commandLine(arguments)
+    }
+}
+android.sourceSets["debug"].jniLibs.srcDir(angleStage.map { it.dir("jniLibs") })
+android.sourceSets["debug"].assets.srcDir(angleStage.map { it.dir("assets") })
+android.packaging.jniLibs.keepDebugSymbols += setOf("**/libEGL_lighttouch_angle.so", "**/libGLESv1_CM_lighttouch_angle.so", "**/libGLESv2_lighttouch_angle.so")
+tasks.named("preDebugBuild").configure { dependsOn(prepareAngleRuntime) }
