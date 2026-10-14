@@ -2,6 +2,11 @@ The SDL frontend runs a fresh native worker for each session and consumes the
 Portable C ABI. It does not assemble machine arguments or duplicate firmware logic.
 Control/status use a private Unix socket; frames use a readonly shared memfd and PCM
 uses a separate bounded socket. Worker crash and graceful shutdown are distinct.
+Shared host policy is `LT_SHUTDOWN_CONFIRMATION_TIMEOUT_MS` (30 seconds) and
+`LT_SHUTDOWN_GRACE_MS` (35 seconds before parent disposal), declared in the native
+header and consumed by Linux. Frontends may extend observation; a shorter timeout
+can interrupt a legitimate shutdown and must preserve dirty state. Startup/import
+have separate budgets. Actual confirmation can complete sooner.
 
 ```sh
 cmake -S Linux -B /private/build/linux \
@@ -68,6 +73,11 @@ The worker polls asynchronous touch-batch admission. An engine rejection release
 all contacts and reports its request/result through typed control messages; the
 frontend clears held contacts. Queued/delivered host input is not guest-visible
 acceptance evidence.
+Pause clears frontend contact ownership as well as the native owned inputs.
+If the bounded control socket rejects an input/release/cancel, the frontend retains
+one cancellation obligation and blocks newer input until cancellation is queued.
+Cancellation retries before each loop's newer events; no stale input backlog is
+replayed. Shutdown delivery failure remains explicit and cannot claim a clean exit.
 
 Touch phases: down=0, move=1, up=2, cancel=3. Motion arguments: field bits (1 accel,
 2 gyro), ax/ay/az in m/s², gx/gy/gz in rad/s. Sensor replay is not physical hardware
