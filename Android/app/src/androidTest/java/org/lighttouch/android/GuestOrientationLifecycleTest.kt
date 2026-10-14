@@ -3,6 +3,8 @@ package org.lighttouch.android
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.os.SystemClock
@@ -22,6 +24,9 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.OutputStream
 
 /** Opt-in real guest exercise, with host observations kept separate from visual proof. */
 @RunWith(AndroidJUnit4::class)
@@ -151,6 +156,45 @@ class GuestOrientationLifecycleTest {
                             ?: JSONArray().also { result.put("semanticControlLookups", it) }
                         check(lookups.length() < 32) { "Semantic control lookup receipt limit" }
                         lookups.put(lookup)
+                        fun retainFailureEvidence(reason: String) {
+                            val failure = JSONObject().put("reason", reason).put("elapsedMs", SystemClock.elapsedRealtime())
+                                .put("beforeScenarioClose", true).put("atomicWindowStatusBindingClaimed", false)
+                            lookup.put("failureEvidence", failure)
+                            // Capture the actual Android window before a potentially blocked
+                            // worker read and before Scenario.close returns to Launcher.
+                            try {
+                                val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot()) { "Android screenshot unavailable" }
+                                try {
+                                    require(image.width > 0 && image.height > 0 && image.width.toLong() * image.height <= 8_388_608)
+                                    val path = File(evidence, "control-${lookups.length()}-failure-android.png")
+                                    val partial = File(evidence, path.name + ".partial")
+                                    var count = 0L
+                                    FileOutputStream(partial).use { file ->
+                                        val limited = object : OutputStream() {
+                                            override fun write(value: Int) {
+                                                if (++count > 8_388_608) throw IOException("Android PNG exceeds evidence limit")
+                                                file.write(value)
+                                            }
+                                            override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                                                if (length.toLong() > 8_388_608 - count) throw IOException("Android PNG exceeds evidence limit")
+                                                file.write(bytes, offset, length); count += length
+                                            }
+                                        }
+                                        check(image.compress(Bitmap.CompressFormat.PNG, 100, limited)) { "Android PNG encoding failed" }
+                                    }
+                                    check(partial.renameTo(path)) { "Android PNG publication failed" }
+                                    failure.put("androidScreenshot", path.absolutePath).put("pngBytes", count)
+                                        .put("width", image.width).put("height", image.height)
+                                } finally { image.recycle() }
+                            } catch (captureFailure: Exception) { failure.put("androidScreenshotFailure", captureFailure.toString()) }
+                            persist()
+                            try {
+                                failure.put("workerReadBeginElapsedMs", SystemClock.elapsedRealtime())
+                                failure.put("workerStatus", encode(worker.status()))
+                                failure.put("workerReadEndElapsedMs", SystemClock.elapsedRealtime())
+                            } catch (statusFailure: Exception) { failure.put("workerStatusFailure", statusFailure.toString()) }
+                            persist()
+                        }
                         var attemptCount = 0
                         do {
                             val ownedNodes = java.util.IdentityHashMap<AccessibilityNodeInfo, Boolean>()
@@ -160,12 +204,20 @@ class GuestOrientationLifecycleTest {
                             if (attempts.length() == 8) attempts.remove(0)
                             attempts.put(attempt)
                             try {
+                                val cacheCleared = if (Build.VERSION.SDK_INT >= 34) instrumentation.uiAutomation.clearCache() else null
+                                val refreshNodes = cacheCleared != true
+                                attempt.put("sdkInt", Build.VERSION.SDK_INT).put("cacheClearSupported", Build.VERSION.SDK_INT >= 34)
+                                    .put("cacheClearReturned", cacheCleared ?: JSONObject.NULL).put("refreshNodes", refreshNodes)
                                 val root = retain(instrumentation.uiAutomation.rootInActiveWindow)
+                                if (refreshNodes && root != null) attempt.put("rootRefreshReturned", root.refresh())
                                 val window = root?.windowId
                                 attempt.put("rootPackage", root?.packageName?.toString() ?: JSONObject.NULL)
                                     .put("rootWindowId", window ?: JSONObject.NULL)
                                 val controls = mutableListOf<AccessibilityNodeInfo>()
+                                val nodeTexts = JSONArray(); val stateCandidates = JSONArray()
+                                attempt.put("ownNodeTexts", nodeTexts).put("statusControlCandidates", stateCandidates)
                                 var labels = 0; var visited = 0
+                                var refreshed = 0; var refreshRejected = 0; var refreshedTextChanges = 0
                                 if (root != null && root.packageName?.toString() == context.packageName) {
                                     // Compose 1.7.8's virtual provider inherits a null text-search
                                     // implementation. Traverse its actual virtual children instead.
@@ -174,13 +226,28 @@ class GuestOrientationLifecycleTest {
                                     while (pending.isNotEmpty() && SystemClock.elapsedRealtime() < deadline) {
                                         val (node, depth) = pending.removeLast()
                                         check(++visited <= 2048 && depth <= 64) { "Semantic tree traversal limit" }
+                                        if (refreshNodes) {
+                                            val cachedText = node.text?.toString()
+                                            if (!node.refresh()) { refreshRejected++; continue }
+                                            refreshed++
+                                            if (cachedText != node.text?.toString()) refreshedTextChanges++
+                                        }
                                         if (node.packageName?.toString() != context.packageName || node.windowId != window) continue
+                                        val label = node.text?.toString().orEmpty()
+                                        val id = node.viewIdResourceName.orEmpty()
+                                        if (label.isNotEmpty() && nodeTexts.length() < 64) nodeTexts.put(JSONObject()
+                                            .put("text", label.take(256)).put("resourceId", id.take(128))
+                                            .put("visible", node.isVisibleToUser).put("enabled", node.isEnabled).put("clickable", node.isClickable))
+                                        if ((label in listOf("Pause", "Resume", "running", "paused") || id.endsWith("session_status")) && stateCandidates.length() < 8)
+                                            stateCandidates.put(JSONObject().put("text", label.take(256)).put("resourceId", id.take(128))
+                                                .put("visible", node.isVisibleToUser).put("enabled", node.isEnabled).put("clickable", node.isClickable))
                                         if (node.text?.toString() == text && node.isVisibleToUser) {
                                             labels++
                                             var ancestor: AccessibilityNodeInfo? = node
                                             var distance = 0
                                             while (ancestor != null && distance++ <= 64 && SystemClock.elapsedRealtime() < deadline &&
                                                 ancestor.packageName?.toString() == context.packageName && ancestor.windowId == window) {
+                                                if (refreshNodes && !ancestor.refresh()) break
                                                 if (ancestor.isClickable && ancestor.isEnabled && ancestor.isVisibleToUser) {
                                                     controls.add(ancestor); break
                                                 }
@@ -197,9 +264,12 @@ class GuestOrientationLifecycleTest {
                                 }
                                 val unique = controls.distinct()
                                 attempt.put("visitedNodes", visited).put("exactVisibleLabels", labels).put("enabledClickableCandidates", unique.size)
+                                    .put("refreshedNodes", refreshed).put("refreshRejectedNodes", refreshRejected).put("refreshedTextChanges", refreshedTextChanges)
                                 check(unique.size <= 1) { "Ambiguous semantic production control: $text" }
                                 val current = retain(instrumentation.uiAutomation.rootInActiveWindow)
-                                val sameWindow = root != null && current?.windowId == window && current?.packageName?.toString() == context.packageName
+                                val currentFresh = !refreshNodes || current?.refresh() == true
+                                if (refreshNodes) attempt.put("currentRootRefreshReturned", currentFresh)
+                                val sameWindow = currentFresh && root != null && current?.windowId == window && current?.packageName?.toString() == context.packageName
                                 attempt.put("currentRootPackage", current?.packageName?.toString() ?: JSONObject.NULL)
                                     .put("currentRootWindowId", current?.windowId ?: JSONObject.NULL).put("sameActiveWindow", sameWindow)
                                 val clicked = SystemClock.elapsedRealtime() < deadline && sameWindow &&
@@ -207,14 +277,14 @@ class GuestOrientationLifecycleTest {
                                 attempt.put("actionReturnedTrue", clicked)
                                 if (clicked) { lookup.put("clicked", true); persist(); return }
                             } catch (failure: Throwable) {
-                                attempt.put("failure", failure.toString()); persist(); throw failure
+                                attempt.put("failure", failure.toString()); retainFailureEvidence(failure.toString()); throw failure
                             } finally {
                                 @Suppress("DEPRECATION")
                                 for (node in ownedNodes.keys) node.recycle()
                             }
                             Thread.sleep(minOf(100, maxOf(0, deadline - SystemClock.elapsedRealtime())))
                         } while (SystemClock.elapsedRealtime() < deadline)
-                        persist()
+                        retainFailureEvidence("Semantic production control unavailable: $text")
                         error("Semantic production control unavailable: $text")
                     }
                     fun resume() { worker.pause(false); awaitState("running"); readyDisplay(); Thread.sleep(300) }
