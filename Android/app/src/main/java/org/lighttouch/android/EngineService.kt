@@ -20,6 +20,8 @@ class EngineService : Service() {
     private val alive = AtomicBoolean(true)
     @Volatile private var audio: AudioTrack? = null
     @Volatile private var focus: AudioFocusRequest? = null
+    private val touchAdmissionGuard = Any()
+    private val touchTimestampOrder = TouchTimestampOrder()
     private val audioGuard = Any()
     private val audioObservations = AudioObservations()
     @Volatile private var audioError = ""
@@ -129,9 +131,20 @@ class EngineService : Service() {
             else if (button in 0..1) (if (down) buttonDownAdmissions else buttonUpAdmissions).incrementAndGet(button)
         }
         override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String {
-            val result = Native.touch(timestampNanos, ids, phases, coordinates, width, height, rotation)
-            if (result.isNotEmpty()) error = result
-            return result
+            // Keep selection and native admission in the same worker-owned order.
+            // Cancel/pause/surface replacement deliberately do not reset this clock.
+            return synchronized(touchAdmissionGuard) {
+                val ordered = try { touchTimestampOrder.select(timestampNanos) }
+                catch (failure: IllegalArgumentException) {
+                    val rejected = "${failure.message}; gesture cancelled. Start a new gesture."
+                    error = rejected
+                    Native.cancelInput()
+                    return@synchronized rejected
+                }
+                val result = Native.touch(ordered, ids, phases, coordinates, width, height, rotation)
+                if (result.isNotEmpty()) error = result
+                result
+            }
         }
         override fun cancelInput() { Native.cancelInput() }
         override fun motion(kind: Int, timestampNanos: Long, xyz: FloatArray, rotation: Int) {
@@ -287,6 +300,13 @@ class EngineService : Service() {
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
         putLong("buttonRejections", buttonRejections.get())
+        // Volatile immutable snapshot: observers never wait on touch/native admission.
+        val touchClock = touchTimestampOrder.snapshot
+        putBundle("touchTimestampSelection", Bundle().apply {
+            putLong("rawUptimeNs", touchClock.rawUptimeNs); putLong("orderedUptimeNs", touchClock.orderedUptimeNs)
+            putLong("selections", touchClock.selections); putLong("adjustedSelections", touchClock.adjustedSelections)
+            putLong("rejectedSelections", touchClock.rejectedSelections); putBoolean("guestConsumptionInferred", false)
+        })
     }
     private fun audioAttributes() = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
     private fun requestAudioFocus() {
