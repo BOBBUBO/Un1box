@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import time
@@ -139,6 +140,17 @@ def cleanup_attempt(attempt):
                     'guestShutdownConfirmed':False,'acceptanceRequiresIndependentReceipts':True})
 
 
+def owned_qemu(wrapper):
+    spec=importlib.util.spec_from_file_location('owned_base',Path(__file__).resolve().parents[1]/'supervise_16k_retry.py');base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
+    owned={};base.retain_descendants(wrapper,owned);q=[]
+    for pid,ticks in owned.items():
+        try:
+            args=Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+            if b'qemu-system-x86_64' in args[0]:q.append((pid,ticks))
+        except OSError:pass
+    return owned,q
+
+
 def launch_owner(plan_path):
     plan_path=private(plan_path);raw=plan_path.read_bytes();p=json.loads(raw);out=private(p['output'])
     grant=json.loads((plan_path.parent/'ROOT-PERSISTENT-AVD-GRANT.json').read_text())
@@ -165,24 +177,32 @@ def launch_owner(plan_path):
     deadline=time.monotonic()+210
     owner=None
     while time.monotonic()<deadline and avd.poll() is None:
-        r=subprocess.run([p['adb'],'-s',SERIAL,'shell','getprop','sys.boot_completed'],capture_output=True,timeout=2)
-        if r.returncode==0 and r.stdout.strip()==b'1':
-            r=subprocess.run([p['adb'],'-s',SERIAL,'exec-out','cat','/proc/sys/kernel/random/boot_id'],capture_output=True,timeout=2)
-            pages=subprocess.run([p['adb'],'-s',SERIAL,'shell','getconf','PAGE_SIZE'],capture_output=True,timeout=2)
-            if r.returncode==0 and not r.stderr and pages.returncode==0 and pages.stdout.strip()==b'16384':
-                spec=importlib.util.spec_from_file_location('owned_base',Path(__file__).resolve().parents[1]/'supervise_16k_retry.py');base=importlib.util.module_from_spec(spec);spec.loader.exec_module(base)
-                owned={};base.retain_descendants(avd.pid,owned);q=[]
-                for pid,ticks in owned.items():
-                    try:
-                        args=Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
-                        if b'qemu-system-x86_64' in args[0]:q.append((pid,ticks))
-                    except OSError:pass
-                if len(q)!=1:raise ValueError('Exactly one owned persistent QEMU required')
-                owner={'schema':1,**candidate,'avd':p['avd'],'serial':SERIAL,'pageBytes':16384,'ramMB':8192,
-                    'qemuPid':q[0][0],'qemuStartTicks':q[0][1],'ownedIdentities':owned,'bootId':r.stdout.strip().decode(),
-                    'normalGuestCleanupStopsAvd':False,'guestAcceptancePassed':False}
-                write(out/'owner.json',owner);print(json.dumps(owner),flush=True);break
-        time.sleep(1)
+        try:
+            def probe(tail):
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise TimeoutError('Original210 readiness budget expired')
+                return subprocess.run([p['adb'],'-s',SERIAL]+tail,capture_output=True,timeout=min(2,remaining))
+            boot=probe(['shell','getprop','sys.boot_completed'])
+            if boot.returncode==0 and boot.stdout.strip()==b'1':
+                r=probe(['exec-out','cat','/proc/sys/kernel/random/boot_id'])
+                pages=probe(['shell','getconf','PAGE_SIZE'])
+                if r.returncode==0 and not r.stderr and pages.returncode==0 and pages.stdout.strip()==b'16384':
+                    if not re.fullmatch(rb'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',r.stdout.strip()):
+                        raise OSError('Original Android boot identity not yet readable')
+                    owned,q=owned_qemu(avd.pid)
+                    if len(q)!=1:raise OSError('Unique owned QEMU not yet observed')
+                    if time.monotonic()>=deadline:raise TimeoutError('Readiness completed after original210')
+                    owner={'schema':1,**candidate,'avd':p['avd'],'serial':SERIAL,'pageBytes':16384,'ramMB':8192,
+                        'qemuPid':q[0][0],'qemuStartTicks':q[0][1],'ownedIdentities':owned,'bootId':r.stdout.strip().decode(),
+                        'normalGuestCleanupStopsAvd':False,'guestAcceptancePassed':False}
+                    write(out/'owner.json',owner);print(json.dumps(owner),flush=True);break
+        except (OSError,subprocess.TimeoutExpired,TimeoutError) as error:
+            with (out/'readiness-probe-errors.jsonl').open('a') as f:
+                f.write(json.dumps({'observedAtMonotonic':time.monotonic(),'type':type(error).__name__,
+                    'error':str(error),'argv':getattr(error,'cmd',None),'stdout':(getattr(error,'stdout',None) or b'').decode(errors='replace'),
+                    'stderr':(getattr(error,'stderr',None) or b'').decode(errors='replace'),
+                    'emulatorPreserved':avd.poll() is None,'guestAcceptancePassed':False})+'\n')
+        time.sleep(min(1,max(0,deadline-time.monotonic())))
     if owner is None:write(out/'readiness-unconfirmed.json',{'startupBoundExpired':True,'emulatorPreserved':avd.poll() is None,'guestAcceptancePassed':False})
     print('Persistent Android retained; only explicit REQUEST-STOP-AVD disposes it.',flush=True)
     while avd.poll() is None:
