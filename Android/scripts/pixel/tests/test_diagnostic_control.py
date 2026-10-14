@@ -208,6 +208,50 @@ class CaptureIdentity(unittest.TestCase):
 
 
 class Admission(unittest.TestCase):
+    def test_public_clock_reads_actual_host_proc_protocol_without_app_uid_context(self):
+        # Actual Linux proc read exercises the protocol; this is not Android evidence.
+        import time
+        with tempfile.TemporaryDirectory() as d:
+            b=binding();b['bootId']=Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+            calls=[]
+            def run(argv,**kw):
+                calls.append(argv);self.assertNotIn('run-as',argv)
+                self.assertEqual(argv[3:5],['exec-out','cat'])
+                return subprocess.run(argv[4:],**kw)
+            output=Path(d)/'clock.json'
+            bracket=admit_observation.public_device_clock('/synthetic/adb',b,output,time.monotonic_ns()+3*10**9,run=run)
+            self.assertEqual(bracket['bootId'],b['bootId']);self.assertEqual(bracket['quantizationMs'],10)
+            receipt=json.loads(output.read_text());self.assertEqual(receipt['exit'],0)
+            self.assertEqual(bytes.fromhex(receipt['stdoutHex']).decode(),receipt['stdout'])
+            self.assertLessEqual(bracket['hostBeforeNs'],bracket['hostAfterNs'])
+
+    def test_public_clock_preserves_denied_merged_malformed_changed_boot_and_timeout_before_rejection(self):
+        b=binding();boot=b['bootId'].encode();good=boot+b'\n215.58 331.98\n'+boot+b'\n'
+        cases=[(0,b'cat: /proc/uptime: Permission denied\n',b''),
+            (0,good,b'Permission denied'),(1,good,b''),(0,b'other\n215.58 331.98\n'+boot+b'\n',b''),
+            (0,boot+b'\n215.58 331.98\nother\n',b''),(0,boot+b'\n215.5800 331.98\n'+boot+b'\n',b''),
+            (0,good+b'extra\n',b''),(0,b'\xff',b''),'timeout']
+        for case in cases:
+            with self.subTest(case=case),tempfile.TemporaryDirectory() as d:
+                out=Path(d)/'clock.json'
+                def run(argv,**kw):
+                    if case=='timeout':raise subprocess.TimeoutExpired(argv,1,output=b'partial clock',stderr=b'partial error')
+                    return subprocess.CompletedProcess(argv,*case)
+                with self.assertRaises(ValueError):admit_observation.public_device_clock('/synthetic/adb',b,out,10**9,now=lambda:1,run=run)
+                receipt=json.loads(out.read_text());self.assertFalse(receipt['guestAcceptancePassed'])
+                self.assertEqual(bytes.fromhex(receipt['stdoutHex']),b'partial clock' if case=='timeout' else case[1])
+                if case=='timeout':self.assertEqual(receipt['exit'],124)
+
+    def test_public_clock_expired_never_dispatches_and_late_positive_is_rejected(self):
+        b=binding();boot=b['bootId'].encode();run=mock.Mock()
+        with tempfile.TemporaryDirectory() as d:
+            out=Path(d)/'clock.json'
+            with self.assertRaises(TimeoutError):admit_observation.public_device_clock('/synthetic/adb',b,out,1,now=lambda:1,run=run)
+            run.assert_not_called();self.assertFalse(out.exists())
+            run.return_value=subprocess.CompletedProcess([],0,boot+b'\n215.58 331.98\n'+boot+b'\n',b'')
+            with self.assertRaises(ValueError):admit_observation.public_device_clock('/synthetic/adb',b,out,10,now=mock.Mock(side_effect=[1,11]),run=run)
+            self.assertTrue(out.exists())
+
     def execute(self, directory, offset=400, change=None, publication=0):
         b = binding(); out = Path(directory)
         origin = {"originNs": b["originNs"], "supervisorStartTicks": 100000, "clockTicksPerSecond": 100}
@@ -230,6 +274,8 @@ class Admission(unittest.TestCase):
             calls.append(argv)
             if argv[3] == "shell":
                 return subprocess.CompletedProcess(argv, 0, f"\n__LT_GATE_EXIT__={publication}\n".encode(), b"")
+            if argv[3:]==['exec-out','cat','/proc/sys/kernel/random/boot_id','/proc/uptime','/proc/sys/kernel/random/boot_id']:
+                return subprocess.CompletedProcess(argv,0,responses['/proc/sys/kernel/random/boot_id']+b'\n'+responses['/proc/uptime']+responses['/proc/sys/kernel/random/boot_id']+b'\n',b'')
             tail = argv[-1]
             key = "ready" if tail.endswith("/ready.json") else "id" if tail == "-u" else tail
             return subprocess.CompletedProcess(argv, 0, responses[key], b"")

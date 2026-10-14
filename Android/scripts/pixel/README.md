@@ -202,6 +202,15 @@ both actual streams and exit in `normal-marker-presence.json`; merged exec-out
 diagnostics, permission errors and timeouts never mean clean state. The check
 does not read, clear or rewrite a dirty marker.
 
+Device clock reads use the public adb shell context, with one `cat` of boot ID,
+uptime and boot ID. Both IDs must match the independently bound worker boot;
+identity-sensitive app files remain under the app UID. The original host clock
+brackets the complete read. Exact stdout/stderr bytes, status and bracket times
+are retained before parsing in `pre-start-device-clock.json` and
+`after-start-device-clock.json`. The same read is checked before Start, then
+repeated freshly for full300s admission. A denied app-context proc read cannot
+silently become a clock value, and no observation deadline is extended.
+
 Parent SIGTERM/SIGHUP handlers perform no file IO: they retain signal/time fields
 in memory and unwind into the existing cleanup. Cleanup records
 `host-signals.json`, attempts the existing scoped Stop, then disposes owned

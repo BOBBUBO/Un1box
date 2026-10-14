@@ -140,8 +140,11 @@ def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monoton
     after_stat=read(f'/proc/{pid}/stat').decode()
     if not worker_identity(after_stat,status,role,binding): raise ValueError('Original worker identity changed')
     if read('/proc/sys/kernel/random/boot_id').strip()!=binding['bootId'].encode() or read('files/library/selected').strip()!=record.encode(): raise ValueError('Boot/selection changed during preflight')
+    from admit_observation import public_device_clock
+    clock_probe=public_device_clock(adb,binding,out/'pre-start-device-clock.json',deadline,now=now,run=run)
     binding.update(priorDirty=cold_recovery,coldRecoveryUsed=cold_recovery,pinsVerified=True,pins=actual,
         dirtyReceipt=dirty_receipt,
+        preStartClockProbe=clock_probe,
         beforeStart=True,guestAcceptancePassed=False,cleanInitialAdmissionClaimed=False,
         captureCommands=capture.commands,completedNs=now())
     with (out/('recovery-record-bound.json' if cold_recovery else 'normal-record-bound.json')).open('x') as stream: stream.write(json.dumps(binding,indent=2)+'\n')

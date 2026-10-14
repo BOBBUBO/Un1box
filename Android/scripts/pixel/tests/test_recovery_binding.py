@@ -76,6 +76,8 @@ class Recovery(unittest.TestCase):
         pins={suffix:sha(data[root+'/'+suffix]) for suffix in ('record.json','base/device.lock.json','assets/bootrom.bin','assets/guest.itpack')}
         def run(argv,**kw):
             if argv[-2:] == ['pidof','org.lighttouch.android:engine']:return subprocess.CompletedProcess(argv,0,b'42\n',b'')
+            if argv[3:]==['exec-out','cat','/proc/sys/kernel/random/boot_id','/proc/uptime','/proc/sys/kernel/random/boot_id']:
+                boot=data['/proc/sys/kernel/random/boot_id'];return subprocess.CompletedProcess(argv,0,boot+b'\n100.00 200.00\n'+boot+b'\n',b'')
             if 'LT_MARKER_ABSENT' in argv[-1]:
                 status=b'LT_MARKER_ABSENT\n' if data.get(root+'/state/.dirty') is None else b'LT_MARKER_PRESENT\n'
                 return subprocess.CompletedProcess(argv,0,status,b'')
