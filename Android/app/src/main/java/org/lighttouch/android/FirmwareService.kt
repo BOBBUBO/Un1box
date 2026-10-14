@@ -47,7 +47,8 @@ class FirmwareService : Service() {
                 putBoolean("consumed", consumed.get() || values.getOrElse(6) { "0" } == "1")
                 putLong("done", values[2].toLong()); putLong("total", values[3].toLong()); putInt("code", values[4].toInt())
                 putString("error", if (failure.isNotEmpty()) failure else values[5]); putString("destination", destination)
-                putInt("pid", Process.myPid()); putString("firmwareId", currentFirmwareId)
+                putBoolean("cancellationCheckpointReached", values.getOrElse(7) { "0" } == "1")
+                putInt("uid", Process.myUid()); putInt("pid", Process.myPid()); putString("firmwareId", currentFirmwareId)
             }
         }
         override fun cancel() { cancelling = true; FirmwareNative.cancel() }
@@ -56,7 +57,11 @@ class FirmwareService : Service() {
             Handler(mainLooper).postDelayed({ stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); Process.killProcess(Process.myPid()) }, 200)
         }
     }
-    override fun onBind(intent: Intent): IBinder = binder
+    override fun onBind(intent: Intent): IBinder {
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 && intent.getBooleanExtra("acceptanceCancelAfterSystemEdits", false))
+            FirmwareNative.armCancellationCheckpoint()
+        return binder
+    }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { foreground(); return START_NOT_STICKY }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)
@@ -73,4 +78,5 @@ internal object FirmwareNative {
     external fun prepare(catalog: String, id: String, ipsw: String, tools: String, inventory: String, destination: String): Int
     external fun status(): Array<String>
     external fun cancel()
+    external fun armCancellationCheckpoint()
 }
