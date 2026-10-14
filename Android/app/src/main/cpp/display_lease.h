@@ -44,7 +44,8 @@ public:
     void contactsReleased() { contacts_.clear(); }
     void admittedContact(int32_t id,int32_t phase) {
         auto existing=std::find(contacts_.begin(),contacts_.end(),id);
-        if(phase==2) { if(existing!=contacts_.end())contacts_.erase(existing); }
+        // Successfully admitted public UP (2) and CANCEL (3) both release IDs.
+        if(phase>=2) { if(existing!=contacts_.end())contacts_.erase(existing); }
         else if(existing==contacts_.end())contacts_.push_back(id);
     }
 private:

@@ -60,11 +60,23 @@ void no_contact_attach_preserves_buttons_and_held_takeover_requires_cancel() {
     state.admittedContact(7,0);state.admittedContact(7,2);button_held=true;
     takeover();assert(cancellations==1 && button_held);
 }
+void admitted_cancel_releases_only_its_id_and_last_cancel_preserves_new_pulse() {
+    DisplayLease state;auto a=state.claim();
+    state.admittedContact(7,0);state.admittedContact(23,0);
+    state.admittedContact(7,3);assert(state.contactsHeld()); // ID23 remains held.
+    state.admittedContact(23,3);assert(!state.contactsHeld());
+    bool power_held=true;int cancellations=0;
+    // A new unrelated pulse follows the successful CANCEL admissions.
+    if(state.contactsHeld()){++cancellations;power_held=false;}
+    assert(state.detach(a));state.claim();
+    assert(cancellations==0 && power_held && !state.contactsHeld());
+}
 }
 int main() {
     obsolete_conversion_and_release();retired_controls_and_duplicate_callbacks();
     surface_loss_keeps_background_authority_but_retired_owner_cannot_pause();
     same_worker_foreground_return_requires_fresh_native_token();
     no_contact_attach_preserves_buttons_and_held_takeover_requires_cancel();
+    admitted_cancel_releases_only_its_id_and_last_cancel_preserves_new_pulse();
     std::cout<<"PASS display lease stale controls/conversion, converted refs, contact handoff and empty callback pulse preservation\n";
 }
