@@ -39,6 +39,19 @@ static void racing_growth_commits_only_successful_copy() {
     assert(probes==2 && copies==2 && invalidated==2 && since==4);
     assert(cache.frame.width==640 && cache.frame.sequence==4 && cache.pixels[0]==42);
 }
+static void successive_non_power_of_two_growth_has_no_geometric_capacity() {
+    FrameCopyCache cache;uint64_t since=0;lt_error error=LT_INIT(lt_error);
+    for(uint32_t width:{257u,258u,259u,261u}) {
+        const auto desired=info(width,257,since+1);
+        assert(cache.latest(since,error,[&](uint64_t observed,lt_frame_info &out,lt_error &){assert(observed+1==desired.sequence);out=desired;return LT_OK;},
+            [&](void *p,uint64_t capacity,uint64_t &next,lt_frame_info &out,lt_error &){
+                assert(!cache.frame.width && capacity==desired.bytes);
+                static_cast<uint8_t *>(p)[capacity-1]=31;out=desired;next=desired.sequence;return LT_OK;
+            },[]{})==LT_OK);
+        assert(cache.pixels.size()==desired.bytes && cache.pixels.capacity()==desired.bytes);
+        assert(cache.pixels.capacity()<=LT_FRAME_CAPACITY && cache.pixels.back()==31);
+    }
+}
 static void growth_then_no_frame_and_exhausted_copy_keep_watermark() {
     FrameCopyCache cache;cache.pixels.resize(614400);cache.frame=info();uint64_t since=1;lt_error error=LT_INIT(lt_error);
     auto larger=[](uint64_t observed,lt_frame_info &out,lt_error &){assert(observed==1);out=info(640,960,2);return LT_OK;};
@@ -90,6 +103,7 @@ static void blocked_old_window_keeps_storage_until_presenter_returns() {
     assert(!staleCommits && since==2 && cache.frame.width==640 && cache.pixels.size()==2457600);
 }
 int main(){no_frame_and_first_size();racing_growth_commits_only_successful_copy();
+    successive_non_power_of_two_growth_has_no_geometric_capacity();
     growth_then_no_frame_and_exhausted_copy_keep_watermark();invalid_metadata_never_allocates_or_copies();
     copied_metadata_failure_invalidates_previous_cache();blocked_old_window_keeps_storage_until_presenter_returns();
     std::cout<<"frame cache ownership/size/retry checks passed\n";}
