@@ -53,7 +53,31 @@ The owner's external execution deadline is still required for Binder/platform
 calls. Instrumentation completion may terminate the target package; retain the
 evidence before interpreting subsequent lifecycle or dirty-state outcomes.
 
-Build this new runner from candidate19's frozen Android/AIDL sources plus the
-reviewed test file only. Record both source revisions and file hashes; exclude
-native/main APK tasks and leave the sealed main APK byte-identical. No compiler
-or target run was performed by the product lane at this source checkpoint.
+The isolated runner was compiled from Android/AIDL source
+`4c9a54a57e13abe1cde34b52fa0e4b687debd76e`, plus only `GuestUnlockTest.kt`
+from `463fe49e081dd9a01b36650aceca4c691e35b45d`. All81 base Android files
+were verified unchanged. Native53ea and engine19/e67 inputs remain the sealed
+main19 producers; this runner does not replace those binaries. Keep the helper
+revision separate from the main APK's source identity.
+
+Reproduce with a fresh Git archive of the base Android directory, add that single
+test file from its pinned Git commit, and use main19's recorded dependency and
+notice properties with an isolated build directory. The executed task selection
+was:
+
+```sh
+./gradlew --offline --no-daemon --max-workers=1 \
+  -Dorg.gradle.jvmargs='-Xmx768m -XX:MaxMetaspaceSize=384m' \
+  -PnativeJobs=1 <main19-properties-with-isolated-buildRoot> \
+  :app:assembleDebugAndroidTest \
+  -x :app:externalNativeBuildDebug \
+  -x :app:mergeDebugAndroidTestNativeLibs -x :app:packageDebug
+```
+
+The angle-bracket argument represents the recorded properties, not a literal
+shell argument. The private producer receipt retains the complete executed argv,
+archives, file hashes and log. Compilation passed in53.5s; no native or main APK
+packaging task ran. The runner has zero native entries, its compiled test method
+is present in DEX, and signature compatibility/alignment checks passed. Main19
+and its original runner hashes were checked unchanged before and after. These
+are build checks; no target unlock run was performed by the product lane.
