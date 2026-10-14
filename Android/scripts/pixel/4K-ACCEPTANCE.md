@@ -7,10 +7,11 @@ state and historical evidence. Any restored5554 instance remains outside this
 4KiB lane. Actual Poco or physical Pixel4KiB execution does not satisfy the
 separate4KiB AVD requirement.
 
-The private review package is
-`builds/pixel/plan-g5-api35-4k25d-01/` in the coordination workspace. Its `plan.json`
-contains exact proposed SDK argv arrays, artifact pins, input destinations and
-two bounded phases. `original-4k-image-metadata.json` records read-only backing
+The current private source package is
+`builds/pixel/prepared-g5-api35-4k26-source-03/` in the coordination workspace.
+Its `allocation-metadata.json` contains proposed SDK argv arrays and input
+destinations; `inputs.json` pins the APK26 pair. The earlier metadata package
+`plan-g5-api35-4k25d-01/original-4k-image-metadata.json` records read-only backing
 chains; `resource-justification.json` retains the memory calculation;
 `compact-index-metadata.json` describes only the compact archive index. No AVD,
 image child, NAND copy, asset push, ADB server, compiler or guest was started.
@@ -26,20 +27,23 @@ image flavor, so comparisons do not isolate page size.
 
 Reuse the installed API35 image and the existing smoke AVD's backing chain, with
 new small external QCOW children and a separately named private configuration
-`LightTouch_API35_4K_G5_25d`. Do not mutate the original smoke disks. The proposed
+`LightTouch_API35_4K_G5_26`. Do not mutate the original smoke disks. The proposed
 creation command uses `system-images;android-35;default;x86_64`, profile `pixel_6`,
 no `--force`, and stdin `no`. None of these creation commands has run.
 
-Reserve emulator port5556/serial `emulator-5556`. The current user session occupies
-5554 and must never be stopped, restarted, reparented or targeted by these tests.
+Reserve emulator port5556/serial `emulator-5556`. Port5554 belongs to the separately
+restored persistent16KiB session and must never be stopped, restarted, reparented
+or targeted by these tests.
 The new test uses4GiB Android RAM,2 virtual CPUs and outer SwiftShader. KVM applies
 to Android's x86 machine; iOS still uses QEMU TCG. Host GPU passthrough is absent.
 `-no-audio` means counters can be recorded but speaker playback cannot be passed.
 
-Use unchanged main25 SHA
-`ddf8ea5b0066ae5c3a432d4e663436f251b60be42462fae8072177619a7d66c3`
-and sealed test-only25d SHA
-`1d3cbe85451cdec59cdfef581b1ac3ae7aeadded79a76d3aa09272d9b64584ee`.
+Use sealed main26 SHA
+`99b601ee73f09ce9e5f836f9d6636b0971f9d0e4dd29e9e86f3b46dcc4fe160a`
+and matching test26 SHA
+`30ea248ba52a38fcbadd395ed8d4f20a71842301ebfd0d8369c697afa50e755e`.
+Its packaged stripped x86 engine SHA is
+`6796ae4ae9401414e4aace4a799ee67f4a172c3d0148598f31916977ebd44274`.
 Select inner LightTouch `platform` explicitly. An actual missing/broken platform
 GLES path may justify a separately approved fresh-worker `angle-gl` attempt;
 retain the platform failure and each provider's scope. Never switch providers
@@ -162,4 +166,14 @@ It requires bounded original-process absence/reuse evidence in the same Android
 boot, or a fresh matching bracket proving the prior Android boot ended; failed
 reads do not mean absent. All72 host tests pass, including live-importer rejection,
 permission/read failures, PID reuse, boot changes and a real host process exit.
-Complete Root review and actual4KiB guest qualification remain pending.
+Root reviewed version02; actual4KiB guest qualification remains pending.
+
+Version03 repins only `inputs.json` and the operator note to the actual APK26
+pair, packaged x86 engine and new unallocated4KiB name/path. Every namespace,
+retirement and controller code byte equals version02. Its source seal is
+`69d69b4c9c59e07dd70b6d5195b53dffdb5ab19431361dd565e53968c65c864c`.
+All72 host checks pass again; no image creation, firmware read, ADB or VM launch
+occurred. Run the package's `prepare_boot.py --check-source`, then use its exact
+operator commands after a fresh Root resource grant. The provision phase creates
+the genuine import proof; the guest phase generates its record/token/pins from
+that proof. No old25 APK or pre-reboot clean receipt admits APK26.
