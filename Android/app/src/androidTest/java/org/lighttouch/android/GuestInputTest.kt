@@ -49,7 +49,18 @@ class GuestInputTest {
     private fun withGuest(action: (ActivityScenario<MainActivity>, IEngine, File) -> Unit) {
         assumeTrue("Requires legitimate fixture and visual guest workload", arguments.getString("exerciseGuest") == "true")
         val context = instrumentation.targetContext
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+        val evidence = File(context.filesDir, "input-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
+        val outcome = JSONObject().put("hostExerciseCompleted", false).put("guestAcceptancePassed", false)
+        @Suppress("DEPRECATION")
+        fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
+            for (key in bundle.keySet()) when (val value = bundle.get(key)) {
+                is Bundle -> put(key, encode(value))
+                is IntArray -> put(key, JSONArray(value.toList()))
+                is LongArray -> put(key, JSONArray(value.toList()))
+                else -> put(key, value)
+            }
+        }
+        try { ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             var engine: IEngine? = null
             val connected = CountDownLatch(1)
             val connection = object : ServiceConnection {
@@ -60,7 +71,10 @@ class GuestInputTest {
             try {
                 assertTrue(connected.await(10, TimeUnit.SECONDS))
                 val worker = requireNotNull(engine)
-                val state = worker.status().getString("state")
+                val initial = worker.status()
+                outcome.put("initialWorker", encode(initial))
+                File(evidence, "result.json").writeText(outcome.toString(2))
+                val state = initial.getString("state")
                 if (state == "stopped") {
                     scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
                     val started = worker.start(requireNotNull(worker.records().firstOrNull { it.getBoolean("selected") }?.getString("id")) { "Import and select the legitimate private device first" })
@@ -73,17 +87,19 @@ class GuestInputTest {
                 // built-in guest app. State=running alone does not prove Home.
                 val seconds = arguments.getString("settleSeconds", "60").toInt().coerceIn(0, 300)
                 Thread.sleep(seconds * 1000L)
+                outcome.put("beforeGuestOperation", encode(worker.status()))
+                File(evidence, "result.json").writeText(outcome.toString(2))
                 arguments.getString("guestBundle")?.let { id ->
                     guestOperation(worker, if (arguments.getString("gyroProbe") == "true" && arguments.getString("experimentalMotion") == "true") 5 else 2, id)
                     Thread.sleep(1000)
                     val frontmost = guestOperation(worker, 1, "").lineSequence().firstOrNull()
                     assertEquals("Actual guest frontmost workload", id, frontmost)
                 }
-                val evidence = File(context.filesDir, "input-evidence-${System.currentTimeMillis()}")
-                assertTrue(evidence.mkdir())
                 action(scenario, worker, evidence)
+                outcome.put("terminalWorker", encode(worker.status())).put("hostExerciseCompleted", true)
             } finally { context.unbindService(connection) }
-        }
+        } } catch (failure: Throwable) { outcome.put("failure", failure.toString()); throw failure }
+        finally { File(evidence, "result.json").writeText(outcome.toString(2)) }
     }
     @Test fun stableTwoPointerTrajectoriesUseProductionDisplayPath() = withGuest { scenario, worker, evidence ->
         val trace = JSONArray()

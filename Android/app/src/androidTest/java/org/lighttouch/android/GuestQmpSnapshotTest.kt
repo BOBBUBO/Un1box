@@ -69,7 +69,15 @@ class GuestQmpSnapshotTest {
                     fun capture(index: Int, phase: String) {
                         val before = worker.status()
                         val captured = worker.debugQmpSnapshot()
-                        val item = JSONObject().put("index", index).put("phase", phase).put("error", captured.getString("error"))
+                        val diagnostics = JSONObject()
+                        before.getBundle("observations")?.let { observed ->
+                            @Suppress("DEPRECATION")
+                            for (key in listOf("runtimeDiagnosticsAvailable", "engineReady", "displaySleeping", "backlightLevel", "guestAgentStateAvailable",
+                                "guestAgentState", "guestAgentStateLabel", "guestAgentEndpointAvailable", "guestAgentFreshnessAgeAvailable", "shutdownPhase", "shutdownRoute",
+                                "guestFrameWidth", "guestFrameHeight", "guestFrameSamplePixels", "guestFrameNonzeroRgbSamples", "guestFrameRgbSampleSum"))
+                                diagnostics.put(key, observed.get(key) ?: JSONObject.NULL)
+                        }
+                        val item = JSONObject().put("diagnostics", diagnostics).put("index", index).put("phase", phase).put("error", captured.getString("error"))
                             .put("path", captured.getString("path")).put("engineState", before.getString("state"))
                             .put("engineLog", before.getString("engineLog")).put("hostElapsedMs", SystemClock.elapsedRealtime())
                         snapshots.put(item); File(evidence, "snapshots.json").writeText(snapshots.toString(2))
