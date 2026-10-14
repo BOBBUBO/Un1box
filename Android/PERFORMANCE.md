@@ -1,4 +1,9 @@
-# Host performance panel (future producer)
+# Host performance panel
+
+The source update adds cumulative CPU time and clarifies the CPU label for a
+future main producer. Sealed candidate 25 keeps its original **Emulator CPU**
+label and six rows. The new **QEMU worker CPU** label describes the same host
+process measurement; it is not a newly measured iOS or vCPU-only statistic.
 
 The collapsed **Performance** button requests no samples. While the panel is open
 and its Activity is started, a separate UI background reader requests a cached
@@ -13,7 +18,8 @@ The displayed values have distinct scopes:
 
 | Label | Actual measurement |
 | --- | --- |
-| Emulator CPU | Whole `:engine` process CPU-time delta / elapsed-time delta, multiplied by 100. One busy core is 100%; multiple cores may exceed 100%. This includes all worker threads and sampler overhead. |
+| QEMU worker CPU | Host CPU used by the whole `:engine` process: CPU-time delta / elapsed-time delta, multiplied by 100. One busy core is 100%; multiple cores may exceed 100%. This includes QEMU execution, worker support/audio threads and sampler overhead, rather than only emulated vCPU execution. Candidate 25 calls this same measurement **Emulator CPU**. |
+| QEMU worker CPU time | Existing `processCpuMs` counter converted to cumulative CPU seconds consumed by this worker process. It is available on the first successful counter read, even while the percentage is warming up. It is not wall-clock guest uptime or iOS scheduler accounting. |
 | Emulator memory | Current worker's reported proportional set size (PSS), converted from KiB to MiB. This is neither RSS nor guest RAM usage. Android may omit protected allocations such as graphics. |
 | Android RAM | Device memory available / total memory accessible to the kernel, converted from bytes to MiB. Available is not identical to free memory. |
 | Android whole-device CPU | Unavailable; no privileged or `/proc` fallback. |
@@ -27,15 +33,23 @@ observation epoch, invalid/regressing counter, nonpositive interval or gap above
 10 seconds warms up a fresh baseline. A valid zero CPU delta is displayed as 0%.
 
 Each metric includes its own elapsed-time sample/read-completion age and the
-worker PID. Platform memory reads are not an atomic snapshot with CPU or each
+worker PID. CPU rate and cumulative time share the same counter-read age. A
+missing/failed CPU read is unavailable, not cumulative zero; a valid zero is
+allowed. Cumulative time belongs to the current worker PID, continues during
+guest Pause if the host does work, and is not reset by opening the panel or
+resetting the rate baseline. A new worker shows its own counter, never its
+predecessor's accumulated time. The UI additionally requires the sampled PID to
+match the current status PID. Platform memory reads are not an atomic snapshot with CPU or each
 other; the Bundle additionally retains collection completion/cost and raw units.
 A slow read leaves prior values visible with increasing ages. Missing/failed
 reads are unavailable, never silently substituted with zero. A nonpositive PSS
 from a live worker is also unavailable: the public void memory wrapper does not
 expose successful map reading and can leave a zero-initialized result unchanged.
-This differs from a valid measured zero CPU delta. Six fixed-height,
+This differs from a valid measured zero CPU delta. Seven fixed-height,
 single-line rows prevent sample updates from changing the viewport; opening or
 closing the panel can resize it and retains existing gesture cancellation rules.
+Candidate 25 has six rows; the additional cumulative-time row changes geometry
+only in the future main build, not sealed 25 or its test-only runners.
 
 The single trailing `IEngine.performance(long observationEpoch)` method only
 requests collection and returns scalar cached data. Its observer key is the
@@ -46,13 +60,23 @@ sampling epoch. Late UI responses are accepted only for the same Binder and
 current observation token. There are no changes to Native/status/observations,
 Portable APIs, audio policy, settings or gyro support.
 
-`PerformanceCountersTest` contains eleven source regression cases covering multicore
+`PerformanceCountersTest` contains the original eleven regression cases covering multicore
 and zero usage, PID/epoch changes, invalid counters/clocks, long gaps without
 invented guest-pause semantics, cadence/single-flight, observer handoff, blocked
-read closure, duplicate completions, and an unfilled void-memory-read result. They are written but **not run** pending
-the owner's compiler allocation. Main/AIDL/Compose and instrumentation compilation
-and an actual target inspection are also pending. Sealed candidate 24 and its
-24b helper runner are not modified or qualified by this source change.
+read closure, duplicate completions, and an unfilled void-memory-read result.
+Those eleven passed in candidate 25's actual 41-test JVM run. Three additional
+source cases cover first-read cumulative time before a valid rate, missing or
+wrong-PID counters, and cumulative time across observer/rate resets. The three
+new cases and updated Compose UI have **not** been compiled or executed yet.
+No new sampler, Binder/Native API or guest-tools operation is introduced. The
+current protocol exposes no genuine iOS CPU/RAM measurement; host QEMU worker
+CPU time already provides the available VM-process view without a guest-tools
+port. Sealed candidate 25 and its test-only runners remain unchanged.
+
+`MONITOR-COLLECTION.md` describes same-PID closed/open/closed observations. Its
+collector explicitly recognizes both the original six-row labels and the new
+seven-row labels, retaining the layout identity; mixed or incomplete CPU labels
+are rejected. Host collection does not substitute for target UI inspection.
 
 Primary API definitions checked for this implementation:
 

@@ -58,12 +58,21 @@ def panel_observation(xml, phase, pid):
     state = tagged.get("session_status")
     require(state is not None and state.get("text") == ("paused" if phase == "paused-open" else "running"),
             "session state differs from declared phase")
-    rows = [text for text in texts if text.startswith(("Emulator CPU:", "Emulator memory:", "Android RAM:",
+    rows = [text for text in texts if text.startswith(("Emulator CPU:", "QEMU worker CPU:", "QEMU worker CPU time:", "Emulator memory:", "Android RAM:",
             "Android whole-device CPU:", "iOS guest CPU / RAM:", "Worker PID:"))]
+    layout = "closed"
     if opened:
-        require(len(rows) == 6 and any(re.match(rf"Worker PID: {pid}\b", row) for row in rows),
+        prefixes = [row.split(":", 1)[0] + ":" for row in rows]
+        common = {"Emulator memory:", "Android RAM:", "Android whole-device CPU:", "iOS guest CPU / RAM:", "Worker PID:"}
+        if set(prefixes) == common | {"Emulator CPU:"} and len(rows) == 6:
+            layout = "legacy-25-process-cpu"
+        elif set(prefixes) == common | {"QEMU worker CPU:", "QEMU worker CPU time:"} and len(rows) == 7:
+            layout = "qemu-worker-process-cpu-and-time"
+        else:
+            raise ValueError("mixed, incomplete or unknown monitor labels")
+        require(any(re.match(rf"Worker PID: {pid}\b", row) for row in rows),
                 "monitor worker identity/rows unavailable")
-    return {"panelOpen": opened, "sessionState": state.get("text"), "rows": rows,
+    return {"panelOpen": opened, "sessionState": state.get("text"), "rows": rows, "layout": layout,
             "visibleMetricAgesSeconds": [int(age) for row in rows for age in re.findall(r"· (\d+)s ago", row)],
             "atomicNativeSnapshot": False}
 

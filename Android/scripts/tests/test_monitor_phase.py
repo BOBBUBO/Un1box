@@ -88,6 +88,21 @@ class MonitorPhaseTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 monitor.counter_interval(first, invalid, 100)
 
+    def test_new_worker_process_time_layout_is_explicit_and_legacy_remains_supported(self):
+        def xml(cpu_rows):
+            rows = cpu_rows + ["Emulator memory: 400 MiB PSS · 2s ago", "Android RAM: 1 / 2 MiB available/total · 2s ago",
+                "Android whole-device CPU: unavailable", "iOS guest CPU / RAM: unavailable", "Worker PID: 71 · sampled every 2s while open"]
+            return '<hierarchy><node package="org.lighttouch.android" resource-id="toggle_performance" text="Performance"/><node package="org.lighttouch.android" resource-id="session_status" text="running"/>' + ''.join(
+                '<node package="org.lighttouch.android" text="' + row + '"/>' for row in rows) + '</hierarchy>'
+        legacy = "Emulator CPU: 120% of one core · 1s ago"
+        rate = "QEMU worker CPU: 120% of one core · 1s ago"
+        total = "QEMU worker CPU time: 1234.5s total · 1s ago"
+        self.assertEqual(monitor.panel_observation(xml([legacy]), "b-open", 71)["layout"], "legacy-25-process-cpu")
+        self.assertEqual(monitor.panel_observation(xml([rate, total]), "b-open", 71)["layout"], "qemu-worker-process-cpu-and-time")
+        for mixed in ([rate], [total], [legacy, total], [legacy, rate, total], [rate, total, total]):
+            with self.assertRaises(ValueError):
+                monitor.panel_observation(xml(mixed), "b-open", 71)
+
 
 if __name__ == "__main__":
     unittest.main()
