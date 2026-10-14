@@ -178,6 +178,7 @@ class GuestAngleProviderTest {
                     // Capture diagnostics do not start another readiness interval.
                     val image = File(context.filesDir, "screenshots/${evidence.name}/provider.png")
                     receipt.put("capture", image.absolutePath).put("captureStartedElapsedMs", SystemClock.elapsedRealtime())
+                        .put("postCaptureFrameReadyObserved", false)
                     persist()
                     val captureError = try { worker.screenshot(image.absolutePath) } catch (failure: Throwable) {
                         receipt.put("captureThrowable", failure.toString())
@@ -185,12 +186,21 @@ class GuestAngleProviderTest {
                     }
                     receipt.put("captureError", captureError).put("captureEndedElapsedMs", SystemClock.elapsedRealtime())
                     if (image.isFile) receipt.put("captureBytes", image.length()).put("captureSha256", acceptanceSha256(image))
-                    try { receipt.put("terminalWorker", encode(worker.status())) } catch (failure: Throwable) {
+                    var postCaptureFrameReady = false
+                    try {
+                        val terminal = worker.status()
+                        val observedAt = SystemClock.elapsedRealtime()
+                        receipt.put("terminalWorker", encode(terminal)).put("postCaptureObservedElapsedMs", observedAt)
+                        postCaptureFrameReady = terminal.getInt("pid") == started.getInt("pid") &&
+                            angleFrameReadyInTime(terminal, requireNonzero, observedAt, deadline)
+                    } catch (failure: Throwable) {
                         receipt.put("terminalWorkerFailure", failure.toString())
                     }
+                    receipt.put("postCaptureFrameReadyObserved", postCaptureFrameReady)
                     persist()
                     assertTrue("Provider verified, but no fresh coherent copied lit frame within the original observation deadline: $frameFailure", frameReady)
                     assertEquals("Actual copied guest frame capture", "", captureError)
+                    assertTrue("Copied frame was not current, coherent and lit after capture within the original observation deadline; raw capture retained", postCaptureFrameReady)
                 }
             }
         } catch (failure: Throwable) { receipt.put("failure", failure.toString()); throw failure }
