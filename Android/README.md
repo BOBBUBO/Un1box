@@ -212,3 +212,20 @@ checks that status remains responsive during native validation, and writes
 UI status polling uses one background request at a time; native startup does
 integrity admission outside the frame/control mutex and publishes handles only
 when ready. Stop during admission is retained and applied when startup returns.
+
+Real Android userspace preparation acceptance is also opt-in:
+`-e class org.lighttouch.android.FirmwareAcceptanceTest -e preparePrivateFirmware true`.
+Privately stage `files/acceptance-fw/stock.ipsw`,
+`files/acceptance-fw/handoff/inventory.json`, and its
+`release-guest-unpacked/guest-tools` directory. Supply
+`files/acceptance-fw/input-sha256.json`, mapping every staged input path relative
+ to `acceptance-fw` to its verified SHA256. The test first cancels at the native
+`write NAND` checkpoint after system edits, checks cleanup and unchanged inputs,
+waits for Binder death, retries in a fresh same-UID worker, then validates and
+imports the completed base through production IEngine. Its cancellation hook
+exists only in Debug native builds and requires an explicit non-exported service
+bind extra. Timings/results/stage traces are under `files/firmware-evidence-*`;
+native preparer diagnostics remain at `files/prepared/job-*.native.log`.
+Default timeout is 1800 seconds per job, overridden with
+`firmwareTimeoutSeconds`. This establishes preparation/import only; guest boot
+and the normal picker flow still require independent acceptance.
