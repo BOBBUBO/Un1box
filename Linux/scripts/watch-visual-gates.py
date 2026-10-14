@@ -36,7 +36,8 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
     This records a past admission, not a new model inspection. Its verification
     must precede the original deadline; later watchdog polls do not age or reset
     that already-admitted gate. Static publication is permitted only with fresh
-    capture/diagnostics and exact same-worker metadata readback. Publication
+    capture/diagnostics and exact same-worker coherent copy readback. Independently sampled Status
+    sequences are deliberately not equated with the copied sequence. Publication
     timestamps use host CLOCK_MONOTONIC; they do not measure observation age.
     The loader supplies actual bounded file bytes.
     """
@@ -49,7 +50,7 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
         status = proof['status']
         viewport = proof['viewport']
         readback = proof['metadata_readback']
-        return (proof['policy'] == 'static-awake-full-image-v1' and
+        return (proof['policy'] == 'coherent-copy-static-awake-v2' and
                 gate['model_inspected'] is True and gate['scene'] == scene and
                 all(gate[k] == proof[k] == identity[k] for k in identity) and
                 gate['worker_pid'] == proof['worker_pid'] and
@@ -67,11 +68,11 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
                 0 <= verified - captured <= 2_000_000_000 and
                 int(current['sequence']) >= int(original['sequence']) and
                 0 < int(original['frame_monotonic_ns']) <= int(current['frame_monotonic_ns']) <= captured and
-                0 <= verified - int(current['copy_finished_monotonic_ns']) <= 2_000_000_000 and
-                captured <= int(current['copy_finished_monotonic_ns']) <= checked and
-                int(readback['sequence']) == int(current['sequence']) == int(status['frame_sequence']) and
-                int(readback['frame_monotonic_ns']) == int(current['frame_monotonic_ns']) == int(status['frame_monotonic_ns']) and
-                int(readback['observed_monotonic_ns']) == int(status['observed_monotonic_ns']) and
+                coherent_copy(current, identity['hello_monotonic_ns'], verified) and
+                captured <= int(current['saved_monotonic_ns']) <= checked and
+                int(readback['sequence']) == int(current['sequence']) and
+                int(readback['frame_monotonic_ns']) == int(current['frame_monotonic_ns']) and
+                int(readback['shared_generation']) == int(current['shared_generation']) and
                 0 <= verified - int(current['diagnostics_monotonic_ns']) <= 1_000_000_000 and
                 0 <= verified - int(status['observed_monotonic_ns']) <= 1_000_000_000 and
                 int(status['state']) == 2 and int(status['sleeping']) == 0 and
@@ -80,6 +81,34 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
                 gate['window'] == proof['window'] and gate['viewport'] == viewport and
                 len(viewport) == 2 and all(isinstance(v, int) and 0 < v <= 16384 for v in viewport))
     except (KeyError, TypeError, ValueError):
+        return False
+
+
+def capture_attempts(now, wait, deadline):
+    """At most2Hz, fixed operation deadline; callback work consumes the budget."""
+    attempt = 0
+    due = now()
+    while now() < deadline:
+        if now() < due:
+            wait(max(0, min(due, deadline) - now()) / 1e9)
+        if now() >= deadline:
+            return
+        due = now() + 500_000_000
+        attempt += 1
+        yield attempt
+
+
+def coherent_copy(receipt, hello, verified):
+    """Exact native pixels/metadata share one accepted even generation, not Status sampling."""
+    try:
+        start = int(receipt['copy_started_monotonic_ns'])
+        finish = int(receipt['copy_finished_monotonic_ns'])
+        observed = int(receipt['observed_monotonic_ns'])
+        generation = int(receipt['shared_generation'])
+        return (int(receipt['coherent_readback']) == 1 and generation > 0 and generation % 2 == 0 and
+                hello <= start <= finish <= observed <= verified and
+                0 <= verified - start <= 2_000_000_000)
+    except (KeyError, ValueError, TypeError):
         return False
 
 

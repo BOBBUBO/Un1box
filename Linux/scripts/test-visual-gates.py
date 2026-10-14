@@ -124,14 +124,16 @@ class ContinuityGates(unittest.TestCase):
                              frame_monotonic_ns=99_900_000_000, diagnostics_monotonic_ns=99_950_000_000,
                              sleeping=0, agent=1, backlight=245)
         self.current = dict(self.original, observed_monotonic_ns=115_000_000_000, sequence=11,
-                            copy_finished_monotonic_ns=115_005_000_000,
+                            copy_started_monotonic_ns=114_990_000_000,
+                            copy_finished_monotonic_ns=114_999_000_000,
+                            saved_monotonic_ns=115_005_000_000, coherent_readback=1, shared_generation=40,
                             frame_monotonic_ns=114_900_000_000, diagnostics_monotonic_ns=114_950_000_000)
         self.proof = dict(self.identity, owner_checked_monotonic_ns=115_010_000_000,
                           worker_pid=13, worker_start_ticks='35',
                           verified_monotonic_ns=115_020_000_000, window=42, viewport=[480, 800],
-                          policy='static-awake-full-image-v1',
+                          policy='coherent-copy-static-awake-v2',
                           metadata_readback=dict(sequence=11, frame_monotonic_ns=114_900_000_000,
-                                                 observed_monotonic_ns=115_000_000_000),
+                                                 shared_generation=40),
                           status=dict(state=2, observed_monotonic_ns=115_000_000_000,
                                       frame_sequence=11, frame_monotonic_ns=114_900_000_000,
                                       sleeping=0, agent=1, backlight=245))
@@ -216,7 +218,7 @@ class ContinuityGates(unittest.TestCase):
 
     def test_capture_readback_sequence_timestamp_and_future_clock_reject(self):
         for owner, key, value in [(self.proof['metadata_readback'], 'sequence', 12),
-                                  (self.proof['status'], 'frame_monotonic_ns', 114_800_000_000),
+                                  (self.proof['metadata_readback'], 'frame_monotonic_ns', 114_800_000_000),
                                   (self.current, 'frame_monotonic_ns', 0),
                                   (self.current, 'frame_monotonic_ns', 116_000_000_000),
                                   (self.current, 'copy_finished_monotonic_ns', 115_030_000_000),
@@ -225,6 +227,57 @@ class ContinuityGates(unittest.TestCase):
             owner[key] = value
             self.assertFalse(self.check(), key)
             owner[key] = before
+
+    def test_status_sampler_can_lag_coherent_actual_copy(self):
+        self.proof['status']['frame_sequence'] = 5
+        self.proof['status']['frame_monotonic_ns'] = 90_000_000_000
+        self.assertTrue(self.check())  # Status is diagnostics, not copy readback.
+
+    def test_coherent_native_copy_proof_and_clock_order_required(self):
+        for key, value in [('coherent_readback', 0), ('shared_generation', 41),
+                           ('shared_generation', 0), ('copy_started_monotonic_ns', 115_001_000_000),
+                           ('copy_started_monotonic_ns', 110_000_000_000),
+                           ('copy_finished_monotonic_ns', 115_010_000_000),
+                           ('saved_monotonic_ns', 114_000_000_000)]:
+            before = self.current[key]
+            self.current[key] = value
+            self.assertFalse(self.check(), key)
+            self.current[key] = before
+        self.proof['metadata_readback']['shared_generation'] = 42
+        self.assertFalse(self.check())
+
+    def test_caret_retry_preserves_model_time_and_fixed_cadence(self):
+        clock = [115_000_000_000]
+        attempts = []
+        inspected = self.gate['inspected_monotonic_ns']
+        for attempt in module.capture_attempts(lambda: clock[0],
+                                               lambda seconds: clock.__setitem__(0, clock[0] + int(seconds * 1e9)),
+                                               127_000_000_000):
+            attempts.append(clock[0])
+            if attempt == 1:
+                self.current_bytes = b'caret opposite phase'
+                self.assertFalse(self.check())
+            else:
+                self.current_bytes = b'full native BMP host fixture, not a guest'
+                self.assertTrue(self.check())
+                break
+            clock[0] += 100_000_000  # Actual capture work consumes the budget.
+        self.assertEqual(attempts, [115_000_000_000, 115_500_000_000])
+        self.assertEqual(self.gate['inspected_monotonic_ns'], inspected)
+
+    def test_retry_exhaustion_never_extends_operation_or_original_gate(self):
+        clock = [115_000_000_000]
+        starts = []
+        for _ in module.capture_attempts(lambda: clock[0],
+                                         lambda seconds: clock.__setitem__(0, clock[0] + int(seconds * 1e9)),
+                                         116_000_000_000):
+            starts.append(clock[0])
+            self.current_bytes = b'never matches inspected caret'
+            self.assertFalse(self.check())
+        self.assertEqual(starts, [115_000_000_000, 115_500_000_000])
+        self.assertEqual(clock[0], 116_000_000_000)
+        self.proof['verified_monotonic_ns'] = 130_000_000_001
+        self.assertFalse(self.check())
 
     def test_consistent_but_rolled_back_source_rejects(self):
         self.current['sequence'] = self.proof['status']['frame_sequence'] = self.proof['metadata_readback']['sequence'] = 9
