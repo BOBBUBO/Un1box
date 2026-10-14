@@ -38,7 +38,15 @@ struct FrameCopyCache {
                 // Capture may not observe old dimensions against changed storage,
                 // including when allocation or the following copy fails.
                 invalidate(invalidated);
-                try { pixels.resize(size_t(metadata.bytes)); }
+                try {
+                    // resize() may retain geometric capacity beyond the actual
+                    // validated requirement. Fresh construction avoids that
+                    // growth policy; old storage is released after the swap.
+                    std::vector<uint8_t> replacement(size_t(metadata.bytes));
+                    if (replacement.capacity() > metadata.bytes)
+                        return fail("Guest frame cache allocation exceeded its size bound");
+                    pixels.swap(replacement);
+                }
                 catch (const std::bad_alloc &) { return fail("Cannot allocate guest frame cache"); }
             }
             lt_frame_info copied = LT_INIT(lt_frame_info);
