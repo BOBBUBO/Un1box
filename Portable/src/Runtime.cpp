@@ -165,6 +165,7 @@ struct lt_runtime {
     lt_shared_frame *shared = nullptr;
     size_t mapping_bytes = 0;
     std::vector<char *> argv;
+    bool debug_touch_trace = false;
     std::vector<uint8_t> scratch;
     uint64_t serial = 0, audio_generation = 0, input_id = 0, pcm_dropped = 0;
     lt::MotionClock motion_clock;
@@ -380,6 +381,25 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         lt::io(fcntl(runtime->frame_fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) == 0,
                "seal frame size");
         *out = runtime.release();
+    });
+}
+lt_status lt_runtime_debug_touch_trace_enable(lt_runtime *r, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+#ifndef LIGHTTOUCH_ENABLE_DEBUG_QMP
+        lt::require(false, "touch wire diagnosis is not compiled in", LT_UNSUPPORTED);
+#else
+        std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(!r->started && !r->done, "touch trace must be enabled before start", LT_BUSY);
+        if (r->debug_touch_trace)
+            return;
+        r->argv.reserve(r->argv.size() + 2);
+        r->argv.pop_back();
+        r->argv.push_back(const_cast<char *>("-trace"));
+        r->argv.push_back(const_cast<char *>("enable=ipod_touch_multitouch_log"));
+        r->argv.push_back(nullptr);
+        r->debug_touch_trace = true;
+#endif
     });
 }
 lt_status lt_runtime_debug_qmp_enable(lt_runtime *r, lt_error *e) {
