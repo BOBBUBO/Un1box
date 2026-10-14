@@ -1,6 +1,8 @@
 #include "../src/PcmEpoch.hpp"
 #include "../src/VmPauseControl.hpp"
+#include <array>
 #include <cassert>
+#include <cstring>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -12,6 +14,41 @@ struct Packet {
 };
 
 int main() {
+    struct AudioPacket {
+        std::array<int16_t, 8192> samples{};
+        uint32_t bytes = 0;
+        uint64_t timestamp = 0;
+    };
+    lt::PcmEpochQueue<AudioPacket> audio;
+    std::atomic<uint64_t> pulled{17};
+    std::array<int16_t, 8192> output;
+    output.fill(1234);
+    lt_pcm_info info{sizeof(info), 1, 123, 7, 99, 0, 55, 66};
+    const auto original_info = info;
+    const auto original_output = output;
+    for (int poll = 0; poll < 1000; ++poll)
+        assert(!lt::pull_pcm(audio, output.data(), info, pulled));
+    assert(output == original_output && memcmp(&info, &original_info, sizeof(info)) == 0);
+    assert(pulled == 17 && audio.epoch == 1 && audio.dropped == 0 && audio.packets.empty());
+    AudioPacket packet;
+    packet.samples[0] = -123;
+    packet.samples[1] = 456;
+    packet.bytes = 4;
+    packet.timestamp = 9876;
+    assert(audio.append(audio.epoch, packet));
+    assert(lt::pull_pcm(audio, output.data(), info, pulled));
+    assert(output[0] == -123 && output[1] == 456 && output[2] == 1234);
+    assert(info.sample_rate == 44100 && info.channels == 2 && info.frames == 1 && info.timestamp_ns == 9876);
+    assert(pulled == 18 && audio.packets.empty());
+    assert(audio.append(audio.epoch, packet));
+    audio.transition(true); // Same production pause epoch clears pending PCM.
+    const auto paused_info = info;
+    assert(!lt::pull_pcm(audio, output.data(), info, pulled));
+    assert(memcmp(&info, &paused_info, sizeof(info)) == 0 && pulled == 18 && audio.dropped == 1);
+    audio.transition(false);
+    assert(audio.append(audio.epoch, packet));
+    assert(lt::pull_pcm(audio, output.data(), info, pulled));
+    assert(info.dropped_frames == 1 && pulled == 19 && audio.epoch == 3);
     lt::PcmEpochQueue<Packet> queue;
     std::mutex mutex;
     std::condition_variable ready;

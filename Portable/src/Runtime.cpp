@@ -813,19 +813,18 @@ lt_status lt_map_contact(double px, double py, double left, double top, double w
     return LT_OK;
 }
 lt_status lt_runtime_pcm(lt_runtime *r, int16_t *out, uint32_t capacity, lt_pcm_info *info, lt_error *e) {
-    return lt::guard(e, [&] {
+    bool ready = false;
+    const auto status = lt::guard(e, [&] {
         lt::require(r && out, "invalid PCM output");
         lt::abi(info);
         lt::require(r->audio_enabled, "audio disabled", LT_UNSUPPORTED);
         lt::require(capacity >= 4096, "PCM capacity needs 4096 stereo frames");
         std::lock_guard<std::mutex> lock(r->mutex);
-        lt::require(!r->pcm.packets.empty(), "no PCM ready", LT_AGAIN);
-        auto &p = r->pcm.packets.front();
-        memcpy(out, p.samples.data(), p.bytes);
-        *info = {sizeof(*info), 1, 44100, 2, p.bytes / 4, 0, p.timestamp, r->pcm.dropped};
-        r->pcm_pulled += p.bytes / 4;
-        r->pcm.packets.pop_front();
+        ready = lt::pull_pcm(r->pcm, out, *info, r->pcm_pulled);
     });
+    if (status != LT_OK)
+        return status; // Validation/errors keep their original precedence.
+    return ready ? status : lt::error(e, LT_AGAIN, "no PCM ready");
 }
 lt_status lt_runtime_guest_status(lt_runtime *r, uint32_t *out, lt_error *e) {
     return lt::guard(e, [&] {

@@ -1,5 +1,8 @@
 #pragma once
+#include "../include/lighttouch.h"
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <utility>
 
@@ -45,4 +48,17 @@ template <class Packet> struct PcmEpochQueue {
         return true;
     }
 };
+// Caller holds the runtime queue mutex and has validated output ABI/capacity.
+// Empty is normal polling, with no exception or mutation of caller outputs.
+template <class Packet>
+bool pull_pcm(PcmEpochQueue<Packet> &queue, int16_t *out, lt_pcm_info &info, std::atomic<uint64_t> &pulled) {
+    if (queue.packets.empty())
+        return false;
+    const auto &packet = queue.packets.front();
+    memcpy(out, packet.samples.data(), packet.bytes);
+    info = {sizeof(info), 1, 44100, 2, packet.bytes / 4, 0, packet.timestamp, queue.dropped};
+    pulled += packet.bytes / 4;
+    queue.packets.pop_front();
+    return true;
+}
 } // namespace lt
