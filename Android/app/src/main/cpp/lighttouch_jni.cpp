@@ -72,6 +72,7 @@ void present_stage(PresentPhase phase,uint64_t generation,uint64_t epoch) {
 bool presenter_started = false;
 bool starting = false, startup_stop_requested = false, startup_pause_requested = false;
 uint64_t last_rejected_input = 0;
+uint64_t ignored_input_rejections=0,last_ignored_input_request=0;
 std::string diagnostic;
 unsigned graphics_provider_choice=0;
 bool graphics_provider_fixed=false;
@@ -150,11 +151,22 @@ void present() {
             if (runtime) {
                 present_stage(PresentPhase::InputStatus,phase_generation,phase_epoch);
                 lt_input_status delivered=LT_INIT(lt_input_status);lt_error error=LT_INIT(lt_error);
-                if(lt_runtime_input_status(runtime,&delivered,&error)==LT_OK && delivered.state==3 && delivered.request_id!=last_rejected_input) {
-                    last_rejected_input=delivered.request_id;
-                    diagnostic="Guest rejected contact batch "+std::to_string(delivered.request_id)+" (engine result "+std::to_string(delivered.engine_result)+"); contact release requested";
-                    if(lt_runtime_cancel_input(runtime,&error)!=LT_OK)diagnostic += "; input release failed: "+std::string(error.message);
-                    else display_lease.contactsReleased();
+                if(lt_runtime_input_status(runtime,&delivered,&error)==LT_OK) {
+                    if(delivered.state==2)display_lease.inputCompleted(delivered.request_id);
+                    else if(delivered.state==3 && delivered.request_id!=last_rejected_input) {
+                        last_rejected_input=delivered.request_id;
+                        if(display_lease.reportsRejectedInput(delivered.request_id)) {
+                            diagnostic="Guest rejected contact batch "+std::to_string(delivered.request_id)+" (engine result "+std::to_string(delivered.engine_result)+")";
+                            if(display_lease.cancelsRejectedInput(delivered.request_id)) {
+                                diagnostic += "; contact release requested";
+                                if(lt_runtime_cancel_input(runtime,&error)!=LT_OK)diagnostic += "; input release failed: "+std::string(error.message);
+                                else display_lease.contactsReleased();
+                            } else diagnostic += "; no owned contacts require release";
+                            display_lease.inputCompleted(delivered.request_id);
+                        } else {
+                            ++ignored_input_rejections;last_ignored_input_request=delivered.request_id;
+                        }
+                    }
                 }
             }
             if (runtime && window) {
@@ -576,6 +588,7 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     // Guest portrait is kept upright within Android's rotated view. Mapping receives
     // view-local pixels; applying display rotation again would rotate contacts twice.
     (void)rotation;
+    const bool had_owned_contacts=lease && display_lease.contactsHeld();
     auto status=lt_runtime_touch(runtime,&batch,&error);
     std::string failure=result(status,error);
     if(status!=LT_OK) {
@@ -583,8 +596,22 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
         const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&cancelled));
         if(cancellation==LT_OK)display_lease.contactsReleased();
         if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
-    } else if(lease) {
-        for(jsize i=0;i<count;++i)display_lease.admittedContact(id[i],phase[i]);
+    } else {
+        if(lease)for(jsize i=0;i<count;++i)display_lease.admittedContact(id[i],phase[i]);
+        // Read the real submitted ID while this JNI guard still serializes all
+        // touch admissions. A separate error buffer cannot erase touch failures.
+        lt_input_status submitted=LT_INIT(lt_input_status);lt_error identity_error=LT_INIT(lt_error);
+        const auto identity=lt_runtime_input_status(runtime,&submitted,&identity_error);
+        if(identity==LT_OK && submitted.request_id) {
+            display_lease.submittedInput(submitted.request_id,lease,had_owned_contacts || display_lease.contactsHeld());
+            if(submitted.state==2)display_lease.inputCompleted(submitted.request_id);
+        } else {
+            failure="Touch request identity unavailable; gesture cancelled";
+            lt_error cancelled=LT_INIT(lt_error);
+            const auto cancellation=lt_runtime_cancel_input(runtime,&cancelled);
+            if(cancellation==LT_OK)display_lease.contactsReleased();
+            else failure += "; input release failed: "+result(cancellation,cancelled);
+        }
     }
     if(!failure.empty())diagnostic=failure;
     return string(env,failure);
@@ -692,7 +719,8 @@ JNI(observations) jlongArray JNICALL Java_org_lighttouch_android_Native_observat
         jlong(observer.shutdown_reply_received),jlong(frame.width),jlong(frame.height),
         jlong(frame_sample_pixels),jlong(frame_nonzero_rgb_samples),jlong(frame_rgb_sample_sum),
         jlong(window_attached.load()),jlong(presentation_epoch),jlong(phase),jlong(phase_entry),
-        jlong(phase_generation),jlong(phase_epoch),jlong(phase_revision_after),jlong(phase_stable)};
+        jlong(phase_generation),jlong(phase_epoch),jlong(phase_revision_after),jlong(phase_stable),
+        jlong(ignored_input_rejections),jlong(last_ignored_input_request)};
     auto array=env->NewLongArray(sizeof(values)/sizeof(values[0]));
     env->SetLongArrayRegion(array,0,sizeof(values)/sizeof(values[0]),values);return array;
 }

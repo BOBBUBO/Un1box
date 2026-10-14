@@ -41,7 +41,18 @@ public:
         owner_=0;++order_;contacts_.clear();return true;
     }
     bool contactsHeld() const { return !contacts_.empty(); }
-    void contactsReleased() { contacts_.clear(); }
+    void contactsReleased() { contacts_.clear(); input_pending_=false; }
+    void submittedInput(uint64_t request,uint64_t owner,bool release_needed) {
+        input_request_=request;input_owner_=owner;input_release_needed_=release_needed;
+        input_pending_=request!=0;
+    }
+    bool reportsRejectedInput(uint64_t request) const {
+        return input_pending_ && request==input_request_ && (input_owner_==0 || owns(input_owner_));
+    }
+    bool cancelsRejectedInput(uint64_t request) const {
+        return reportsRejectedInput(request) && (input_owner_==0 || input_release_needed_);
+    }
+    void inputCompleted(uint64_t request) { if(request==input_request_)input_pending_=false; }
     void admittedContact(int32_t id,int32_t phase) {
         auto existing=std::find(contacts_.begin(),contacts_.end(),id);
         // Successfully admitted public UP (2) and CANCEL (3) both release IDs.
@@ -50,5 +61,7 @@ public:
     }
 private:
     uint64_t serial_=0,owner_=0,order_=0;
+    uint64_t input_request_=0,input_owner_=0;
+    bool input_pending_=false,input_release_needed_=false;
     std::vector<int32_t> contacts_;
 };

@@ -49,6 +49,16 @@ conversion and reference release never enter that monitor; observations and
 the independent shutdown watchdog do not wait on it. The lease does not reinterpret
 shutdown confirmation, guest input application, audio focus policy or pixels.
 
+Submitted touch IDs are captured from the existing runtime status immediately
+after admission under the JNI guard, with a separate error buffer. Rejection
+cleanup retains that request's owner and whether its pre/post batch could leave
+contacts held. A retired owner's delayed failure cannot cancel the new owner or
+replace its diagnostic; ignored IDs are retained in fixed telemetry counters.
+Current-owner failures remain actionable. An empty batch needs no full release,
+but a failed UP can require it even after the admitted-ID ledger became empty.
+Successful full cancellation or terminal model success discharges that request's
+cleanup obligation. Legacy direct diagnostic input remains explicitly global.
+
 The phase telemetry from `121936c8` remains in this source. Its stage codes,
 timestamps and window presence are diagnostic metadata, never guest acceptance.
 Bitmap capture and status remain separate calls without an atomic PNG serial.
