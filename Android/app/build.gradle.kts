@@ -72,3 +72,34 @@ val prepareNotices = tasks.register<Exec>("prepareFirmwareNotices") {
 }
 android.sourceSets["main"].assets.srcDir(noticeAssets)
 tasks.named("preBuild").configure { dependsOn(prepareNotices) }
+
+// Consume backend-owned, audited bundles; do not regenerate dependency notices here.
+val engineNoticeInputs = mapOf(
+    "arm64-v8a" to providers.gradleProperty("engineNoticeArm64"),
+    "x86_64" to providers.gradleProperty("engineNoticeX86")
+)
+val engineNoticeAssets = layout.buildDirectory.dir("generated/engineNoticeAssets")
+val prepareEngineNotices = tasks.register<Exec>("prepareEngineNotices") {
+    val selectedAbis = providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",")
+    val supplied = selectedAbis.filter { engineNoticeInputs.getValue(it).isPresent }
+    require(supplied.isEmpty() || supplied.size == selectedAbis.size) {
+        "Provide an engine notice bundle for every packaged ABI"
+    }
+    val engineRoot = providers.gradleProperty("engineRoot").orElse("")
+    inputs.file(rootProject.file("scripts/stage-engine-notices.py"))
+    inputs.property("selectedAbis", selectedAbis)
+    supplied.forEach { abi ->
+        inputs.dir(engineNoticeInputs.getValue(abi).map { file(it) })
+        inputs.file(engineRoot.map { file("$it/$abi/libqemu-arm.so") })
+        inputs.file(engineRoot.map { file("$it/$abi/libc++_shared.so") })
+    }
+    outputs.dir(engineNoticeAssets)
+    doFirst {
+        val arguments = mutableListOf("python3", rootProject.file("scripts/stage-engine-notices.py").absolutePath,
+            engineNoticeAssets.get().dir("licenses").asFile.absolutePath, "--engine-root", engineRoot.get())
+        supplied.forEach { abi -> arguments += listOf("--bundle", abi, engineNoticeInputs.getValue(abi).get()) }
+        commandLine(arguments)
+    }
+}
+android.sourceSets["main"].assets.srcDir(engineNoticeAssets)
+tasks.named("preBuild").configure { dependsOn(prepareEngineNotices) }
