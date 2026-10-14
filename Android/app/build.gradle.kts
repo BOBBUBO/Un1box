@@ -170,7 +170,8 @@ val prepareAngleRuntime = tasks.register<Exec>("prepareAngleRuntime") {
 android.sourceSets["debug"].jniLibs.srcDir(angleStage.map { it.dir("jniLibs") })
 android.sourceSets["debug"].assets.srcDir(angleStage.map { it.dir("assets") })
 android.packaging.jniLibs.keepDebugSymbols += setOf("**/libEGL_lighttouch_angle.so", "**/libGLESv1_CM_lighttouch_angle.so", "**/libGLESv2_lighttouch_angle.so")
-tasks.named("preDebugBuild").configure { dependsOn(prepareAngleRuntime) }
+// AGP registers variant tasks after this script is evaluated.
+tasks.matching { it.name == "preDebugBuild" }.configureEach { dependsOn(prepareAngleRuntime) }
 
 // Firmware owns extraction; this consumer verifies the complete unchanged bundle
 // against the actual main variant graph before copying public notice assets.
