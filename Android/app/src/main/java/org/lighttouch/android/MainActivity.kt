@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var detail by mutableStateOf("")
     private var displayAsleep by mutableStateOf(false)
     private var error by mutableStateOf("")
+    private val workerEvidenceDelivery = SessionDeliveryGate()
     private var workerPid by mutableIntStateOf(0)
     private var sessionOwned by mutableStateOf(false)
     private var pendingGuestStart = false
@@ -98,6 +99,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val sensors by lazy { getSystemService(SensorManager::class.java) }
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            workerEvidenceDelivery.advance()
             engine = IEngine.Stub.asInterface(binder)
             refreshDevices()
             binder.linkToDeath({ handler.post { if (engine?.asBinder() == binder) workerExited() } }, 0)
@@ -396,10 +398,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }, "device-library").start()
     }
     private fun bindWorker() {
+        workerEvidenceDelivery.advance()
         if (bound) { unbindService(connection); bound = false }
         bound = bindService(Intent(this, EngineService::class.java), connection, BIND_AUTO_CREATE)
     }
     private fun workerExited() {
+        val evidenceGeneration = workerEvidenceDelivery.advance()
         val unexpected = !engineExpectedExit && (guestStartRequested || sessionOwned || status in listOf("running", "starting", "paused"))
         val exitedPid = workerPid
         engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
@@ -415,11 +419,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             val retained = try { File(filesDir, "worker-stop-error-$exitedPid.txt").takeIf { it.exists() }?.readText() } catch (_: java.io.IOException) { null }
             if (terminal != null) {
                 val reported = terminal.optString("error")
-                if (reported.isNotEmpty()) handler.post { error = reported }
+                if (reported.isNotEmpty()) handler.post { workerEvidenceDelivery.deliver(evidenceGeneration) { error = reported } }
                 else if (!unexpected && terminal.optString("reason") == "native-terminal" && terminal.optString("nativeTerminalState") == "stopped") {
-                    handler.post { error = "" } // Own native terminal report wins over any earlier error.
+                    handler.post { workerEvidenceDelivery.deliver(evidenceGeneration) { error = "" } } // Own current terminal report wins over an earlier error.
                 }
-            } else retained?.takeIf { it.isNotEmpty() }?.let { handler.post { error = it } }
+            } else retained?.takeIf { it.isNotEmpty() }?.let { handler.post { workerEvidenceDelivery.deliver(evidenceGeneration) { error = it } } }
         }, "worker-retained-error").start()
     }
     private fun startGuest() {
@@ -428,6 +432,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (worker == null) { pendingGuestStart = true; bindWorker(); return }
         if (sessionOwned) { restartGuestForStart(worker); return }
         val id = selected?.getString("id") ?: run { error = "Select a device"; status = "stopped"; return }
+        workerEvidenceDelivery.advance()
         engineExpectedExit = false; guestStartRequested = true; status = "starting"
         startForegroundService(Intent(this, EngineService::class.java))
         Thread({
@@ -448,6 +453,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }, "guest-stop-request").start()
     }
     private fun restartGuestForStart(old: IEngine) {
+        workerEvidenceDelivery.advance()
         engineRestarting = true; engineExpectedExit = true; pendingGuestStart = true; status = "stopping"
         if (bound) { unbindService(connection); bound = false }
         val binder = old.asBinder()
@@ -574,5 +580,5 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         } catch (_: RemoteException) { error = "Guest worker exited while the activity stopped; writable state retained." }
         handler.removeCallbacks(poll); super.onStop()
     }
-    override fun onDestroy() { handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    override fun onDestroy() { workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }
