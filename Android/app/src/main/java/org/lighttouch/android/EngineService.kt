@@ -15,6 +15,7 @@ class EngineService : Service() {
     @Volatile private var userPaused = false
     @Volatile private var focusPaused = false
     private val started = AtomicBoolean(false)
+    private val failureRecorded = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
     private val alive = AtomicBoolean(true)
     @Volatile private var audio: AudioTrack? = null
@@ -56,6 +57,10 @@ class EngineService : Service() {
         override fun status(): Bundle {
             val s = Native.status()
             s.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { error = it }
+            if (s.firstOrNull() == "failed" && started.get() && failureRecorded.compareAndSet(false, true)) {
+                val retainedError = error.ifEmpty { "Guest worker failed; writable state and diagnostics retained. Start a fresh worker." }
+                Thread({ persistStopError(retainedError); persistObservations("unexpected-engine-exit") }, "guest-failure-record").start()
+            }
             return Bundle().apply {
                 putString("state", s.getOrElse(0) { "stopped" })
                 putString("detail", s.getOrElse(1) { "" })

@@ -258,3 +258,9 @@ Worker start failure and terminal/timed-out shutdown additionally retain
 `files/worker-observations-PID.json` before worker disposal, including error and
 native log paths. Audio-focus denial pauses the guest and reports a recovery
 message; user Resume requests focus again.
+Unexpected worker death preserves an actionable error instead of presenting a
+clean stop; terminal dirty/unconfirmed native exits are failed even for exit0.
+Start from a consumed worker waits for its Binder death and binds a fresh process.
+On API30+, only this app's `:engine` historical exit record is captured via
+ActivityManager/ApplicationExitInfo, with at most 4 MiB from its own trace stream,
+under private `files/worker-exits`. No other process or system logs are read.
