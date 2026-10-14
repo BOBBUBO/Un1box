@@ -143,6 +143,46 @@ use `--no-audio` or a dummy host audio sink for playback qualification. Each sto
 shutter creates a Photos screenshot in the writable guest overlay; the generator
 caps cycles at16, never modifies the immutable base and never starts a guest.
 
+For a built-in zoom target, use Photos and a guest-created screenshot. On the
+verified n72 image, wake with Home held150ms, wait2s, then drag the lock slider
+from(.18,.9) to(.92,.9). Open Photos, inspect its loaded screen, open Saved Photos
+and an image. Album/list loading can take several seconds; a blank list is not the
+image viewer. A viewer has a `1 of N` heading and the actual full image. F6 enlarges
+that image with two stable contacts101/102 over13 batches at80ms spacing
+(960ms total). Keep the image below maximum zoom so a later replay can show change.
+A screenshot of the stock Home screen provides readable icon sizes for comparison.
+
+An already running private SDL guest can use the bounded controller:
+
+```sh
+DISPLAY=:99 XAUTHORITY=/private/xauthority \
+python3 Linux/scripts/run-photos-concurrency.py --window 2097173 \
+  --output-dir /private/photos-concurrent --execute
+```
+
+Supply the actual private display/window and a new output directory; omit
+`--execute` to inspect the plan without sending input. The controller captures the
+actual X11 display, balances Power1/Home0, admits F6, then starts another complete
+replay at pulse+1.2s to cover the measured delayed shutter PCM burst. It records
+start/end host-monotonic timestamps for every command and requests shutdown with
+Escape. The launch owner must retain native status, frame sequence/timestamps,
+PCM nonzero/peak/drop/error counters, source/binary/engine hashes, worker PID/start
+identity and the final confirmed1/dirty0 receipt. It does not start a worker,
+select state, assert success, or kill a process. Inspect Photos identity and image
+scale in before/during/after pixels; rotation alone does not prove cancellation
+of active contacts. No controller timing qualifies PCM/touch overlap without
+reviewing target observations. Guest-scoped `IT_I2S_DUMP` can retain raw I2S data;
+leave tone, gain and hardware overrides unset.
+
+Actual private Linux GUI attempts on2026-10-14 showed a guest-created Photos image
+enlarge with F6, stock shutter nonzero PCM, and clean shutdown. Run04 enlarged the
+image while the screenshot buttons were held, but its sampled PCM rise straddled
+the first replay's final lift. Its subsequent replay was at apparent maximum zoom;
+a later held-mouse/rotation sequence returned to the grid. Those observations do
+not qualify sustained simultaneous audio/touch or subsequent cancellation/zoom.
+The repeatable second-replay timing above remains a candidate for target execution.
+Host PulseAudio was `auto_null`, so physical audibility remains unqualified.
+
 The native recipe supplies `-audio driver=none`, which selects the default mixer
 backend while the exported capture API supplies the real PCM to SDL/AudioTrack.
 The I2S source warns that a bare `-audiodev` without a default audio backend can
