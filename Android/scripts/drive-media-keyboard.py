@@ -127,6 +127,19 @@ def image_regions(data, b):
         return [sha(image.crop(tuple(roi)).convert("RGB").tobytes()) for roi in b["stableKeyboardRegions"]]
 
 
+def tap_script(pid, start, cutoff, x, y, folder):
+    # Values come only from validated integer identities/rectangles and the
+    # closed media-folder pattern. Android input stays at shell UID; metadata
+    # reads use the owning app UID, with no privileged executable or settings.
+    return (f"s=$(run-as {PACKAGE} cat /proc/{pid}/stat) || exit 20; "
+            "s=${s##*) }; set -- $s; "
+            f"test \"${{20}}\" = {start} || exit 21; "
+            f"u=$(cut -d. -f1 /proc/uptime); test $u -lt {(cutoff - 500) // 1000} || exit 22; "
+            "l=$(run-as " + PACKAGE + " tail -n 1 " + shlex.quote("files/" + folder + "/observations.jsonl") + ") || exit 23; "
+            "case \"$l\" in *'\"label\":\"running\"'*|*'\"label\":\"measurement-start\"'*) ;; *) exit 24;; esac; "
+            f"input touchscreen tap {x} {y}")
+
+
 def run(args):
     b = json.loads(args.keyboard.read_text()); prior = json.loads(args.binding.read_text())
     monitor = load_monitor(); helper = monitor.load_collector(); helper.validate_spec(prior["spec"])
@@ -211,13 +224,7 @@ def run(args):
                 x0, y0, x1, y1 = b[key]; x, y = (x0 + x1) // 2, (y0 + y1) // 2
                 # Recheck device BOOTTIME and process start token on the target immediately
                 # before one Android input tap; host timeouts do not cancel remote gestures.
-                script = (f"s=$(run-as {PACKAGE} cat /proc/{pid}/stat) || exit 20; "
-                          "s=${s##*) }; set -- $s; "
-                          f"test \"${{20}}\" = {start} || exit 21; "
-                          f"u=$(cut -d. -f1 /proc/uptime); test $u -lt {(fence.cutoff - 500) // 1000} || exit 22; "
-                          "l=$(run-as " + PACKAGE + " tail -n 1 " + shlex.quote("files/" + b["mediaFolder"] + "/observations.jsonl") + ") || exit 23; "
-                          "case \"$l\" in *'\"label\":\"running\"'*|*'\"label\":\"measurement-start\"'*) ;; *) exit 24;; esac; "
-                          f"input touchscreen tap {x} {y}")
+                script = tap_script(pid, start, fence.cutoff, x, y, b["mediaFolder"])
                 # Constrain this blocking call to the remaining quiet-window budget.
                 old_deadline = c.deadline
                 c.deadline = min(old_deadline, time.monotonic() + min(2, (fence.cutoff-clock["upperMs"])/1000))
