@@ -103,3 +103,33 @@ val prepareEngineNotices = tasks.register<Exec>("prepareEngineNotices") {
 }
 android.sourceSets["main"].assets.srcDir(engineNoticeAssets)
 tasks.named("preBuild").configure { dependsOn(prepareEngineNotices) }
+
+// Explicit audit only: resolve the selected runtime graph without compiling or
+// confusing build-tool/androidTest dependencies with the conveyed main APK.
+tasks.register("recordApkRuntimeArtifacts") {
+    val configurationName = providers.gradleProperty("auditConfiguration").orElse("debugRuntimeClasspath")
+    val report = layout.buildDirectory.file(configurationName.map { "reports/$it-artifacts.json" })
+    outputs.file(report)
+    outputs.upToDateWhen { false }
+    doLast {
+        require(configurationName.get() in listOf("debugRuntimeClasspath", "releaseRuntimeClasspath"))
+        val artifacts = configurations.getByName(configurationName.get()).resolvedConfiguration.resolvedArtifacts
+            .sortedBy { "${it.moduleVersion.id}:${it.name}:${it.classifier ?: ""}" }
+            .map { artifact ->
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
+                artifact.file.inputStream().use { input ->
+                    val block = ByteArray(1024 * 1024)
+                    while (true) { val size = input.read(block); if (size < 0) break; digest.update(block, 0, size) }
+                }
+                mapOf("coordinate" to artifact.moduleVersion.id.toString(), "file" to artifact.file.name,
+                    "sha256" to digest.digest().joinToString("") { "%02x".format(it) },
+                    "artifact_path" to artifact.file.absolutePath)
+            }
+        val document = mapOf("schema" to 1, "configuration" to configurationName.get(), "artifacts" to artifacts,
+            "scope" to "selected main APK runtime inputs; private audit paths are not offline assets or source distribution clearance")
+        val output = report.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(document)) + "\n")
+        println("Recorded ${artifacts.size} selected runtime artifacts: ${output.name}")
+    }
+}
