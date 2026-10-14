@@ -1,7 +1,7 @@
 # Planned final-engine n72 verification
 
 This next plan has not launched a guest. The prospective write controller is
-`builds/runtime/final-upstream-n72/run-08-stock-staged/manager.py` in the private
+`builds/runtime/final-upstream-n72/run-09-stock-staged/manager.py` in the private
 workspace. Its producer pins are complete; execution remains disabled until Root
 reviews this exact plan and grants one GUI. Do not substitute older engine or
 frontend bytes. Source592 includes the tested contact/audio lifecycle fixes plus
@@ -21,11 +21,11 @@ NAND hash: allocated production admission validates every required byte.
 | Read-only generated base | `private-assets/native-prepared-n72-trial6` | n72ap/7E18/iboot; DeviceLock SHA256 `eec93b0c9c9d33fe65e760d747d5a47d9bf1e0bca659dca280ba4c8b53ffb2f2` |
 | Matched ROM | `private-assets/runtime-inputs/bootrom_240_4` | SHA256 `55f4d8ea2791ba51dd89934168f38f0fb21ce8762ff614c1e742407c0d3ca054` |
 | Matched package | `private-assets/native-prepared-n72-trial6/guest.itpack` | Declared raw armv6 package; SHA256 `fe25b1406b1153837075c56944fadbac7406840667215f232d16fafca079f45b` |
-| New write state | `builds/runtime/final-upstream-n72/stock-state-08` | Must not exist; never reset retained prior state |
+| New write state | `builds/runtime/final-upstream-n72/stock-state-09` | Must not exist; never reset retained prior state |
 | Engine | `builds/backend/frozen/a85e640b791aa8e1260ed2c2349e7807a14cf71e3864805b5bd3fd03717c5737/libqemu-arm.so` | SHA256 `a85e640b791aa8e1260ed2c2349e7807a14cf71e3864805b5bd3fd03717c5737`, clean source259e4ad3 |
 | Complete engine manifest | Same frozen directory, `portable-manifest.json` | SHA256 `5ef1ab85eddf22b43d3183ba443bea697c79ba874248a863ef105fcbfeae046e` |
 | Frontend producer receipt | `builds/runtime/linux-frame-storage-source-11/producer-receipt.json` | SHA256 `42d1f9625f1c9a934265868a62e26214c89a378ae35c315ae2c2d12f29d53970` |
-| Runtime dependency pins | `builds/runtime/final-upstream-n72/run-08-stock-staged/dependencies-pins.json` | SHA256 `b0203797cb4c64fb5e1a6a39574e81b26f83320ece9b6c12b2cac74d869eb582`; 65 exact file identities |
+| Runtime dependency pins | `builds/runtime/final-upstream-n72/run-09-stock-staged/dependencies-pins.json` | SHA256 `b0203797cb4c64fb5e1a6a39574e81b26f83320ece9b6c12b2cac74d869eb582`; 65 exact file identities |
 
 The domain creates its own lease/base pin, sparse NAND overlay and small private
 NOR. The frontend producer receipt is retained at
@@ -43,16 +43,19 @@ Execution-ready entrypoints are retained in the staged directory. After Root
 sets its explicit execution authorization and grants one GUI, launch only:
 
 ```sh
-xvfb-run -a -s '-screen 0 1000x1000x24 -nolisten tcp' python3 /home/blake/Documents/LightTouch-Development/port-workspace/builds/runtime/final-upstream-n72/run-08-stock-staged/manager.py --execute
+xvfb-run -a -s '-screen 0 1000x1000x24 -nolisten tcp' python3 /home/blake/Documents/LightTouch-Development/port-workspace/builds/runtime/final-upstream-n72/run-09-stock-staged/manager.py --execute
 ```
 
 Keep the manager session live. In that same awaited tool execution, wait for its
-`started.json`, then await `await-first-png.py --execute` and emit its exact PNG
-with `view_image` immediately. The expected initial target is
-`wake-auto-01/paired/capture-01/native.png`; the returned path is authoritative.
+`started.json`, then await `await-first-png.py --execute`, immediately use the
+owner-checked `control.py capture ready-current-01 --execute` and emit that exact
+PNG with `view_image` before returning. Retain the earlier first candidate too;
+it can be a faint fade frame. The staged `OPERATOR_EXEC.md` contains the exact
+direct functions.exec sequence, without a detached waiter/message hop.
 The next tool after actual Lock inspection runs `inspect-and-unlock.py --capture
 <actual-capture-directory> --output unlock-fast-01 --model-inspected-lock
---execute`. This single handler records the honest after-view time, validates a
+--execute`, awaits its completion in the same exec, immediately captures
+`after-release-current-01` and emits that current image. This single handler records the honest after-view time, validates a
 fresh capture against the inspected Lock anchors, performs any bounded rewake,
 and immediately applies the mapped slider. Do not insert a status poll or wait
 for Root image review between inspection and that call. A mismatch retains both
@@ -60,7 +63,7 @@ images and requires actual inspection again, within the original deadline.
 
 Immediately inspect `unlock-fast-01/after/native.png`; if it shows Home, the next
 call is repository `Linux/scripts/record-inspected-gate.py --run <write-run>
---capture <write-run>/unlock-fast-01/after --scene home --transition-record <write-run>/unlock-fast-01/content-continuity.json --output home-continuity-01
+--capture <write-run>/after-release-current-01 --scene home --transition-record <write-run>/unlock-fast-01/content-continuity.json --output home-continuity-01
 --model-inspected --execute`. The Home/editor gate still uses full-image matching,
 fresh capture2s/diagnostic1s bounds, exact current worker metadata readback and original129/179s deadlines. No ROI mask is added
 for these scenes. A changed image or aged capture/diagnostics can reject despite a previously viewed
@@ -164,7 +167,7 @@ time. A read worker needs a separately reviewed, honestly named saved-marker gat
 140 guest launch com.apple.mobilenotes
 145 guest frontmost
 160 screenshot <write-run>/notes-open.bmp
-190 guest type LightTouch generated-stock Linux persistence run08
+190 guest type LightTouch generated-stock Linux persistence run09
 220 guest sync
 225 guest frontmost
 230 screenshot <write-run>/saved-notes.bmp
@@ -234,3 +237,19 @@ Its exit1 frontend LeakSanitizer report and missing final confirmed status remai
 unqualified despite absent dirty marker and available lease. Source changes to
 script suppression, flushed final receipts and scoped SDL cleanup require a new
 build/test allocation; they have not been exercised by that original run.
+
+Actual generated-stock run08 on frontend ea786/cleanup259 a85 reached a visibly
+colored Lock Screen and then a knob-right transitional Lock image. It did not
+admit Home before the original129s watchdog, so no Notes typing or read worker
+ran. The attempt's native FINAL confirmed clean Stop/dirty0/workerexit0, actual
+frontendexit0/no sanitizer failure and available lease are a bounded teardown
+subset only. Captures, original clocks and failed prerequisite remain retained.
+The colored Lock capture preceded its honest after-view receipt by32.17s.
+
+Run09 changes operator orchestration, not acceptance policy or native code:
+await capture and emit the image in the same exec; after actual Lock inspection,
+the next tool fully awaits balanced unlock and immediately emits a current
+post-release capture. No Root-message/status hop belongs inside that image/action
+sequence. A transitional current image gets a direct new capture/image next; it
+is never relabelled Home. Exact producer pins and all deadlines remain unchanged,
+with a new small state09. Execution remains disabled until the next Root GUI grant.
