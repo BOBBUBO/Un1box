@@ -42,11 +42,31 @@ internal class ActiveDisplayOwner {
 
 internal object DisplayOwners { val active = ActiveDisplayOwner() }
 
-/** Expected lifecycle cancellations are not sticky guest/backend failures. */
+/** Expected balanced cancellations are nonempty rejections, not guest/backend failures. */
 internal object DisplayInputAdmission {
     const val GENERATION_RETIRED = "Display input generation retired"
     const val PAUSED = "Display input is paused"
-    fun isCancellation(value: String) = value == GENERATION_RETIRED || value == PAUSED
+    const val VIEWPORT_CANCELLED = "Display input outside guest viewport; gesture cancelled"
+    fun isCancellation(value: String) = value == GENERATION_RETIRED || value == PAUSED || value == VIEWPORT_CANCELLED
+}
+
+/** Bounded worker-owned cancellation facts; this never stores/clears fatal errors.
+ * Writers record only closed cancellation reasons, readers take one snapshot
+ * without waiting on input/native admission. Counts are host facts, not delivery.
+ */
+internal data class DisplayCancellationSnapshot(val count: Long = 0, val reasons: List<String> = emptyList())
+internal class DisplayCancellationHistory {
+    @Volatile var snapshot = DisplayCancellationSnapshot()
+        private set
+    @Synchronized fun record(reason: String): Boolean {
+        if (!DisplayInputAdmission.isCancellation(reason)) return false
+        val previous = snapshot
+        snapshot = DisplayCancellationSnapshot(
+            if (previous.count < Long.MAX_VALUE) previous.count + 1 else Long.MAX_VALUE,
+            (previous.reasons + reason).takeLast(LIMIT))
+        return true
+    }
+    companion object { const val LIMIT = 8 }
 }
 
 /** The numeric token is never reused via a newly bound worker closure. */

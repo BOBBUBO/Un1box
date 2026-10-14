@@ -131,7 +131,7 @@ class GuestDisplayAdmissionTest {
         assertArrayEquals(intArrayOf(), display.inputObservations().getIntArray("androidContactIds"))
     }
     @Test fun nonemptyNativeRejectionsDropViewOwnershipUntilFreshDown() = onMain {
-        for (message in listOf("Touch left guest viewport; gesture cancelled", "No active guest frame; gesture cancelled", "No active guest session; touch was not admitted")) {
+        for (message in listOf("Touch left guest viewport; gesture cancelled", "Invalid touch coordinates or viewport; gesture cancelled", "No active guest frame; gesture cancelled", "No active guest session; touch was not admitted")) {
             val endpoint = Endpoint()
             val errors = mutableListOf<String>()
             val display = fakeOwnedDisplay(endpoint) { errors += it }
@@ -149,6 +149,47 @@ class GuestDisplayAdmissionTest {
             send(display, MotionEvent.ACTION_DOWN); send(display, MotionEvent.ACTION_UP)
             assertEquals(listOf("touch", "touch"), endpoint.calls.drop(rejectedAt))
         }
+    }
+    @Test fun balancedViewportCancellationDropsContactsAndGenerationUntilFreshDown() = onMain {
+        for (hadContact in listOf(false, true)) {
+            val endpoint = Endpoint(); val errors = mutableListOf<String>()
+            val display = fakeOwnedDisplay(endpoint) { errors += it }
+            display.layout(0, 0, 320, 480)
+            if (hadContact) {
+                send(display, MotionEvent.ACTION_DOWN)
+                assertArrayEquals(intArrayOf(0), display.inputObservations().getIntArray("androidContactIds"))
+            }
+            endpoint.rejection = DisplayInputAdmission.VIEWPORT_CANCELLED
+            send(display, if (hadContact) MotionEvent.ACTION_MOVE else MotionEvent.ACTION_DOWN)
+            val cancelled = display.inputObservations()
+            assertTrue(errors.isEmpty())
+            assertEquals(1L, cancelled.getLong("expectedCancellationBatches"))
+            assertEquals(0L, cancelled.getLong("rejectedBatches"))
+            assertEquals(0L, cancelled.getLong("inputGeneration"))
+            assertArrayEquals(intArrayOf(), cancelled.getIntArray("androidContactIds"))
+            assertTrue(cancelled.getBoolean("awaitingNewDown"))
+            val before = endpoint.calls.size
+            endpoint.rejection = ""
+            send(display, MotionEvent.ACTION_MOVE); send(display, MotionEvent.ACTION_UP)
+            assertEquals("Cancelled continuation reached native admission", before, endpoint.calls.size)
+            send(display, MotionEvent.ACTION_DOWN); send(display, MotionEvent.ACTION_UP)
+            assertEquals(listOf("touch", "touch"), endpoint.calls.drop(before))
+            assertTrue(errors.isEmpty())
+        }
+    }
+    @Test fun viewportReleaseFailureRemainsActionableRatherThanExpectedCancellation() = onMain {
+        val endpoint = Endpoint(); val errors = mutableListOf<String>()
+        val display = fakeOwnedDisplay(endpoint) { errors += it }
+        display.layout(0, 0, 320, 480)
+        send(display, MotionEvent.ACTION_DOWN)
+        val failure = "Touch left guest viewport; gesture cancelled; input release failed: native rejected"
+        endpoint.rejection = failure
+        send(display, MotionEvent.ACTION_MOVE)
+        assertEquals(listOf(failure), errors)
+        assertEquals(0L, display.inputObservations().getLong("expectedCancellationBatches"))
+        assertEquals(1L, display.inputObservations().getLong("rejectedBatches"))
+        assertArrayEquals(intArrayOf(), display.inputObservations().getIntArray("androidContactIds"))
+        assertTrue(display.inputObservations().getBoolean("awaitingNewDown"))
     }
     @Test fun focusCancelAndGainBetweenPollsRequiresFreshDownWithoutStickyError() = onMain {
         val endpoint = Endpoint(); val errors = mutableListOf<String>()
