@@ -41,6 +41,13 @@ C++ lifetimes on return. JNI persists a small library handle/root, not this
 index/tree. This source review finds no intentional persistent archive tree;
 allocator high-water retention, mapped libraries, framework memory and filesystem
 cache are still possible. Existing samples cannot partition their contribution.
+The import's index/tree/name-set lifetimes also span `Stage.finish()` and its base
+validation, so validation work overlaps those allocations. Independently matched
+APK22 sources eagerly size JNI's global pixel vector to the64MiB frame capacity
+before guest Start; runtime creation sizes another64MiB scratch vector. The
+shared64MiB memfd mapping is a separate reservation, whose residency cannot be
+assumed. These source facts justify measuring frame-buffer residency and sizing;
+they do not prove a particular share of LMK RSS or a tested memory fix.
 Measure canonical worker VmRSS/VmSwap/PSS and `/proc/PID/smaps_rollup`/mapping
 classes where permissions allow, before import, after import and before Start.
 Record denied reads as unavailable. Avoid inferred heap leaks from one `top` row.
