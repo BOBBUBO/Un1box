@@ -154,11 +154,13 @@ class Attempt:
 
     def launch(self):
         # Refuse an existing target: the supervisor may only dispose its own AVD.
-        result = subprocess.run([self.args.adb, "-s", "emulator-5554", "get-state"], capture_output=True, timeout=5)
-        if result.returncode == 0:
+        result = subprocess.run([self.args.adb, "devices", "-l"], capture_output=True, timeout=5)
+        if result.returncode != 0:
+            raise RuntimeError("Cannot enumerate ADB devices; no launch or cleanup authorized")
+        if any(line.split() and line.split()[0] == b"emulator-5554" for line in result.stdout.splitlines()):
             raise RuntimeError("emulator-5554 already exists; no launch or cleanup authorized")
         command = ["sudo", "-n", "-u", self.args.user, "xvfb-run", "-a", "-s", "-screen 0 1280x1024x24",
-                   self.args.emulator, "-avd", self.args.avd, "-no-window", "-no-snapshot", "-no-audio",
+                   self.args.emulator, "-avd", self.args.avd, "-port", "5554", "-no-window", "-no-snapshot", "-no-audio",
                    "-gpu", "swiftshader", "-cores", "2", "-memory", "2048"]
         log = (self.output/"avd.log").open("wb")
         self.avd = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -313,7 +315,8 @@ class Attempt:
             except subprocess.TimeoutExpired:
                 self.logcat.kill()
         self.complete.set()
-        self.watcher.join(timeout=2)
+        if self.watcher is not None and self.watcher.pid is not None:
+            self.watcher.join(timeout=2)
         remaining = {}
         for pid,start in owned.items():
             identity = process_identity(pid)

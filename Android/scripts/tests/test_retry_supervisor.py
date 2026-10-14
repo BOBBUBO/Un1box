@@ -6,7 +6,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("retry", Path(__file__).resolve().parents[1]/"supervise_16k_retry.py")
 retry = importlib.util.module_from_spec(spec)
@@ -14,6 +16,55 @@ spec.loader.exec_module(retry)
 
 
 class Supervision(unittest.TestCase):
+    def arguments(self, directory):
+        return SimpleNamespace(output=str(Path(directory)/"attempt"),adb="/synthetic/adb",
+            emulator="/synthetic/emulator",avd="synthetic_16k",user="synthetic")
+
+    def test_launch_pins_port_and_never_uses_auto_serial(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(retry.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout=b"List of devices attached\n")) as run, \
+             mock.patch.object(retry.subprocess,"Popen") as popen, \
+             mock.patch.object(retry.PROCESS_CONTEXT,"Process"):
+            popen.return_value.pid = 987654
+            attempt = retry.Attempt(self.arguments(directory))
+            attempt.launch()
+            self.assertEqual(run.call_args.args[0],["/synthetic/adb","devices","-l"])
+            argv = popen.call_args.args[0]
+            self.assertEqual(argv[argv.index("-port"):argv.index("-port")+2],["-port","5554"])
+            self.assertEqual(argv[argv.index("-gpu"):argv.index("-gpu")+2],["-gpu","swiftshader"])
+
+    def test_existing_serial_refuses_launch_in_every_adb_state(self):
+        for state in ("device","offline","unauthorized","no permissions"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory, \
+                 mock.patch.object(retry.subprocess,"run",return_value=SimpleNamespace(returncode=0,
+                    stdout=f"List of devices attached\nemulator-5554\t{state}\n".encode())), \
+                 mock.patch.object(retry.subprocess,"Popen") as popen:
+                attempt = retry.Attempt(self.arguments(directory))
+                with self.assertRaisesRegex(RuntimeError,"already exists"):
+                    attempt.launch()
+                popen.assert_not_called()
+                self.assertIsNone(attempt.avd)
+
+    def test_failed_enumeration_refuses_launch(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(retry.subprocess,"run",return_value=SimpleNamespace(returncode=1,stdout=b"")), \
+             mock.patch.object(retry.subprocess,"Popen") as popen:
+            with self.assertRaisesRegex(RuntimeError,"Cannot enumerate"):
+                retry.Attempt(self.arguments(directory)).launch()
+            popen.assert_not_called()
+
+    def test_cleanup_handles_watchdog_that_did_not_start(self):
+        for watcher in (None,SimpleNamespace(pid=None)):
+            with self.subTest(watcher=watcher), tempfile.TemporaryDirectory() as directory, \
+                 mock.patch.object(retry,"retain_descendants"), mock.patch.object(retry,"signal_owned"):
+                attempt = retry.Attempt(self.arguments(directory))
+                attempt.avd = mock.Mock(pid=987654)
+                attempt.avd.poll.return_value = 0
+                attempt.watcher = watcher
+                attempt.adb = mock.Mock(return_value=(0,b""))
+                attempt.cleanup()
+                self.assertTrue((attempt.output/"terminal.json").exists())
+
     def test_independent_deadline_disposes_hung_owned_child(self):
         # Actual OS subprocesses, no Android tools, compiler, window or guest.
         with tempfile.TemporaryDirectory() as directory:

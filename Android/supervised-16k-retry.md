@@ -2,8 +2,10 @@
 
 This Linux supervisor requires an explicit exclusive AVD allocation. Preparing
 the tool or passing its synthetic tests is not an allocation or target result.
-It refuses an existing `emulator-5554`. Every Android command specifies that
-serial. It launches one AVD in an isolated Xvfb as the current user, using fresh
+It refuses any existing `emulator-5554` device-list entry, including offline or
+unauthorized entries, and refuses launch if enumeration fails. It explicitly
+binds emulator port 5554. Every target Android command specifies that serial.
+It launches one AVD in an isolated Xvfb as the current user, using fresh
 sudo credentials, two cores, requested 2048 MB RAM, `-gpu swiftshader`, no window,
 no snapshot and no audio. It never wipes data or changes the GPU/image/version.
 Retained evidence showed the emulator raised RAM to 2560 MB; inspect the new
