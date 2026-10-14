@@ -12,6 +12,8 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.security.MessageDigest
+import java.util.zip.ZipFile
 
 /** Debug-only, fixed read-only diagnosis; never passes commands or paths. */
 @RunWith(AndroidJUnit4::class)
@@ -24,6 +26,14 @@ class GuestQmpSnapshotTest {
         val receipt = JSONObject().put("diagnosisCaptured", false).put("guestBootProven", false)
         val snapshots = JSONArray()
         try {
+            receipt.put("installedApkSha256", acceptanceSha256(File(context.applicationInfo.sourceDir)))
+            ZipFile(context.applicationInfo.sourceDir).use { apk ->
+                val entry = requireNotNull(apk.getEntry("lib/${Build.SUPPORTED_ABIS[0]}/libqemu-arm.so"))
+                val digest = MessageDigest.getInstance("SHA-256")
+                apk.getInputStream(entry).use { input -> val buffer = ByteArray(65536); while (true) { val size = input.read(buffer); if (size < 0) break; digest.update(buffer, 0, size) } }
+                receipt.put("packagedEngineSha256", digest.digest().joinToString("") { "%02x".format(it) })
+            }
+            receipt.put("firmwareNoticeManifest", JSONObject(context.assets.open("licenses/firmware/manifest.json").bufferedReader().use { it.readText() }))
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 AcceptanceBinding(context, Intent(context, EngineService::class.java), IEngine.Stub::asInterface).use { binding ->
                     val worker = binding.get()
@@ -62,7 +72,7 @@ class GuestQmpSnapshotTest {
                         File(evidence, "snapshots.json").writeText(snapshots.toString(2))
                         Thread.sleep(3000)
                     }
-                    receipt.put("diagnosisCaptured", true).put("workerPid", initial.getInt("pid"))
+                    receipt.put("recordId", record).put("diagnosisCaptured", true).put("workerPid", initial.getInt("pid"))
                         .put("appUid", Process.myUid()).put("privateEndpoint", endpoint.absolutePath).put("snapshots", snapshots)
                 }
             }
