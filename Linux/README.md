@@ -154,3 +154,35 @@ while the engine admits the agent halt or board gesture. Observer phase1 is host
 queued,2 cancelling,3 engine request,4 admitted and5 actual PMU confirmation.
 A halt reply or dark screen never clears dirty state without PMU confirmation and
 successful worker exit.
+
+`scripts/run-private-acceptance.py` records reproducible n72 import/write/read
+commands and native state/PID observations. Its default is plan-only; `--execute`
+runs the reviewed command. Output directories must be new and outside Git:
+
+```sh
+python3 Linux/scripts/run-private-acceptance.py --mode write \
+  --binary /private/build/lighttouch-linux --base /private/base --state /private/state \
+  --engine /private/libqemu-arm.so --rom /private/bootrom_240_4 \
+  --package /private/armv6.itpack --output-dir /private/write-evidence
+```
+
+Review command.json/input.txt, then generate a new directory with `--execute` when
+the state lease is free. Write mode uses the root-inspected n72 Home Notes icon and
+corrected create control (.94,.09); remeasure these positions if the Home layout or
+Notes screen differs. `--recover` is an explicit first-write option for a prior dirty
+state. After a confirmed clean exit, run `--mode read` on the same base/state with
+a different output directory, deliberately without recovery. Inspect its Notes list,
+then supply `--reopen X Y` from the actual saved row pixels to capture the marker.
+The script records frontend/worker PIDs and process start ticks, exact argv, selected
+source hashes, initial/final dirty and base-pin observations, log, screenshots, and
+the actual confirmed-clean status receipt. A nonzero exit, missing receipt or dirty
+state fails the session check. `visual_text_verified` remains false: human inspection
+of write and fresh-worker reopened pixels must establish the exact persisted text.
+
+Prepare mode uses `--import-source` and optional `--source-sha256` (mandatory for
+archives) to import an already prepared base through the same native verifier.
+It does not build firmware and cannot qualify firmware preparation by itself. Use
+the resulting base in the same write/read sessions; native open independently checks
+all base hashes and acquires the exclusive writer lease. The driver never deletes,
+repairs, or substitutes state, and its supervisor only terminates its own spawned
+process group on a bounded timeout.
