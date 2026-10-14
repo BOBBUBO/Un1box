@@ -8,6 +8,8 @@ sends input, restarts a worker or pauses on close. It binds the existing service
 requires stopped/sessionStarted=false/no valid native session/no produced frames
 and empty error, then arms fixed touch trace and optional fixed QMP. It records
 actual main APK SHA, UID/PID, before/after status and exact admission results.
+Its local binding omits BIND_AUTO_CREATE, and required expectedWorkerPid must
+match before any arming. Missing/retired worker fails without creating/retrying it.
 
 Root foregrounds MainActivity first and controls the platform instrumentation
 lifetime/outer deadline. Planned invocation after the new runner is sealed:
@@ -17,6 +19,7 @@ adb -s "$LT_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
 adb -s "$LT_SERIAL" shell am instrument --no-restart -w \
   -e class org.lighttouch.android.GuestSessionSetupTest \
   -e armGuestSession true -e armTouchWireTrace true \
+  -e expectedWorkerPid "$LT_EXPECTED_UNUSED_WORKER_PID" \
   -e expectedMainApkSha256 49565cd70fa9a83d99c2865707055313ec2cf373e85c13dcbc907401e4c71fa2 \
   org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
