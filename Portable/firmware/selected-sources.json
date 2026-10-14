@@ -155,6 +155,29 @@
       "unknown catalog comparison mode",
       "non-v5 HFSX"
     ],
-    "post_exclusion_build_validation": "PENDING resource allocation"
+    "post_exclusion_build_validation": "PASS Linux and ARM64 j1 build; Linux regression tests 3/3"
+  },
+  "validated_exclusion": {
+    "tested_source": "0799c2ec72a16acba02cc2ec431cbadfd5ff1f75",
+    "generated_recipe_sha256": "6c39f63696958597ea96665b59055120b8ef80983d0e0360d241d265590a539d",
+    "linux_dso": {
+      "sha256": "0ece9d6c814b4294e5e8c1bd1e7bf18583e607506d2bde7606489360bb172e65",
+      "apple_symbols_absent": true,
+      "apple_table_bytes_absent": true,
+      "folding_object_absent": true,
+      "public_c_api_exports_present": true,
+      "target_runtime_preparation_tested_here": false
+    },
+    "android_arm64_dso": {
+      "sha256": "61efc17448a2a1a30f8a6fb9126cc6e83b00fad06344b41b5a6e05e7050eb3cf",
+      "apple_symbols_absent": true,
+      "apple_table_bytes_absent": true,
+      "folding_object_absent": true,
+      "public_c_api_exports_present": true,
+      "target_runtime_preparation_tested_here": false,
+      "page_alignment": 16384
+    },
+    "android_preparation_after_exclusion": "NOT_TESTED",
+    "guest_boot_after_exclusion": "NOT_TESTED"
   }
 }
