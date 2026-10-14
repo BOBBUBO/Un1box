@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import time
 
@@ -16,19 +17,24 @@ def main():
     parser.add_argument('--window', type=int, required=True)
     parser.add_argument('--log', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
-    parser.add_argument('--stage', choices=['prepare', 'cross', 'cancel', 'focus', 'pause', 'rotation'], required=True)
+    parser.add_argument('--stage', choices=['prepare', 'reopen-albums', 'reopen-grid', 'reopen-viewer', 'cross', 'cancel', 'focus', 'pause', 'rotation'], required=True)
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--video-size', default='800x1000')
+    parser.add_argument('--viewport', type=int, nargs=2, metavar=('WIDTH', 'HEIGHT'))
     args = parser.parse_args()
+    expected_scene = {'reopen-albums': 'Photos image viewer', 'reopen-grid': 'Photo Albums',
+                      'reopen-viewer': 'Saved Photos grid'}.get(args.stage, 'Photos image viewer below maximum zoom')
     plan = {'stage': args.stage, 'window': args.window,
-            'precondition': 'Current Photos image viewer inspected; interruption stages require inspected belowmax zoom',
-            'prepare': 'Balanced F5 pinch-in then paired native capture; inspect it before admitting another stage',
+            'precondition': 'Current pixels inspected: ' + expected_scene,
+            'prepare': 'Every reopen screen must be inspected before the next stage; F5 shrink remains unqualified',
             'acceptance_assertions': False, 'shutdown': 'Launch owner requests Escape after all stages and waits clean receipt'}
     if not args.execute:
         print(json.dumps(plan, indent=2))
         return
     if args.window <= 0:
         parser.error('positive private SDL window required')
+    if args.stage.startswith('reopen-') and (not args.viewport or min(args.viewport) <= 0):
+        parser.error('reopen stages require the measured portrait SDL viewport')
     args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
     (args.output_dir / 'plan.json').write_text(json.dumps(plan, indent=2) + '\n')
 
@@ -56,9 +62,43 @@ def main():
               '--output-dir', str(args.output_dir / name)])
         gui(name)
 
+    def tap_guest(x, y):
+        bitmap = (args.output_dir / 'before/native.bmp').read_bytes()
+        width, height = struct.unpack_from('<ii', bitmap, 18)
+        height = abs(height)
+        if width <= 0 or height < width:
+            raise RuntimeError('Reopen route requires a valid portrait guest frame')
+        scale = min(args.viewport[0] / width, args.viewport[1] / height)
+        left, top = (args.viewport[0] - width * scale) / 2, (args.viewport[1] - height * scale) / 2
+        call(['xdotool', 'mousemove', '--window', str(args.window),
+              str(round(left + x * width * scale)), str(round(top + y * height * scale))])
+        call(['xdotool', 'mousedown', '1'])
+        try:
+            time.sleep(.15)
+        finally:
+            call(['xdotool', 'mouseup', '1'])
+        time.sleep(1)
+
     paused = False
     try:
         capture('before')
+        if args.stage == 'reopen-albums':
+            # A hidden viewer bar can consume the first tap; viewer->grid->album
+            # uses the next two. Inspect before admitting the separate grid stage.
+            for _ in range(3):
+                tap_guest(.1, .085)
+            capture('albums-after')
+            return
+        if args.stage == 'reopen-grid':
+            tap_guest(.5, .2)
+            time.sleep(1)
+            capture('grid-after')
+            return
+        if args.stage == 'reopen-viewer':
+            tap_guest(.1, .2)
+            time.sleep(1)
+            capture('viewer-after')
+            return
         if args.stage == 'prepare':
             key('F5')
             time.sleep(1.2)

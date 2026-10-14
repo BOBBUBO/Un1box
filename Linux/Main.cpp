@@ -1,6 +1,5 @@
 #include "lighttouch.h"
 #include "../Portable/src/Elapsed.hpp"
-#include "../Portable/src/LinuxTrace.hpp"
 #include "TouchScript.hpp"
 #include "ControlDelivery.hpp"
 #include "Presentation.hpp"
@@ -278,7 +277,7 @@ static int worker(const Options &o) {
                               o.package.empty() ? nullptr : o.package.c_str(), serial.c_str(), uint32_t(o.audio)}};
     check(lt_runtime_create(&config, &r, &error), error);
     if (o.debug_touch_trace) {
-        check(lt::linux_touch_trace_enable(r, &error), error);
+        check(lt_runtime_debug_touch_trace_enable(r, &error), error);
         std::cerr << "debug_touch_trace worker_pid=" << getpid()
                   << " fixed_event=ipod_touch_multitouch_log clock=guest_virtual_seconds\n";
     }
