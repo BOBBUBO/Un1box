@@ -32,7 +32,7 @@ def identity_matches(gate, owner):
 
 def admit_rewake(gate, inspected_bytes, owner, *, now, status, pulse,
                  capture, verify_window, wait, compare_scene=None):
-    """Return an identical fresh capture or reject before contact input.
+    """Return fresh known-scene continuity or reject before contact input.
 
     verify_window returns a validated viewport and must independently check the
     live PID/startticks/UID/argv, window PID and focus on every invocation.
