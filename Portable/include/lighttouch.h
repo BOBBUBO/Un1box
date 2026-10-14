@@ -27,6 +27,28 @@ typedef struct {
 } lt_error;
 typedef struct lt_device lt_device;
 typedef struct lt_runtime lt_runtime;
+typedef struct lt_library lt_library;
+/* Durable private device library. Records retain independent immutable bases,
+ * writable state and asset copies. Selection is native, atomic and persistent.
+ * All callers serialize handle lifetime; cross-process mutations use flock. */
+typedef struct {
+    uint32_t size, version;
+    const char *root_path;
+} lt_library_config;
+typedef struct {
+    uint32_t size, version;
+    char id[64], display_name[128], board[32], build[32], base_sha256[65];
+    char base_path[1024], state_path[1024], bootrom_path[1024], guest_package_path[1024];
+    uint32_t selected, dirty;
+} lt_record_info;
+lt_status lt_library_open(const lt_library_config *, lt_library **, lt_error *);
+void lt_library_close(lt_library *);
+lt_status lt_library_count(lt_library *, uint32_t *, lt_error *);
+lt_status lt_library_record_at(lt_library *, uint32_t index, lt_record_info *, lt_error *);
+lt_status lt_library_select(lt_library *, const char *record_id, lt_error *);
+lt_status lt_library_selected(lt_library *, lt_record_info *, lt_error *);
+lt_status lt_library_device_open(lt_library *, const char *record_id, uint32_t allow_dirty, lt_device **, lt_error *);
+
 /* All paths UTF-8, absolute, private app-owned directories. Destination must not
  * exist. Imports stage beside destination and atomically publish after validation.
  * expected_sha256 is mandatory for archives; folder import verifies lock outputs.
@@ -39,6 +61,19 @@ typedef struct {
     lt_progress_fn progress;
     void *opaque;
 } lt_import_config;
+typedef struct {
+    uint32_t size, version;
+    const char *source_path, *expected_sha256, *display_name, *bootrom_path, *guest_package_path;
+    uint64_t max_bytes;
+    lt_progress_fn progress;
+    void *opaque;
+} lt_library_import_config;
+lt_status lt_library_import(lt_library *, const lt_library_import_config *, lt_record_info *, lt_error *);
+/* Transactionally copy a stopped legacy base/state into a new record while
+ * holding its writer lease. Preserves old data, including dirty/pin/overlay.
+ * Library must be empty to avoid accidentally adopting legacy data twice. */
+lt_status lt_library_adopt_legacy(lt_library *, const lt_library_import_config *, const char *legacy_state_path,
+                                  lt_record_info *, lt_error *);
 lt_status lt_import_archive(const lt_import_config *, lt_error *);
 lt_status lt_import_directory(const lt_import_config *, lt_error *);
 lt_status lt_sha256_file(const char *path, char hex[65], lt_error *);
@@ -181,6 +216,38 @@ typedef struct {
     uint64_t timestamp_ns, dropped_frames;
 } lt_pcm_info;
 lt_status lt_runtime_pcm(lt_runtime *, int16_t *, uint32_t capacity_frames, lt_pcm_info *, lt_error *);
+/* Small typed guest operations use the existing agent, never a host/guest shell.
+ * Requests are async, at most one pending; caller polls completion. Lost/timeout
+ * mutations are not retried. Launch builtin IDs are limited to com.apple.*;
+ * gyro probe requires an explicitly authorized already-installed workload and
+ * actual engine guest gyro capability. No probe binary is synthesized. */
+typedef enum {
+    LT_GUEST_PING = 0,
+    LT_GUEST_FRONTMOST = 1,
+    LT_GUEST_LAUNCH_BUILTIN = 2,
+    LT_GUEST_TYPE_TEXT = 3,
+    LT_GUEST_SYNC = 4,
+    LT_GUEST_LAUNCH_GYRO_PROBE = 5
+} lt_guest_operation;
+typedef struct {
+    uint32_t size, version;
+    uint32_t operation, timeout_ms;
+    const char *argument;
+} lt_guest_request;
+typedef struct {
+    uint32_t size, version;
+    uint64_t request_id;
+    uint32_t state;
+    int32_t guest_status;
+    uint32_t bytes, reserved;
+    char output[4096];
+} lt_guest_result;
+/* Guest result states: 0 unknown,1 queued,2 complete,3 rejected,4 cancelled,
+ * 5 timed out (outcome unknown). output bytes UTF-8; caller owns buffer. */
+lt_status lt_runtime_guest_status(lt_runtime *, uint32_t *status, lt_error *);
+lt_status lt_runtime_guest_request(lt_runtime *, const lt_guest_request *, uint64_t *request_id, lt_error *);
+lt_status lt_runtime_guest_poll(lt_runtime *, uint64_t request_id, lt_guest_result *, lt_error *);
+lt_status lt_runtime_guest_cancel(lt_runtime *, uint64_t request_id, lt_error *);
 uint32_t lt_abi_version(void);
 #ifdef __cplusplus
 }

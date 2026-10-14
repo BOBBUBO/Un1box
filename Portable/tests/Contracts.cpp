@@ -1,6 +1,8 @@
 #include "lighttouch.h"
 #include "../src/Sha256.hpp"
 #include "../src/Json.hpp"
+#include "../src/MotionClock.hpp"
+#include "../src/Base64.hpp"
 #include <zlib.h>
 #include <cassert>
 #include <cmath>
@@ -71,6 +73,35 @@ int main() {
     assert(lt_map_motion(90, 900000000, 1000000000, &raw, &mapped, &e) == LT_OK);
     assert(mapped.acceleration[0] == -2 && mapped.acceleration[1] == 1 && mapped.angular_velocity[0] == -5);
     assert(lt_map_motion(0, 1, 1000000000, &raw, &mapped, &e) == LT_AGAIN);
+    assert(lt::base64_encode("Hi") == "SGk=" && lt::base64_decode("SGk=") == "Hi");
+    assert(lt::base64_decode(lt::base64_encode("multiline\ntext")) == "multiline\ntext");
+    bad = false;
+    try {
+        lt::base64_decode("YR==");
+    } catch (...) {
+        bad = true;
+    }
+    assert(bad);
+    lt::MotionClock clocks;
+    clocks.validate(1, 1000000000, 1000000000);
+    clocks.commit(1, 1000000000);
+    clocks.validate(2, 1000000000, 1000000000);
+    clocks.commit(2, 1000000000);
+    for (uint64_t t = 1005000000; t < 1500000000; t += 5000000) {
+        clocks.validate(1, t, t);
+        clocks.commit(1, t);
+        clocks.validate(2, t, t);
+        clocks.commit(2, t);
+    }
+    bad = false;
+    try {
+        clocks.validate(3, 1495000001, 1495000001);
+    } catch (...) {
+        bad = true;
+    }
+    assert(bad);
+    clocks.reset();
+    clocks.validate(3, 1000000000, 1000000000);
     const std::string nor = "nor", page = "page", iboot = "boot", gid = "gid";
     std::string listing = "cs0/0.page " + hash(page) + "\n";
     std::string lock = "{\"format\":1,\"board\":\"n72ap\",\"build\":\"7E18\",\"boot_strategy\":\"iboot\",\"outputs\":{"
@@ -183,6 +214,73 @@ int main() {
     config.expected_sha256 = sha.c_str();
     config.progress = [](void *, uint64_t, uint64_t) { return 1; };
     assert(lt_import_archive(&config, &e) == LT_CANCELLED && !fs::exists(dest));
+
+    // Firmware output declares its matching package; native code chooses it
+    // without requiring UI architecture/recipe knowledge.
+    fs::copy_file(root / "synthetic.itpack", root / "n81source/guest.itpack");
+    std::string withpack = n81lock;
+    size_t outputs = withpack.find("\"outputs\":{");
+    assert(outputs != std::string::npos);
+    withpack.insert(outputs + 11, "\"guest_package\":{\"path\":\"guest.itpack\",\"sha256\":\"" +
+                                      sha_file(root / "n81source/guest.itpack") + "\"},");
+    put(root / "n81source/device.lock.json", withpack);
+    std::string packedbase = (root / "n81packbase").string();
+    n81import.destination = packedbase.c_str();
+    assert(lt_import_directory(&n81import, &e) == LT_OK);
+    // Native durable record selection keeps both boards and distinct state.
+    std::string libroot = (root / "library").string();
+    lt_library_config lc{sizeof(lc), 1, libroot.c_str()};
+    lt_library *l = nullptr;
+    assert(lt_library_open(&lc, &l, &e) == LT_OK);
+    lt_record_info first{}, second_record{}, selected_record{};
+    first.size = second_record.size = selected_record.size = sizeof(lt_record_info);
+    first.version = second_record.version = selected_record.version = 1;
+    lt_library_import_config li{
+        sizeof(li), 1, (root / "base").c_str(), nullptr, "Baseline", rom.c_str(), nullptr, 0, nullptr, nullptr};
+    dest = (root / "base").string();
+    li.source_path = dest.c_str();
+    assert(lt_library_import(l, &li, &first, &e) == LT_OK);
+    li.source_path = packedbase.c_str();
+    li.display_name = "Gyro board";
+    li.bootrom_path = nullptr;
+    li.guest_package_path = nullptr;
+    assert(lt_library_import(l, &li, &second_record, &e) == LT_OK);
+    assert(*second_record.guest_package_path && fs::exists(second_record.guest_package_path));
+    assert(sha_file(second_record.guest_package_path) == sha_file(root / "synthetic.itpack"));
+    assert(std::string(first.id) != second_record.id && std::string(first.state_path) != second_record.state_path);
+    uint32_t count = 0;
+    assert(lt_library_count(l, &count, &e) == LT_OK && count == 2);
+    assert(lt_library_select(l, second_record.id, &e) == LT_OK);
+    lt_library_close(l);
+    assert(lt_library_open(&lc, &l, &e) == LT_OK);
+    assert(lt_library_selected(l, &selected_record, &e) == LT_OK &&
+           std::string(selected_record.id) == second_record.id);
+    assert(lt_library_device_open(l, first.id, 0, &d, &e) == LT_OK);
+    lt_device_close(d);
+    assert(lt_library_device_open(l, second_record.id, 0, &d, &e) == LT_OK);
+    lt_device_close(d);
+    assert(lt_library_adopt_legacy(l, &li, state.c_str(), &selected_record, &e) == LT_BUSY);
+    assert(lt_library_select(l, "../escape", &e) == LT_INVALID);
+    assert(lt_library_count(l, &count, &e) == LT_OK && count == 2);
+    lt_library_close(l);
+    // A one-time migration retains stopped legacy user state and dirty marker,
+    // rather than replacing the baseline when a second board is introduced.
+    libroot = (root / "migrated-library").string();
+    lc.root_path = libroot.c_str();
+    assert(lt_library_open(&lc, &l, &e) == LT_OK);
+    li.source_path = dest.c_str();
+    li.display_name = "Legacy baseline";
+    li.bootrom_path = rom.c_str();
+    li.guest_package_path = nullptr;
+    put(root / "state/nand/retained-user-page", "guest user data");
+    assert(lt_library_adopt_legacy(l, &li, state.c_str(), &first, &e) == LT_OK);
+    assert(first.dirty == 1 && fs::exists(fs::path(first.state_path) / "nand/retained-user-page"));
+    assert(fs::exists(root / "state/nand/retained-user-page") && fs::exists(root / "state/.dirty"));
+    assert(lt_library_device_open(l, first.id, 0, &d, &e) == LT_DIRTY);
+    assert(lt_library_device_open(l, first.id, 1, &d, &e) == LT_OK);
+    lt_device_close(d);
+    lt_library_close(l);
+
     // A modified page invalidates the lock's full listing even when the lock file
     // itself still matches the device pin. Recover never silently accepts mutation.
     chmod((root / "base/nand/cs0/0.page").c_str(), 0600);

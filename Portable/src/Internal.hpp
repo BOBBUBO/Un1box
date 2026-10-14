@@ -45,6 +45,7 @@ std::string read_file(const fs::path &, size_t limit = 64u << 20);
 std::string digest_file(const fs::path &);
 void atomic_write(const fs::path &, const std::string &);
 void sync_dir(const fs::path &);
+std::string prepared_guest_package(lt_device *);
 std::string guest_offer(lt_device *, const char *);
 void clean_device(lt_device *, bool);
 } // namespace lt

@@ -15,6 +15,21 @@ mkdir -p /private/devices/n72
   --rom /private/bootrom_240_4 --package /private/armv6.itpack
 ```
 
+Durable native library operations retain both boards and per-device state/assets:
+
+```sh
+/private/build/linux/lighttouch-linux --library /private/devices/library --import /private/n72ap-7E18.itbase \
+  --sha256 EXPECTED_HASH --name "Baseline iPod" --rom /private/bootrom_240_4 --package /private/armv6.itpack
+/private/build/linux/lighttouch-linux --library /private/devices/library --list
+/private/build/linux/lighttouch-linux --library /private/devices/library --record RECORD_ID
+/private/build/linux/lighttouch-linux --library /private/devices/library --engine /private/libqemu-arm.so
+```
+
+The selected ID persists in the shared domain; the frontend never derives paths from
+a board name. A session selects the exact record in its worker, so changing selection
+does not redirect a running lease. Importing another board cannot replace baseline
+state. Engine facts/capabilities are queried separately per recorded board.
+
 The n81ap kboot route omits `--rom` and uses the matching armv7 package. `--recover`
 permits cold reboot of an interrupted state without deleting it. Without this flag,
 dirty state produces an actionable error. Exit code zero requires confirmed guest
@@ -41,8 +56,19 @@ acceleration only. `--script FILE` runs deterministic production input commands:
 31 button 0 1
 31.1 button 0 0
 32 motion 1 0 9.80665 0 0 0 0
+45 guest frontmost
+46 guest launch com.apple.mobilenotes
+# tap the actual Notes editing field through the shared input path before typing
+50 guest type Hi
+51 guest sync
+52 guest frontmost
 60 stop
 ```
+
+The worker polls asynchronous touch-batch admission. An engine rejection releases
+all contacts and reports its request/result through typed control messages; the
+frontend clears held contacts. Queued/delivered host input is not guest-visible
+acceptance evidence.
 
 Touch phases: down=0, move=1, up=2, cancel=3. Motion arguments: field bits (1 accel,
 2 gyro), ax/ay/az in m/s², gx/gy/gz in rad/s. Sensor replay is not physical hardware
@@ -55,3 +81,9 @@ guest frame; there is no fallback image. Use `--no-audio` only when testing unre
 headless behavior; default audio uses the real mixer/SDL path. Keep screenshots,
 logs and firmware outside Git. The CLI implements device selection/import/errors;
 SDL provides display/input/audio and state in its title, not a full desktop library UI.
+
+Guest script commands are typed domain requests: ping/frontmost/launch/type/sync and
+`gyro-probe INSTALLED_AUTHORIZED_BUNDLE_ID`. A launch/type request is queued, then
+its actual guest status/output is printed when received. Requests are not retried.
+Missing/stale guest agents and absent guest gyro capability are explicit errors.
+Native package selection uses a checksum-declared prepared guest.itpack when present.
