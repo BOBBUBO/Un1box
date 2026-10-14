@@ -4,6 +4,7 @@
 #include "../src/MotionClock.hpp"
 #include "../src/Base64.hpp"
 #include "../src/Elapsed.hpp"
+#include "../src/Lifecycle.hpp"
 #include "../../Linux/TouchScript.hpp"
 #include <zlib.h>
 #include <cassert>
@@ -46,6 +47,14 @@ static std::string sha_file(const fs::path &p) {
     return h;
 }
 int main() {
+    // A zero engine return is not a guest shutdown receipt. Finalization may
+    // briefly retain dirty while the confirmed publisher is still cleaning up.
+    assert(lt::terminal_issue(true, true, false, true, 0) == lt::TerminalIssue::unconfirmed_shutdown);
+    assert(lt::terminal_issue(true, false, false, true, 0) == lt::TerminalIssue::unconfirmed_shutdown);
+    assert(lt::terminal_issue(true, false, true, true, 0) == lt::TerminalIssue::dirty_state);
+    assert(lt::terminal_issue(true, true, true, true, 0) == lt::TerminalIssue::none);
+    assert(lt::terminal_issue(true, false, true, false, 0) == lt::TerminalIssue::none);
+    assert(lt::terminal_issue(true, false, false, true, 1) == lt::TerminalIssue::engine_exit);
     std::istringstream pair("17 0 .3 .5 91 0 .7 .5");
     auto batch = lt::parse_touch_contacts(pair, 2);
     assert(batch.count == 2 && batch.contacts[0].id == 17 && batch.contacts[1].id == 91);
