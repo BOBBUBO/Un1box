@@ -128,6 +128,14 @@ verifies and installs the frozen matching main/test APKs, runs scoped
 `am start -W` with a bounded 30-second timeout, then captures and views the
 actual new application's Android UI by the original 240-second deadline.
 Installation, foreground launch and image review do not reset either clock.
+Read a capture's SHA256 from its actual capture receipt when recording explicit
+visual approval; do not transcribe it from memory. A rejected local hash or
+image argument must not approve the UI or be reported as a target failure.
+Retain that rejection and allow a corrected argument before the original
+240-second deadline while the controller's approval wait continues. Missing
+timely approval still requests Stop. Native, target, ownership and import
+binding failures continue to request Stop, and an existing Stop cannot be
+undone by a later approval.
 An Android framework ANR overlay does not establish a usable application UI.
 If a bounded Wait action is appropriate, use the actual UI hierarchy's enabled
 Wait control bounds. A resized image displayed by an inspection tool may use
@@ -135,6 +143,8 @@ different coordinates from the target's pixels; do not tap those displayed
 coordinates. Retain the hierarchy, action and a fresh screenshot, then visually
 verify the overlay cleared before the original 240-second deadline. A late
 correction does not extend the gate or establish guest acceptance.
+Hierarchy resolution is only for a specifically inspected ANR overlay; a
+visibly unobstructed application does not need that additional prerequisite.
 If this UI gate fails or misses that deadline, create `request-stop` and retain
 the failure; do not start a guest. An older APK's foreground timeout is not a
 new guest failure. The supervisor receipt is not UI, guest, provider or
