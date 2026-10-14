@@ -31,12 +31,29 @@ uint64_t sequence = 0;
 uint64_t presented_frames=0,first_present_ns=0,last_present_ns=0,previous_present_ns=0,max_present_gap_ns=0;
 uint64_t max_present_work_ns=0,window_failures=0,frame_copy_failures=0,surface_generation=0,pcm_failures=0;
 uint64_t present_intervals[6]={};
+int first_lock_error=0,last_lock_error=0,first_post_error=0,last_post_error=0,last_geometry_error=0;
+int last_buffer_format=0,last_buffer_width=0,last_buffer_height=0,last_buffer_stride=0;
+uint64_t geometry_failures=0,invalid_buffers=0,first_window_error_ns=0;
+unsigned window_log_budget=8;
 uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
 bool presenter_started = false;
 bool starting = false, startup_stop_requested = false, startup_pause_requested = false;
 uint64_t last_rejected_input = 0;
 std::string diagnostic;
 std::string engine_log_path;
+std::string debug_qmp_path;
+bool debug_qmp_armed=false;
+#ifdef LT_ANDROID_DEBUG
+extern "C" int lighttouch_debug_qmp_snapshot(const char *,int);
+#endif
+void window_error(const char *operation,int code) {
+    if(!first_window_error_ns)first_window_error_ns=monotonic_ns();
+    if(window_log_budget) {
+        --window_log_budget;
+        std::fprintf(stderr,"LightTouch Surface %s error=%d generation=%llu format=%d width=%d height=%d stride=%d\n",operation,code,
+            static_cast<unsigned long long>(surface_generation),last_buffer_format,last_buffer_width,last_buffer_height,last_buffer_stride);
+    }
+}
 struct Utf {
     JNIEnv *env; jstring source; const char *value;
     Utf(JNIEnv *e, jstring s): env(e), source(s), value(s ? e->GetStringUTFChars(s, nullptr) : nullptr) {}
@@ -93,7 +110,16 @@ void present() {
                 if (status == LT_OK && frame.width && frame.height && frame.stride >= frame.width * 4 && frame.bytes <= pixels.size()) {
                     const auto begin=monotonic_ns();
                     ANativeWindow_Buffer target;
-                    if (ANativeWindow_lock(window, &target, nullptr) == 0) {
+                    const int lock_code=ANativeWindow_lock(window, &target, nullptr);
+                    if (lock_code == 0) {
+                        last_buffer_format=target.format;last_buffer_width=target.width;last_buffer_height=target.height;last_buffer_stride=target.stride;
+                        if(!target.bits || target.width<=0 || target.height<=0 || target.stride<target.width ||
+                            (target.format!=WINDOW_FORMAT_RGBA_8888 && target.format!=WINDOW_FORMAT_RGBX_8888)) {
+                            ++invalid_buffers;++window_failures;window_error("buffer layout",-1);
+                            const int post_code=ANativeWindow_unlockAndPost(window);
+                            if(post_code){last_post_error=post_code;if(!first_post_error)first_post_error=post_code;window_error("post invalid buffer",post_code);}
+                            sequence=0;
+                        } else {
                         const auto view = viewport(target.width, target.height);
                         for (int y=0; y<target.height; ++y) {
                             auto *row = static_cast<uint32_t *>(target.bits) + y * target.stride;
@@ -106,7 +132,8 @@ void present() {
                                 row[x] = uint32_t(p[2]) | (uint32_t(p[1])<<8) | (uint32_t(p[0])<<16) | 0xff000000u;
                             }
                         }
-                        if(ANativeWindow_unlockAndPost(window)==0) {
+                        const int post_code=ANativeWindow_unlockAndPost(window);
+                        if(post_code==0) {
                             const auto now=monotonic_ns();++presented_frames;
                             if(!first_present_ns)first_present_ns=now;
                             if(previous_present_ns) {
@@ -115,8 +142,9 @@ void present() {
                                 size_t bucket=0;while(bucket<5 && gap>limits[bucket])++bucket;++present_intervals[bucket];
                             }
                             last_present_ns=previous_present_ns=now;max_present_work_ns=std::max(max_present_work_ns,now-begin);
-                        } else {++window_failures;sequence=0;}
-                    } else {++window_failures;sequence=0;}
+                        } else {++window_failures;sequence=0;last_post_error=post_code;if(!first_post_error)first_post_error=post_code;window_error("post",post_code);}
+                        }
+                    } else {++window_failures;sequence=0;last_lock_error=lock_code;if(!first_lock_error)first_lock_error=lock_code;window_error("lock",lock_code);}
                 } else if(status!=LT_AGAIN) ++frame_copy_failures;
             }
         }
@@ -173,10 +201,11 @@ JNI(select) jstring JNICALL Java_org_lighttouch_android_Native_select(JNIEnv *en
     return string(env,result(status,error));
 }
 JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,jobject,jstring root,jstring id) {
+    bool qmp_requested=false;
     {
         std::lock_guard<std::mutex> lock(guard);
         if(runtime || starting)return string(env,"Worker already consumed; stop and start a fresh worker");
-        starting=true;diagnostic.clear();
+        starting=true;diagnostic.clear();qmp_requested=debug_qmp_armed;debug_qmp_armed=false;
     }
     // Integrity admission can hash many gigabytes. It must not hold the frame,
     // status, input or lifecycle mutex while the library performs that work.
@@ -207,6 +236,12 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
     engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;
     engine.boot.guest_package_path=selected.guest_package_path;engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
     if(status==LT_OK)status=lt_runtime_create(&engine,&prepared_runtime,&error);
+    if(status==LT_OK && qmp_requested) {
+        status=lt_runtime_debug_qmp_enable(prepared_runtime,&error);
+        char endpoint[1024]={};
+        if(status==LT_OK)status=lt_runtime_debug_qmp_path(prepared_runtime,endpoint,sizeof(endpoint),&error);
+        if(status==LT_OK){std::lock_guard<std::mutex> lock(guard);debug_qmp_path=endpoint;}
+    }
     if(status==LT_OK)status=lt_runtime_start(prepared_runtime,&error);
     if(status!=LT_OK) {
         bool released=!prepared_runtime;
@@ -245,17 +280,22 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
             detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
         }
     }
-    auto arr=env->NewObjectArray(4,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(5,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
-    env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));return arr;
+    env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));return arr;
 }
 JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env,jobject,jobject surface) {
     std::lock_guard<std::mutex> lock(guard);
     if(window) ANativeWindow_release(window);
     window=surface?ANativeWindow_fromSurface(env,surface):nullptr;
     ++surface_generation;previous_present_ns=0;
-    if(window) { ANativeWindow_setBuffersGeometry(window,0,0,WINDOW_FORMAT_RGBA_8888);sequence=0; }
+    if(window) {
+        last_buffer_width=ANativeWindow_getWidth(window);last_buffer_height=ANativeWindow_getHeight(window);last_buffer_format=ANativeWindow_getFormat(window);
+        last_geometry_error=ANativeWindow_setBuffersGeometry(window,0,0,WINDOW_FORMAT_RGBA_8888);
+        if(last_geometry_error){++geometry_failures;window_error("geometry",last_geometry_error);}
+        sequence=0;
+    }
 }
 JNI(pause) jstring JNICALL Java_org_lighttouch_android_Native_pause(JNIEnv *env,jobject,jboolean paused) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);
@@ -375,11 +415,48 @@ JNI(observations) jlongArray JNICALL Java_org_lighttouch_android_Native_observat
         jlong(surface_generation),jlong(frame.sequence),jlong(frame.timestamp_ns),jlong(pcm_failures),jlong(pcm.dropped_frames),
         jlong(present_intervals[0]),jlong(present_intervals[1]),jlong(present_intervals[2]),jlong(present_intervals[3]),jlong(present_intervals[4]),jlong(present_intervals[5]),jlong(shared.frame_count),jlong(shared.frame_sequence),jlong(shared.frame_timestamp_ns),
         jlong(shared.frame_published_monotonic_ns),jlong(shared.pcm_captured_frames),jlong(shared.pcm_pulled_frames),jlong(shared.pcm_dropped_frames),
-        jlong(shared.input_requests),jlong(shared.pcm_queued_packets)};
+        jlong(shared.input_requests),jlong(shared.pcm_queued_packets),first_lock_error,last_lock_error,first_post_error,last_post_error,last_geometry_error,
+        jlong(geometry_failures),last_buffer_format,last_buffer_width,last_buffer_height,last_buffer_stride,jlong(invalid_buffers),jlong(first_window_error_ns)};
     auto array=env->NewLongArray(sizeof(values)/sizeof(values[0]));
     env->SetLongArrayRegion(array,0,sizeof(values)/sizeof(values[0]),values);return array;
 }
 
 JNI(shutdownGraceMillis) jint JNICALL Java_org_lighttouch_android_Native_shutdownGraceMillis(JNIEnv *,jobject) {
     return jint(LT_SHUTDOWN_GRACE_MS);
+}
+
+JNI(debugArmQmp) jstring JNICALL Java_org_lighttouch_android_Native_debugArmQmp(JNIEnv *env,jobject) {
+#ifdef LT_ANDROID_DEBUG
+    std::lock_guard<std::mutex> lock(guard);
+    if(runtime || starting)return string(env,"Debug diagnosis requires a fresh unused worker");
+    debug_qmp_armed=true;return string(env,"");
+#else
+    return string(env,"Debug diagnosis is unavailable in this build");
+#endif
+}
+JNI(debugQmpSnapshot) jobjectArray JNICALL Java_org_lighttouch_android_Native_debugQmpSnapshot(JNIEnv *env,jobject) {
+    std::string failure,path;
+#ifdef LT_ANDROID_DEBUG
+    std::string endpoint;
+    {
+        std::lock_guard<std::mutex> lock(guard);endpoint=debug_qmp_path;
+        if(!endpoint.empty() && !engine_log_path.empty())path=engine_log_path.substr(0,engine_log_path.find_last_of('/'))+
+            "/qmp-snapshot-"+std::to_string(getpid())+"-"+std::to_string(monotonic_ns())+".jsonl";
+    }
+    if(endpoint.empty() || path.empty())failure="Debug endpoint was not enabled before this session";
+    else {
+        const int fd=open(path.c_str(),O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC,0600);
+        if(fd<0)failure="Cannot retain private debug snapshot";
+        else {
+            // No session/Surface mutex is held across the bounded socket calls.
+            const int result=lighttouch_debug_qmp_snapshot(endpoint.c_str(),fd);
+            const int saved=errno;close(fd);
+            if(result)failure="Read-only debug snapshot failed: "+std::string(std::strerror(saved));
+        }
+    }
+#else
+    failure="Debug diagnosis is unavailable in this build";
+#endif
+    auto result=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(result,0,string(env,failure));env->SetObjectArrayElement(result,1,string(env,path));return result;
 }

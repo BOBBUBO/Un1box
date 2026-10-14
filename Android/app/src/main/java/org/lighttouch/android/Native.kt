@@ -14,6 +14,8 @@ internal object Native {
     external fun pause(paused: Boolean): String
     external fun stop(): String
     external fun shutdownGraceMillis(): Int
+    external fun debugArmQmp(): String
+    external fun debugQmpSnapshot(): Array<String>
     external fun button(button: Int, down: Boolean): String
     external fun touch(time: Long, ids: IntArray, phases: IntArray, xy: FloatArray, width: Int, height: Int, rotation: Int): String
     external fun cancelInput()
