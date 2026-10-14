@@ -276,7 +276,8 @@ again. Its script has only launch140/frontmost145, captures160/230, frontmost225
 and Stop260.
 
 B manager refuses until Root separately authorizes it and pins A result,
-started/worker identities, written-marker proof and metadata-after JSON hashes
+started/worker identities, written-marker proof, metadata-after JSON and exact
+input/session-log hashes (successful type/sync operation identity and replies)
 plus the unchanged state `.base-identity` hash. It verifies actual native/
 frontend clean exit0/no sanitizer/forced disposal/dirty, retired A owners,
 available lease, same producer/state and hashed raw full-marker proof. All
