@@ -207,6 +207,13 @@ typedef struct {
 } lt_frame_info;
 lt_status lt_runtime_copy_frame(lt_runtime *, void *pixels, uint64_t capacity, uint64_t *since_sequence,
                                 lt_frame_info *, lt_error *);
+/* Bounded coherent query of published shared metadata; copies NO pixels.
+ * LT_OK describes a frame newer than since_sequence; LT_AGAIN means no newer
+ * coherent publication is available. since_sequence is never advanced.
+ * Publication may lag the engine: required storage can change before copy_frame.
+ * Callers must bound growth/retries and validate the actual successful copy.
+ * This additive query preserves the existing layouts and copy_frame contract. */
+lt_status lt_runtime_frame_metadata(lt_runtime *, uint64_t since_sequence, lt_frame_info *, lt_error *);
 /* Export a private bounded shared-frame FD. Caller owns fd and closes it.
  * mmap read-only; header followed by capacity bytes; generation seqlock must be
  * equal/even before and after copying. Producer never waits for consumer. */
