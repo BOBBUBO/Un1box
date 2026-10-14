@@ -38,18 +38,22 @@ def bounded_capture(adb, binding, output, now=time.monotonic_ns, process_factory
     child.start()
     identity = base.process_identity(child.pid)
     deadline = end - 200_000_000  # Reserve child disposal before the original gate.
-    child.join(timeout=max(0, (deadline - now()) / 1e9))
-    forced = child.is_alive()
-    if forced and base.process_identity(child.pid) == identity and identity is not None:
-        try:
-            # The child creates its own group; do not signal the parent's group.
-            if os.getpgid(child.pid) == child.pid:
-                os.killpg(child.pid, signal.SIGKILL)
-            else:
-                os.kill(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    child.join(timeout=max(0, (end - now()) / 1e9))
+    try:
+        child.join(timeout=max(0, (deadline - now()) / 1e9))
+    finally:
+        # TERM/HUP/KeyboardInterrupt during join must retire this separately
+        # grouped child before the outer finally retires the AVD watchdog.
+        forced = child.is_alive()
+        if forced and base.process_identity(child.pid) == identity and identity is not None:
+            try:
+                # The child creates its own group; never signal the parent's.
+                if os.getpgid(child.pid) == child.pid:
+                    os.killpg(child.pid, signal.SIGKILL)
+                else:
+                    os.kill(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        child.join(timeout=max(0, (end - now()) / 1e9))
     return {"captureStarted": True, "captureChildPid": child.pid, "forcedCaptureDisposal": forced,
             "captureChildExit": child.exitcode, "captureChildStillAlive": child.is_alive(),
             "beginNs": begin, "limitNs": end, "endedNs": now(), "guestAcceptancePassed": False}

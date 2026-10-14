@@ -267,6 +267,20 @@ class Admission(unittest.TestCase):
 
 
 class BoundedChild(unittest.TestCase):
+    def test_interrupted_join_still_kills_original_owned_child_and_reaps_then_propagates(self):
+        child=mock.Mock(pid=543210,exitcode=-9)
+        child.is_alive.return_value=True
+        child.join.side_effect=[KeyboardInterrupt('actual join interruption'),None]
+        with mock.patch.object(pixel_supervisor.base,'process_identity',return_value=(1,123)), \
+             mock.patch.object(pixel_supervisor.os,'getpgid',return_value=543210), \
+             mock.patch.object(pixel_supervisor.os,'killpg') as kill:
+            with self.assertRaisesRegex(KeyboardInterrupt,'actual join interruption'):
+                pixel_supervisor.bounded_capture('/synthetic/adb',binding(),'/synthetic/out',
+                    now=lambda:binding()['originNs']+809_000_000_000,process_factory=lambda **kw:child)
+        kill.assert_called_once_with(543210,pixel_supervisor.signal.SIGKILL)
+        self.assertEqual(child.join.call_count,2)
+        self.assertLessEqual(child.join.call_args.kwargs['timeout'],1)
+
     def test_expired_original810_never_starts_capture_child(self):
         factory = mock.Mock()
         outcome = pixel_supervisor.bounded_capture("/synthetic/adb", binding(), "/synthetic/out",
