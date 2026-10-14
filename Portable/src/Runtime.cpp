@@ -1,5 +1,6 @@
 #include "Internal.hpp"
 #include "MotionClock.hpp"
+#include "Lifecycle.hpp"
 #include "Base64.hpp"
 #include "qemu-ios-ui.h"
 #include "qemu-macos-extras.h"
@@ -414,7 +415,8 @@ lt_status lt_runtime_poll(lt_runtime *r, lt_runtime_status *out, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r, "null runtime");
         lt::abi(out);
-        bool failed = r->storage_failed || r->worker_failed || r->exit_code != 0;
+        auto issue = lt::terminal_issue(r->done, r->publisher_running, r->confirmed, r->device->dirty, r->exit_code);
+        bool failed = r->storage_failed || r->worker_failed || issue != lt::TerminalIssue::none;
         out->state = !r->started           ? LT_STOPPED
                      : failed              ? LT_FAILED
                      : r->done             ? (r->publisher_running ? LT_STOPPING : LT_STOPPED)
@@ -430,6 +432,15 @@ lt_status lt_runtime_poll(lt_runtime *r, lt_runtime_status *out, lt_error *e) {
         std::lock_guard<std::mutex> lock(r->mutex);
         if (!r->fault.empty())
             throw lt::Failure(LT_ENGINE, r->fault);
+        if (issue == lt::TerminalIssue::engine_exit)
+            throw lt::Failure(LT_ENGINE, "engine exited with code " + std::to_string(r->exit_code) +
+                                             "; state remains dirty; recover in a fresh worker");
+        if (issue == lt::TerminalIssue::unconfirmed_shutdown)
+            throw lt::Failure(LT_ENGINE, "engine returned without confirmed guest shutdown; state remains dirty; "
+                                         "recover in a fresh worker");
+        if (issue == lt::TerminalIssue::dirty_state)
+            throw lt::Failure(LT_ENGINE, "guest shutdown was confirmed but state could not be finalized cleanly; "
+                                         "recover in a fresh worker");
     });
 }
 lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {
