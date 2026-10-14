@@ -158,6 +158,14 @@ up to 600 seconds, subject to the overall deadline. A logo or agent ALIVE does
 not justify a Frontmost request or input test. Inspect recognizable Lock/Home
 and Photos pixels before those stages. Surface/raw captures and any concurrent
 media test remain independently reviewed evidence.
+The provider instrumentation test shares its original observation deadline with
+a subsequent frame wait. Provider verification is recorded first. Frame evidence
+requires a coherent copied and producer sequence/timestamp, a lit awake panel
+and a publish age of at most five seconds on the same native clock; the nonzero
+pixel requirement remains explicit. A static coherent frame may qualify this
+frame evidence. Raw capture attempts and errors are retained even when the wait
+fails. Capture diagnostics do not grant another readiness interval. None of
+these receipts verifies a particular guest scene or extends the external budget.
 
 An independent forked OS process tracks only this emulator launcher's
 descendants and their Linux start ticks. At 898 seconds it requests termination;
