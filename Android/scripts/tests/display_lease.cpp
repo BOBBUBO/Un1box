@@ -71,6 +71,27 @@ void admitted_cancel_releases_only_its_id_and_last_cancel_preserves_new_pulse() 
     assert(state.detach(a));state.claim();
     assert(cancellations==0 && power_held && !state.contactsHeld());
 }
+void delayed_rejection_cannot_release_new_owner_but_current_rejected_up_can() {
+    DisplayLease state;auto a=state.claim();
+    state.admittedContact(7,0);state.admittedContact(7,2);
+    state.submittedInput(41,a,true); // A's queued UP may still fail with an empty ledger.
+    const auto b=state.claim();bool power_held=true;int cancellations=0;
+    assert(!state.reportsRejectedInput(41));
+    if(state.cancelsRejectedInput(41)){++cancellations;power_held=false;state.contactsReleased();}
+    assert(cancellations==0 && power_held && state.owns(b));
+    state.submittedInput(42,b,false); // Current B admitted no held contacts.
+    assert(state.reportsRejectedInput(42));assert(!state.cancelsRejectedInput(42));
+    assert(power_held);state.inputCompleted(42);
+    state.admittedContact(23,0);state.submittedInput(43,b,true);
+    assert(!state.reportsRejectedInput(41));assert(state.cancelsRejectedInput(43));
+    state.admittedContact(23,2);state.submittedInput(44,b,true);
+    assert(!state.contactsHeld());assert(state.cancelsRejectedInput(44));
+    state.contactsReleased();assert(!state.reportsRejectedInput(44)); // No duplicate cancel after a full release.
+    state.submittedInput(45,b,false);state.inputCompleted(45);
+    assert(!state.reportsRejectedInput(45)); // Terminal success discharges delayed cleanup.
+    state.submittedInput(46,0,true);state.claim();
+    assert(state.reportsRejectedInput(46) && state.cancelsRejectedInput(46)); // Explicit legacy/global input.
+}
 }
 int main() {
     obsolete_conversion_and_release();retired_controls_and_duplicate_callbacks();
@@ -78,5 +99,6 @@ int main() {
     same_worker_foreground_return_requires_fresh_native_token();
     no_contact_attach_preserves_buttons_and_held_takeover_requires_cancel();
     admitted_cancel_releases_only_its_id_and_last_cancel_preserves_new_pulse();
+    delayed_rejection_cannot_release_new_owner_but_current_rejected_up_can();
     std::cout<<"PASS display lease stale controls/conversion, converted refs, contact handoff and empty callback pulse preservation\n";
 }
