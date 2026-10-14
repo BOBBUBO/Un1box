@@ -94,6 +94,7 @@ class GuestInputTest {
             fun send(action: Int, contacts: List<Triple<Int, Float, Float>>) {
                 scenario.onActivity { activity ->
                     val display = requireNotNull(findDisplay(activity.window.decorView)) { "Production GuestDisplay missing" }
+                    require(contacts.all { it.first in 0..31 }) { "Android pointer IDs must fit the platform range" }
                     val properties = contacts.map { MotionEvent.PointerProperties().apply { id = it.first; toolType = MotionEvent.TOOL_TYPE_FINGER } }.toTypedArray()
                     val coordinates = contacts.map { MotionEvent.PointerCoords().apply { x = it.second * display.width; y = it.third * display.height; pressure = 1f; size = .05f } }.toTypedArray()
                     val time = SystemClock.uptimeMillis()
@@ -112,22 +113,22 @@ class GuestInputTest {
             }
             screenshot("before")
             send(MotionEvent.ACTION_DOWN, listOf(Triple(7, .42f, .50f)))
-            send(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), listOf(Triple(7, .42f, .50f), Triple(42, .58f, .50f)))
+            send(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), listOf(Triple(7, .42f, .50f), Triple(23, .58f, .50f)))
             for (step in 1..40) {
                 val t = step / 40f
                 val a = if (kind == "pinch") .42f - .16f*t else .42f + .16f*t
                 val b = if (kind == "pinch") .58f + .16f*t else .58f - .16f*t
-                send(MotionEvent.ACTION_MOVE, listOf(Triple(7, a, .50f), Triple(42, b, .50f)))
+                send(MotionEvent.ACTION_MOVE, listOf(Triple(7, a, .50f), Triple(23, b, .50f)))
             }
             screenshot("two-held")
-            if (kind == "cancel") send(MotionEvent.ACTION_CANCEL, listOf(Triple(7, .58f, .50f), Triple(42, .42f, .50f)))
+            if (kind == "cancel") send(MotionEvent.ACTION_CANCEL, listOf(Triple(7, .58f, .50f), Triple(23, .42f, .50f)))
             else {
                 val a = if (kind == "pinch") .26f else .58f
                 val b = if (kind == "pinch") .74f else .42f
-                send(MotionEvent.ACTION_POINTER_UP, listOf(Triple(7, a, .50f), Triple(42, b, .50f)))
-                for (step in 1..8) send(MotionEvent.ACTION_MOVE, listOf(Triple(42, b, .50f + step * .01f)))
+                send(MotionEvent.ACTION_POINTER_UP, listOf(Triple(7, a, .50f), Triple(23, b, .50f)))
+                for (step in 1..8) send(MotionEvent.ACTION_MOVE, listOf(Triple(23, b, .50f + step * .01f)))
                 screenshot("independent-lift")
-                send(MotionEvent.ACTION_UP, listOf(Triple(42, b, .58f)))
+                send(MotionEvent.ACTION_UP, listOf(Triple(23, b, .58f)))
             }
             screenshot("after")
             Thread.sleep(200)
