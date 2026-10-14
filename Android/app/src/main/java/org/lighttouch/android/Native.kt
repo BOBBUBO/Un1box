@@ -9,6 +9,7 @@ internal object Native {
     external fun records(libraryRoot: String): Array<Array<String>>
     external fun select(libraryRoot: String, id: String): String
     external fun start(libraryRoot: String, id: String): String
+    external fun recoverStart(libraryRoot: String, id: String): String
     external fun status(): Array<String>
     external fun surface(surface: Surface?)
     external fun pause(paused: Boolean): String

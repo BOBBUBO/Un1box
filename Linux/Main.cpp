@@ -4,6 +4,7 @@
 #include "ControlDelivery.hpp"
 #include "Presentation.hpp"
 #include "ReplayQueue.hpp"
+#include "Admission.hpp"
 #include <SDL.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
@@ -19,6 +20,8 @@
 #include <chrono>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -41,6 +44,31 @@ static void require(bool ok, const std::string &m) {
     if (!ok)
         throw std::runtime_error(m);
 }
+static volatile sig_atomic_t interrupt_requested = 0;
+static void request_interrupt(int) { interrupt_requested = 1; }
+struct InterruptGuard {
+    struct sigaction previous {};
+    InterruptGuard() {
+        struct sigaction action {};
+        action.sa_handler = request_interrupt;
+        sigemptyset(&action.sa_mask);
+        require(sigaction(SIGINT, &action, &previous) == 0, "install interrupt handler");
+    }
+    ~InterruptGuard() { sigaction(SIGINT, &previous, nullptr); }
+};
+static std::string child_start_ticks(pid_t pid) {
+    std::ifstream file("/proc/" + std::to_string(pid) + "/stat");
+    std::string line, token;
+    std::getline(file, line);
+    const auto end = line.rfind(')');
+    if (end == std::string::npos)
+        return "unavailable";
+    std::istringstream fields(line.substr(end + 1));
+    for (int i = 0; i < 20; ++i)
+        if (!(fields >> token))
+            return "unavailable";
+    return token;
+}
 // Private inherited SOCK_SEQPACKET sockets: control/status and bounded PCM are
 // separate channels, shared-frame bytes travel only through readonly memfd.
 enum Kind : uint32_t {
@@ -57,7 +85,10 @@ enum Kind : uint32_t {
     GuestRequest = 11,
     GuestResult = 12,
     GuestCancel = 13,
-    Screenshot = 14
+    Screenshot = 14,
+    AdmissionUpdate = 15,
+    AdmissionCancel = 16,
+    AdmissionFailure = 17
 };
 struct Packet {
     uint32_t size = sizeof(Packet), version = 1, kind = 0, reserved = 0;
@@ -75,6 +106,7 @@ struct Packet {
     uint64_t pcm_socket_dropped = 0, diagnostics_monotonic_ns = 0;
     uint32_t button = 0, value = 0;
     uint64_t mapping_bytes = 0;
+    lt::AdmissionProgress admission{};
 };
 struct AudioPacket {
     uint32_t size = sizeof(AudioPacket), version = 1;
@@ -108,7 +140,7 @@ static bool receive(int socket, Packet &p, int *fd = nullptr) {
     message.msg_control = control;
     message.msg_controllen = sizeof control;
     ssize_t n = recvmsg(socket, &message, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
-    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
         return false;
     if (n == 0)
         throw std::runtime_error("worker control channel closed");
@@ -180,8 +212,9 @@ static Options options(int argc, char **argv) {
                    "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
                    "[--no-audio] [--trace-io] [--debug-touch-trace]\n\nMouse left/right: contacts 1/2. H: Home, P: "
                    "Power, Space: pause, "
-                   "Escape: orderly "
-                   "stop.\nC: release all contacts. F5: pinch in. F6: labeled two-contact pinch. F7: "
+                   "Escape: cancel admission or orderly "
+                   "stop. Validation:900s absolute/30s checkpoint budget; Ctrl+C cancels or stops.\nC: release all "
+                   "contacts. F5: pinch in. F6: labeled two-contact pinch. F7: "
                    "crossing/independent lift. "
                    "Arrows: acceleration replay (not hardware "
                    "gyro).\nScript: seconds touch ID phase x y; button ID down; pause 0/1; cancel; stop.\n";
@@ -252,22 +285,89 @@ static void prepare_library(Options &o) {
         o.package = info.guest_package_path;
 }
 static int worker(const Options &o) {
+    InterruptGuard interrupts;
     peer(o.control);
     peer(o.pcm);
     lt_error error{sizeof(error), 1, 0, {}};
     lt_device *d = nullptr;
+    lt_runtime *r = nullptr;
+    struct PrestartHandles {
+        lt_device *&device;
+        lt_runtime *&runtime;
+        bool started = false;
+        bool release() {
+            if (started)
+                return false; // Never destroy/close an active guest as admission cancellation.
+            bool released = !runtime;
+            if (runtime) {
+                lt_error cleanup{sizeof(cleanup), 1, 0, {}};
+                released = lt_runtime_destroy(runtime, &cleanup) == LT_OK;
+                if (released)
+                    runtime = nullptr;
+            }
+            if (released && device) {
+                lt_device_close(device);
+                device = nullptr;
+            }
+            return released;
+        }
+        ~PrestartHandles() {
+            if (!started)
+                release();
+        }
+    } prestart{d, r};
     lt_device_config dc{sizeof(dc), 1, o.base.c_str(), o.state.c_str(), uint32_t(o.recover)};
+    lt::AdmissionObserver admission(
+        now_ns,
+        [&] {
+            if (interrupt_requested)
+                return true;
+            Packet incoming;
+            for (int budget = 0; budget < 32 && receive(o.control, incoming); ++budget) {
+                require(incoming.kind == AdmissionCancel, "unexpected command during admission");
+                return true;
+            }
+            return false;
+        },
+        [&](const lt::AdmissionProgress &progress) {
+            Packet update;
+            update.kind = AdmissionUpdate;
+            update.admission = progress;
+            return send_packet(o.control, update);
+        });
+    auto fail_admission = [&](lt_status status) {
+        if (!prestart.release()) {
+            status = LT_ENGINE;
+            std::snprintf(error.message, sizeof(error.message),
+                          "unstarted runtime did not release; process disposal required; state retained");
+        }
+        Packet failure;
+        failure.kind = AdmissionFailure;
+        failure.error = error;
+        failure.error.code = status;
+        if (status == LT_CANCELLED && !admission.reason.empty())
+            std::snprintf(failure.error.message, sizeof(failure.error.message), "%s", admission.reason.c_str());
+        send_packet(o.control, failure);
+        std::cerr << "admission failed code=" << status << " message=" << failure.error.message << std::endl;
+        return status == LT_CANCELLED ? 130 : 2;
+    };
+    lt_status admitted = LT_OK;
     if (o.library.empty())
-        check(lt_device_open(&dc, &d, &error), error);
+        admitted = lt_device_open_observed(&dc, lt::AdmissionObserver::notify, &admission, &d, &error);
     else {
         lt_library *l = nullptr;
         lt_library_config cfg{sizeof(cfg), 1, o.library.c_str()};
-        check(lt_library_open(&cfg, &l, &error), error);
-        lt_status status = lt_library_device_open(l, o.record.c_str(), uint32_t(o.recover), &d, &error);
-        lt_library_close(l);
-        check(status, error);
+        admitted = lt_library_open(&cfg, &l, &error);
+        if (admitted == LT_OK)
+            admitted = lt_library_device_open_observed(l, o.record.c_str(), uint32_t(o.recover),
+                                                       lt::AdmissionObserver::notify, &admission, &d, &error);
+        if (l)
+            lt_library_close(l);
     }
-    lt_runtime *r = nullptr;
+    if (admitted != LT_OK)
+        return fail_admission(admitted);
+    if (admission.checkpoint(admission.progress.done, admission.progress.total, true))
+        return fail_admission(LT_CANCELLED);
     std::string serial = o.state + "/serial.log";
     lt_runtime_config config{sizeof(config),
                              1,
@@ -275,27 +375,61 @@ static int worker(const Options &o) {
                              d,
                              {sizeof(lt_boot_config), 1, nullptr, o.rom.empty() ? nullptr : o.rom.c_str(),
                               o.package.empty() ? nullptr : o.package.c_str(), serial.c_str(), uint32_t(o.audio)}};
-    check(lt_runtime_create(&config, &r, &error), error);
+    admitted = lt_runtime_create(&config, &r, &error);
+    if (admitted != LT_OK)
+        return fail_admission(admitted);
+    if (admission.checkpoint(admission.progress.done, admission.progress.total, true))
+        return fail_admission(LT_CANCELLED);
     if (o.debug_touch_trace) {
-        check(lt_runtime_debug_touch_trace_enable(r, &error), error);
+        admitted = lt_runtime_debug_touch_trace_enable(r, &error);
+        if (admitted != LT_OK)
+            return fail_admission(admitted);
         std::cerr << "debug_touch_trace worker_pid=" << getpid()
                   << " fixed_event=ipod_touch_multitouch_log clock=guest_virtual_seconds\n";
     }
     if (o.debug_qmp) {
-        check(lt_runtime_debug_qmp_enable(r, &error), error);
+        admitted = lt_runtime_debug_qmp_enable(r, &error);
+        if (admitted != LT_OK)
+            return fail_admission(admitted);
         char path[1024];
-        check(lt_runtime_debug_qmp_path(r, path, sizeof(path), &error), error);
+        admitted = lt_runtime_debug_qmp_path(r, path, sizeof(path), &error);
+        if (admitted != LT_OK)
+            return fail_admission(admitted);
         std::cerr << "debug_qmp worker_pid=" << getpid() << " private_path=" << path << "\n";
     }
     Packet hello;
     hello.kind = Hello;
     int fd = -1;
-    check(lt_runtime_frame_fd(r, &fd, &hello.mapping_bytes, &error), error);
-    require(send_packet(o.control, hello, fd), "send worker frame FD");
+    admitted = lt_runtime_frame_fd(r, &fd, &hello.mapping_bytes, &error);
+    if (admitted != LT_OK)
+        return fail_admission(admitted);
+    if (admission.checkpoint(admission.progress.done, admission.progress.total, true)) {
+        close(fd);
+        return fail_admission(LT_CANCELLED);
+    }
+    const uint64_t hello_attempt = now_ns();
+    while (!send_packet(o.control, hello, fd)) {
+        if (admission.checkpoint(admission.progress.done, admission.progress.total, true)) {
+            close(fd);
+            return fail_admission(LT_CANCELLED);
+        }
+        if (lt::admission_elapsed(now_ns(), hello_attempt, 2000000000ull)) {
+            close(fd);
+            std::snprintf(error.message, sizeof(error.message), "send verified admission frame FD deadline");
+            return fail_admission(LT_IO);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     close(fd);
+    // A cancellation racing HELLO is handled as ordinary Stop once start succeeds.
     check(lt_runtime_start(r, &error), error);
+    prestart.started = true;
     uint64_t last_status = 0, stopping_since = 0, reported_input = 0, pending_guest = 0, pcm_socket_dropped = 0;
     for (;;) {
+        if (interrupt_requested && !stopping_since) {
+            check(lt_runtime_request_shutdown(r, &error), error);
+            stopping_since = now_ns();
+        }
         Packet p;
         for (int budget = 0; budget < 32 && receive(o.control, p); budget++) {
             lt_status result = LT_INVALID;
@@ -323,6 +457,7 @@ static int worker(const Options &o) {
             case Pause:
                 result = lt_runtime_pause(r, p.value, &error);
                 break;
+            case AdmissionCancel:
             case Stop:
                 result = lt_runtime_request_shutdown(r, &error);
                 if (result == LT_OK && !stopping_since)
@@ -410,7 +545,9 @@ static int worker(const Options &o) {
         }
         if (status.state == LT_STOPPED) {
             check(lt_runtime_destroy(r, &error), error);
+            r = nullptr;
             lt_device_close(d);
+            d = nullptr;
             return status.guest_shutdown_confirmed ? 0 : 2;
         }
         if (status.state == LT_FAILED) {
@@ -562,6 +699,8 @@ static int frontend(const Options &o, int argc, char **argv) {
         return 0;
     }
     require(!o.engine.empty(), "--engine required for session");
+    InterruptGuard interrupts;
+    const uint64_t admission_started = now_ns();
     int sockets[2], audio[2];
     require(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == 0, "control socketpair");
     require(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, audio) == 0, "audio socketpair");
@@ -589,56 +728,51 @@ static int frontend(const Options &o, int argc, char **argv) {
     }
     close(sockets[1]);
     close(audio[1]);
-    peer(sockets[0]);
-    peer(audio[0]);
     struct Child {
         pid_t pid;
-        int control, audio;
+        int control, audio, status = 0;
+        std::string ticks;
+        bool wait_bounded(uint64_t budget) {
+            const uint64_t began = now_ns();
+            do {
+                const pid_t found = waitpid(pid, &status, WNOHANG);
+                if (found == pid) {
+                    pid = -1;
+                    return true;
+                }
+                if (found < 0 && errno != EINTR) {
+                    pid = -1;
+                    return false;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            } while (!lt::admission_elapsed(now_ns(), began, budget));
+            return false;
+        }
         ~Child() {
             close(control);
             close(audio);
-            int status = 0;
-            if (pid > 0 && waitpid(pid, &status, WNOHANG) == 0) {
-                kill(pid, SIGTERM);
-                bool exited = false;
-                for (int i = 0; i < 50; i++) {
-                    if (waitpid(pid, &status, WNOHANG) == pid) {
-                        exited = true;
-                        break;
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                }
-                if (!exited) {
-                    kill(pid, SIGKILL);
-                    waitpid(pid, &status, 0);
-                }
-            }
+            if (pid <= 0 || wait_bounded(100000000ull))
+                return;
+            if (pid <= 0)
+                return; // No longer an unreaped child; never signal a reused PID.
+            kill(pid, SIGTERM);
+            if (wait_bounded(500000000ull) || pid <= 0)
+                return;
+            kill(pid, SIGKILL);
+            if (!wait_bounded(2000000000ull) && pid > 0)
+                std::cerr << "worker disposal pending pid=" << pid << " start_ticks=" << ticks
+                          << "; lease/state may remain owned; no clean exit inferred" << std::endl;
         }
-    } child{pid, sockets[0], audio[0]};
-    Packet hello;
-    int fd = -1;
-    uint64_t deadline = now_ns() + 60000000000ull;
-    while (!receive(sockets[0], hello, &fd)) {
-        require(now_ns() < deadline, "worker startup timeout");
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    require(hello.kind == Hello && fd >= 0 && hello.mapping_bytes == sizeof(lt_shared_frame) + LT_FRAME_CAPACITY,
-            "worker handshake invalid");
-    auto *shared =
-        static_cast<const lt_shared_frame *>(mmap(nullptr, size_t(hello.mapping_bytes), PROT_READ, MAP_SHARED, fd, 0));
-    close(fd);
-    require(shared != MAP_FAILED, "map shared guest frame");
-    require(shared->size == sizeof(*shared) && shared->version == 1 && shared->capacity == LT_FRAME_CAPACITY,
-            "frame ABI mismatch");
-    struct Mapping {
-        const void *p;
-        size_t n;
-        ~Mapping() { munmap(const_cast<void *>(p), n); }
-    } mapping{shared, size_t(hello.mapping_bytes)};
+    } child{pid, sockets[0], audio[0], 0, child_start_ticks(pid)};
+    peer(sockets[0]);
+    peer(audio[0]);
+    std::cout << "admission worker_pid=" << pid << " start_ticks=" << child.ticks
+              << " parent_started_monotonic_ns=" << admission_started
+              << " absolute_budget_ns=" << lt::admission_absolute_ns
+              << " checkpoint_stall_budget_ns=" << lt::admission_stall_ns << std::endl;
     uint32_t flags = o.headless ? 0 : SDL_INIT_VIDEO | SDL_INIT_EVENTS;
-    if (o.audio)
-        flags |= SDL_INIT_AUDIO;
-    require(SDL_Init(flags) == 0, SDL_GetError());
+    if (!o.headless)
+        require(SDL_Init(flags) == 0, SDL_GetError());
     struct Sdl {
         ~Sdl() { SDL_Quit(); }
     } sdl;
@@ -658,7 +792,109 @@ static int frontend(const Options &o, int argc, char **argv) {
         require(SDL_GetRendererInfo(renderer, &info) == 0, SDL_GetError());
         std::cout << "SDL renderer=" << info.name << " opaque_format=BGRX32\n";
     }
+    Packet hello;
+    int fd = -1;
+    lt::AdmissionWatch admission(admission_started);
+    bool admission_cancelled = false, cancel_sent = false;
+    uint64_t cancel_since = 0;
+    auto cancel_admission = [&](const char *reason) {
+        if (!admission_cancelled) {
+            admission_cancelled = true;
+            cancel_since = now_ns();
+            std::cout << "admission cancel_requested_monotonic_ns=" << cancel_since << " reason=" << reason
+                      << std::endl;
+        }
+    };
+    for (;;) {
+        if (!o.headless) {
+            SDL_Event event;
+            while (SDL_PollEvent(&event))
+                if (event.type == SDL_QUIT || (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE))
+                    cancel_admission("user");
+        }
+        if (interrupt_requested)
+            cancel_admission("interrupt");
+        const uint64_t current = now_ns();
+        if (admission.absolute_expired(current))
+            cancel_admission("absolute-deadline");
+        else if (admission.stalled(current))
+            cancel_admission("checkpoint-stall");
+        if (admission_cancelled && !cancel_sent) {
+            Packet request;
+            request.kind = AdmissionCancel;
+            cancel_sent = send_packet(sockets[0], request);
+        }
+        if (admission_cancelled && lt::admission_elapsed(current, cancel_since, lt::admission_cancel_grace_ns))
+            throw std::runtime_error("admission cancellation deadline; disposing only owned worker; state retained");
+        Packet incoming;
+        int passed = -1;
+        if (receive(sockets[0], incoming, &passed)) {
+            if (incoming.kind == Hello) {
+                require(passed >= 0 && incoming.mapping_bytes == sizeof(lt_shared_frame) + LT_FRAME_CAPACITY,
+                        "worker handshake invalid");
+                hello = incoming;
+                fd = passed;
+                break; // Start can race this handoff; cancellation follows ordinary Stop below.
+            }
+            if (passed >= 0) {
+                close(passed);
+                throw std::runtime_error("unexpected admission frame FD");
+            }
+            if (incoming.kind == AdmissionFailure) {
+                std::ostringstream message;
+                message << "admission failed native_code=" << incoming.error.code << " message="
+                        << std::string(incoming.error.message,
+                                       strnlen(incoming.error.message, sizeof(incoming.error.message)));
+                throw std::runtime_error(message.str());
+            }
+            require(incoming.kind == AdmissionUpdate, "unexpected admission packet");
+            const uint64_t received = now_ns();
+            admission.observe(incoming.admission, received);
+            const auto &progress = admission.latest();
+            std::cout << "admission observed_monotonic_ns=" << received
+                      << " worker_monotonic_ns=" << progress.worker_monotonic_ns
+                      << " checkpoint_sequence=" << progress.sequence << " done=" << progress.done
+                      << " total=" << progress.total << " phase=" << lt::admission_phase_name(progress.phase)
+                      << " worker_pid=" << pid << " start_ticks=" << child.ticks << std::endl;
+            if (window) {
+                const std::string title = "LightTouch — validating prepared device: " + std::to_string(progress.done) +
+                                          "/" + std::to_string(progress.total) + " bytes — Escape cancels";
+                SDL_SetWindowTitle(window, title.c_str());
+            }
+        }
+        if (renderer) {
+            SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
+            SDL_RenderClear(renderer);
+            if (admission.latest().total) {
+                int width = 0, height = 0;
+                SDL_GetRendererOutputSize(renderer, &width, &height);
+                SDL_Rect bar{width / 10, height / 2,
+                             int(width * .8 * double(admission.latest().done) / double(admission.latest().total)), 12};
+                SDL_SetRenderDrawColor(renderer, 80, 160, 240, 255);
+                SDL_RenderFillRect(renderer, &bar);
+            }
+            SDL_RenderPresent(renderer);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    auto *shared =
+        static_cast<const lt_shared_frame *>(mmap(nullptr, size_t(hello.mapping_bytes), PROT_READ, MAP_SHARED, fd, 0));
+    close(fd);
+    require(shared != MAP_FAILED, "map shared guest frame");
+    require(shared->size == sizeof(*shared) && shared->version == 1 && shared->capacity == LT_FRAME_CAPACITY,
+            "frame ABI mismatch");
+    std::cout << "admission hello_verified_observed_monotonic_ns=" << now_ns() << " worker_pid=" << pid
+              << " start_ticks=" << child.ticks << " mapping_bytes=" << hello.mapping_bytes
+              << "; guest readiness still pending" << std::endl;
+    if (window)
+        SDL_SetWindowTitle(window, "LightTouch — starting guest");
+    struct Mapping {
+        const void *p;
+        size_t n;
+        ~Mapping() { munmap(const_cast<void *>(p), n); }
+    } mapping{shared, size_t(hello.mapping_bytes)};
     if (o.audio) {
+        require(SDL_InitSubSystem(SDL_INIT_AUDIO) == 0, SDL_GetError());
         SDL_AudioSpec want{}, got{};
         want.freq = 44100;
         want.format = AUDIO_S16LSB;
@@ -749,6 +985,8 @@ static int frontend(const Options &o, int argc, char **argv) {
             stop_since = now_ns();
         }
     };
+    if (admission_cancelled || interrupt_requested)
+        stop();
     auto touch = [&](uint32_t id, uint32_t phase, double x, double y) {
         Packet p;
         p.kind = Touch;
@@ -777,7 +1015,7 @@ static int frontend(const Options &o, int argc, char **argv) {
             } else
                 submit(command.packet);
         }
-        if (o.seconds > 0 && elapsed >= o.seconds)
+        if (interrupt_requested || (o.seconds > 0 && elapsed >= o.seconds))
             stop();
         Packet update;
         while (receive(sockets[0], update)) {
@@ -1098,10 +1336,16 @@ static int frontend(const Options &o, int argc, char **argv) {
         SDL_DestroyRenderer(renderer);
     if (window)
         SDL_DestroyWindow(window);
-    int status = 0;
-    waitpid(pid, &status, 0);
-    child.pid = -1;
-    return WIFEXITED(status) ? WEXITSTATUS(status) : 2;
+    uint64_t exit_budget = 5000000000ull;
+    const uint64_t exiting = now_ns();
+    if (stopping && exiting >= stop_since) {
+        const uint64_t elapsed_stop = exiting - stop_since;
+        exit_budget = elapsed_stop >= lt::parent_shutdown_timeout_ns
+                          ? 0
+                          : std::min(exit_budget, lt::parent_shutdown_timeout_ns - elapsed_stop);
+    }
+    require(child.wait_bounded(exit_budget), "worker process exit deadline after terminal receipt; state retained");
+    return WIFEXITED(child.status) ? WEXITSTATUS(child.status) : 2;
 }
 int main(int argc, char **argv) {
     try {

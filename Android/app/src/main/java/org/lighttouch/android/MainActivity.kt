@@ -31,8 +31,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var detail by mutableStateOf("")
     private var displayAsleep by mutableStateOf(false)
     private var error by mutableStateOf("")
+    private val workerEvidenceDelivery = SessionDeliveryGate()
     private var workerPid by mutableIntStateOf(0)
     private var sessionOwned by mutableStateOf(false)
+    private data class GuestStartRequest(val recordId: String, val coldRecovery: Boolean)
+    private var pendingGuestRequest: GuestStartRequest? = null
     private var pendingGuestStart = false
     private var guestStartRequested = false
     private var engineExpectedExit = false
@@ -98,6 +101,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val sensors by lazy { getSystemService(SensorManager::class.java) }
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            workerEvidenceDelivery.advance()
             engine = IEngine.Stub.asInterface(binder)
             refreshDevices()
             binder.linkToDeath({ handler.post { if (engine?.asBinder() == binder) workerExited() } }, 0)
@@ -107,7 +111,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     try { val state = worker.status(); handler.post {
                         if (engine?.asBinder() != binder) return@post
                         sessionOwned = state.getBoolean("sessionStarted"); status = state.getString("state") ?: "stopped"
-                        pendingGuestStart = false; engineRestarting = false; startGuest()
+                        pendingGuestStart = false; engineRestarting = false
+                        pendingGuestRequest?.let { startGuest(retainedRequest = it) }
+                            ?: run { error = "Guest start request was lost; select Start or Recover retained state again."; status = "failed" }
                     } } catch (failure: RemoteException) { handler.post { pendingGuestStart = false; workerExited() } }
                 }, "guest-reconnect").start()
             }
@@ -222,13 +228,23 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         TextButton(onClick = { importTree.launch(null) }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping")) { Text("Import prepared folder instead") }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { startGuest() }, enabled = !busy && selected != null && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
-                            Button(onClick = { engineExpectedExit = true; engine?.stop(); stopSensors(); status = "stopping" }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
+                            Button(onClick = { startGuest() }, enabled = !busy && selected != null && selected?.getBoolean("dirty") != true && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
+                            Button(onClick = { stopGuest() }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
                             Button(onClick = {
                                 val pausing = status != "paused"
                                 if (pausing) displayView?.cancelOwnedGesture()
                                 engine?.pause(pausing)
                             }, enabled = status in listOf("running", "paused")) { Text(if (status == "paused") "Resume" else "Pause") }
+                        }
+                        if (selected != null && status !in listOf("running", "paused", "starting", "stopping")) {
+                            TextButton(onClick = { startGuest(coldRecovery = true) }, enabled = !busy,
+                                modifier = Modifier.testTag("recover_guest")) { Text("Recover retained state") }
+                            if (selected?.getBoolean("dirty") == true) Text(
+                                "The previous shutdown was unconfirmed. Recovery boots retained writable data and keeps private diagnostics.",
+                                style = MaterialTheme.typography.bodySmall)
+                            else if (status == "failed") Text(
+                                "Recovery boots retained writable data and keeps private diagnostics; it does not confirm a previous shutdown.",
+                                style = MaterialTheme.typography.bodySmall)
                         }
                         if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.", modifier = Modifier.testTag("guest_screen_asleep"))
                         AndroidView(factory = { GuestDisplay(it, onError = { message -> error = message }) { engine }.also { displayView = it } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
@@ -396,37 +412,72 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }, "device-library").start()
     }
     private fun bindWorker() {
+        workerEvidenceDelivery.advance()
         if (bound) { unbindService(connection); bound = false }
         bound = bindService(Intent(this, EngineService::class.java), connection, BIND_AUTO_CREATE)
     }
     private fun workerExited() {
+        val evidenceGeneration = workerEvidenceDelivery.retire(engine != null || workerPid != 0) ?: return
         val unexpected = !engineExpectedExit && (guestStartRequested || sessionOwned || status in listOf("running", "starting", "paused"))
         val exitedPid = workerPid
         engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
         status = if (unexpected) "failed" else "stopped"
         if (unexpected) error = "Guest worker exited unexpectedly; writable state retained. Start creates a fresh worker. Private diagnostics are retained."
+        else if (engineExpectedExit) error = "Guest worker disposed; writable state retained. Shutdown confirmation receipt is unavailable."
         Thread({
             WorkerExitEvidence.capture(applicationContext, exitedPid)
-            val retained = try { File(filesDir, "worker-stop-error.txt").takeIf { it.exists() }?.readText() } catch (_: java.io.IOException) { null }
-            retained?.takeIf { it.isNotEmpty() }?.let { handler.post { error = it } }
+            val terminal = try {
+                val file = File(filesDir, "worker-shutdown-$exitedPid.json")
+                file.takeIf { it.exists() }?.readText()?.let { JSONObject(it) }?.takeIf { it.optInt("workerPid") == exitedPid }
+            } catch (_: Exception) { null }
+            val retained = try { File(filesDir, "worker-stop-error-$exitedPid.txt").takeIf { it.exists() }?.readText() } catch (_: java.io.IOException) { null }
+            if (terminal != null) {
+                val reported = terminal.optString("error")
+                if (reported.isNotEmpty()) handler.post { workerEvidenceDelivery.deliver(evidenceGeneration) { error = reported } }
+                else if (!unexpected && terminal.optString("reason") == "native-terminal" && terminal.optString("nativeTerminalState") == "stopped") {
+                    handler.post { workerEvidenceDelivery.deliver(evidenceGeneration) { error = "" } } // Own current terminal report wins over an earlier error.
+                }
+            } else retained?.takeIf { it.isNotEmpty() }?.let { handler.post { workerEvidenceDelivery.deliver(evidenceGeneration) { error = it } } }
         }, "worker-retained-error").start()
     }
-    private fun startGuest() {
+    private fun startGuest(coldRecovery: Boolean = false, retainedRequest: GuestStartRequest? = null) {
         if (engineRestarting) return
+        val request = retainedRequest ?: GuestStartRequest(
+            selected?.getString("id") ?: run { error = "Select a device"; status = "stopped"; return }, coldRecovery)
+        // Preserve the exact record and explicit recovery choice across worker
+        // disposal/rebinding; later device-list refreshes cannot change the request.
+        pendingGuestRequest = request
         val worker = engine
-        if (worker == null) { pendingGuestStart = true; bindWorker(); return }
+        if (worker == null) { pendingGuestStart = true; status = "starting"; bindWorker(); return }
         if (sessionOwned) { restartGuestForStart(worker); return }
-        val id = selected?.getString("id") ?: run { error = "Select a device"; status = "stopped"; return }
+        workerEvidenceDelivery.advance()
         engineExpectedExit = false; guestStartRequested = true; status = "starting"
         startForegroundService(Intent(this, EngineService::class.java))
         Thread({
-            try { val b = worker.start(id); handler.post {
-                if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: ""
+            try {
+                val b = if (request.coldRecovery) worker.recoverStart(request.recordId) else worker.start(request.recordId)
+                handler.post { if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: "" }
+            }
+            catch (failure: Exception) { handler.post {
+                if (engine?.asBinder() == worker.asBinder()) {
+                    error = "Guest start failed: ${failure.message ?: "worker exited"}. Writable state and private diagnostics retained."
+                    status = "failed"
+                }
             } }
-            catch (failure: Exception) { handler.post { error = "Guest start failed: ${failure.message ?: "worker exited"}. Writable state and private diagnostics retained."; status = "failed" } }
         }, "guest-start").start()
     }
+    private fun stopGuest() {
+        val worker = engine ?: return
+        engineExpectedExit = true; status = "stopping"; stopSensors()
+        Thread({
+            try { worker.stop() }
+            catch (failure: RemoteException) { handler.post {
+                if (engine?.asBinder() == worker.asBinder()) error = "Stop admission failed; writable state retained: ${failure.message ?: "worker exited"}"
+            } }
+        }, "guest-stop-request").start()
+    }
     private fun restartGuestForStart(old: IEngine) {
+        workerEvidenceDelivery.advance()
         engineRestarting = true; engineExpectedExit = true; pendingGuestStart = true; status = "stopping"
         if (bound) { unbindService(connection); bound = false }
         val binder = old.asBinder()
@@ -553,5 +604,5 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         } catch (_: RemoteException) { error = "Guest worker exited while the activity stopped; writable state retained." }
         handler.removeCallbacks(poll); super.onStop()
     }
-    override fun onDestroy() { handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    override fun onDestroy() { workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }

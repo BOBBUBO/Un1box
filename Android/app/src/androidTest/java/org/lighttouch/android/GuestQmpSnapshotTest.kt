@@ -40,25 +40,34 @@ class GuestQmpSnapshotTest {
                     val initial = worker.status()
                     assertEquals(Process.myUid(), initial.getInt("uid")); assertNotEquals(Process.myPid(), initial.getInt("pid"))
                     val snapshotOnly = arguments.getString("snapshotOnly") == "true"
+                    val touchWireTrace = arguments.getString("touchWireTrace") == "true"
+                    val coldRecover = arguments.getString("coldRecover") == "true"
+                    require(!coldRecover || !snapshotOnly) { "Cold recovery requires a fresh worker; snapshotOnly cannot recover an existing session" }
+                    receipt.put("coldRecoveryRequested", coldRecover).put("shutdownConfirmationInferred", false)
+                    receipt.put("touchWireTraceRequested", touchWireTrace).put("initialTouchTraceConfigured", initial.getBoolean("touchTraceConfigured"))
                     val record = if (snapshotOnly) arguments.getString("recordId") else arguments.getString("recordId")
                         ?: requireNotNull(worker.records().firstOrNull { it.getBoolean("selected") }?.getString("id"))
                     val started = if (snapshotOnly) {
                         assertTrue("Existing enabled session required; use --no-restart when injecting instrumentation", initial.getBoolean("sessionStarted"))
                         assertFalse("Existing debug endpoint required", initial.getString("debugQmpPath").isNullOrEmpty())
+                        if (touchWireTrace) assertTrue("Snapshot-only diagnosis cannot configure trace after start; existing trace required", initial.getBoolean("touchTraceConfigured"))
                         if (arguments.getString("resumeExisting") == "true") worker.pause(false)
                         worker.status()
                     } else {
                         assertFalse("Root must dispose any consumed worker first", initial.getBoolean("sessionStarted"))
                         assertEquals("stopped", initial.getString("state"))
+                        if (touchWireTrace) assertEquals("Fixed touch trace must be admitted before QMP/start", "", worker.debugEnableTouchTrace())
                         assertEquals("", worker.debugArmQmp())
                         scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
-                        worker.start(requireNotNull(record))
+                        if (coldRecover) worker.recoverStart(requireNotNull(record)) else worker.start(requireNotNull(record))
                     }
                     val requestedHoldSeconds = arguments.getString("qmpHoldSeconds", "0").toLong()
                     val holdSeconds = requestedHoldSeconds.coerceIn(0, 3600)
                     receipt.put("snapshotOnly", snapshotOnly).put("requestedHoldSeconds", requestedHoldSeconds)
                         .put("holdSeconds", holdSeconds)
                     assertEquals(started.toString(), "", started.getString("error"))
+                    receipt.put("touchTraceConfigured", started.getBoolean("touchTraceConfigured"))
+                    if (touchWireTrace) assertTrue("Trace configuration missing from started worker", started.getBoolean("touchTraceConfigured"))
                     val endpoint = File(requireNotNull(started.getString("debugQmpPath")))
                     val deadline = SystemClock.elapsedRealtime() + 120_000
                     while (!endpoint.exists() && SystemClock.elapsedRealtime() < deadline) {
@@ -79,6 +88,7 @@ class GuestQmpSnapshotTest {
                         }
                         val item = JSONObject().put("diagnostics", diagnostics).put("index", index).put("phase", phase).put("error", captured.getString("error"))
                             .put("path", captured.getString("path")).put("engineState", before.getString("state"))
+                            .put("touchTraceConfigured", before.getBoolean("touchTraceConfigured"))
                             .put("engineLog", before.getString("engineLog")).put("hostElapsedMs", SystemClock.elapsedRealtime())
                         snapshots.put(item); File(evidence, "snapshots.json").writeText(snapshots.toString(2))
                         assertEquals(captured.toString(), "", captured.getString("error"))

@@ -515,3 +515,80 @@ larger crops in the R90 presentation. The inspected portrait return retained the
 same enlarged image. The fresh worker confirmed shutdown with exit0 and clean
 state. This is bounded Linux rotation/cancellation/reuse evidence, with raw and
 presentation images retained separately, not physical multitouch or Android proof.
+
+`run-crossing-continuation.py` observes the existing F7 replay without rebuilding
+the frontend. First inspect fit, perform a partial F6 followed by balanced C,
+and inspect that the photograph is enlarged with pan margin. The controller
+retains native checkpoints near crossing, lift and remaining-contact motion;
+`capture-native-checkpoint.py --defer-preview` copies BMP/receipt first and defers
+PNG conversion until input finishes. This reduces work during the short solo
+motion interval. Checkpoint names express intended timing, not contact phases:
+compare source timestamps with actual requests and ordered wire transfers before
+qualifying the image. The owner requests Escape and waits confirmed clean exit.
+
+A bounded run retained progressive crossing/enlargement and then horizontal image
+translation while the remaining contact still existed. The last two-held pose
+source preceded the lift; a subsequent source followed both ID202-only moves and
+preceded final END admission. The clock-face component kept the same dimensions
+and moved 26 pixels horizontally, corroborating the independently inspected pan.
+The intended lift checkpoint still held a pre-lift source and was disclosed;
+after-release capture reused the earlier held-motion source. These timestamps
+prevent later screenshots from being presented as a different contact phase.
+Clean shutdown was confirmed with exit0. Raw images, exact controller snapshots,
+request/source timing, wire traces and concurrent load remain private evidence;
+this is bounded Linux behavior evidence, not physical input or overall gate closure.
+
+For a lifecycle or recovery retest, include input boundaries as distinct
+observations. Begin inside the displayed image, move outside its letterbox,
+then return inside while the pointer remains held. If the adapter cancels the
+native contacts, subsequent MOVE/UP events must be suppressed until a fresh
+DOWN. A viewport resize or Surface replacement with held contacts likewise
+needs a balanced cancellation and a separately inspected fresh gesture. Retain
+logical contact IDs, cancellation/rejection observations and actual wire/frame
+receipts; an empty adapter error or a handled event is not guest admission.
+
+Keep raw input source time, ordered admission time, frame-source time and capture
+time separate. Millisecond source ties may receive bounded nanosecond ordinals;
+a genuinely backwards source time remains a rejected gesture. Never reset a
+worker's ordering merely because a View was recreated or contacts were cancelled.
+A fresh process starts a new ordering scope. Host ordering tests and pending
+FRAME_READ counts are useful regressions, while current pixels, complete transfer
+inferences and confirmed lifecycle receipts remain separate target observations.
+
+Prepared-base validation now uses the existing observed native device/library
+open APIs in the fresh Linux worker. Private progress receipts retain processed
+digest bytes (`done`), fixed checked total, sequence, worker/receipt host-monotonic
+timestamps and generic phases. The observer does not expose internal file/stage
+names: 0/0 means plan/checkpoints, intermediate bytes mean digest work, complete
+bytes mean post-digest checkpoints. Runtime setup is a separate worker boundary.
+Byte completion is not verified admission; corruption, modes, identity/pin,
+dirty-policy or setup failures still report their native code/message and refuse
+HELLO. No checksum cache or partial validation is used.
+
+The parent shows validation progress and accepts Escape/window close, or Ctrl+C
+in headless/terminal use. Publication is bounded and throttled to250ms except
+phase/final changes; source callback checks cancellation between checked chunks
+and stages. A900s absolute budget from parent fork never extends with progress;
+30s without an observed checkpoint requests cancellation. These are startup
+budgets, separate from `--seconds` and30/35s guest Stop budgets. User/deadline
+cancellation gets5s to unwind before bounded disposal of the known child. Logs
+record PID/start ticks; a process still pending after kill is disclosed, and a
+missing window or timeout never means its lease is free.
+
+Pre-engine cancellation returns `LT_CANCELLED`, releases unstarted handles before
+reporting, preserves existing dirty state and starts no guest. Cancellation that
+races HELLO/start follows ordinary Stop; it does not close a live device or infer
+a clean VM from process disposal. HELLO transfers the frame FD only after complete
+native admission and runtime setup. Actual guest readiness remains a later fact.
+Headless startup uses no SDL until any requested audio playback is opened after
+admission. Archive/folder import commands before this worker phase retain their
+existing behavior; this change observes prepared-base admission, not firmware
+preparation or a new preparation recipe.
+
+The shared domain already selects n81 kboot, immutable NAND, separate writable
+NAND overlay/NOR and matching guest package without requiring a hardware ROM.
+This source route and synthetic contracts do not qualify the supplied18GB fixture:
+its full native admission and actual boot/GLES2/input still need an allocation.
+The old fdde frontend/unoptimized archive and separate optimized hash receipts
+remain distinct. New source needs an allocated build and small-fixture checks;
+no old binary receives these deadlines/progress features.

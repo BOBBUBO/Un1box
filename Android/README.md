@@ -48,36 +48,16 @@ NDK≥r28 provide compatible packaging/linking defaults. This app additionally
 links JNI with max-page-size 16384. Verify the entire engine dependency closure,
 not only JNI.
 
-## Build
+## Build and run
 
-Build the real QEMU Android engine first using its pinned backend recipe. Stage
-all Bionic shared libraries under `ENGINE_ROOT/arm64-v8a/` and
-`ENGINE_ROOT/x86_64/`, including `libqemu-arm.so`. JNI and QEMU use the same NDK28.2 shared C++ runtime;
-AGP packages it once from the NDK (`ANDROID_STL=c++_shared`). These private build outputs must
-stay outside Git. No stub/fallback engine is accepted. The build fails explicitly
-if a requested ABI is missing.
-
-```sh
-export ANDROID_HOME=/path/to/Android/Sdk
-export JAVA_HOME=/path/to/jdk-17
-cd Android
-./gradlew --no-daemon --max-workers=2 \
-  -PportableDir=/path/to/LightTouch/Portable \
-  -PqemuSource=/path/to/qemu-ios \
-  -PengineRoot=/path/to/android-engine-libraries \
-  -PfirmwareDir=/path/to/LightTouch/Portable/firmware \
-  -PxpwnSource=/path/to/pinned-xpwn \
-  -PnativeDepsRoot=/path/to/android-dependency-prefixes \
-  -PbuildRoot=/path/to/private/android-build \
-  :app:assembleDebug
-./scripts/check-apk.py /path/to/private/android-build/app/outputs/apk/debug/app-debug.apk
-```
-
-To build only the physical phone ABI while x86_64 is being compiled, add
-`-PtargetAbis=arm64-v8a`. This does not qualify the AVD gate. Dependency verification metadata is checked in and Gradle checks SHA256 for the
-pinned dependency closure. Regenerate intentionally with
-`--write-verification-metadata sha256` when updating dependencies, then review
-the changed versions/checksums.
+Follow the concise [verified build/install/run guide](BUILD-AND-RUN.md) for
+candidate17b's exact source revisions, required engine/firmware/ANGLE/frontend
+notice inputs, complete Gradle properties and APK checks. It separates tested
+build/host admission commands from manual guest readiness and open acceptance.
+Keep build outputs and guest material outside the checkout. Build both real
+Bionic ABI closures; missing engine libraries fail explicitly, and an arm64-only
+build cannot qualify the AVD gates. Review pinned dependency verification changes
+when intentionally updating versions/checksums.
 
 ## Private imports and state
 
@@ -118,14 +98,16 @@ emulation; notification permits return to the app. See
 No Google services, root privileges or isolated-UID storage exceptions are needed.
 The foreground notification permission can be denied without affecting user input.
 
-Stop requests guest shutdown and polls native confirmation for at most 15 seconds.
-The domain alone decides clean versus dirty storage. A rejected shutdown request or timeout is preserved in private
-`files/worker-stop-error.txt` and shown after reconnect, while native dirty metadata
-remains authoritative. The process exits after Stop;
-restart binds a newly created worker and never invokes QEMU twice in one process.
-Native/OS crashes also preserve the dirty marker and original/base. Cold recovery
-uses the native existing overlay, with dirty state visible in status. No snapshot
-capability is claimed.
+Stop requests guest shutdown under the shared 35-second disposal budget.
+The domain alone decides clean versus dirty storage. The independent watchdog is
+armed before native admission; Stop runs off the UI/Binder path. Own-PID terminal
+receipts/errors are best effort, and a missing receipt never confirms clean halt.
+Native state metadata remains authoritative. Restart binds a newly created worker
+and never invokes QEMU twice in one process. Ordinary Start refuses a dirty state;
+**Recover retained state** explicitly reuses the existing overlay in a fresh
+worker without clearing markers. Confirmed guest halt plus engine cleanup decides
+clean state. See [recovery controls](recovery-controls.md). No snapshot capability
+is claimed.
 
 Audio drains only actual bounded signed-16-bit PCM into an AudioTrack configured
 from native sample rate/channel metadata. Unsupported audio remains unsupported;
@@ -289,9 +271,28 @@ A cancelled/focus-lost/surface-lost gesture ignores subsequent moves until a new
 DOWN. Worker death during Surface/input Binder calls reports recovery text and
 does not throw through the activity event dispatcher. Touch evidence is written
 incrementally so failures preserve the preceding trajectory.
-Shutdown disposal uses the native shared LT_SHUTDOWN_GRACE_MS (35seconds),
-allowing the 30second confirmation window and cleanup; actual confirmed cleanup
-may finish earlier. Expiry still preserves dirty state and reports failure.
+Shutdown disposal uses shared LT_SHUTDOWN_GRACE_MS (35seconds), copied from the
+authoritative header into BuildConfig at configuration time. The service arms an
+independent timer before any Stop JNI call and admits native shutdown off Binder;
+the UI also sends Stop off its main thread. The deadline reads only cached
+progress and queues a bounded private `worker-shutdown-PID.json` receipt/error
+to a nonwaiting daemon writer before disposing its own worker process. It never queries Native status or
+observations, waits for AudioTrack cleanup or changes native state markers.
+Terminal native status may dispose earlier; the single winner does not infer
+clean shutdown when no native confirmation was observed. Expiry reports
+unconfirmed shutdown and retained writable state, including startup that never
+marked a device dirty. The policy deadline begins at service Stop admission;
+it does not prove that Binder dispatch, OS scheduling or storage writes have a
+hard realtime guarantee. Existing presenter/platform blocking needs separate
+target evidence and is not identified by this source change.
+Receipt/error persistence is best effort: a blocked filesystem cannot delay
+process disposal, and the process can die before the writer completes. The UI
+reports unconfirmed shutdown when a valid terminal receipt is unavailable;
+missing/partial bytes are never taken as clean shutdown proof.
+Host `ShutdownWatchdogTest` blocks each native callback in turn and checks timer
+disposal and late-completion single-winner behavior without loading/killing QEMU
+or operating a phone. Run with the configured native/source input properties and
+`:app:testDebugUnitTest --tests org.lighttouch.android.ShutdownWatchdogTest`.
 
 Gradle consumes the shared firmware `package-notices.py` generator and pinned
 NDK notice into offline assets. `sourceRevision`/`sourceReference` override the
@@ -333,6 +334,13 @@ force-stop ([AOSP Android16 policy](https://android.googlesource.com/platform/fr
 the target main process must already run. ActivityScenario closure still invokes
 background pause, so reopen and Resume for continued foreground use. Exit reason
 and trace availability remain actual platform evidence, not a service-failure claim.
+For a fresh worker, `GuestQmpSnapshotTest -e touchWireTrace true` admits the fixed
+typed trace before `debugArmQmp` and guest start, retaining configuration in the
+receipt and each snapshot. This combines copied-buffer metrics/QMP with guest
+MT wire logging from boot. `snapshotOnly=true` with this flag requires the
+existing worker's `touchTraceConfigured` status; it never configures a running
+guest. No event name, general command or caller path is accepted. Trace admission
+does not prove that any touch frame was collected or visible.
 
 `GuestOrientationLifecycleTest` is opt-in (`-e exerciseOrientationLifecycle true`)
 against an already booted legitimate guest. It uses the production activity and

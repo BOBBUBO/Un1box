@@ -20,6 +20,8 @@ class EngineService : Service() {
     private val alive = AtomicBoolean(true)
     @Volatile private var audio: AudioTrack? = null
     @Volatile private var focus: AudioFocusRequest? = null
+    private val touchAdmissionGuard = Any()
+    private val touchTimestampOrder = TouchTimestampOrder()
     private val audioGuard = Any()
     private val audioObservations = AudioObservations()
     @Volatile private var audioError = ""
@@ -27,6 +29,9 @@ class EngineService : Service() {
     private val buttonDownAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonUpAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonRejections = java.util.concurrent.atomic.AtomicLong(0)
+    private val shutdownWatchdog = ShutdownWatchdog(BuildConfig.SHUTDOWN_GRACE_MS, SystemClock::elapsedRealtime,
+        requestNativeStop = { Native.stop() }, cancelNativeContacts = { Native.cancelInput() },
+        nativeStatus = { Native.status() }, dispose = { receipt -> disposeAfterShutdown(receipt) })
     private val binder = object : IEngine.Stub() {
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
         override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
@@ -58,10 +63,18 @@ class EngineService : Service() {
             }
         }.toTypedArray()
         override fun select(recordId: String): String = Native.select(File(filesDir, "library").absolutePath, recordId)
-        override fun start(recordId: String): Bundle {
-            if (!started.compareAndSet(false, true)) return status()
+        override fun start(recordId: String): Bundle = startRecord(recordId, coldRecovery = false)
+        override fun recoverStart(recordId: String): Bundle = startRecord(recordId, coldRecovery = true)
+        private fun startRecord(recordId: String, coldRecovery: Boolean): Bundle {
+            if (stopping.get()) return Bundle().apply {
+                putString("state", "stopping"); putString("error", "This worker is disposing; recovery and Start require a fresh worker.")
+            }
+            if (!started.compareAndSet(false, true)) return status().apply {
+                putString("error", "Start and recovery require a fresh unused guest worker. Stop this worker first.")
+            }
             foreground()
-            error = Native.start(File(filesDir, "library").absolutePath, recordId)
+            val libraryRoot = File(filesDir, "library").absolutePath
+            error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId) else Native.start(libraryRoot, recordId)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) requestAudioFocus() }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
@@ -118,37 +131,7 @@ class EngineService : Service() {
         }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
-            Native.cancelInput()
-            error = Native.stop()
-            Thread({
-                val graceMs = Native.shutdownGraceMillis().toLong()
-                val deadline = SystemClock.elapsedRealtime() + graceMs
-                var terminal = false
-                while (SystemClock.elapsedRealtime() < deadline) {
-                    val observed = Native.status()
-                    val state = observed.firstOrNull()
-                    if (state == "stopped" || state == "failed") {
-                        terminal = true
-                        if (state == "failed") {
-                            val nativeFailure = observed.getOrNull(2)?.takeIf { it.isNotEmpty() }
-                                ?: error.takeIf { it.isNotEmpty() }
-                                ?: observed.getOrElse(1) { "Shutdown was not confirmed" }
-                            error = "Guest worker failed; writable state retained: $nativeFailure"
-                        }
-                        break
-                    }
-                    Thread.sleep(100)
-                }
-                if (!terminal) error = "Guest shutdown timed out after ${graceMs / 1000} seconds; worker terminated and dirty state preserved. " + error
-                if (error.isNotEmpty()) persistStopError(error)
-                persistObservations(if (terminal) "stop-terminal" else "stop-timeout")
-                // Native domain owns dirty/clean state. A timeout never marks clean.
-                alive.set(false)
-                abandonAudioFocus()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-                Process.killProcess(Process.myPid())
-            }, "guest-stop").start()
+            shutdownWatchdog.request()
         }
         override fun button(button: Int, down: Boolean) {
             val result = Native.button(button, down)
@@ -156,9 +139,20 @@ class EngineService : Service() {
             else if (button in 0..1) (if (down) buttonDownAdmissions else buttonUpAdmissions).incrementAndGet(button)
         }
         override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String {
-            val result = Native.touch(timestampNanos, ids, phases, coordinates, width, height, rotation)
-            if (result.isNotEmpty()) error = result
-            return result
+            // Keep selection and native admission in the same worker-owned order.
+            // Cancel/pause/surface replacement deliberately do not reset this clock.
+            return synchronized(touchAdmissionGuard) {
+                val ordered = try { touchTimestampOrder.select(timestampNanos) }
+                catch (failure: IllegalArgumentException) {
+                    val rejected = "${failure.message}; gesture cancelled. Start a new gesture."
+                    error = rejected
+                    Native.cancelInput()
+                    return@synchronized rejected
+                }
+                val result = Native.touch(ordered, ids, phases, coordinates, width, height, rotation)
+                if (result.isNotEmpty()) error = result
+                result
+            }
         }
         override fun cancelInput() { Native.cancelInput() }
         override fun motion(kind: Int, timestampNanos: Long, xyz: FloatArray, rotation: Int) {
@@ -196,13 +190,37 @@ class EngineService : Service() {
         } catch (_: Exception) { /* State markers and per-worker native logs remain authoritative. */ }
     }
     private fun persistStopError(message: String) {
-        try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Native dirty marker remains authoritative. */ }
+        try { File(filesDir, "worker-stop-error-${Process.myPid()}.txt").writeText(message) } catch (_: java.io.IOException) { /* State markers remain authoritative. */ }
+        try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Legacy private diagnostic only, not another worker's live status. */ }
+    }
+    private fun disposeAfterShutdown(receipt: ShutdownReceipt) {
+        alive.set(false)
+        val message = when {
+            receipt.reason == "deadline-unconfirmed" -> "Guest shutdown was not confirmed within ${BuildConfig.SHUTDOWN_GRACE_MS / 1000} seconds; worker disposed and writable state retained. ${receipt.progress.error}"
+            receipt.terminalState == "failed" -> "Guest worker reported failure; writable state retained: ${receipt.progress.error}"
+            else -> receipt.progress.error
+        }.take(4096)
+        error = message
+        disposeWithoutWaitingForReceipt(writeReceipt = {
+            if (message.isNotEmpty()) persistStopError(message)
+            // Cached facts only. Native.status/observations and audio/framework
+            // cleanup can block; none may precede this process disposal.
+            val record = JSONObject().put("reason", receipt.reason).put("admissionStage", receipt.progress.stage)
+                .put("error", message).put("nativeTerminalState", receipt.terminalState ?: JSONObject.NULL)
+                .put("acceptedAtHostMs", receipt.acceptedAtMs).put("deadlineHostMs", receipt.deadlineMs).put("observedAtHostMs", receipt.observedAtMs)
+                .put("workerPid", Process.myPid()).put("shutdownConfirmationInferred", false).put("nativeStateMarkersModified", false)
+                .put("receiptPersistenceBestEffort", true)
+            try { File(filesDir, "worker-shutdown-${Process.myPid()}.json").writeText(record.toString(2)) }
+            catch (_: java.io.IOException) { /* Retained state markers stay authoritative. */ }
+        }, terminate = { Process.killProcess(Process.myPid()) })
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { foreground(); return START_NOT_STICKY }
     override fun onBind(intent: Intent): IBinder = binder
     override fun onCreate() {
         super.onCreate()
-        error = try { File(filesDir, "worker-stop-error.txt").takeIf { it.exists() }?.readText() ?: "" } catch (_: java.io.IOException) { "" }
+        // A fresh worker must not inherit a prior PID's error as current status.
+        // The UI reads the exited PID's receipt/error; state markers and legacy
+        // diagnostics remain available for cold recovery review.
         Thread({
             val samples = ShortArray(8192)
             var format = ""
@@ -292,6 +310,13 @@ class EngineService : Service() {
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
         putLong("buttonRejections", buttonRejections.get())
+        // Volatile immutable snapshot: observers never wait on touch/native admission.
+        val touchClock = touchTimestampOrder.snapshot
+        putBundle("touchTimestampSelection", Bundle().apply {
+            putLong("rawUptimeNs", touchClock.rawUptimeNs); putLong("orderedUptimeNs", touchClock.orderedUptimeNs)
+            putLong("selections", touchClock.selections); putLong("adjustedSelections", touchClock.adjustedSelections)
+            putLong("rejectedSelections", touchClock.rejectedSelections); putBoolean("guestConsumptionInferred", false)
+        })
     }
     private fun audioAttributes() = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
     private fun requestAudioFocus() {

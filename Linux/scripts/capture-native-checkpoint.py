@@ -16,6 +16,8 @@ def main():
     parser.add_argument('--window', type=int, required=True)
     parser.add_argument('--log', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--defer-preview', action='store_true',
+                        help='Copy native BMP/receipt promptly; caller converts a PNG after timed input')
     args = parser.parse_args()
     args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
     before_bytes = args.log.stat().st_size
@@ -54,8 +56,9 @@ def main():
     receipt['display'] = os.environ.get('DISPLAY')
     receipt['native_rgb_unchanged'] = True
     (args.output_dir / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
-    subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', str(target),
-                    '-frames:v', '1', str(args.output_dir / 'native.png')], check=True, timeout=5)
+    if not args.defer_preview:
+        subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', str(target),
+                        '-frames:v', '1', str(args.output_dir / 'native.png')], check=True, timeout=5)
     print(json.dumps(receipt))
 
 
