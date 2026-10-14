@@ -635,8 +635,9 @@ static int frontend(const Options &o, int argc, char **argv) {
     uint64_t sequence = 0, start = now_ns();
     bool stopping = false, paused = false, terminal = false;
     uint64_t stop_since = 0;
-    uint64_t pcm_received = 0, pcm_nonzero_samples = 0, pcm_socket_dropped = 0, pcm_sdl_queued = 0,
-             pcm_sdl_discarded = 0, pcm_sdl_errors = 0;
+    uint64_t pcm_received = 0, pcm_nonzero_samples = 0, pcm_loud_samples = 0, pcm_socket_dropped = 0,
+             pcm_sdl_queued = 0, pcm_sdl_discarded = 0, pcm_sdl_errors = 0;
+    uint32_t pcm_peak_abs = 0;
     std::map<uint32_t, std::pair<double, double>> contacts;
     std::map<SDL_FingerID, uint32_t> fingers;
     uint32_t next_finger = 10000, display_rotation = 0;
@@ -752,9 +753,10 @@ static int frontend(const Options &o, int argc, char **argv) {
                           << " pcm_pulled=" << update.io.pcm_pulled_frames
                           << " pcm_native_dropped=" << update.io.pcm_dropped_frames
                           << " pcm_native_packets=" << update.io.pcm_queued_packets << " pcm_received=" << pcm_received
-                          << " pcm_nonzero_samples=" << pcm_nonzero_samples
-                          << " pcm_socket_dropped=" << pcm_socket_dropped << " pcm_sdl_queued=" << pcm_sdl_queued
-                          << " pcm_sdl_discarded=" << pcm_sdl_discarded << " pcm_sdl_errors=" << pcm_sdl_errors << "\n";
+                          << " pcm_nonzero_samples=" << pcm_nonzero_samples << " pcm_loud_samples=" << pcm_loud_samples
+                          << " pcm_peak_abs=" << pcm_peak_abs << " pcm_socket_dropped=" << pcm_socket_dropped
+                          << " pcm_sdl_queued=" << pcm_sdl_queued << " pcm_sdl_discarded=" << pcm_sdl_discarded
+                          << " pcm_sdl_errors=" << pcm_sdl_errors << "\n";
                 if (window) {
                     std::string title = "LightTouch — " + std::string(s.state == LT_RUNNING    ? "running"
                                                                       : s.state == LT_PAUSED   ? "paused"
@@ -804,8 +806,12 @@ static int frontend(const Options &o, int argc, char **argv) {
             require(n == sizeof pcm && pcm.version == 1 && pcm.info.frames <= 4096 && pcm.info.channels == 2,
                     "invalid PCM packet");
             pcm_received += pcm.info.frames;
-            for (uint32_t i = 0; i < pcm.info.frames * 2; i++)
+            for (uint32_t i = 0; i < pcm.info.frames * 2; i++) {
                 pcm_nonzero_samples += pcm.samples[i] != 0;
+                uint32_t magnitude = uint32_t(std::abs(int(pcm.samples[i])));
+                pcm_loud_samples += magnitude > 1000;
+                pcm_peak_abs = std::max(pcm_peak_abs, magnitude);
+            }
             if (sound) {
                 if (SDL_GetQueuedAudioSize(sound) > 17640) {
                     pcm_sdl_discarded += SDL_GetQueuedAudioSize(sound) / 4;

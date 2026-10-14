@@ -121,6 +121,71 @@ separate producer/transport/sink failures; queued or nonzero samples alone do no
 prove audible playback. Run without `--no-audio` for concurrent qualification and
 use a supported guest audio workload; the offline zoom page itself is silent.
 
+A stock n72 audio candidate needs no download, SDK, installed IPA or generated
+audio asset: the guest screenshot shutter. The existing engine source
+`hw/arm/ipod_touch_i2s.c` documents Home+Power held about350ms as producing
+photoShutter.caf PCM; the same notes say keyboard clicks were silent on those
+images. Bulk `guest type` calls the focused text delegate, so it cannot stand in
+for a keyboard sound test. This historical source evidence proposes a target test;
+it does not qualify Linux/Android output.
+
+`scripts/make-shutter-audio-acceptance.py --output-dir /private/shutter-evidence
+--start 60 --cycles 4` writes a bounded script after root has observed Home/unlock
+and a real zoom page. Each cycle holds two stable contacts while pressing Home0
+and Power1 together for350ms, moves both contacts, releases both buttons and
+contacts, then captures the actual frame. Initial/final guest frontmost replies
+check the chord did not lock or leave the app. Run with default audio enabled and
+compare timestamped frame/touch activity with received PCM nonzero samples,
+peak magnitude and loud-sample counts (absolute S16 magnitude>1000). The floor is
+a diagnostic observation; it is not an automatic audio pass. Listen to the real
+output, inspect pixels/contact identifiers and retain the exact script/log. Do not
+use `--no-audio` or a dummy host audio sink for playback qualification. Each stock
+shutter creates a Photos screenshot in the writable guest overlay; the generator
+caps cycles at16, never modifies the immutable base and never starts a guest.
+
+The native recipe supplies `-audio driver=none`, which selects the default mixer
+backend while the exported capture API supplies the real PCM to SDL/AudioTrack.
+The I2S source warns that a bare `-audiodev` without a default audio backend can
+drop board audio; the current shared recipe does not take that route. N72's default
+audio hardware includes CS42L58, LM48821, I2S/PL080 pacing and AMC. Do not disable
+it with inherited `IT_AUDIO_HW=0`. If the shutter yields silence, preserve the
+candidate failure and inspect guest button/frontmost response, actual mixer/capture
+counts, codec/amp route and sink errors before proposing a new workload. No synthetic
+host PCM qualifies the guest route.
+
+For n81 supported-board input/GLES2 checks, Linux can use the supplied read-only
+prepared folder directly with a separate private state, avoiding an18GB import:
+
+```sh
+/private/build/lighttouch-linux \
+  --base /private/n81-handoff/fixture/n81ap-8C148 \
+  --state /private/target-state/n81 --engine /private/libqemu-arm.so \
+  --package /private/n81-handoff/release-guest-unpacked/guest-tools/armv7.itpack \
+  --headless --seconds 90 --script /private/n81-input.txt \
+  --screenshot /private/n81-frame.bmp
+```
+
+Source/metadata review confirms the supplied format1 lock uses kboot, nor and
+NAND final `listing_sha256` (not the pre-seal `built_listing_sha256`), with nine
+NAND files including geometry. Native admission hashes every NAND byte at each
+open; resource allocation for that full18GB read remains necessary. It does not
+copy the NAND base. Source root/files must already have no writable mode bits;
+never chmod or repair the supplied original. Native open copies only the1MiB NOR
+into private writable state, creates its independent NAND overlay, pins the base
+lock and holds its exclusive lease. The route supplies kboot/nand-overlay/nor-rw
+and the two identity die-id words; it uses no hardware ROM or n72 memory override.
+The raw matching armv7 package must be passed explicitly because the shipped
+lock's package path names its original Mac host. Folder import/library import would
+copy the full base and should not be used merely to run this Linux reference.
+
+The supplied base metadata/read-only modes were inspected without a full NAND
+hash or guest run. This is admission planning, not integrity or target acceptance.
+The current frontend worker-handshake budget is60s including base verification;
+if allocated full hashing exceeds that, record the startup timeout and extend the
+diagnostic startup policy instead of bypassing hashes. N81 screenshots/frontmost
+and shared multi-touch/GLES2 workloads need fresh target evidence; borrowed Mac
+Home/reboot results do not qualify target behavior or n81 native preparation.
+
 `--headless --seconds N --screenshot /private/frame.bmp` captures at the duration checkpoint before requesting shutdown, then exercises the same worker,
 input and frame transport without a window. Screenshots require an actual published
 guest frame; there is no fallback image. Use `--no-audio` only when testing unrelated

@@ -18,7 +18,7 @@ def summarize(text):
                     row[key] = value
             rows.append(row)
     keys = ('frames', 'pcm_captured', 'pcm_pulled', 'pcm_native_dropped', 'pcm_received',
-            'pcm_nonzero_samples', 'pcm_socket_dropped', 'pcm_sdl_queued', 'pcm_sdl_discarded', 'pcm_sdl_errors')
+            'pcm_nonzero_samples', 'pcm_loud_samples', 'pcm_peak_abs', 'pcm_socket_dropped', 'pcm_sdl_queued', 'pcm_sdl_discarded', 'pcm_sdl_errors')
     ranges = {key: {'first': values[0], 'last': values[-1], 'delta': values[-1] - values[0]}
               for key in keys if (values := [r[key] for r in rows if isinstance(r.get(key), int)])}
     intervals = []
