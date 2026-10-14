@@ -294,3 +294,35 @@ they cannot run the parent's cleanup. Repeated TERM/HUP cannot interrupt cleanup
 and the independent original hard-deadline SIGKILL remains enabled. Signal sender
 is unknown. SIGKILL or external group disposal can still prevent graceful cleanup;
 retain actual terminal/identity evidence rather than infer guest shutdown.
+
+
+## Physical Pixel diagnosis
+
+The virtual `GuestPixelBootDiagnosisTest` intentionally asserts x86_64. Do not run
+it on an ARM phone or remove its assertion in a frozen test artifact. The sealed
+25d runner also contains the ARM-compatible `GuestQmpSnapshotTest`, which can
+start an explicitly selected existing clean record and retain fixed QMP
+snapshots during a bounded foreground hold. It does not Stop the guest in
+`finally`. A controller must retain its original clock, verify the current
+record/assets/worker, collect the full observation and send ordinary semantic
+Stop while the hold is still active. A late DeadObjectException after confirmed
+Stop is a diagnostic test failure, separately recorded from the actual native
+shutdown receipt. `am instrument` exit0 is not a JUnit pass.
+
+The first physical Pixel10 diagnosis used unchanged main25 and test-only25d on
+Android17/API37/arm64 with4096-byte pages. It retained304120ms of foreground QMP
+samples and an independently viewed black→Apple logo→black sequence after one
+production Home pulse, followed by confirmed native clean shutdown. The same
+worker reached kernel/userspace with mixed alive/stale guest-agent samples.
+The engine logged platform EGL/GLES, incomplete FBO and refused host context.
+These observations do not establish a guest reboot loop, a16KiB cause or a fix.
+
+A separate nonroot shell probe on the same PowerVR driver rejected packed
+`GL_DEPTH24_STENCIL8` storage with `GL_INVALID_ENUM`; separate depth16/stencil8
+attachments passed actual green and blue depth/stencil readbacks. Changing size,
+name generation or wrapping alone retained the failure. App-UID execution was
+denied before probe entry and no policy workaround was used. Shell UID2000 and
+matching vendor mappings do not prove app GraphicsEnvironment equivalence.
+These feature probes motivate a capability-based renderer fix; only a new real
+guest run can qualify it. Private receipts and images remain in the workspace
+under `builds/pixel/physical-pixel10-01/`; none are committed here.
