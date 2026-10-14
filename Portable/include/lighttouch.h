@@ -96,6 +96,16 @@ typedef struct {
     uint32_t dirty;
 } lt_device_info;
 lt_status lt_device_open(const lt_device_config *, lt_device **, lt_error *);
+/* Optional synchronous admission observer. Bytes count original asset digest
+ * input, with monotonic done/total; (0,0) may report initial enumeration.
+ * Nonzero callback return cancels between hash chunks/stages with LT_CANCELLED,
+ * null output and released lease. Do not reenter device/library APIs from the
+ * callback. A null observer preserves ordinary opening and every integrity,
+ * mode/path/identity/dirty check; progress completion is not admission success. */
+lt_status lt_device_open_observed(const lt_device_config *, lt_progress_fn, void *opaque,
+                                  lt_device **, lt_error *);
+lt_status lt_library_device_open_observed(lt_library *, const char *record_id, uint32_t allow_dirty,
+                                          lt_progress_fn, void *opaque, lt_device **, lt_error *);
 /* Engine-owned hardware facts. Call before boot; machine is selected by board
  * from engine discovery when boot.machine is null. Cap bits: 1 accel,2 guest
  * gyro MODEL,4 multi-touch,8 frame copy. Gyro is deferred/unqualified, never
