@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from unittest import mock
 import warnings
 import zipfile
 
@@ -135,6 +136,52 @@ class FrontendNotices(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate ZIP"):
             self.run_package()
         self.assertFalse((self.root / "assets").exists())
+
+    def test_declared_license_requires_original_pom_hash_and_url(self):
+        row = self.selected(archive([("Example.class", b"synthetic class")]))
+        pom = self.cache / "example.runtime/ui-android/1.2.3/hash/ui-android-1.2.3.pom"
+        pom.parent.mkdir(parents=True)
+        pom.write_bytes(b'<project xmlns="http://maven.apache.org/POM/4.0.0"><groupId>example.runtime</groupId>'
+            b'<artifactId>ui-android</artifactId><version>1.2.3</version><licenses><license><name>Apache 2.0</name>'
+            b'<url>http://www.apache.org/licenses/LICENSE-2.0.txt</url></license></licenses></project>')
+        legal = self.root / "upstream"
+        legal.mkdir()
+        payload = b"Synthetic declared-license body fixture\n"
+        (legal / "Apache-LICENSE-2.0.txt").write_bytes(payload)
+        pins = {"Apache-LICENSE-2.0.txt": ("https://www.apache.org/licenses/LICENSE-2.0.txt", hashlib.sha256(payload).hexdigest())}
+        with mock.patch.object(tool, "PINNED_UPSTREAM_TEXTS", pins):
+            self.run_package(upstream_cache=legal)
+            m = json.loads((self.root / "assets/manifest.json").read_text())
+            notice = next(n for n in m["components"][0]["notices"] if n.get("role") == "license")
+            self.assertEqual(notice["pom_basis"]["sha256"], hashlib.sha256(pom.read_bytes()).hexdigest())
+            self.assertEqual(notice["pom_basis"]["declared_license_url"], "http://www.apache.org/licenses/LICENSE-2.0.txt")
+            (legal / "Apache-LICENSE-2.0.txt").write_bytes(b"corrupt source text")
+            with self.assertRaisesRegex(ValueError, "Pinned upstream source text checksum"):
+                self.run_package("corrupt", upstream_cache=legal)
+            self.assertFalse((self.root / "corrupt").exists())
+
+    def test_original_source_header_byte_range(self):
+        row = self.selected(archive([("Example.class", b"synthetic class")]))
+        source = self.root / "public-source.cpp"
+        header = b"/* Synthetic copyright/license header fixture. */"
+        source.write_bytes(header + b"\nvoid source_fixture() {}\n")
+        notice = self.root / "source-notice.txt"
+        notice.write_bytes(header)
+        item = {"name": "source-header.txt", "role": "license", "notice_path": str(notice),
+                "sha256": hashlib.sha256(header).hexdigest(), "source_url": "https://upstream.example/v1.2.3/source.cpp",
+                "upstream_reference": "v1.2.3", "source_file_path": str(source),
+                "source_file_sha256": hashlib.sha256(source.read_bytes()).hexdigest(), "source_byte_range": [0, len(header)]}
+        supplement = self.root / "supplement.json"
+        def write():
+            supplement.write_text(json.dumps({"schema": 1, "components": [{"coordinate": row["coordinate"],
+                                  "artifact_sha256": row["sha256"], "notices": [item]}]}))
+        write()
+        self.run_package(supplements=supplement)
+        item["source_byte_range"][0] = 1
+        write()
+        with self.assertRaisesRegex(ValueError, "checked original byte range"):
+            self.run_package("bad-source-range", supplements=supplement)
+        self.assertFalse((self.root / "bad-source-range").exists())
 
 
 if __name__ == "__main__":

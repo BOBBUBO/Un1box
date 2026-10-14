@@ -79,6 +79,69 @@ versioned license summary identifies additional stdlib source attributions, whic
 must be checked against the selected JVM runtime rather than copying all compiler,
 test, JS or native licenses into the APK's runtime inventory.
 
+For this checked selected graph, the production recipe can consume an offline
+cache of the 20 primary source texts pinned by URL and SHA256 in the script's
+`PINNED_UPSTREAM_TEXTS`, instead of a manually assembled supplements file:
+
+```sh
+python3 Android/scripts/package-frontend-notices.py /private/selected-artifacts.json \
+  /private/generated/assets/licenses/frontend \
+  --metadata-cache /private/gradle/caches/modules-2/files-2.1 \
+  --upstream-cache /private/pinned-frontend-source-notices \
+  --source-reference https://publisher.example/corresponding-source \
+  --source-revision FULL_40_HEX_SOURCE_REVISION
+```
+
+Provision that legal-source cache separately; notice generation performs no
+downloads. This reproducible procurement snippet fetches only the enumerated
+public, versioned legal/source inputs and verifies their bytes. Gitiles source
+files use its Base64 TEXT representation and are hashed after decoding:
+
+```python
+import base64, hashlib, pathlib, runpy, urllib.request
+pins = runpy.run_path("Android/scripts/package-frontend-notices.py")["PINNED_UPSTREAM_TEXTS"]
+cache = pathlib.Path("/private/pinned-frontend-source-notices")
+cache.mkdir(parents=True, exist_ok=True)
+for name, (url, digest) in sorted(pins.items()):
+    data = urllib.request.urlopen(url, timeout=30).read()
+    if url.endswith("?format=TEXT"):
+        data = base64.b64decode(data)
+    assert hashlib.sha256(data).hexdigest() == digest, name
+    (cache / name).write_bytes(data)
+```
+
+The shared Apache text is used only when the exact original selected-version POM
+(or its recorded original parent) explicitly references that license URL. Every
+such supplement records and verifies the original POM hash and declared URL;
+it is not a group-prefix license assignment. Kotlin v2.1.20's original source
+license summary and the GWT, ThreeTen BSD3, Guava and Boost texts are retained for
+its JVM stdlib. The original summary includes broader compiler/test/platform
+sections; retaining that document does not label those components as shipped.
+The JDK compatibility artifacts use their actual v1.8.20 source license;
+coroutines use 1.7.3, and annotations use 23.0.0. Changed runtime versions need a
+new reviewed source-notice recipe instead of silently inheriting these pins.
+
+The graphics-path 1.0.1 native attribution inputs are pinned to the endpoint
+`8a05a22af450d589ef911d772a001a49dcb05b71` linked by its
+[official release history](https://developer.android.com/jetpack/androidx/releases/graphics).
+Its ten original C++/math copyright-license headers are copied as unchanged
+source byte ranges; full source-file hashes and byte offsets remain in the manifest.
+The producer verifies each range against the checked original source, rather than
+constructing attribution text. This does not claim a reproduced native build.
+The ui 1.7.8 AAR additionally contains inspector.jar with nested tooling native
+files; these remain original archive provenance, not automatically APK runtime
+components. The inspected frozen main APKs contain neither that tooling JAR nor
+its JNI libraries. Recheck the actual conveyed APK if packaging changes.
+
+The checked production bundle has 137 files: one manifest and 136 original
+notice/metadata payloads representing all 57 unique selected inputs. This count
+includes the five original embedded licenses, 57 original POMs, the Guava parent,
+52 POM-bound full license texts and 21 versioned source attribution/license texts.
+All notice hashes, path safety, private-path exclusion and deterministic output
+were checked. `ALL_SELECTED_INPUTS_REPRESENTED` describes retained checked bytes;
+it is not a distribution grant or a claim that every source/licensing question
+inside those upstream projects has been resolved.
+
 Run source-only correctness checks without Gradle, a compiler or device:
 
 ```sh
