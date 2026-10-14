@@ -13,6 +13,7 @@ interface IEngine {
     Bundle status();
     long claimDisplay();
     String attachDisplay(long lease, in Surface surface);
+    void detachDisplay(long lease);
     void releaseDisplay(long lease);
     void cancelDisplayInput(long lease);
     void backgroundDisplay(long lease);

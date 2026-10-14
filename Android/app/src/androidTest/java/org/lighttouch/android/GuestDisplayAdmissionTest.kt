@@ -28,6 +28,9 @@ class GuestDisplayAdmissionTest {
                     null
                 }
                 "attachDisplay" -> { calls += "surface"; "" }
+                "detachDisplay" -> { check(args!![0] == 1L); calls += "detach"; null }
+                "backgroundDisplay" -> { check(args!![0] == 1L); calls += "background"; null }
+                "releaseDisplay" -> { check(args!![0] == 1L); calls += "release"; null }
                 "asBinder" -> identity
                 "toString" -> "Fake View admission endpoint"
                 else -> error("Unexpected View control: ${method.name}")
@@ -40,6 +43,15 @@ class GuestDisplayAdmissionTest {
         (field.get(view) as WorkerDisplayLease).bind(endpoint.identity, 1)
         GuestDisplay::class.java.getDeclaredField("leasedWorker").apply { isAccessible = true }.set(view, endpoint.worker)
         return view
+    }
+    @Test fun destroyedSurfaceRetainsCapturedAuthorityForFollowingBackgroundPause() = onMain {
+        val endpoint = Endpoint(); val display = fakeOwnedDisplay(endpoint)
+        display.surfaceDestroyed(display.holder)
+        assertEquals(listOf("detach"), endpoint.calls)
+        display.backgroundOwnedDisplay() // The path used by the current Activity's onStop.
+        assertEquals(listOf("detach", "background", "release"), endpoint.calls)
+        display.retireDisplay()
+        assertEquals("Repeated retirement has no captured owner left", listOf("detach", "background", "release"), endpoint.calls)
     }
     @Test fun unownedResizePreservesUnrelatedButtonAndRequiresFreshDown() = onMain {
         val endpoint = Endpoint()

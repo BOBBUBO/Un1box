@@ -33,6 +33,22 @@ void retired_controls_and_duplicate_callbacks() {
     assert(!state.current(first));assert(state.current(duplicate));
     assert(state.release(b));assert(!state.release(b));assert(!state.current(duplicate));
 }
+void same_worker_foreground_return_requires_fresh_native_token() {
+    DisplayLease state;const auto a=state.claim();auto pending=state.begin(a);
+    const auto b=state.claim();assert(!state.owns(a));
+    const auto returning_a=state.claim();assert(returning_a>a && returning_a>b);
+    assert(!state.current(pending));assert(!state.release(a));assert(!state.detach(b));
+    assert(state.owns(returning_a) && state.current(state.begin(returning_a)));
+}
+void surface_loss_keeps_background_authority_but_retired_owner_cannot_pause() {
+    DisplayLease state;const auto a=state.claim();auto pending=state.begin(a);
+    assert(state.detach(a));assert(!state.current(pending));assert(state.owns(a));
+    int pauses=0;if(state.owns(a))++pauses;assert(pauses==1); // Surface destroy then Activity stop.
+    assert(state.current(state.begin(a))); // Same Activity can reattach without minting.
+    const auto b=state.claim();
+    assert(!state.detach(a));if(state.owns(a))++pauses;
+    assert(pauses==1 && state.owns(b));assert(!state.release(a));
+}
 void no_contact_attach_preserves_buttons_and_held_takeover_requires_cancel() {
     DisplayLease state;state.claim();bool button_held=true;int cancellations=0;
     auto takeover=[&]{ if(state.contactsHeld()){++cancellations;button_held=false;state.contactsReleased();}return state.claim(); };
@@ -47,6 +63,8 @@ void no_contact_attach_preserves_buttons_and_held_takeover_requires_cancel() {
 }
 int main() {
     obsolete_conversion_and_release();retired_controls_and_duplicate_callbacks();
+    surface_loss_keeps_background_authority_but_retired_owner_cannot_pause();
+    same_worker_foreground_return_requires_fresh_native_token();
     no_contact_attach_preserves_buttons_and_held_takeover_requires_cancel();
     std::cout<<"PASS display lease stale controls/conversion, converted refs, contact handoff and empty callback pulse preservation\n";
 }

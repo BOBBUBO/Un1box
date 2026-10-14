@@ -14,6 +14,7 @@ internal object Native {
     external fun claimDisplay(): Long
     external fun ownsDisplay(lease: Long): Boolean
     external fun attachDisplay(lease: Long, surface: Surface): String
+    external fun detachDisplay(lease: Long)
     external fun releaseDisplay(lease: Long)
     external fun cancelDisplayInput(lease: Long)
     external fun backgroundDisplay(lease: Long): String
