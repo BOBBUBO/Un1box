@@ -30,6 +30,12 @@ class GuestPixelBootDiagnosisTest {
         val recoveryArg = args.getString("pixelColdRecovery", "false")
         require(recoveryArg in listOf("true", "false")) { "Explicit boolean recovery mode required" }
         val coldRecovery = recoveryArg == "true"
+        val graphicsProvider = args.getString("pixelGraphicsProvider", "platform")
+        val graphicsChoice = when (graphicsProvider) {
+            "platform" -> 0
+            "angle-gl" -> 1
+            else -> error("pixelGraphicsProvider must be platform or angle-gl")
+        }
         val record = requireNotNull(args.getString("recordId"))
         require(Regex("[0-9a-f]{32}").matches(record))
         val seconds = args.getString("pixelObserveSeconds", "300").toLong()
@@ -44,6 +50,8 @@ class GuestPixelBootDiagnosisTest {
             .put("physicalPixelEquivalent", false).put("audiblePlaybackVerified", false)
             .put("recordId", record).put("observationSeconds", seconds).put("expectedMainApkSha256", expectedMainSha)
             .put("coldRecoveryUsed", coldRecovery).put("recoveryStartUsed", coldRecovery).put("cleanInitialAdmissionClaimed", false)
+            .put("graphicsProviderRequested", graphicsProvider)
+            .put("graphicsProviderFallbackAllowed", false)
         @Suppress("DEPRECATION")
         fun encode(b: Bundle): JSONObject = JSONObject().apply {
             for (key in b.keySet()) when (val value = b.get(key)) {
@@ -62,6 +70,10 @@ class GuestPixelBootDiagnosisTest {
             atomic("result.json", receipt.toString(2))
             atomic("timeline.json", timeline.toString(2))
         }
+        fun checkGraphicsProvider(state: Bundle) {
+            assertEquals("Observed provider differs; no fallback is allowed", graphicsProvider, state.getString("graphicsProviderChoice"))
+            assertTrue("Provider selection must remain fixed", state.getBoolean("graphicsProviderFixed"))
+        }
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 AcceptanceBinding(context, Intent(context, EngineService::class.java), IEngine.Stub::asInterface).use { binding ->
@@ -76,13 +88,23 @@ class GuestPixelBootDiagnosisTest {
                     val priorDirty = selected.getBoolean("dirty")
                     assertEquals("Recovery is explicit only for retained dirty state", coldRecovery, priorDirty)
                     receipt.put("priorDirty", priorDirty)
-                    assertEquals("", worker.debugSelectGraphicsProvider(1))
+                    val selectionError = worker.debugSelectGraphicsProvider(graphicsChoice)
+                    val graphicsPreflight = worker.status()
+                    receipt.put("graphicsProviderSelectionError", selectionError)
+                        .put("graphicsProviderObserved", graphicsPreflight.getString("graphicsProviderChoice"))
+                        .put("graphicsProviderFixed", graphicsPreflight.getBoolean("graphicsProviderFixed"))
+                        .put("graphicsProviderPreflightWorker", encode(graphicsPreflight))
+                        .put("graphicsProviderSelectionElapsedMs", SystemClock.elapsedRealtime())
+                    persist()
+                    assertEquals("Explicit graphics provider could not be selected", "", selectionError)
+                    checkGraphicsProvider(graphicsPreflight)
                     assertEquals("", worker.debugArmQmp())
                     scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
                     val beforeStartMs = SystemClock.elapsedRealtime()
                     val started = if (coldRecovery) worker.recoverStart(record) else worker.start(record)
                     val afterStartMs = SystemClock.elapsedRealtime()
                     assertEquals(started.toString(), "", started.getString("error"))
+                    checkGraphicsProvider(started)
                     val pid = started.getInt("pid")
                     assertEquals(initial.getInt("pid"), pid)
                     val log = File(requireNotNull(started.getString("engineLog")))
@@ -93,6 +115,9 @@ class GuestPixelBootDiagnosisTest {
                         .put("workerStartTicks", startTicks).put("bootId", bootId).put("recordId", record)
                         .put("attemptToken", token).put("originToken", originToken)
                         .put("coldRecoveryUsed", coldRecovery).put("recoveryStartUsed", coldRecovery).put("priorDirty", priorDirty)
+                        .put("graphicsProviderRequested", graphicsProvider)
+                        .put("graphicsProviderObserved", started.getString("graphicsProviderChoice"))
+                        .put("graphicsProviderFixed", started.getBoolean("graphicsProviderFixed"))
                         .put("beforeStartElapsedMs", beforeStartMs).put("afterStartElapsedMs", afterStartMs)
                         .put("nativeAfterStartMonotonicNs", started.getBundle("observations")?.getLong("hostMonotonicNs"))
                         .put("guestAcceptancePassed", false)
@@ -110,7 +135,8 @@ class GuestPixelBootDiagnosisTest {
                     while (!gatePath.exists() && SystemClock.elapsedRealtime() < waitDeadline) Thread.sleep(100)
                     check(gatePath.exists()) { "No timely host after-Start admission; interval not shortened" }
                     val gate = JSONObject(gatePath.readText())
-                    for (key in listOf("workerPid", "appUid", "workerStartTicks", "bootId", "recordId", "attemptToken", "originToken"))
+                    for (key in listOf("workerPid", "appUid", "workerStartTicks", "bootId", "recordId", "attemptToken", "originToken",
+                        "graphicsProviderRequested", "graphicsProviderObserved", "graphicsProviderFixed"))
                         check(gate.get(key).toString() == ready.get(key).toString()) { "Admission identity differs: $key" }
                     check(gate.getLong("observationMs") == 300_000L)
                     val observationStartMs = SystemClock.elapsedRealtime()
@@ -126,6 +152,7 @@ class GuestPixelBootDiagnosisTest {
                     while (SystemClock.elapsedRealtime() < deadline) {
                         val state = worker.status()
                         assertEquals("Worker replaced during diagnosis", pid, state.getInt("pid"))
+                        checkGraphicsProvider(state)
                         assertTrue("Unexpected pause/stop/failure: $state", state.getString("state") in listOf("starting", "running"))
                         val item = JSONObject().put("index", index).put("hostElapsedMs", SystemClock.elapsedRealtime())
                             .put("status", encode(state))
@@ -157,9 +184,11 @@ class GuestPixelBootDiagnosisTest {
                         val remaining = deadline - SystemClock.elapsedRealtime()
                         if (remaining > 0) Thread.sleep(minOf(10_000, remaining))
                     }
+                    val terminalWorker = worker.status()
+                    checkGraphicsProvider(terminalWorker)
                     receipt.put("stage", "diagnosis-complete").put("diagnosisCaptured", true)
                         .put("sampleCount", index).put("oneSleepWakeSent", wokeOnce)
-                        .put("terminalWorker", encode(worker.status())).put("completedElapsedMs", SystemClock.elapsedRealtime())
+                        .put("terminalWorker", encode(terminalWorker)).put("completedElapsedMs", SystemClock.elapsedRealtime())
                         .put("scenarioCloseMayPauseGuest", true).put("shutdownConfirmationInferred", false)
                     persist()
                     // The supervisor owns Stop; this test cannot infer or extend its deadline.

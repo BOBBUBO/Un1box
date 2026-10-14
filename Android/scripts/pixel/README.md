@@ -11,6 +11,48 @@ when selected); the test requires 64 lowercase hex digits and hashes the actual
 installed APK. There is no default or previous-APK fallback. This is an identity
 check, not a guest acceptance claim. Existing sealed artifacts remain untouched.
 
+## Explicit graphics provider
+
+New diagnostics accept only `pixelGraphicsProvider=platform` (default) or
+`pixelGraphicsProvider=angle-gl` (explicit optional comparison). These map to the
+existing debug API choices0/1; the production main APK and native ABI are unchanged.
+The overlay selects once on a fresh unused worker, retains the selection error and
+actual pre-Start status, and requires the observed provider to match with
+`graphicsProviderFixed=true` before Start, after Start and throughout observation.
+Selection failure or provider drift fails the diagnostic; it never tries another
+provider. Requested/observed/fixed fields are published in result/ready/admission
+receipts. No observed provider is claimed by the host before the actual selection.
+
+`plan_manifest.build(..., pixel_graphics_provider='platform')` pins the choice and
+generates the exact `-e pixelGraphicsProvider platform` instrumentation argument.
+The builder defaults every new plan to platform, including plans seeded from an
+old ANGLE run; ANGLE requires `pixel_graphics_provider='angle-gl'`. The controller
+must pass the same manifest choice to preflight:
+
+```python
+bind_recovery.bind(adb, attempt, token, record, pins,
+    cold_recovery=plan['coldRecovery'],
+    pixel_graphics_provider=plan['pixelGraphicsProvider'])
+```
+
+That preflight records `graphicsProviderRequested`. Host admission requires exactly
+one pinned record/provider preflight, then checks actual ready requested/observed/
+fixed values before publishing a gate. The device checks these same fields in the
+returned gate. Unknown, missing, duplicated or inconsistent manifest/argument
+choices fail closed. Historical APK25/07 ANGLE results retain their original sealed
+runner/source and remain scoped evidence; the new provider contract requires a
+new matched test-only build, such as the prospective25d. It is not retroactively
+compatible with the old diagnostic runner, which does not publish provider fields.
+
+The platform provider exercises Android's installed EGL/GLES stack; packaged
+ANGLE is an additional translation layer. Neither label establishes hardware
+acceleration. On the current host, renderD128 advertises virtio3D_FEATURES=0,
+CONTEXT_INIT=0 and no capsets, and host EGL reports llvmpipe. `-gpu host` cannot
+produce a phone GPU through this host configuration. Preserve the running
+SwiftShader AVD; changing the app provider does not require restarting Android,
+but requires a fresh guest worker and explicit return of user UI ownership.
+Virtual x86/software rendering cannot qualify physical Tensor/vendor GPU behavior.
+
 ## Original clock and after-Start admission
 
 After a separate compiler/AVD allocation, use `pixel_supervisor.py`, the Pixel
@@ -38,14 +80,15 @@ adb -s emulator-5554 shell am instrument -w -r --no-restart \
   -e class org.lighttouch.android.GuestPixelBootDiagnosisTest \
   -e diagnoseVirtualPixel true -e recordId VERIFIED_NEW_RECORD_ID \
   -e expectedMainApkSha256 SEALED_MAIN_APK_SHA256 \
+  -e pixelGraphicsProvider platform \
   -e pixelAttemptToken UNIQUE_32_LOWERCASE_HEX \
   -e pixelOriginToken SHA256_OF_ORIGINAL_CLOCK_CONTEXT \
   -e pixelObserveSeconds 300 -e allowOneSleepWake true \
   org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-The diagnostic fixes packaged x86 ANGLE and arms private read-only QMP before
-Start. It atomically publishes `ready.json` after Start, including UID/PID/start
+The diagnostic fixes the explicitly selected provider and arms private read-only
+QMP before Start. It atomically publishes `ready.json` after Start, including UID/PID/start
 ticks, device boot ID and pre/post-Start Android elapsed times. While the test
 waits, invoke the host admission command:
 

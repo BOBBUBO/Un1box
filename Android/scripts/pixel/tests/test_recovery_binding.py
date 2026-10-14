@@ -91,7 +91,25 @@ class Recovery(unittest.TestCase):
 
     def bound(self):
         return {'schema':1,'originNs':10**12,'appUid':10215,'workerPid':42,'workerStartTicks':1234,'bootId':'11111111-2222-3333-4444-555555555555',
-            'recordId':'a'*32,'attemptToken':'b'*32,'originToken':'c'*64,'priorDirty':True,'coldRecoveryUsed':True,'pinsVerified':True}
+            'recordId':'a'*32,'attemptToken':'b'*32,'originToken':'c'*64,'priorDirty':True,'coldRecoveryUsed':True,'pinsVerified':True,
+            'graphicsProviderRequested':'platform','graphicsProviderObserved':'platform','graphicsProviderFixed':True}
+
+    def test_observed_provider_cannot_silently_fallback_or_omit_fixed_selection(self):
+        for chosen in ('platform','angle-gl'):
+            prior={**self.bound(),'graphicsProviderRequested':chosen}
+            ready={**prior,'graphicsProviderObserved':chosen}
+            bind_recovery.match_ready(prior,ready)
+            for change in ({'graphicsProviderRequested':'angle-gl' if chosen=='platform' else 'platform'},
+                    {'graphicsProviderObserved':'angle-gl' if chosen=='platform' else 'platform'},
+                    {'graphicsProviderFixed':False},{'graphicsProviderFixed':1},{'graphicsProviderObserved':None}):
+                with self.subTest(chosen=chosen,change=change),self.assertRaises(ValueError):bind_recovery.match_ready(prior,{**ready,**change})
+        prior=self.bound();prior.pop('graphicsProviderRequested')
+        with self.assertRaises(ValueError):bind_recovery.match_ready(prior,self.bound())
+
+    def test_unknown_provider_fails_before_any_adb_or_state_read(self):
+        run=mock.Mock()
+        with self.assertRaises(ValueError):bind_recovery.bind('/synthetic/adb','/not-created','b'*32,'a'*32,{},run=run,pixel_graphics_provider='auto')
+        run.assert_not_called()
 
     def test_match_original_recovery_identity_and_mode(self):
         bound=self.bound();bind_recovery.match_ready(bound,bound)
@@ -110,6 +128,8 @@ class Recovery(unittest.TestCase):
                     result=bind_recovery.bind('/synthetic/adb',out,token,record,pins,run=run,now=lambda:10**12+100*10**9)
             self.assertTrue(result['priorDirty']);self.assertTrue(result['pinsVerified']);self.assertFalse(result['guestAcceptancePassed'])
             self.assertTrue(result['beforeStart']);self.assertTrue((out/'recovery-record-bound.json').exists())
+            self.assertEqual(result['graphicsProviderRequested'],'platform')
+            self.assertNotIn('graphicsProviderObserved',result)  # Selection has not run yet.
             self.assertEqual(data['files/library/records/'+record+'/state/.dirty'],b'actual interrupted')
 
     def test_missing_dirty_permission_or_different_pin_fails_no_binding(self):
@@ -196,7 +216,7 @@ class Recovery(unittest.TestCase):
                     else:
                         result=bind_recovery.bind('/synthetic/adb',out,token,record,pins,run=invoke,now=lambda:10**12+100*10**9,cold_recovery=False)
                         self.assertFalse(result['priorDirty']);self.assertFalse(result['coldRecoveryUsed']);self.assertTrue(result['dirtyReceipt']['confirmedAbsent'])
-                        bind_recovery.match_ready(result,result)
+                        bind_recovery.match_ready(result,{**result,'graphicsProviderObserved':'platform','graphicsProviderFixed':True})
                         self.assertTrue((out/'normal-record-bound.json').exists());self.assertFalse((out/'recovery-record-bound.json').exists())
 
     def test_prestart_reads_actual_padded_role_and_rejects_real_identity_change(self):

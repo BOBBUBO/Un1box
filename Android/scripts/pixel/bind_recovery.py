@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from diagnostic_control import Capture, validate_binding, PACKAGE, SERIAL
 from memory_monitor import Sampler, process_ticks, worker_identity
+from plan_manifest import graphics_provider
 
 
 def normal_marker_absence(capture, root, output):
@@ -53,6 +54,9 @@ def match_ready(prior, ready):
             raise ValueError('Recovery Start changed original bound identity: ' + key)
     if ready.get('priorDirty') is not prior['priorDirty'] or ready.get('coldRecoveryUsed') is not prior['coldRecoveryUsed']:
         raise ValueError('Ready did not use declared dirty recovery')
+    chosen=graphics_provider(prior.get('graphicsProviderRequested'))
+    if ready.get('graphicsProviderRequested')!=chosen or ready.get('graphicsProviderObserved')!=chosen or ready.get('graphicsProviderFixed') is not True:
+        raise ValueError('Actual fixed graphics provider differs from pinned preflight; fallback is forbidden')
 
 
 def recheck_before_start(controller, binding):
@@ -78,7 +82,8 @@ def recheck_before_start(controller, binding):
             "cmdlineBytes": len(data["cmdline"]), "identityMatched": True, "guestAcceptancePassed": False}
 
 
-def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monotonic_ns, cold_recovery=True):
+def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monotonic_ns, cold_recovery=True, pixel_graphics_provider='platform'):
+    chosen_provider=graphics_provider(pixel_graphics_provider)
     out = Path(attempt)
     context_raw = (out/'clock-context.json').read_bytes(); context=json.loads(context_raw)
     monitor=json.loads((out/'memory-monitor.json').read_text())
@@ -150,6 +155,7 @@ def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monoton
     from admit_observation import public_device_clock
     clock_probe=public_device_clock(adb,binding,out/'pre-start-device-clock.json',deadline,now=now,run=run)
     binding.update(priorDirty=cold_recovery,coldRecoveryUsed=cold_recovery,pinsVerified=True,pins=actual,
+        graphicsProviderRequested=chosen_provider,
         dirtyReceipt=dirty_receipt,
         preStartClockProbe=clock_probe,
         beforeStart=True,guestAcceptancePassed=False,cleanInitialAdmissionClaimed=False,
@@ -162,6 +168,7 @@ if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     for flag in ('adb','attempt','token','record','record-sha256','lock-sha256','rom-sha256','guest-sha256'):p.add_argument('--'+flag,required=True)
     p.add_argument('--cold-recovery',choices=('true','false'),default='true')
+    p.add_argument('--pixel-graphics-provider',choices=('platform','angle-gl'),default='platform')
     a=p.parse_args()
     pins={'record.json':a.record_sha256,'base/device.lock.json':a.lock_sha256,'assets/bootrom.bin':a.rom_sha256,'assets/guest.itpack':a.guest_sha256}
-    print(json.dumps(bind(a.adb,a.attempt,a.token,a.record,pins,cold_recovery=a.cold_recovery=='true'),indent=2))
+    print(json.dumps(bind(a.adb,a.attempt,a.token,a.record,pins,cold_recovery=a.cold_recovery=='true',pixel_graphics_provider=a.pixel_graphics_provider),indent=2))
