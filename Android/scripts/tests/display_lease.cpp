@@ -139,6 +139,18 @@ void failed_rejected_up_and_touch_errors_preserve_pending_cleanup_for_next_claim
     state.contactsReleased();const auto b=state.claim();
     assert(state.owns(b) && !state.reportsRejectedInput(91));
 }
+void newer_empty_batch_carries_unresolved_release_but_success_refresh_discharges_it() {
+    DisplayLease state;const auto a=state.claim();state.admittedContact(7,0);state.admittedContact(7,2);
+    state.submittedInput(101,a,true);assert(!state.contactsHeld() && state.pendingOwnedRelease());
+    const bool prior_release=state.needsOwnedRelease();
+    state.submittedInput(102,a,prior_release || state.contactsHeld());
+    assert(state.cancelsRejectedInput(102)); // Two failed queued UPs cannot orphan the earlier DOWN.
+    state.inputCompleted(102); // A refreshed terminal success discharges the old obligation.
+    const bool completed_release=state.needsOwnedRelease();
+    assert(!completed_release);
+    state.submittedInput(103,a,completed_release || state.contactsHeld());
+    assert(state.reportsRejectedInput(103) && !state.cancelsRejectedInput(103)); // Preserve a later independent pulse.
+}
 }
 int main() {
     obsolete_conversion_and_release();retired_controls_and_duplicate_callbacks();
@@ -150,5 +162,6 @@ int main() {
     pending_release_is_balanced_before_handoff_or_detach_and_completed_release_is_not_cancelled();
     failed_release_keeps_old_obligation_retryable_without_minting_new_owner();
     failed_rejected_up_and_touch_errors_preserve_pending_cleanup_for_next_claim();
+    newer_empty_batch_carries_unresolved_release_but_success_refresh_discharges_it();
     std::cout<<"PASS display lease stale controls/conversion, converted refs, contact handoff and empty callback pulse preservation\n";
 }
