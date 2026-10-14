@@ -24,9 +24,9 @@ internal fun WorkerGuestSurface(
             view = GuestDisplay(context,
                 onError = { message -> if (identity.matches(currentWorker()?.asBinder())) onError(message) },
                 isActiveOwner = { identity.matches(currentWorker()?.asBinder()) && mayClaim(view) },
-                ownerTicket = ownerTicket) {
-                    worker?.takeIf { identity.matches(currentWorker()?.asBinder()) }
-                }
+                // Cleanup retains A's captured Binder/token after replacement.
+                // Admission above cannot attach/touch B from this retired View.
+                ownerTicket = ownerTicket) { worker }
             onCreated(view)
             view
         }, modifier = modifier, onReset = null, onRelease = { view ->
