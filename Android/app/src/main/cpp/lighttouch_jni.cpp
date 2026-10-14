@@ -20,6 +20,7 @@
 #include <dlfcn.h>
 #include <optional>
 #include "presentation_lifetime.h"
+#include "display_lease.h"
 
 namespace {
 std::mutex guard;
@@ -35,6 +36,8 @@ lt_pcm_info pcm = LT_INIT(lt_pcm_info);
 lt_board_info board = LT_INIT(lt_board_info);
 uint64_t sequence = 0;
 uint64_t presentation_epoch = 0, surface_request = 0;
+DisplayLease display_lease;
+constexpr const char *retired_display="Display ownership retired";
 uint64_t presented_frames=0,first_present_ns=0,last_present_ns=0,previous_present_ns=0,max_present_gap_ns=0;
 uint64_t max_present_work_ns=0,window_failures=0,frame_copy_failures=0,surface_generation=0,pcm_failures=0;
 uint64_t present_intervals[6]={};
@@ -151,6 +154,7 @@ void present() {
                     last_rejected_input=delivered.request_id;
                     diagnostic="Guest rejected contact batch "+std::to_string(delivered.request_id)+" (engine result "+std::to_string(delivered.engine_result)+"); contact release requested";
                     if(lt_runtime_cancel_input(runtime,&error)!=LT_OK)diagnostic += "; input release failed: "+std::string(error.message);
+                    else display_lease.contactsReleased();
                 }
             }
             if (runtime && window) {
@@ -422,27 +426,89 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     env->SetObjectArrayElement(arr,6,string(env,graphics_provider_fixed?"1":"0"));
     env->SetObjectArrayElement(arr,7,string(env,debug_touch_trace_configured?"1":"0"));return arr;
 }
-JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env,jobject,jobject surface) {
-    uint64_t request;
+// Must hold guard. Routine attachment/detachment with no View-owned contacts
+// never cancels an unrelated Home/Power pulse. A real held-contact handoff uses
+// the existing full cancellation API, which also releases hardware buttons.
+std::string cancel_display_contacts() {
+    if(!display_lease.contactsHeld())return "";
+    lt_error error=LT_INIT(lt_error);
+    const auto status=runtime?lt_runtime_cancel_input(runtime,&error):LT_OK;
+    if(status==LT_OK)display_lease.contactsReleased();
+    return result(status,error);
+}
+JNI(claimDisplay) jlong JNICALL Java_org_lighttouch_android_Native_claimDisplay(JNIEnv *,jobject) {
+    ANativeWindow *retired=nullptr;uint64_t token=0;
     {
         std::lock_guard<std::mutex> lock(guard);
+        const auto cancelled=cancel_display_contacts();
+        if(!cancelled.empty()){diagnostic="Display handoff release failed: "+cancelled;return 0;}
+        token=display_lease.claim();
+        if(!token)return 0;
+        ++surface_request;retired=window;window=nullptr;window_attached.store(0);
+        ++surface_generation;++presentation_epoch;previous_present_ns=0;
+    }
+    if(retired)ANativeWindow_release(retired);
+    return jlong(token);
+}
+JNI(ownsDisplay) jboolean JNICALL Java_org_lighttouch_android_Native_ownsDisplay(JNIEnv *,jobject,jlong lease) {
+    std::lock_guard<std::mutex> lock(guard);return display_lease.owns(uint64_t(lease));
+}
+JNI(attachDisplay) jstring JNICALL Java_org_lighttouch_android_Native_attachDisplay(JNIEnv *env,jobject,jlong lease,jobject surface) {
+    DisplayLease::Request owner;uint64_t request;
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        owner=display_lease.begin(uint64_t(lease));
+        if(!owner.owner)return string(env,retired_display);
         request=++surface_request;
     }
-    // Conversion may enter platform code. A later clear/attach wins even if
-    // this earlier conversion takes longer to return.
-    ANativeWindow *incoming=surface?ANativeWindow_fromSurface(env,surface):nullptr;
-    ANativeWindow *retired=nullptr;
+    // No control/Service lock spans platform conversion or reference release.
+    ConvertedWindow<ANativeWindow,ANativeWindow_release> incoming(surface?ANativeWindow_fromSurface(env,surface):nullptr);
+    const bool converted=incoming.get()!=nullptr;
+    ANativeWindow *retired=nullptr;bool committed=false;
     {
         std::lock_guard<std::mutex> lock(guard);
-        if(request==surface_request) {
-            retired=window;window=incoming;incoming=nullptr;
-            window_attached.store(window?1u:0u);
-            ++surface_generation;++presentation_epoch;previous_present_ns=0;
-            if(window)sequence=0; // Replay the latest cache on a replacement.
+        if(request==surface_request && display_lease.current(owner) && incoming.get()) {
+            retired=window;window=incoming.take();committed=true;
+            window_attached.store(1);
+            ++surface_generation;++presentation_epoch;previous_present_ns=0;sequence=0;
         }
     }
     if(retired)ANativeWindow_release(retired);
-    if(incoming)ANativeWindow_release(incoming);
+    // incoming's rejected conversion reference is released outside guard.
+    return string(env,committed?"":converted?retired_display:"Guest Surface conversion failed");
+}
+JNI(releaseDisplay) void JNICALL Java_org_lighttouch_android_Native_releaseDisplay(JNIEnv *,jobject,jlong lease) {
+    ANativeWindow *retired=nullptr;
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        if(!display_lease.owns(uint64_t(lease)))return;
+        const auto cancelled=cancel_display_contacts();
+        if(!cancelled.empty())diagnostic="Display release failed: "+cancelled;
+        display_lease.release(uint64_t(lease));++surface_request;
+        retired=window;window=nullptr;window_attached.store(0);
+        ++surface_generation;++presentation_epoch;previous_present_ns=0;
+    }
+    if(retired)ANativeWindow_release(retired);
+}
+JNI(cancelDisplayInput) void JNICALL Java_org_lighttouch_android_Native_cancelDisplayInput(JNIEnv *,jobject,jlong lease) {
+    std::lock_guard<std::mutex> lock(guard);
+    if(!display_lease.owns(uint64_t(lease)))return;
+    const auto cancelled=cancel_display_contacts();
+    if(!cancelled.empty())diagnostic="Display contact release failed: "+cancelled;
+}
+JNI(backgroundDisplay) jstring JNICALL Java_org_lighttouch_android_Native_backgroundDisplay(JNIEnv *env,jobject,jlong lease) {
+    std::lock_guard<std::mutex> lock(guard);
+    if(!display_lease.owns(uint64_t(lease)))return string(env,retired_display);
+    // Only the actual owner may apply the existing full background cleanup.
+    lt_error error=LT_INIT(lt_error);
+    if(runtime) {
+        const auto cancelled=lt_runtime_cancel_input(runtime,&error);
+        if(cancelled!=LT_OK)return string(env,result(cancelled,error));
+    }
+    display_lease.contactsReleased();
+    ++presentation_epoch;previous_present_ns=0;sequence=0;
+    if(starting){startup_pause_requested=true;return string(env,"");}
+    return string(env,runtime?result(lt_runtime_pause(runtime,1,&error),error):"No active session");
 }
 JNI(pause) jstring JNICALL Java_org_lighttouch_android_Native_pause(JNIEnv *env,jobject,jboolean paused) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);
@@ -463,16 +529,18 @@ JNI(button) jstring JNICALL Java_org_lighttouch_android_Native_button(JNIEnv *en
     return string(env,runtime?result(lt_runtime_button(runtime,button,down,&error),error):"No active session");
 }
 JNI(cancelInput) void JNICALL Java_org_lighttouch_android_Native_cancelInput(JNIEnv *,jobject) {
-    std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);if(runtime) lt_runtime_cancel_input(runtime,&error);
+    std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);
+    if(!runtime || lt_runtime_cancel_input(runtime,&error)==LT_OK)display_lease.contactsReleased();
 }
-JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,jobject,jlong time,jintArray ids,jintArray phases,jfloatArray xy,jint width,jint height,jint rotation) {
-    std::lock_guard<std::mutex> lock(guard);
+jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintArray phases,jfloatArray xy,jint width,jint height,jint rotation) {
+    if(lease && !display_lease.owns(lease))return string(env,retired_display);
     const jsize count=env->GetArrayLength(ids);
     if(count<1 || count>jsize(LT_MAX_CONTACTS) || env->GetArrayLength(phases)!=count || env->GetArrayLength(xy)!=count*2) return string(env,"Invalid contact batch");
     if(!runtime) return string(env,"No active guest session; touch was not admitted");
     if(!frame.width || !frame.height) {
         lt_error cancelled=LT_INIT(lt_error);
-        const auto cancellation=lt_runtime_cancel_input(runtime,&cancelled);
+        const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&cancelled));
+        if(cancellation==LT_OK)display_lease.contactsReleased();
         std::string failure="No active guest frame; gesture cancelled";
         if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
         return string(env,failure);
@@ -485,7 +553,8 @@ JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,
         batch.contacts[i]=lt_contact LT_INIT(lt_contact);batch.contacts[i].id=id[i];batch.contacts[i].phase=phase[i];
         auto status=lt_map_contact(coords[i*2],coords[i*2+1],view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
         if(status!=LT_OK) {
-            const auto cancellation=lt_runtime_cancel_input(runtime,&error);
+            const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&error));
+            if(cancellation==LT_OK)display_lease.contactsReleased();
             std::string failure="Touch left guest viewport; gesture cancelled";
             if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,error);
             return string(env,failure);
@@ -498,11 +567,22 @@ JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,
     std::string failure=result(status,error);
     if(status!=LT_OK) {
         lt_error cancelled=LT_INIT(lt_error);
-        const auto cancellation=lt_runtime_cancel_input(runtime,&cancelled);
+        const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&cancelled));
+        if(cancellation==LT_OK)display_lease.contactsReleased();
         if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
+    } else if(lease) {
+        for(jsize i=0;i<count;++i)display_lease.admittedContact(id[i],phase[i]);
     }
     if(!failure.empty())diagnostic=failure;
     return string(env,failure);
+}
+JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,jobject,jlong time,jintArray ids,jintArray phases,jfloatArray xy,jint width,jint height,jint rotation) {
+    std::lock_guard<std::mutex> lock(guard);return touch_command(env,0,time,ids,phases,xy,width,height,rotation);
+}
+JNI(touchDisplay) jstring JNICALL Java_org_lighttouch_android_Native_touchDisplay(JNIEnv *env,jobject,jlong lease,jlong time,jintArray ids,jintArray phases,jfloatArray xy,jint width,jint height,jint rotation) {
+    std::lock_guard<std::mutex> lock(guard);
+    if(!display_lease.owns(uint64_t(lease)))return string(env,retired_display);
+    return touch_command(env,uint64_t(lease),time,ids,phases,xy,width,height,rotation);
 }
 JNI(motion) jstring JNICALL Java_org_lighttouch_android_Native_motion(JNIEnv *env,jobject,jint kind,jlong time,jfloatArray xyz,jint rotation) {
     std::lock_guard<std::mutex> lock(guard);if(!runtime)return string(env,"");

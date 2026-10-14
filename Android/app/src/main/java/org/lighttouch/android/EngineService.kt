@@ -109,13 +109,21 @@ class EngineService : Service() {
                 putBundle("observations", observations())
             }
         }
-        override fun surface(surface: Surface) {
-            // The :engine Binder parcel is a worker-owned Java reference. Native
-            // retains its own ANativeWindow ref; release this copy promptly so an
-            // old CPU-connected Surface is destroyed when Native replaces it.
-            try { Native.surface(surface) } finally { surface.release() }
+        override fun claimDisplay(): Long = Native.claimDisplay()
+        override fun attachDisplay(lease: Long, surface: Surface): String = try {
+            Native.attachDisplay(lease, surface)
+        } finally { surface.release() } // Includes rejected stale parcels.
+        override fun releaseDisplay(lease: Long) { Native.releaseDisplay(lease) }
+        override fun cancelDisplayInput(lease: Long) { Native.cancelDisplayInput(lease) }
+        override fun backgroundDisplay(lease: Long) {
+            if (stopping.get()) return
+            val result = Native.backgroundDisplay(lease)
+            if (result == "Display ownership retired") return
+            if (result.isNotEmpty()) { error = result; return }
+            userPaused = true
+            synchronized(audioGuard) { audioObservations.pauses++ }
+            abandonAudioFocus(); pauseAudio()
         }
-        override fun clearSurface() { Native.cancelInput(); Native.surface(null) }
         override fun pause(paused: Boolean) {
             // A background callback can race the stop button. Shutdown already
             // cancels input; an inactive pause must not replace its diagnostic.
@@ -138,21 +146,25 @@ class EngineService : Service() {
             if (result.isNotEmpty()) { error = result; buttonRejections.incrementAndGet() }
             else if (button in 0..1) (if (down) buttonDownAdmissions else buttonUpAdmissions).incrementAndGet(button)
         }
-        override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String {
-            // Keep selection and native admission in the same worker-owned order.
-            // Cancel/pause/surface replacement deliberately do not reset this clock.
-            return synchronized(touchAdmissionGuard) {
-                val ordered = try { touchTimestampOrder.select(timestampNanos) }
-                catch (failure: IllegalArgumentException) {
-                    val rejected = "${failure.message}; gesture cancelled. Start a new gesture."
-                    error = rejected
-                    Native.cancelInput()
-                    return@synchronized rejected
-                }
-                val result = Native.touch(ordered, ids, phases, coordinates, width, height, rotation)
-                if (result.isNotEmpty()) error = result
-                result
+        override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String =
+            admitTouch(null, timestampNanos, ids, phases, coordinates, width, height, rotation)
+        override fun touchDisplay(lease: Long, timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String =
+            admitTouch(lease, timestampNanos, ids, phases, coordinates, width, height, rotation)
+        private fun admitTouch(lease: Long?, timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String = synchronized(touchAdmissionGuard) {
+            // Native admission rechecks the owner under the control guard. This
+            // early check only avoids advancing the clock for already stale Views.
+            if (lease != null && !Native.ownsDisplay(lease)) return@synchronized "Display ownership retired"
+            val ordered = try { touchTimestampOrder.select(timestampNanos) }
+            catch (failure: IllegalArgumentException) {
+                val rejected = "${failure.message}; gesture cancelled. Start a new gesture."
+                if (lease == null) { error = rejected; Native.cancelInput() }
+                else Native.cancelDisplayInput(lease)
+                return@synchronized rejected
             }
+            val result = if (lease == null) Native.touch(ordered, ids, phases, coordinates, width, height, rotation)
+                else Native.touchDisplay(lease, ordered, ids, phases, coordinates, width, height, rotation)
+            if (result.isNotEmpty() && result != "Display ownership retired") error = result
+            result
         }
         override fun cancelInput() { Native.cancelInput() }
         override fun motion(kind: Int, timestampNanos: Long, xyz: FloatArray, rotation: Int) {

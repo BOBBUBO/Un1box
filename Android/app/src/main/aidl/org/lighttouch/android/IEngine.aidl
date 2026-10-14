@@ -11,8 +11,12 @@ interface IEngine {
     String importBase(String source, String displayName);
     String importPrepared(String source, String displayName);
     Bundle status();
-    void surface(in Surface surface);
-    void clearSurface();
+    long claimDisplay();
+    String attachDisplay(long lease, in Surface surface);
+    void releaseDisplay(long lease);
+    void cancelDisplayInput(long lease);
+    void backgroundDisplay(long lease);
+    String touchDisplay(long lease, long timestampNanos, in int[] ids, in int[] phases, in float[] coordinates, int width, int height, int rotation);
     void pause(boolean paused);
     void stop();
     void button(int button, boolean down);
