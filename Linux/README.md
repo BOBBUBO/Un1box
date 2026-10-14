@@ -97,3 +97,17 @@ published frame and never invents one.
 Gyro/motion qualification is DEFERRED and unqualified by user scope update. The
 preserved APIs/manual replay do not advertise gyro as working and do not require
 SDK/probe acquisition or further gyro integration for initial completion.
+
+Scripts can capture independent live checkpoints (`52 screenshot /private/awake.bmp`)
+without stopping the guest. Status/checkpoint logs separately report backlight level,
+display sleeping, agent liveness, shutdown phase and route. Black pixels are not a
+shutdown confirmation. Home is button0; Power is button1. The verified original n72
+wake/unlock driver taps Home150ms, waits2s, then drags (.18,.9) to (.92,.9), waits5s
+and checks guest lock status. A lock screen sleeps about12s after becoming lit, so
+sending a swipe to an already sleeping panel does not establish an input-map defect.
+
+Shutdown is queued to the runtime supervisor. Control/status continue to respond
+while the engine admits the agent halt or board gesture. Observer phase1 is host
+queued,2 cancelling,3 engine request,4 admitted and5 actual PMU confirmation.
+A halt reply or dark screen never clears dirty state without PMU confirmation and
+successful worker exit.
