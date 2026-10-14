@@ -76,6 +76,10 @@ class GuestInputTest {
                 File(evidence, "result.json").writeText(outcome.toString(2))
                 val state = initial.getString("state")
                 if (state == "stopped") {
+                    if (arguments.getString("touchWireTrace") == "true") {
+                        assertFalse("Trace opt-in requires an unused worker", initial.getBoolean("sessionStarted"))
+                        assertEquals("Fixed native trace admission", "", worker.debugEnableTouchTrace())
+                    }
                     scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
                     val started = worker.start(requireNotNull(worker.records().firstOrNull { it.getBoolean("selected") }?.getString("id")) { "Import and select the legitimate private device first" })
                     assertEquals(started.toString(), "", started.getString("error"))
@@ -83,6 +87,10 @@ class GuestInputTest {
                 val deadline = SystemClock.elapsedRealtime() + 120_000
                 while (worker.status().getString("state") != "running" && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100)
                 assertEquals(worker.status().toString(), "running", worker.status().getString("state"))
+                if (arguments.getString("touchWireTrace") == "true") {
+                    assertTrue("Existing worker must have configured trace before start", worker.status().getBoolean("touchTraceConfigured"))
+                    assertTrue("Trace cannot be changed after start", worker.debugEnableTouchTrace().isNotEmpty())
+                }
                 // Root owns this device while the harness runs and opens the chosen
                 // built-in guest app. State=running alone does not prove Home.
                 val seconds = arguments.getString("settleSeconds", "60").toInt().coerceIn(0, 300)
@@ -103,7 +111,11 @@ class GuestInputTest {
     }
     @Test fun stableTwoPointerTrajectoriesUseProductionDisplayPath() = withGuest { scenario, worker, evidence ->
         val trace = JSONArray()
+        val wire = if (arguments.getString("touchWireTrace") == "true") GuestTouchWireEvidence(instrumentation.targetContext.filesDir, worker.status(), evidence) else null
+        var touchIndex = 0
         val selected = arguments.getString("gesture", "all")
+        var exerciseFailure: Throwable? = null
+        try {
         for (kind in listOf("pinch", "cross", "cancel").filter { selected == "all" || selected == it }) {
             val down = SystemClock.uptimeMillis()
             var eventIndex = 0
@@ -124,11 +136,12 @@ class GuestInputTest {
                     val entries = JSONArray()
                     for ((index, contact) in contacts.withIndex()) entries.put(JSONObject().put("id", contact.first)
                         .put("guestX", contact.second).put("guestY", contact.third).put("viewXPx", points[index].first).put("viewYPx", points[index].second))
-                    trace.put(JSONObject().put("gesture", kind).put("index", eventIndex++).put("action", action).put("uptimeMs", time)
+                    trace.put(JSONObject().put("gesture", kind).put("index", eventIndex++).put("touchIndex", touchIndex++).put("action", action).put("uptimeMs", time)
                         .put("viewport", viewport.receipt()).put("displayRotation", display.display.rotation).put("contacts", entries))
                 }
                 File(evidence, "touch.json").writeText(JSONObject().put("events", trace).put("guestOutcomeRequiresReview", true).put("guestAcceptancePassed", false).toString(2))
                 Thread.sleep(20)
+                wire?.drain(touchIndex - 1)
             }
             fun screenshot(label: String) {
                 val target = File(instrumentation.targetContext.filesDir, "screenshots/input-$kind-$label-${System.currentTimeMillis()}.png")
@@ -160,8 +173,27 @@ class GuestInputTest {
             val status = worker.status()
             assertEquals("Production path rejected input: $status", "", status.getString("error"))
         }
+        if (wire != null) {
+            Thread.sleep(1000); wire.drain(touchIndex - 1)
+            assertTrue("No actual guest FRAME_READ with a pending frame in the retained gesture interval", wire.collectedFrameCount() > 0)
+            assertTrue("No serialized nonempty contact records in retained wire interval", wire.serializedContactCount() > 0)
+        }
         File(evidence, "touch.json").writeText(JSONObject().put("events", trace).put("workerPid", worker.status().getInt("pid"))
             .put("guestOutcomeRequiresReview", true).put("guestAcceptancePassed", false).toString(2))
+        } catch (failure: Throwable) { exerciseFailure = failure; throw failure }
+        finally {
+            // A screenshot or dispatch failure while two contacts are held must
+            // still request release. No successful cleanup erases the failure.
+            var cleanupFailure: Throwable? = null
+            try { worker.cancelInput() } catch (failure: Throwable) { cleanupFailure = failure }
+            try { wire?.drain(touchIndex - 1) } catch (failure: Throwable) {
+                if (cleanupFailure == null) cleanupFailure = failure else cleanupFailure.addSuppressed(failure)
+            }
+            cleanupFailure?.let { failure ->
+                File(evidence, "cleanup-error.txt").writeText(failure.toString())
+                if (exerciseFailure == null) throw failure else exerciseFailure?.addSuppressed(failure)
+            }
+        }
     }
     @Test fun deferredPhysicalMotionRecordingHarness() {
         assumeTrue("Motion is deferred/unqualified by user scope D12", arguments.getString("experimentalMotion") == "true")
