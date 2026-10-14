@@ -21,7 +21,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Arms an existing unused worker only. Never starts, resumes or replaces a guest. */
+/** Explicit service creation or existing-worker arming; never starts/resumes a guest. */
 @RunWith(AndroidJUnit4::class)
 class GuestSessionSetupTest {
     private fun withExistingWorker(context: Context, action: (IEngine) -> Unit) {
@@ -39,6 +39,53 @@ class GuestSessionSetupTest {
             check(connected.await(10, TimeUnit.SECONDS)) { "No existing guest worker connection" }
             action(requireNotNull(worker))
         } finally { context.unbindService(connection) }
+    }
+    @Test fun createUnusedForegroundServiceForLaterArming() {
+        val arguments = InstrumentationRegistry.getArguments()
+        assumeTrue("Explicit unused service creation required", arguments.getString("createUnusedGuestWorker") == "true")
+        val expectedApk = requireNotNull(arguments.getString("expectedMainApkSha256")) { "Expected main APK hash required" }
+        require(expectedApk.matches(Regex("[0-9a-f]{64}"))) { "Invalid expected APK hash" }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val evidence = File(context.filesDir, "session-create-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
+        val receipt = JSONObject().put("pass", false).put("guestAcceptance", false)
+            .put("createsServiceMaySpawnWorker", true).put("serviceStartRequested", false)
+            .put("guestStartedByTest", false).put("workerRestartedByTest", false)
+            .put("priorWorkerAbsenceProven", false).put("traceArmedByTest", false)
+        @Suppress("DEPRECATION")
+        fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
+            for (key in bundle.keySet()) when (val value = bundle.get(key)) {
+                is Bundle -> put(key, encode(value))
+                is LongArray -> put(key, JSONArray(value.toList()))
+                is IntArray -> put(key, JSONArray(value.toList()))
+                else -> put(key, value)
+            }
+        }
+        fun unused(status: Bundle) {
+            assertEquals(Process.myUid(), status.getInt("uid")); assertNotEquals(Process.myPid(), status.getInt("pid"))
+            assertEquals("stopped", status.getString("state")); assertFalse(status.getBoolean("sessionStarted"))
+            assertFalse(status.getBoolean("nativePollSnapshotValid")); assertEquals("", status.getString("error"))
+            assertEquals(0L, status.getBundle("observations")!!.getLong("producedFrames"))
+        }
+        try {
+            assertTrue("Debug build required", context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
+            val actualApk = acceptanceSha256(File(context.applicationInfo.sourceDir))
+            receipt.put("mainApkSha256", actualApk).put("expectedMainApkSha256", expectedApk)
+            assertEquals("Installed main APK identity", expectedApk, actualApk)
+            receipt.put("serviceStartRequested", true).put("serviceStartHostElapsedNs", SystemClock.elapsedRealtimeNanos())
+            val component = requireNotNull(context.startForegroundService(Intent(context, EngineService::class.java)))
+            assertEquals(ComponentName(context, EngineService::class.java), component)
+            receipt.put("serviceComponent", component.flattenToString())
+            withExistingWorker(context) { worker ->
+                val initial = worker.status()
+                receipt.put("before", encode(initial)).put("beforeHostElapsedNs", SystemClock.elapsedRealtimeNanos())
+                unused(initial)
+                val after = worker.status()
+                receipt.put("after", encode(after)).put("afterHostElapsedNs", SystemClock.elapsedRealtimeNanos())
+                unused(after); assertEquals(initial.getInt("pid"), after.getInt("pid")); assertEquals(initial.getInt("uid"), after.getInt("uid"))
+                receipt.put("pass", true).put("workerPid", after.getInt("pid")).put("appUid", after.getInt("uid"))
+            }
+        } catch (failure: Throwable) { receipt.put("failure", failure.toString()); throw failure }
+        finally { File(evidence, "result.json").writeText(receipt.toString(2)) }
     }
     @Test fun armExistingUnusedWorkerBeforeOperatorStart() {
         val arguments = InstrumentationRegistry.getArguments()
