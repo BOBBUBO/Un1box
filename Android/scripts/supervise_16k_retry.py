@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import shlex
 import signal
 import subprocess
 import time
@@ -213,14 +214,12 @@ class Attempt:
         record = self.args.record_id
         root = f"files/library/records/{record}"
         for path in (f"{root}/record.json", f"{root}/state", f"{root}/base/device.lock.json", f"{root}/assets"):
-            if self.adb("exec-out", "run-as", PACKAGE, "stat", path)[0] != 0:
+            if self.path_presence(path) is not True:
                 raise RuntimeError("Retained record is incomplete; no import or reset attempted")
-        code, marker = self.adb("exec-out", "run-as", PACKAGE, "stat", f"{root}/state/.dirty")
-        if code == 0:
+        marker = self.path_presence(f"{root}/state/.dirty")
+        if marker is True:
             raise RuntimeError("Retained record is dirty; this normal-start recipe cannot silently recover")
-        # A failed stat alone is insufficient: a direct test must confirm absence.
-        code, _ = self.adb("shell", f"run-as {PACKAGE} sh -c 'test ! -e {root}/state/.dirty'")
-        if code != 0:
+        if marker is not False:
             raise RuntimeError("Could not confirm absence of dirty marker")
         code, selected = self.adb("exec-out", "run-as", PACKAGE, "cat", "files/library/selected")
         if code != 0 or selected.strip().decode() != record:
@@ -255,6 +254,19 @@ class Attempt:
                  "guestAcceptancePassed":False, "stopAtSeconds":STOP_AT, "hardDeadlineSeconds":HARD_LIMIT}
         self.write("ready.json", ready)
         return ready
+
+    def path_presence(self, path):
+        # exec-out preserves bytes, but can return host exit0 for a remote stat
+        # failure. Require an explicit remote sentinel, with readable parent.
+        parent = str(Path(path).parent)
+        script = (f"if test ! -d {shlex.quote(parent)} || test ! -x {shlex.quote(parent)}; then "
+                  "printf 'LT_PATH_UNKNOWN\\n'; "
+                  f"elif test -e {shlex.quote(path)} || test -L {shlex.quote(path)}; then "
+                  "printf 'LT_PATH_PRESENT\\n'; else printf 'LT_PATH_ABSENT\\n'; fi")
+        code, output = self.adb("shell", shlex.join(["run-as",PACKAGE,"sh","-c",script]))
+        if code != 0:
+            return None
+        return {b"LT_PATH_PRESENT":True,b"LT_PATH_ABSENT":False}.get(output.strip())
 
     def stop(self):
         self.stop_attempted = True
