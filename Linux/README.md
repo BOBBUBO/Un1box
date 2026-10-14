@@ -386,3 +386,33 @@ worker finished confirmed1/dirty0/exit0. This is bounded Linux trace/pixel/raw-P
 evidence awaiting independent review; sustained concurrency, physical audibility
 on auto_null, Android and full G3-I remain unqualified. Earlier calibration
 failures and contrary screenshots remain retained.
+
+For crossing and interruption stages, F7 admits17 native batches: stableIDs201/202
+cross in X while retaining separate Y positions, ID201 lifts alone, ID202 keeps
+moving and then lifts. C releases all contacts. Generated future replay moves
+are discarded on cancel/focus loss/pause/rotation/backpressure/rejection/stop;
+caller script checkpoints and lifecycle commands remain scheduled. This prevents
+old replay moves from reappearing after a release. The focused queue regression
+checks cancellation cannot skip the next caller checkpoint; it is host evidence.
+
+Use `scripts/run-multitouch-interruption.py` against an already inspected current
+Photos viewer. Its default prints the plan. First execute `--stage prepare` with
+private window/log/output arguments to perform F5 balanced pinch-in and capture
+native+GUI pixels. Inspect that result below maximum zoom before admitting
+`--stage cross`, `cancel`, `focus`, `pause` or `rotation` into a new output folder.
+The interruption stages begin a two-contact pinch, interrupt while both are held,
+then replay a fresh pinch; each has paired native receipts and actual GUI captures.
+The caller supplies the measured private X display size and finally requests
+Escape, retaining the confirmed-clean receipt. A script exit or applied input
+alone cannot qualify any stage.
+
+Actual private run07 retained crossing shrink/enlargement, crossed stableIDs,
+independent ID201 lift and continued ID202 movement/lift. Cancel/focus/pause/
+rotation each discarded9 pending generated moves and admitted new input after
+interruption; pause state and visible rotation were retained. Its attempted
+instant mouse double-click reset failed, so the later captures named `belowmax`
+were still at apparent maximum zoom and fresh pinch scale changes were not
+established. Those labels are not assertions. All failed preparation/pixels and
+clean shutdown evidence remain retained. F5 pinch-in and the generic staged
+controller are the corrected preparation proposal; they have not yet qualified
+fresh-pinch-after-interruption on a guest.
