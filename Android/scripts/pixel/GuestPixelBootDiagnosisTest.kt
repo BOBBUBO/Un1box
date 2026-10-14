@@ -15,7 +15,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
-/** Overlay this file into an isolated APK22 test build, never the production APK. */
+/** Overlay this file into an isolated matched test build, never the production APK. */
 @RunWith(AndroidJUnit4::class)
 class GuestPixelBootDiagnosisTest {
     @Test fun retainForegroundBootFramesAndCpuState() {
@@ -23,8 +23,9 @@ class GuestPixelBootDiagnosisTest {
         assumeTrue("Explicit virtual Pixel diagnosis required", args.getString("diagnoseVirtualPixel") == "true")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         assertEquals("Fixed x86 virtual attempt", "x86_64", android.os.Build.SUPPORTED_ABIS[0])
-        assertEquals("Frozen production APK22 required",
-            "2288bd375856b528fc6d4a12efae7dd6f447a54e90d296d6397e741c99150628",
+        val expectedMainSha = requireNotNull(args.getString("expectedMainApkSha256"))
+        require(Regex("[0-9a-f]{64}").matches(expectedMainSha)) { "Explicit sealed main APK SHA-256 required" }
+        assertEquals("Installed production APK differs from sealed main artifact", expectedMainSha,
             acceptanceSha256(File(context.applicationInfo.sourceDir)))
         val record = requireNotNull(args.getString("recordId"))
         require(Regex("[0-9a-f]{32}").matches(record))
@@ -38,7 +39,7 @@ class GuestPixelBootDiagnosisTest {
         val timeline = JSONArray()
         val receipt = JSONObject().put("diagnosisCaptured", false).put("guestAcceptancePassed", false).put("visibleGuestVerified", false)
             .put("physicalPixelEquivalent", false).put("audiblePlaybackVerified", false)
-            .put("recordId", record).put("observationSeconds", seconds)
+            .put("recordId", record).put("observationSeconds", seconds).put("expectedMainApkSha256", expectedMainSha)
         @Suppress("DEPRECATION")
         fun encode(b: Bundle): JSONObject = JSONObject().apply {
             for (key in b.keySet()) when (val value = b.get(key)) {
