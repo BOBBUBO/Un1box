@@ -1,16 +1,16 @@
 #include "Internal.hpp"
-#include <zlib.h>
+#include <algorithm>
+#include <array>
 #include <fcntl.h>
-#include <unistd.h>
+#include <fstream>
+#include <linux/fs.h>
+#include <memory>
+#include <set>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <linux/fs.h>
-#include <array>
-#include <set>
-#include <fstream>
-#include <algorithm>
-#include <memory>
+#include <unistd.h>
+#include <zlib.h>
 namespace lt {
 struct Fd {
     int n = -1;
@@ -60,9 +60,29 @@ std::string read_file(const fs::path &p, size_t limit) {
     read_all(fd.n, s.data(), s.size());
     return s;
 }
-static std::string digest_fd(int fd) {
+struct AdmissionProgress {
+    lt_progress_fn callback;
+    void *opaque;
+    uint64_t done = 0, total = 0;
+    void checkpoint() const {
+        require(!callback || callback(opaque, done, total) == 0, "device admission cancelled", LT_CANCELLED);
+    }
+    void advance(uint64_t bytes) {
+        require(done <= total && bytes <= total - done, "admission byte count exceeds checked plan");
+        done += bytes;
+        checkpoint();
+    }
+};
+static std::string digest_fd(int fd, AdmissionProgress *progress = nullptr, uint64_t planned_bytes = 0) {
     Sha256 hash;
     std::array<char, 65536> b{};
+    uint64_t consumed = 0;
+    if (progress) {
+        struct stat st {};
+        io(fstat(fd, &st) == 0, "fstat admission asset");
+        require(st.st_size >= 0 && uint64_t(st.st_size) == planned_bytes, "admission asset size changed");
+        progress->checkpoint();
+    }
     for (;;) {
         ssize_t n = read(fd, b.data(), b.size());
         if (n < 0 && errno == EINTR)
@@ -70,8 +90,17 @@ static std::string digest_fd(int fd) {
         io(n >= 0, "hash read");
         if (!n)
             break;
+        if (progress)
+            require(consumed <= planned_bytes && uint64_t(n) <= planned_bytes - consumed,
+                    "admission asset grew while hashing");
         hash.update(b.data(), size_t(n));
+        if (progress) {
+            consumed += uint64_t(n);
+            progress->advance(uint64_t(n));
+        }
     }
+    if (progress)
+        require(consumed == planned_bytes, "admission asset truncated while hashing");
     return hash.finish();
 }
 std::string digest_file(const fs::path &p) {
@@ -120,7 +149,8 @@ static bool contained(const fs::path &a, const fs::path &b) {
             return false;
     return ia == a.end();
 }
-static void validate_base(const fs::path &base) {
+static void validate_base(const fs::path &base, AdmissionProgress *progress = nullptr,
+                          const std::vector<AdmissionAssetCheck> &extra_checks = {}) {
     Json j = parse(read_file(base / "device.lock.json"));
     require(j.at("format").integer() == 1, "unsupported device lock schema", LT_UNSUPPORTED);
     require(!j.at("board").string().empty() && !j.at("build").string().empty(), "missing board/build");
@@ -146,18 +176,44 @@ static void validate_base(const fs::path &base) {
         required_file("nor", "nor.bin");
         required_file("kboot", "kboot.bin");
     }
+    // Enumerate once, then hash a stable, sorted, checked file plan. Listing
+    // strings and state/lock metadata are not source asset digest input bytes.
+    AdmissionProgress quiet{nullptr, nullptr};
+    auto &events = progress ? *progress : quiet;
+    std::map<fs::path, uint64_t> assets;
+    std::vector<AdmissionAssetCheck> checks = extra_checks;
+    struct ListingCheck {
+        std::vector<std::pair<std::string, fs::path>> files;
+        std::string expected;
+        uint64_t pages = 0;
+        bool check_pages = false;
+    };
+    std::vector<ListingCheck> listings;
+    auto add_asset = [&](const fs::path &path) {
+        events.checkpoint();
+        struct stat st {};
+        io(lstat(path.c_str(), &st) == 0, "stat admission asset");
+        require(S_ISREG(st.st_mode) && st.st_size >= 0, "admission asset must be a regular file");
+        assets.emplace(path, uint64_t(st.st_size));
+    };
+    for (const auto &check : extra_checks)
+        add_asset(check.path);
     for (const auto &pair : outputs.object) {
+        events.checkpoint();
         const Json &o = pair.second;
         const Json *path = o.find("path");
         require(path, "output path missing");
         std::string name = path->string();
         safe_name(name);
-        if (const Json *h = o.find("sha256"))
-            require(digest_file(base / name) == h->string(), "output checksum mismatch: " + name);
+        if (const Json *h = o.find("sha256")) {
+            add_asset(base / name);
+            checks.push_back({base / name, h->string(), "output checksum mismatch: " + name});
+        }
         if (const Json *h = o.find("listing_sha256")) {
             require(fs::is_directory(fs::symlink_status(base / name)), "NAND is not a directory");
             std::vector<std::string> files;
             for (const auto &e : fs::recursive_directory_iterator(base / name)) {
+                events.checkpoint();
                 require(!e.is_symlink(), "symlink in NAND");
                 if (e.is_regular_file())
                     files.push_back(e.path().lexically_relative(base / name).generic_string());
@@ -165,19 +221,55 @@ static void validate_base(const fs::path &base) {
                     require(e.is_directory(), "special file in NAND");
             }
             std::sort(files.begin(), files.end());
-            Sha256 listing;
+            ListingCheck listing;
+            listing.expected = h->string();
             for (const auto &file : files) {
-                std::string line = file + " " + digest_file(base / name / file) + "\n";
-                listing.update(line.data(), line.size());
+                safe_name(file);
+                add_asset(base / name / file);
+                listing.files.emplace_back(file, base / name / file);
             }
-            require(listing.finish() == h->string(), "NAND listing checksum mismatch");
-            if (const Json *p = o.find("pages"))
-                require(files.size() == p->integer(), "NAND page count mismatch");
+            if (const Json *p = o.find("pages")) {
+                listing.pages = p->integer();
+                listing.check_pages = true;
+            }
+            listings.push_back(std::move(listing));
         }
     }
     if (const Json *i = j.find("identity"))
-        if (const Json *h = i->find("sha256"))
-            require(digest_file(base / "identity.json") == h->string(), "identity checksum mismatch");
+        if (const Json *h = i->find("sha256")) {
+            add_asset(base / "identity.json");
+            checks.push_back({base / "identity.json", h->string(), "identity checksum mismatch"});
+        }
+    uint64_t total = 0;
+    for (const auto &asset : assets) {
+        require(asset.second <= UINT64_MAX - total, "admission byte count overflow");
+        total += asset.second;
+    }
+    events.total = total;
+    events.checkpoint();
+    std::map<fs::path, std::string> digests;
+    for (const auto &asset : assets) {
+        events.checkpoint();
+        auto fd = open_read(asset.first);
+        digests.emplace(asset.first, digest_fd(fd.n, &events, asset.second));
+    }
+    for (const auto &check : checks) {
+        events.checkpoint();
+        require(digests.at(check.path) == check.sha256, check.message);
+    }
+    for (const auto &check : listings) {
+        events.checkpoint();
+        Sha256 listing;
+        for (const auto &file : check.files) {
+            events.checkpoint();
+            std::string line = file.first + " " + digests.at(file.second) + "\n";
+            listing.update(line.data(), line.size());
+        }
+        require(listing.finish() == check.expected, "NAND listing checksum mismatch");
+        if (check.check_pages)
+            require(check.files.size() == check.pages, "NAND page count mismatch");
+    }
+    events.checkpoint();
 }
 struct Stage {
     fs::path path, destination;
@@ -273,6 +365,76 @@ void clean_device(lt_device *d, bool confirmed) {
             throw Failure(LT_IO, "clear dirty: " + ec.message());
         sync_dir(d->state);
     }
+}
+} // namespace lt
+namespace lt {
+std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_progress_fn observer, void *opaque,
+                                               const std::vector<AdmissionAssetCheck> &extra_checks) {
+    lt::abi(c);
+    lt::require(c->base_path && c->state_path, "invalid device configuration");
+    lt::require(lt::fs::path(c->base_path).is_absolute() && lt::fs::path(c->state_path).is_absolute(),
+                "device paths must be absolute");
+    auto d = std::make_unique<lt_device>();
+    d->base = lt::fs::canonical(c->base_path);
+    lt::fs::create_directories(c->state_path);
+    d->state = lt::fs::canonical(c->state_path);
+    lt::io(chmod(d->state.c_str(), 0700) == 0, "private device state permissions");
+    lt::require(!lt::contained(d->base, d->state) && !lt::contained(d->state, d->base), "base/state overlap refused");
+    d->lease = open((d->state / ".lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    lt::io(d->lease >= 0, "open device lease");
+    lt::require(flock(d->lease, LOCK_EX | LOCK_NB) == 0, "device has another writer", LT_BUSY);
+    AdmissionProgress events{observer, opaque};
+    events.checkpoint();
+    lt::validate_base(d->base, &events, extra_checks);
+    auto immutable = [](lt::fs::perms mode) {
+        return (mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
+               lt::fs::perms::none;
+    };
+    lt::require(immutable(lt::fs::status(d->base).permissions()),
+                "base root is writable: import into immutable storage first");
+    events.checkpoint();
+    for (const auto &entry : lt::fs::recursive_directory_iterator(d->base)) {
+        events.checkpoint();
+        lt::require(!entry.is_symlink(), "base symlink refused");
+        auto mode = entry.status().permissions();
+        lt::require((mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
+                        lt::fs::perms::none,
+                    "base is writable: import it into immutable storage first");
+    }
+    events.checkpoint();
+    d->lock = lt::parse(lt::read_file(d->base / "device.lock.json"));
+    lt::require(d->lock.at("format").integer() == 1, "unsupported lock schema", LT_UNSUPPORTED);
+    d->base_digest = lt::digest_file(d->base / "device.lock.json");
+    events.checkpoint();
+    auto pin = d->state / ".base-identity";
+    if (lt::fs::exists(pin))
+        lt::require(lt::read_file(pin, 128) == d->base_digest, "state belongs to another prepared base");
+    else {
+        for (const auto &entry : lt::fs::directory_iterator(d->state))
+            lt::require(entry.path().filename() == ".lease", "unidentified nonempty device state");
+        lt::atomic_write(pin, d->base_digest);
+    }
+    events.checkpoint();
+    d->dirty = lt::fs::exists(d->state / ".dirty");
+    lt::require(!d->dirty || c->allow_dirty, "interrupted session: reopen with explicit cold recovery; data retained",
+                LT_DIRTY);
+    events.checkpoint();
+    lt::fs::create_directories(d->state / "nand");
+    if (lt::fs::exists(d->base / "nor.bin") && !lt::fs::exists(d->state / "nor.bin")) {
+        auto staged = d->state / ".nor-import";
+        std::error_code ec;
+        lt::fs::remove(staged, ec);
+        lt::copy_file(d->base / "nor.bin", staged);
+        lt::io(rename(staged.c_str(), (d->state / "nor.bin").c_str()) == 0, "publish writable NOR");
+        lt::sync_dir(d->state);
+    }
+    events.checkpoint();
+    if (lt::fs::exists(d->state / "nor.bin"))
+        lt::require(lt::fs::is_regular_file(lt::fs::symlink_status(d->state / "nor.bin")) &&
+                        lt::fs::file_size(d->state / "nor.bin") == lt::fs::file_size(d->base / "nor.bin"),
+                    "writable NOR invalid or truncated");
+    events.checkpoint();
+    return d;
 }
 } // namespace lt
 extern "C" {
@@ -416,64 +578,15 @@ lt_status lt_import_directory(const lt_import_config *c, lt_error *e) {
     });
 }
 lt_status lt_device_open(const lt_device_config *c, lt_device **out, lt_error *e) {
-    return lt::guard(e, [&] {
-        lt::abi(c);
-        lt::require(out && c->base_path && c->state_path, "invalid device configuration");
+    return lt_device_open_observed(c, nullptr, nullptr, out, e);
+}
+lt_status lt_device_open_observed(const lt_device_config *c, lt_progress_fn observer, void *opaque, lt_device **out,
+                                  lt_error *e) {
+    if (out)
         *out = nullptr;
-        lt::require(lt::fs::path(c->base_path).is_absolute() && lt::fs::path(c->state_path).is_absolute(),
-                    "device paths must be absolute");
-        auto d = std::make_unique<lt_device>();
-        d->base = lt::fs::canonical(c->base_path);
-        lt::fs::create_directories(c->state_path);
-        d->state = lt::fs::canonical(c->state_path);
-        lt::io(chmod(d->state.c_str(), 0700) == 0, "private device state permissions");
-        lt::require(!lt::contained(d->base, d->state) && !lt::contained(d->state, d->base),
-                    "base/state overlap refused");
-        d->lease = open((d->state / ".lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
-        lt::io(d->lease >= 0, "open device lease");
-        lt::require(flock(d->lease, LOCK_EX | LOCK_NB) == 0, "device has another writer", LT_BUSY);
-        lt::validate_base(d->base);
-        auto immutable = [](lt::fs::perms mode) {
-            return (mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
-                   lt::fs::perms::none;
-        };
-        lt::require(immutable(lt::fs::status(d->base).permissions()),
-                    "base root is writable: import into immutable storage first");
-        for (const auto &entry : lt::fs::recursive_directory_iterator(d->base)) {
-            lt::require(!entry.is_symlink(), "base symlink refused");
-            auto mode = entry.status().permissions();
-            lt::require((mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write |
-                                 lt::fs::perms::others_write)) == lt::fs::perms::none,
-                        "base is writable: import it into immutable storage first");
-        }
-        d->lock = lt::parse(lt::read_file(d->base / "device.lock.json"));
-        lt::require(d->lock.at("format").integer() == 1, "unsupported lock schema", LT_UNSUPPORTED);
-        d->base_digest = lt::digest_file(d->base / "device.lock.json");
-        auto pin = d->state / ".base-identity";
-        if (lt::fs::exists(pin))
-            lt::require(lt::read_file(pin, 128) == d->base_digest, "state belongs to another prepared base");
-        else {
-            for (const auto &entry : lt::fs::directory_iterator(d->state))
-                lt::require(entry.path().filename() == ".lease", "unidentified nonempty device state");
-            lt::atomic_write(pin, d->base_digest);
-        }
-        d->dirty = lt::fs::exists(d->state / ".dirty");
-        lt::require(!d->dirty || c->allow_dirty,
-                    "interrupted session: reopen with explicit cold recovery; data retained", LT_DIRTY);
-        lt::fs::create_directories(d->state / "nand");
-        if (lt::fs::exists(d->base / "nor.bin") && !lt::fs::exists(d->state / "nor.bin")) {
-            auto staged = d->state / ".nor-import";
-            std::error_code ec;
-            lt::fs::remove(staged, ec);
-            lt::copy_file(d->base / "nor.bin", staged);
-            lt::io(rename(staged.c_str(), (d->state / "nor.bin").c_str()) == 0, "publish writable NOR");
-            lt::sync_dir(d->state);
-        }
-        if (lt::fs::exists(d->state / "nor.bin"))
-            lt::require(lt::fs::is_regular_file(lt::fs::symlink_status(d->state / "nor.bin")) &&
-                            lt::fs::file_size(d->state / "nor.bin") == lt::fs::file_size(d->base / "nor.bin"),
-                        "writable NOR invalid or truncated");
-        *out = d.release();
+    return lt::guard(e, [&] {
+        lt::require(out, "device output missing");
+        *out = lt::open_device_checked(c, observer, opaque, {}).release();
     });
 }
 lt_status lt_device_describe(lt_device *d, lt_device_info *out, lt_error *e) {

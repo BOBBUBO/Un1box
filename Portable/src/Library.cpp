@@ -1,12 +1,12 @@
 #include "Internal.hpp"
+#include <algorithm>
+#include <array>
 #include <fcntl.h>
+#include <memory>
 #include <sys/file.h>
 #include <sys/random.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <algorithm>
-#include <memory>
-#include <array>
 namespace lt {
 static std::string quote(const std::string &s) {
     std::string out = "\"";
@@ -293,6 +293,12 @@ lt_status lt_library_adopt_legacy(lt_library *l, const lt_library_import_config 
     });
 }
 lt_status lt_library_device_open(lt_library *l, const char *id, uint32_t recover, lt_device **out, lt_error *e) {
+    return lt_library_device_open_observed(l, id, recover, nullptr, nullptr, out, e);
+}
+lt_status lt_library_device_open_observed(lt_library *l, const char *id, uint32_t recover, lt_progress_fn observer,
+                                          void *opaque, lt_device **out, lt_error *e) {
+    if (out)
+        *out = nullptr;
     return lt::guard(e, [&] {
         lt::LibraryLock lock(l);
         lt::require(id && out, "device record ID/output missing");
@@ -300,21 +306,17 @@ lt_status lt_library_device_open(lt_library *l, const char *id, uint32_t recover
         lt_record_info info{sizeof(info), 1, {}, {}, {}, {}, {}, {}, {}, {}, {}, 0, 0};
         lt::describe(l, id, &info);
         auto metadata = lt::parse(lt::read_file(l->root / "records" / id / "record.json", 65536));
+        std::vector<lt::AdmissionAssetCheck> assets;
         if (*info.bootrom_path)
-            lt::require(lt::digest_file(info.bootrom_path) == metadata.at("bootrom_sha256").string(),
-                        "record ROM checksum mismatch");
+            assets.push_back(
+                {info.bootrom_path, metadata.at("bootrom_sha256").string(), "record ROM checksum mismatch"});
         if (*info.guest_package_path)
-            lt::require(lt::digest_file(info.guest_package_path) == metadata.at("guest_package_sha256").string(),
-                        "record guest package checksum mismatch");
+            assets.push_back({info.guest_package_path, metadata.at("guest_package_sha256").string(),
+                              "record guest package checksum mismatch"});
         lt_device_config cfg{sizeof(cfg), 1, info.base_path, info.state_path, recover};
-        lt_error nested{sizeof(nested), 1, 0, {}};
-        auto status = lt_device_open(&cfg, out, &nested);
-        lt::require(status == LT_OK, nested.message, status);
-        if ((*out)->base_digest != info.base_sha256) {
-            lt_device_close(*out);
-            *out = nullptr;
-            throw lt::Failure(LT_INVALID, "record base integrity pin mismatch");
-        }
+        auto device = lt::open_device_checked(&cfg, observer, opaque, assets);
+        lt::require(device->base_digest == info.base_sha256, "record base integrity pin mismatch");
+        *out = device.release();
     });
 }
 }
