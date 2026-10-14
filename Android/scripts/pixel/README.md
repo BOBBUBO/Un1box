@@ -159,3 +159,30 @@ Stop rechecks the original PID/start/UID/role/boot/selection and records that
 record's dirty marker. Missing/mismatched identity produces unconfirmed Stop
 admission, never a Stop sent to a replacement worker. Owned cleanup still runs.
 No import, normal clean-record admission or lifecycle pass is inferred.
+
+## Single identity and clean subsequent Start
+
+`plan_manifest.build` constructs every stage from the same token, record, output,
+mode and frozen main hash. Before any VM launch use the generated
+`launchCheckedCommand`: the actual CLI checks all stage identities and actual
+source/controller/launcher/APK hashes, requires Root's single-attempt allocation
+and consumes it once. A copied stale admission token is rejected before exec.
+
+The next same-child normal Start is supported by the actual03 native clean Stop
+receipt, not a deleted marker. It uses the ordinary `--record-id` clean-record
+supervisor gate and `coldRecovery=false`, and binds actual initialized state with
+confirmed absent dirty marker. Permission denial is not absence. Historical03
+files are for scoped later retrieval; they cannot prove a current guest scene.
+
+Run generated `readyWatcherCommand` concurrently with diagnosis. It polls only
+that attempt's token through original490, retains exact ready bytes immediately,
+and publishes admission through the original after-Start clock/identity check.
+The Kotlin20s wait and full300s are unchanged. Client completion is bounded by
+original800, preserving10s finish plus10s scoped readback through810; setup time
+is included and no fixed330s cap truncates the measured56s setup plus300s.
+
+The supervisor itself now uses original process ticks, including CLI validation
+and imports, for all gates/watchdog. Worker memory sampling and early-failure
+readback can use the actual pre-Start binding when admission never publishes a
+post-Start binding. Captures remain explicitly unconfirmed and never imply a
+full interval, visible boot, physical Pixel or audible-output pass.
