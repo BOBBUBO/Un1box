@@ -17,6 +17,8 @@
 #include <cerrno>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <optional>
+#include "presentation_lifetime.h"
 
 namespace {
 std::mutex guard;
@@ -31,6 +33,7 @@ lt_frame_info frame = LT_INIT(lt_frame_info);
 lt_pcm_info pcm = LT_INIT(lt_pcm_info);
 lt_board_info board = LT_INIT(lt_board_info);
 uint64_t sequence = 0;
+uint64_t presentation_epoch = 0, surface_request = 0;
 uint64_t presented_frames=0,first_present_ns=0,last_present_ns=0,previous_present_ns=0,max_present_gap_ns=0;
 uint64_t max_present_work_ns=0,window_failures=0,frame_copy_failures=0,surface_generation=0,pcm_failures=0;
 uint64_t present_intervals[6]={};
@@ -74,11 +77,12 @@ std::string result(lt_status status, const lt_error &error) {
     return status == LT_OK ? "" : (error.message[0] ? error.message : "Native operation failed");
 }
 struct Viewport { double left, top, width, height; };
-Viewport viewport(int width, int height) {
-    const double scale = std::min(double(width) / std::max(frame.width, 1u), double(height) / std::max(frame.height, 1u));
-    double w = frame.width * scale, h = frame.height * scale;
+Viewport viewport(int width, int height, const lt_frame_info &source) {
+    const double scale = std::min(double(width) / std::max(source.width, 1u), double(height) / std::max(source.height, 1u));
+    double w = source.width * scale, h = source.height * scale;
     return {(width-w)/2, (height-h)/2, w, h};
 }
+Viewport viewport(int width, int height) { return viewport(width, height, frame); }
 lt_status open_library(const char *root,lt_error *error) {
     if(!root)return LT_INVALID;
     if(library && library_root==root)return LT_OK;
@@ -102,8 +106,16 @@ lt_status open_library(const char *root,lt_error *error) {
     }
     return status;
 }
+using WindowSnapshot = PresentationWindow<ANativeWindow, ANativeWindow_acquire, ANativeWindow_release>;
+using WindowPost = PresentationPost<ANativeWindow, ANativeWindow_unlockAndPost>;
 void present() {
+    uint64_t configured_generation = 0;
     for (;;) {
+        // The snapshot outlives both guarded scopes, so its release is outside
+        // the control mutex even when a stale platform operation returns late.
+        std::optional<WindowSnapshot> snapshot;
+        lt_frame_info source = LT_INIT(lt_frame_info);
+        uint64_t begin = 0;
         {
             std::lock_guard<std::mutex> lock(guard);
             if (runtime) {
@@ -118,43 +130,81 @@ void present() {
                 lt_error error = LT_INIT(lt_error);
                 lt_status status = lt_runtime_copy_frame(runtime, pixels.data(), pixels.size(), &sequence, &frame, &error);
                 if (status == LT_OK && frame.width && frame.height && frame.stride >= frame.width * 4 && frame.bytes <= pixels.size()) {
-                    const auto begin=monotonic_ns();
+                    begin=monotonic_ns();
+                    source=frame;
+                    snapshot.emplace(window, surface_generation, presentation_epoch);
                     frame_sample_pixels=frame_nonzero_rgb_samples=frame_rgb_sample_sum=0;
                     // A fixed 16x16 grid diagnoses the copied guest frame without
                     // another full image pass or claiming every pixel is black.
                     for(uint32_t gy=0;gy<16;++gy)for(uint32_t gx=0;gx<16;++gx) {
-                        const uint32_t x=std::min((gx*2+1)*frame.width/32,frame.width-1);
-                        const uint32_t y=std::min((gy*2+1)*frame.height/32,frame.height-1);
-                        const uint8_t *sample=pixels.data()+y*frame.stride+x*4;
+                        const uint32_t x=std::min((gx*2+1)*source.width/32,source.width-1);
+                        const uint32_t y=std::min((gy*2+1)*source.height/32,source.height-1);
+                        const uint8_t *sample=pixels.data()+y*source.stride+x*4;
                         const uint32_t rgb=uint32_t(sample[0])+sample[1]+sample[2];
                         ++frame_sample_pixels;frame_nonzero_rgb_samples+=rgb!=0;frame_rgb_sample_sum+=rgb;
                     }
-                    ANativeWindow_Buffer target;
-                    const int lock_code=ANativeWindow_lock(window, &target, nullptr);
-                    if (lock_code == 0) {
-                        last_buffer_format=target.format;last_buffer_width=target.width;last_buffer_height=target.height;last_buffer_stride=target.stride;
-                        if(!target.bits || target.width<=0 || target.height<=0 || target.stride<target.width ||
-                            (target.format!=WINDOW_FORMAT_RGBA_8888 && target.format!=WINDOW_FORMAT_RGBX_8888)) {
-                            ++invalid_buffers;++window_failures;window_error("buffer layout",-1);
-                            const int post_code=ANativeWindow_unlockAndPost(window);
-                            if(post_code){last_post_error=post_code;if(!first_post_error)first_post_error=post_code;window_error("post invalid buffer",post_code);}
-                            sequence=0;
-                        } else {
-                        const auto view = viewport(target.width, target.height);
-                        for (int y=0; y<target.height; ++y) {
-                            auto *row = static_cast<uint32_t *>(target.bits) + y * target.stride;
-                            std::fill(row, row+target.width, 0xff000000u);
-                            if (y<view.top || y>=view.top+view.height) continue;
-                            uint32_t sy=std::min(uint32_t((y-view.top)*frame.height/view.height), frame.height-1);
-                            for (int x=int(view.left); x<view.left+view.width && x<target.width; ++x) {
-                                uint32_t sx=std::min(uint32_t((x-view.left)*frame.width/view.width), frame.width-1);
-                                const uint8_t *p=pixels.data()+sy*frame.stride+sx*4;
-                                row[x] = uint32_t(p[2]) | (uint32_t(p[1])<<8) | (uint32_t(p[0])<<16) | 0xff000000u;
-                            }
+                } else if(status!=LT_AGAIN) ++frame_copy_failures;
+            }
+        }
+        if (snapshot) {
+            ANativeWindow *target_window=snapshot->get();
+            int geometry_code=0, geometry_width=0, geometry_height=0, geometry_format=0;
+            const bool configure=configured_generation!=snapshot->generation();
+            if(configure) {
+                // Only this presenter configures or draws the window. Binder
+                // setters only exchange the owning reference under guard.
+                geometry_width=ANativeWindow_getWidth(target_window);
+                geometry_height=ANativeWindow_getHeight(target_window);
+                geometry_format=ANativeWindow_getFormat(target_window);
+                geometry_code=ANativeWindow_setBuffersGeometry(target_window,0,0,WINDOW_FORMAT_RGBA_8888);
+                configured_generation=snapshot->generation();
+            }
+            ANativeWindow_Buffer target{};
+            const int lock_code=ANativeWindow_lock(target_window,&target,nullptr);
+            int post_code=0;
+            bool valid_buffer=false;
+            if(lock_code==0) {
+                WindowPost post(target_window);
+                valid_buffer=target.bits && target.width>0 && target.height>0 && target.stride>=target.width &&
+                    (target.format==WINDOW_FORMAT_RGBA_8888 || target.format==WINDOW_FORMAT_RGBX_8888);
+                if(valid_buffer) {
+                    const auto view=viewport(target.width,target.height,source);
+                    // This thread is the sole pixels/frame writer and never
+                    // resizes pixels. Capture reads under guard. Those concurrent
+                    // reads are safe; the next write waits until this iteration
+                    // and any guarded capture have finished. No runtime escapes.
+                    for(int y=0;y<target.height;++y) {
+                        auto *row=static_cast<uint32_t *>(target.bits)+y*target.stride;
+                        std::fill(row,row+target.width,0xff000000u);
+                        if(y<view.top || y>=view.top+view.height)continue;
+                        uint32_t sy=std::min(uint32_t((y-view.top)*source.height/view.height),source.height-1);
+                        for(int x=int(view.left);x<view.left+view.width && x<target.width;++x) {
+                            uint32_t sx=std::min(uint32_t((x-view.left)*source.width/view.width),source.width-1);
+                            const uint8_t *p=pixels.data()+sy*source.stride+sx*4;
+                            row[x]=uint32_t(p[2])|(uint32_t(p[1])<<8)|(uint32_t(p[0])<<16)|0xff000000u;
                         }
-                        const int post_code=ANativeWindow_unlockAndPost(window);
-                        if(post_code==0) {
-                            const auto now=monotonic_ns();++presented_frames;
+                    }
+                }
+                // Exactly one post for every successful lock, including invalid
+                // layouts and a window detached while the call was in flight.
+                post_code=post.finish();
+            }
+            const auto now=monotonic_ns();
+            {
+                std::lock_guard<std::mutex> lock(guard);
+                if(snapshot->current(window,surface_generation,presentation_epoch)) {
+                    if(configure) {
+                        last_buffer_width=geometry_width;last_buffer_height=geometry_height;last_buffer_format=geometry_format;
+                        last_geometry_error=geometry_code;
+                        if(geometry_code){++geometry_failures;window_error("geometry",geometry_code);}
+                    }
+                    if(lock_code==0) {
+                        last_buffer_format=target.format;last_buffer_width=target.width;last_buffer_height=target.height;last_buffer_stride=target.stride;
+                        if(!valid_buffer) {
+                            ++invalid_buffers;++window_failures;window_error("buffer layout",-1);sequence=0;
+                            if(post_code){last_post_error=post_code;if(!first_post_error)first_post_error=post_code;window_error("post invalid buffer",post_code);}
+                        } else if(post_code==0) {
+                            ++presented_frames;
                             if(!first_present_ns)first_present_ns=now;
                             if(previous_present_ns) {
                                 const auto gap=now-previous_present_ns;max_present_gap_ns=std::max(max_present_gap_ns,gap);
@@ -163,11 +213,11 @@ void present() {
                             }
                             last_present_ns=previous_present_ns=now;max_present_work_ns=std::max(max_present_work_ns,now-begin);
                         } else {++window_failures;sequence=0;last_post_error=post_code;if(!first_post_error)first_post_error=post_code;window_error("post",post_code);}
-                        }
                     } else {++window_failures;sequence=0;last_lock_error=lock_code;if(!first_lock_error)first_lock_error=lock_code;window_error("lock",lock_code);}
-                } else if(status!=LT_AGAIN) ++frame_copy_failures;
+                }
             }
         }
+        snapshot.reset(); // Platform release is outside guard, including detach.
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
@@ -326,25 +376,37 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     env->SetObjectArrayElement(arr,7,string(env,debug_touch_trace_configured?"1":"0"));return arr;
 }
 JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env,jobject,jobject surface) {
-    std::lock_guard<std::mutex> lock(guard);
-    if(window) ANativeWindow_release(window);
-    window=surface?ANativeWindow_fromSurface(env,surface):nullptr;
-    ++surface_generation;previous_present_ns=0;
-    if(window) {
-        last_buffer_width=ANativeWindow_getWidth(window);last_buffer_height=ANativeWindow_getHeight(window);last_buffer_format=ANativeWindow_getFormat(window);
-        last_geometry_error=ANativeWindow_setBuffersGeometry(window,0,0,WINDOW_FORMAT_RGBA_8888);
-        if(last_geometry_error){++geometry_failures;window_error("geometry",last_geometry_error);}
-        sequence=0;
+    uint64_t request;
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        request=++surface_request;
     }
+    // Conversion may enter platform code. A later clear/attach wins even if
+    // this earlier conversion takes longer to return.
+    ANativeWindow *incoming=surface?ANativeWindow_fromSurface(env,surface):nullptr;
+    ANativeWindow *retired=nullptr;
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        if(request==surface_request) {
+            retired=window;window=incoming;incoming=nullptr;
+            ++surface_generation;++presentation_epoch;previous_present_ns=0;
+            if(window)sequence=0; // Replay the latest cache on a replacement.
+        }
+    }
+    if(retired)ANativeWindow_release(retired);
+    if(incoming)ANativeWindow_release(incoming);
 }
 JNI(pause) jstring JNICALL Java_org_lighttouch_android_Native_pause(JNIEnv *env,jobject,jboolean paused) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);
-    previous_present_ns=0;
+    // An old in-flight failure cannot rewind the new epoch's cursor. Replay
+    // the cache here so Resume does not depend on a newer guest repaint.
+    ++presentation_epoch;previous_present_ns=0;sequence=0;
     if(starting){startup_pause_requested=paused;return string(env,"");}
     return string(env,runtime?result(lt_runtime_pause(runtime,paused,&error),error):"No active session");
 }
 JNI(stop) jstring JNICALL Java_org_lighttouch_android_Native_stop(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);
+    ++presentation_epoch;previous_present_ns=0;
     if(starting)startup_stop_requested=true;
     return string(env,runtime?result(lt_runtime_request_shutdown(runtime,&error),error):"");
 }
