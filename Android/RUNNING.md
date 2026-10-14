@@ -7,13 +7,13 @@ a Mac, root, a stock IPSW or an Apple SDK.
 
 ## Current artifact and compatibility
 
-Status recorded on 2026-10-14 for candidate 24:
+Status recorded on 2026-10-14 for candidate 25:
 
 | Component | Identity |
 | --- | --- |
-| Android and Portable source | `00cd69e93af493675422b08519c7d9dbd86341a8` |
+| Android and Portable source | `be428ddd18bcf76fea6776258c2e80d867f0eefa` |
 | QEMU engine | `259e4ad31702f4927ed8d06a06b64219121bc0a0` |
-| Main APK SHA256 | `b644c2d7a1e743522a574111c76a4870eb7ddacec150a8f69de8df8b52be0be5` |
+| Main APK SHA256 | `ddf8ea5b0066ae5c3a432d4e663436f251b60be42462fae8072177619a7d66c3` |
 | Android package | `org.lighttouch.android` |
 | Packaged host ABIs | `arm64-v8a`, `x86_64`; no 32-bit Android host claim |
 | Android versions | API 29 minimum; compiled/targeted against API 35 |
@@ -24,7 +24,7 @@ Android version, GPU driver or device has passed guest acceptance.
 
 | Environment | Actual coverage and limits |
 | --- | --- |
-| Poco F3, ARM64, Android 16/API 36,4 KiB pages, Adreno 650 | Candidate 24 reached an inspected Lock Screen and touch-unlocked Home. Its latest Stop was unconfirmed, retained dirty state and produced no terminal receipt. Current24 clean shutdown, persistence and complete lifecycle/media/input acceptance remain open. Historical 21b/23 clean Stop and persistence results belong to those artifacts. |
+| Poco F3, ARM64, Android 16/API 36,4 KiB pages, Adreno 650 | Candidate 25 has compiled/static checks; its guest qualification is pending. Historical candidate 24 reached an inspected Lock Screen and touch-unlocked Home, but its latest Stop was unconfirmed, retained dirty state and produced no terminal receipt. Historical 21b/23 clean Stop and persistence results belong to those artifacts. |
 | x86_64 Android emulators,4 KiB/16 KiB pages | APK/library packaging and selected app/provider loading checks passed. Complete current guest boot, input, audio and clean halt qualification remains open. Static16 KiB ELF/ZIP alignment is not guest execution proof. |
 | Physical Pixel 8/9/10 and other devices | Broad compatibility is intended. Pixel 8/9 are untested; an older 21b Pixel 10 demo showed logo/flicker/black behavior. Physical Pixel 10 remains unqualified; emulator profiles do not qualify Tensor hardware or its GPU. |
 | Prepared n81 route | Native kboot/NAND/NOR/ARMv7 routing exists. Supplemental Linux/Android guest/GLES2/input qualification remains open; this does not expand the n72 stock-preparation coverage. |
@@ -52,11 +52,12 @@ adb -s "$LT_DEVICE_SERIAL" install -r "$LT_MAIN_APK"
 adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
 ```
 
-The test APK is optional instrumentation, not a runtime dependency. Candidate 24's
-original test APK and the later 24b test-only build are different artifacts. 24b
-keeps the same main/native inputs but changes the session-setup helper; select
-the matching test receipt and source overlay explicitly. Do not run a historical
-guest-control test against an arbitrary newer main APK. See the test guidance in
+The test APK is optional instrumentation, not a runtime dependency. Use candidate
+25's matching test artifact and receipt. Its Pixel diagnosis helper is copied from
+the same source revision into the test source set; it is not an external revision
+overlay. Historical 24/24b test artifacts have different provenance and are not
+substitutes. Do not run a historical guest-control test against an arbitrary newer
+main APK. See the test guidance in
 [BUILD-AND-RUN.md](BUILD-AND-RUN.md).
 
 ## Import a prepared n72 base
@@ -125,7 +126,7 @@ imports a new record; if import fails, the completed output is retained for
 The Linux CLI uses the same native recipe. Its input layout, build commands,
 checksum checks and cancellation limits are documented in
 [native preparation](../Portable/firmware/README.md). Actual baseline preparation
-and historical boots are scoped evidence, not a fresh24 prepare/boot acceptance
+and historical boots are scoped evidence, not a fresh25 prepare/boot acceptance
 claim or wider board coverage.
 
 ## Controls, stopping and retained state
@@ -153,13 +154,33 @@ new worker and inspect the same change. Candidate 24's latest unconfirmed Stop
 does not satisfy that condition. Retained-state history and the nondestructive
 comparison limits are explained in [STATE-CONTROL.md](STATE-CONTROL.md).
 
+## Performance observations
+
+Open **Performance** to show cached observations for the current worker. Sampling
+is requested only while the panel is open and the activity is foregrounded; worker
+samples are limited to one every two seconds. Allow the CPU reading to warm up and
+check each reading's age. Missing measurements remain unavailable.
+
+**Emulator CPU** measures the worker process, with 100% meaning one CPU core; it
+can exceed 100% when multiple threads run. It includes emulator, audio, rendering,
+Binder and sampling work. **Emulator memory** is proportional set size (PSS), not
+guest RAM or a complete GPU-memory measurement. **Android RAM** is available/total
+device memory. Android whole-device CPU and iOS guest CPU/RAM are unavailable in
+this artifact. These observations do not establish a performance bottleneck.
+
+Candidate 25 changes display ownership and touch mapping, and avoids empty PCM
+polling work. Those source changes and static tests do not prove a speedup or fix
+an observed device issue. A resized viewport can cancel an in-flight gesture;
+begin a fresh gesture after the view settles rather than continuing an old contact.
+
 ## Building and source material
 
 [BUILD-AND-RUN.md](BUILD-AND-RUN.md) documents pinned host tools, source exports,
 engine/crypto/renderer inputs and builds. Its candidate 20/22 recipes are historical;
-do not silently label their binaries or pins as 24. Reproducing 24 requires the app and
+do not silently label their binaries or pins as 25. Reproducing 25 requires the app and
 engine revisions above, the actual matching per-ABI input manifests and build
-records, and the declared test overlay if building that test APK. Native exports
+records, and the declared same-revision test-source staging if building that test
+APK. Native exports
 must retain all `Portable`, `Packages/FirmwareKit/Sources/CActivation`, Android JNI
 and helper/header inputs, the tracked firmware catalog, and root README/LICENSE.
 Host compilation does not require private guest firmware, ROMs or Apple SDKs.
