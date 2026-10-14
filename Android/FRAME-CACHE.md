@@ -23,8 +23,11 @@ it never preallocates the64MiB integrity limit. Growth constructs an exact-sized
 replacement vector and swaps under the guard instead of resize's geometric
 capacity retention; observable replacement capacity must not exceed validated
 required bytes. Old storage is released there before the next window snapshot.
-Allocator bookkeeping/size-class overhead is not a measured RSS bound. Supported current panels use
-614400/2457600/3145728 bytes, not a promise that every later engine has those sizes.
+Allocator bookkeeping/size-class overhead is not a measured RSS bound.
+Both old and replacement vectors exist during growth until the swap scope ends;
+the per-vector limit does not claim a64MiB total process/temporary peak limit.
+Supported current panels use614400/2457600/3145728 bytes, not a promise that every
+later engine has those sizes.
 
 Only the presenter writes/grows frame storage under the JNI guard at iteration
 start; capture reads under that guard. During outside-guard scale/window-lock/post,
@@ -41,5 +44,9 @@ successive non-power-of-two growth without geometric capacity, AGAIN and
 bounded failure without sequence advance, invalid/oversize metadata, and a
 blocked old window with captured cache/new generation/capture before later growth.
 These source tests use fake metadata/copy callbacks and real synchronization;
-they do not produce guest rendering acceptance. Compilation/sanitizers/two-ABI
-JNI syntax and target measurements await Root allocation.
+they do not produce guest rendering acceptance. Host validation of source
+604c6f053a2c2a8faaf51c127811df4e5b54d85f passed all seven scenarios with
+Clang -O2/-g/-Werror and ASan/UBSan, including leak checks, in1.723s. Receipt
+`builds/product/frame-cache-validation-01/receipt.json` records actual commands
+and source/header/tool hashes (SHA256dc71354387d54f1599e0b2718b6f20da51c058be0813a69164099ff380170e1c).
+Two-ABI JNI syntax, matching runtime link and target measurements remain pending.
