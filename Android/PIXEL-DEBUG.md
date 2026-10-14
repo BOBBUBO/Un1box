@@ -49,10 +49,20 @@ exclusive emulator/heavy allocation with 4 cores, 4096MiB, expected16384 pages,
 and a fresh library. Its fixed240-second Android UI gate,840-second Stop and
 900-second disposal bounds apply to a new attempt. Readiness is not guest
 acceptance. Reserve `emulator-5554`; the supervisor rejects an occupied target.
-Preserve every failed receipt and userdata. Select the packaged x86 ANGLE provider
-explicitly; its prior raw GLES probe passes do not count as guest Home/render
-qualification. Check the new attempt's actual provider owner/renderer/page-size
-results rather than importing prior evidence.
+Preserve every failed receipt and userdata. The current matched diagnostic defaults
+to `pixelGraphicsProvider=platform`, exercising Android's installed EGL/GLES stack
+as the phone application does. Use `angle-gl` only as an explicit separate fallback.
+Record requested and observed provider, fixed selection, renderer and page size;
+selection failure or drift must fail rather than silently change providers. Earlier
+ANGLE success remains scoped to that producer and does not qualify platform or
+physical Pixel graphics. The host and matched runner contract is documented in
+[scripts/pixel/README.md](scripts/pixel/README.md).
+
+For current tests, retain the running Android instance and attach a separately
+bounded guest attempt; do not restart Android between guest tests or interrupt a
+user-owned interactive session. Switching the inner provider requires a fresh
+LightTouch worker, not an Android restart. Use a genuine current clean-shutdown
+receipt or explicit dirty-state recovery for that worker's admission.
 
 This supervisor currently launches `-gpu swiftshader` and `-no-audio`. SwiftShader
 is a software graphics backend; KVM accelerates the Android x86_64 machine, while
@@ -60,6 +70,11 @@ the iOS guest CPU still uses QEMU TCG. The no-audio attempt can collect Android 
 counters but cannot establish physical speaker output. An allocated follow-up
 audio run needs an explicitly reviewed launch change enabling host audio before
 an audible-playback gate can pass. These limitations must appear in the receipt.
+The current Linux VM exposes no virtio 3D capabilities and its EGL renderer is
+llvmpipe. `-gpu host` is an alternate software driver route on this machine and
+cannot reproduce a Tensor GPU. Platform mode may lack required GLES1 extensions;
+retain its precise failure and keep explicit ANGLE fallback evidence separate.
+A virtual GLES version advertisement alone does not qualify guest rendering.
 
 Rehash and install the frozen main APK and a compatible test-only runner. Import
 verified compact baseline/ROM/package into a fresh record, preserve the base
