@@ -112,6 +112,17 @@ void pending_release_is_balanced_before_handoff_or_detach_and_completed_release_
     assert(!state.needsOwnedRelease());assert(state.detach(a));state.claim();
     assert(!guest_contact_held && power_held && !state.reportsRejectedInput(72));
 }
+void failed_release_keeps_old_obligation_retryable_without_minting_new_owner() {
+    DisplayLease state;const auto a=state.claim();state.admittedContact(7,0);
+    state.submittedInput(81,a,true);state.inputCompleted(81); // DOWN accepted; ledger is still held.
+    const bool cancelled=false; // Production error branch: detach only, do not retire/mint.
+    if(cancelled){state.contactsReleased();state.release(a);}else assert(state.detach(a));
+    assert(state.owns(a) && state.contactsHeld() && state.needsOwnedRelease());
+    state.contactsReleased();assert(state.release(a));const auto b=state.claim();
+    assert(b==a+1 && !state.needsOwnedRelease()); // No hidden failed-claim token mint.
+    state.admittedContact(7,0);state.admittedContact(7,2);state.submittedInput(82,b,true);
+    assert(state.detach(b));assert(state.pendingOwnedRelease() && state.needsOwnedRelease());
+}
 }
 int main() {
     obsolete_conversion_and_release();retired_controls_and_duplicate_callbacks();
@@ -121,5 +132,6 @@ int main() {
     admitted_cancel_releases_only_its_id_and_last_cancel_preserves_new_pulse();
     delayed_rejection_cannot_release_new_owner_but_current_rejected_up_can();
     pending_release_is_balanced_before_handoff_or_detach_and_completed_release_is_not_cancelled();
+    failed_release_keeps_old_obligation_retryable_without_minting_new_owner();
     std::cout<<"PASS display lease stale controls/conversion, converted refs, contact handoff and empty callback pulse preservation\n";
 }
