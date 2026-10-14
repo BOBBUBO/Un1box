@@ -32,6 +32,7 @@ def main():
             if line.startswith('screenshot sequence='):
                 values = dict(re.findall(r'(\w+)=([^ ]+)', line))
                 if int(values.get('observed_monotonic_ns', 0)) >= started_ns:
+                    values['path'] = line.split(' path=', 1)[1]
                     receipt = dict(values, exact_log_line=line)
                     break
         if receipt:
@@ -45,6 +46,9 @@ def main():
     target = args.output_dir / 'native.bmp'
     shutil.copyfile(source, target)
     receipt['copy_finished_monotonic_ns'] = time.monotonic_ns()
+    receipt['frame_age_at_capture_ns'] = int(receipt['observed_monotonic_ns']) - int(receipt['frame_monotonic_ns'])
+    receipt['diagnostics_age_at_capture_ns'] = (int(receipt['observed_monotonic_ns']) -
+                                               int(receipt['diagnostics_monotonic_ns']))
     receipt['sha256'] = hashlib.sha256(target.read_bytes()).hexdigest()
     receipt['clock'] = 'host CLOCK_MONOTONIC; separate frame-source and worker-diagnostic observations'
     receipt['display'] = os.environ.get('DISPLAY')
