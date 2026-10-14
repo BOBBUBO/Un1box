@@ -38,13 +38,23 @@ class GuestQmpSnapshotTest {
                 AcceptanceBinding(context, Intent(context, EngineService::class.java), IEngine.Stub::asInterface).use { binding ->
                     val worker = binding.get()
                     val initial = worker.status()
-                    assertFalse("Root must dispose any consumed worker first", initial.getBoolean("sessionStarted"))
-                    assertEquals("stopped", initial.getString("state"))
                     assertEquals(Process.myUid(), initial.getInt("uid")); assertNotEquals(Process.myPid(), initial.getInt("pid"))
-                    assertEquals("", worker.debugArmQmp())
-                    val record = arguments.getString("recordId") ?: requireNotNull(worker.records().firstOrNull { it.getBoolean("selected") }?.getString("id"))
-                    scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
-                    val started = worker.start(record)
+                    val snapshotOnly = arguments.getString("snapshotOnly") == "true"
+                    val record = if (snapshotOnly) arguments.getString("recordId") else arguments.getString("recordId")
+                        ?: requireNotNull(worker.records().firstOrNull { it.getBoolean("selected") }?.getString("id"))
+                    val started = if (snapshotOnly) {
+                        assertTrue("Existing enabled session required; use --no-restart when injecting instrumentation", initial.getBoolean("sessionStarted"))
+                        assertFalse("Existing debug endpoint required", initial.getString("debugQmpPath").isNullOrEmpty())
+                        if (arguments.getString("resumeExisting") == "true") worker.pause(false)
+                        worker.status()
+                    } else {
+                        assertFalse("Root must dispose any consumed worker first", initial.getBoolean("sessionStarted"))
+                        assertEquals("stopped", initial.getString("state"))
+                        assertEquals("", worker.debugArmQmp())
+                        scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
+                        worker.start(requireNotNull(record))
+                    }
+                    receipt.put("snapshotOnly", snapshotOnly).put("holdSeconds", arguments.getString("qmpHoldSeconds", "0").toLong())
                     assertEquals(started.toString(), "", started.getString("error"))
                     val endpoint = File(requireNotNull(started.getString("debugQmpPath")))
                     val deadline = SystemClock.elapsedRealtime() + 120_000
@@ -53,10 +63,10 @@ class GuestQmpSnapshotTest {
                     }
                     assertTrue("Private QMP endpoint unavailable; inspect engineLog", endpoint.exists())
                     Thread.sleep(arguments.getString("qmpSettleSeconds", "30").toLong().coerceIn(0, 180) * 1000)
-                    repeat(arguments.getString("qmpSamples", "3").toInt().coerceIn(1, 12)) { index ->
+                    fun capture(index: Int, phase: String) {
                         val before = worker.status()
                         val captured = worker.debugQmpSnapshot()
-                        val item = JSONObject().put("index", index).put("error", captured.getString("error"))
+                        val item = JSONObject().put("index", index).put("phase", phase).put("error", captured.getString("error"))
                             .put("path", captured.getString("path")).put("engineState", before.getString("state"))
                             .put("engineLog", before.getString("engineLog")).put("hostElapsedMs", SystemClock.elapsedRealtime())
                         snapshots.put(item); File(evidence, "snapshots.json").writeText(snapshots.toString(2))
@@ -70,10 +80,22 @@ class GuestQmpSnapshotTest {
                         item.put("status", responses.getValue("lt-status").getJSONObject("return"))
                             .put("registers", responses.getValue("lt-registers").getString("return"))
                         File(evidence, "snapshots.json").writeText(snapshots.toString(2))
-                        Thread.sleep(3000)
                     }
+                    val count = arguments.getString("qmpSamples", "3").toInt().coerceIn(1, 12)
+                    repeat(count) { capture(it, "snapshot"); Thread.sleep(3000) }
                     receipt.put("recordId", record).put("diagnosisCaptured", true).put("workerPid", initial.getInt("pid"))
                         .put("appUid", Process.myUid()).put("privateEndpoint", endpoint.absolutePath).put("snapshots", snapshots)
+                    val holdMs = arguments.getString("qmpHoldSeconds", "0").toLong().coerceIn(0, 3600) * 1000
+                    receipt.put("stage", if (holdMs > 0) "holding-foreground" else "complete")
+                    File(evidence, "result.json").writeText(receipt.toString(2))
+                    val holdDeadline = SystemClock.elapsedRealtime() + holdMs
+                    var index = count
+                    while (SystemClock.elapsedRealtime() < holdDeadline) {
+                        Thread.sleep(minOf(10_000, (holdDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
+                        capture(index++, "foreground-hold")
+                        File(evidence, "result.json").writeText(receipt.toString(2))
+                    }
+                    receipt.put("stage", "complete").put("normalInstrumentationMayForceStopOnFinish", true)
                 }
             }
         } catch (failure: Throwable) { receipt.put("failure", failure.toString()); throw failure }

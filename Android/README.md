@@ -300,3 +300,14 @@ replacement now releases the previous CPU producer deterministically. Window
 observations retain precise geometry/lock/post codes, format/size/stride and the
 first-error host timestamp; at most8 error lines per worker enter its native log.
 Target execution must confirm recovery; source corrections alone prove no frames.
+`qmpHoldSeconds` (0default, atmost3600) keeps the production activity resumed
+and instrumentation active after initial snapshots, recording additional
+read-only register snapshots every10seconds. `snapshotOnly=true` reuses an
+existing already-enabled worker; `resumeExisting=true` explicitly resumes it.
+No debug test stops/disposes the worker itself. Normal instrumentation completion
+can force-stop the package: observed reason10 '[FORCE STOP] ...finished inst'.
+On AndroidS+ `am instrument --no-restart` prevents restart/finished-instrumentation
+force-stop ([AOSP Android16 policy](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-16.0.0_r2/services/core/java/com/android/server/am/ActivityManagerService.java));
+the target main process must already run. ActivityScenario closure still invokes
+background pause, so reopen and Resume for continued foreground use. Exit reason
+and trace availability remain actual platform evidence, not a service-failure claim.
