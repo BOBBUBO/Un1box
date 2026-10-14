@@ -21,10 +21,18 @@ class GuestWakeDiagnosisTest {
     @Test fun samplePowerAgentAndFramesAroundBalancedWakeButtons() {
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue("Explicit wake diagnosis required", arguments.getString("diagnoseGuestWake") == "true")
+        val holdArgument = arguments.getString("wakePulseHoldMs")
+        val pulseHoldMs = if (holdArgument == null) 150 else requireNotNull(holdArgument.toIntOrNull()) {
+            "wakePulseHoldMs must be an integer from 150 through 500"
+        }
+        require(pulseHoldMs in 150..500) { "wakePulseHoldMs must be from 150 through 500" }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val evidence = File(context.filesDir, "wake-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
         val receipt = JSONObject().put("diagnosisCaptured", false).put("guestBootProven", false)
             .put("visibleGuestVerified", false).put("audiblePlaybackVerified", false)
+            .put("requestedHostPulseHoldMs", pulseHoldMs)
+            .put("hostTimestampClock", "Android elapsedRealtime (BOOTTIME)")
+            .put("guestVirtualHoldMeasured", false)
         val timeline = JSONArray()
         @Suppress("DEPRECATION")
         fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
@@ -64,7 +72,11 @@ class GuestWakeDiagnosisTest {
                     fun pulse(button: Int, label: String) {
                         val item = JSONObject().put("button", button).put("label", label).put("downHostElapsedMs", SystemClock.elapsedRealtime())
                         timeline.put(item); persist()
-                        try { worker.button(button, true); Thread.sleep(150) }
+                        try {
+                            worker.button(button, true)
+                            item.put("downCallReturnedHostElapsedMs", SystemClock.elapsedRealtime()); persist()
+                            Thread.sleep(pulseHoldMs.toLong())
+                        }
                         finally { worker.button(button, false); item.put("upHostElapsedMs", SystemClock.elapsedRealtime()); persist() }
                         Thread.sleep(2000)
                         sample(label)
