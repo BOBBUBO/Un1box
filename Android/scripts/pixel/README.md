@@ -211,6 +211,38 @@ are retained before parsing in `pre-start-device-clock.json` and
 repeated freshly for full300s admission. A denied app-context proc read cannot
 silently become a clock value, and no observation deadline is extended.
 
+## Persistent Android and bounded guest attachment
+
+User authorization now requires keeping the Android AVD running between guest
+tests. `persistent_avd.py --plan /private/persistent-plan.json` requires a distinct
+Root persistent allocation and retains its foreground handle. It writes the
+actual wrapper/QEMU PID-start and Android boot binding to `owner.json`. Only an
+explicit `REQUEST-STOP-AVD` file requests Android shutdown; guest completion,
+failure and its900s deadline do not stop the AVD.
+
+The existing supervisor accepts `--attach-avd-owner /private/owner.json`. Each
+attached guest attempt still gets its own immutable original process clock,
+actual owner/boot binding, fresh unused worker checks,240/810/840/900 bounds and
+full300s admission. Normal cleanup uses the existing scoped guest Stop, retires
+its logcat/monitor/watchdog, and leaves Android idle. Native clean Stop terminates
+that worker; a subsequent guest must use a fresh unused worker. A hard fallback
+can kill only the independently checked original app worker, preserves its dirty
+state and never implies clean shutdown. It cannot signal the AVD/replacement PID.
+
+For LAN viewing, verify the actual emulator adbd listener/protocol at host
+loopback5555 after launch. Tunnel it through SSH instead of exposing the shared
+ADB server5037. Example on the viewer's computer, using host192.168.1.45:
+
+```sh
+ssh -N -L15555:127.0.0.1:5555 blake@192.168.1.45
+adb connect 127.0.0.1:15555
+scrcpy -s 127.0.0.1:15555 --no-audio --no-control
+```
+
+Use read-only viewing while automatic measurements run; coordinate interactive
+control after guest measurement ends. Endpoint availability/authentication must
+be verified on the actual running AVD before reporting access as ready.
+
 Parent SIGTERM/SIGHUP handlers perform no file IO: they retain signal/time fields
 in memory and unwind into the existing cleanup. Cleanup records
 `host-signals.json`, attempts the existing scoped Stop, then disposes owned

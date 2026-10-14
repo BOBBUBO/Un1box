@@ -111,6 +111,13 @@ def bind(adb, attempt, token, record, pins, run=subprocess.run, now=time.monoton
         'bootId':first('/proc/sys/kernel/random/boot_id',True).strip(),'recordId':record,'attemptToken':token,
         'originNs':origin,'originToken':hashlib.sha256(context_raw).hexdigest()}
     validate_binding(binding)
+    attached=out/'attached-owner.json'
+    if attached.exists():
+        owner=json.loads(attached.read_text())
+        if owner['originToken']!=hashlib.sha256(context_raw).hexdigest() or owner['owner']['bootId']!=binding['bootId']:
+            raise ValueError('Persistent owner/original guest clock/boot differs')
+        from persistent_avd import load_owner
+        load_owner(owner['ownerReceipt'],context['avd'],adb,run=run)
     capture=Capture(adb,binding,out/'recovery-preflight',now=now,run=run)
     capture.deadline=deadline
     def read(path, cap=4*1024*1024):

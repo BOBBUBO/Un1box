@@ -78,6 +78,7 @@ def bounded_capture(adb, binding, output, now=time.monotonic_ns, process_factory
 
 
 PIXEL_MEMORY_MB = None
+ATTACH_OWNER_RECEIPT = None
 
 
 def pixel_options(argv):
@@ -87,6 +88,13 @@ def pixel_options(argv):
     if args.pixel_memory_mb is not None and any(x == "--memory-mb" or x.startswith("--memory-mb=") for x in remaining):
         raise ValueError("Use only one memory allocation flag")
     return args.pixel_memory_mb, remaining
+
+
+def attach_options(argv):
+    parser=argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--attach-avd-owner')
+    args,remaining=parser.parse_known_args(argv)
+    return args.attach_avd_owner,remaining
 
 
 class PixelAttempt(base.Attempt):
@@ -115,7 +123,11 @@ class PixelAttempt(base.Attempt):
         host_lifecycle.install(self.pixel_host_signals)
 
     def launch(self):
-        super().launch()
+        if ATTACH_OWNER_RECEIPT:
+            import persistent_avd
+            persistent_avd.attach_attempt(self,ATTACH_OWNER_RECEIPT)
+        else:
+            super().launch()
         self.memory_phase("launch")
         ticks = memory_monitor.process_ticks(self.avd.pid)
         if ticks is None:
@@ -265,7 +277,11 @@ class PixelAttempt(base.Attempt):
                         "reason": "Guest observation did not acknowledge bounded cleanup barrier"})
             finally:
                 try:
-                    super().cleanup()
+                    if getattr(self,'attached_owner',None) is not None:
+                        import persistent_avd
+                        persistent_avd.cleanup_attempt(self)
+                    else:
+                        super().cleanup()
                 finally:
                     try:
                         self.memory_phase("cleanup-after-owned-disposal")
@@ -274,6 +290,7 @@ class PixelAttempt(base.Attempt):
 
 
 if __name__ == "__main__":
+    ATTACH_OWNER_RECEIPT, sys.argv[1:] = attach_options(sys.argv[1:])
     PIXEL_MEMORY_MB, sys.argv[1:] = pixel_options(sys.argv[1:])
     base.Attempt = PixelAttempt
     raise SystemExit(base.main())
