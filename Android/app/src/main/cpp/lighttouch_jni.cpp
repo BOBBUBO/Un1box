@@ -27,6 +27,7 @@ lt_pcm_info pcm = LT_INIT(lt_pcm_info);
 lt_board_info board = LT_INIT(lt_board_info);
 uint64_t sequence = 0;
 bool presenter_started = false;
+bool starting = false, startup_stop_requested = false;
 uint64_t last_rejected_input = 0;
 std::string diagnostic;
 struct Utf {
@@ -155,26 +156,48 @@ JNI(select) jstring JNICALL Java_org_lighttouch_android_Native_select(JNIEnv *en
     return string(env,result(status,error));
 }
 JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,jobject,jstring root,jstring id) {
-    std::lock_guard<std::mutex> lock(guard);std::lock_guard<std::mutex> storage_lock(library_guard);
-    if(runtime)return string(env,"Worker already consumed; stop and start a fresh worker");
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        if(runtime || starting)return string(env,"Worker already consumed; stop and start a fresh worker");
+        starting=true;diagnostic.clear();
+    }
+    // Integrity admission can hash many gigabytes. It must not hold the frame,
+    // status, input or lifecycle mutex while the library performs that work.
+    std::lock_guard<std::mutex> storage_lock(library_guard);
     Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
+    lt_device *prepared_device=nullptr;lt_runtime *prepared_runtime=nullptr;
+    lt_board_info prepared_board=LT_INIT(lt_board_info);
     auto status=open_library(path.value,&error);
     if(status==LT_OK)status=lt_library_select(library,record.value,&error);
     lt_record_info selected=LT_INIT(lt_record_info);
     if(status==LT_OK)status=lt_library_selected(library,&selected,&error);
-    if(status==LT_OK)status=lt_library_device_open(library,record.value,1,&device,&error);
-    if(status==LT_OK)status=lt_engine_board("libqemu-arm.so",selected.board,&board,&error);
-    if(status!=LT_OK){diagnostic=result(status,error);return string(env,diagnostic);}
+    if(status==LT_OK)status=lt_library_device_open(library,record.value,1,&prepared_device,&error);
+    if(status==LT_OK)status=lt_engine_board("libqemu-arm.so",selected.board,&prepared_board,&error);
     std::string serial=std::string(selected.state_path)+"/guest-serial.log";
     lt_runtime_config engine=LT_INIT(lt_runtime_config);
-    engine.engine_library="libqemu-arm.so";engine.device=device;engine.boot=lt_boot_config LT_INIT(lt_boot_config);
+    engine.engine_library="libqemu-arm.so";engine.device=prepared_device;engine.boot=lt_boot_config LT_INIT(lt_boot_config);
     engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;
     engine.boot.guest_package_path=selected.guest_package_path;engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
-    status=lt_runtime_create(&engine,&runtime,&error);if(status==LT_OK)status=lt_runtime_start(runtime,&error);
-    if(status!=LT_OK){diagnostic=result(status,error);return string(env,diagnostic);}
+    if(status==LT_OK)status=lt_runtime_create(&engine,&prepared_runtime,&error);
+    if(status==LT_OK)status=lt_runtime_start(prepared_runtime,&error);
+    if(status!=LT_OK) {
+        bool released=!prepared_runtime;
+        if(prepared_runtime){lt_error cleanup=LT_INIT(lt_error);released=lt_runtime_destroy(prepared_runtime,&cleanup)==LT_OK;}
+        if(released && prepared_device)lt_device_close(prepared_device);
+        std::lock_guard<std::mutex> lock(guard);starting=false;diagnostic=result(status,error);
+        return string(env,diagnostic);
+    }
+    std::lock_guard<std::mutex> lock(guard);
+    runtime=prepared_runtime;device=prepared_device;board=prepared_board;starting=false;
+    if(startup_stop_requested) {
+        lt_error stop_error=LT_INIT(lt_error);
+        auto stopped=lt_runtime_request_shutdown(runtime,&stop_error);
+        if(stopped!=LT_OK)diagnostic=result(stopped,stop_error);
+    }
     if(!presenter_started){presenter_started=true;std::thread(present).detach();}
-    return string(env,"");
+    return string(env,diagnostic);
 }
+
 JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);
     const char *states[]={"stopped","starting","running","paused","stopping","failed"};
@@ -183,7 +206,7 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     if(runtime) { auto status=lt_runtime_poll(runtime,&s,&error);if(status!=LT_OK) { diagnostic=result(status,error);detail=diagnostic; }
         else detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed"); }
     auto arr=env->NewObjectArray(3,env->FindClass("java/lang/String"),nullptr);
-    env->SetObjectArrayElement(arr,0,string(env,states[!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u)]));
+    env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
     env->SetObjectArrayElement(arr,2,string(env,diagnostic));return arr;
 }
@@ -199,6 +222,7 @@ JNI(pause) jstring JNICALL Java_org_lighttouch_android_Native_pause(JNIEnv *env,
 }
 JNI(stop) jstring JNICALL Java_org_lighttouch_android_Native_stop(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);
+    if(starting)startup_stop_requested=true;
     return string(env,runtime?result(lt_runtime_request_shutdown(runtime,&error),error):"");
 }
 JNI(button) jstring JNICALL Java_org_lighttouch_android_Native_button(JNIEnv *env,jobject,jint button,jboolean down) {
