@@ -69,12 +69,15 @@ def main():
     fd = os.pidfd_open(pid)
     poll = select.poll()
     poll.register(fd, select.POLLIN)
+    ownership_verified = False
 
     def verify_owner():
+        nonlocal ownership_verified
         if (poll.poll(0) or proc.stat().st_uid != started['uid'] or started['uid'] != os.geteuid() or
                 proc.joinpath('stat').read_text().rpartition(')')[2].split()[19] != ticks or
                 proc.joinpath('cmdline').read_bytes().decode().split('\0')[:-1] != command):
             raise RuntimeError('owner retired or changed; no wake')
+        ownership_verified = True
 
     record({'armed_monotonic_ns': armed, 'frontend_pid': pid, 'start_ticks': ticks,
             'agent_before_wake_required': False, 'guest_acceptance': False})
@@ -117,14 +120,16 @@ def main():
         # A failed/timed-out input controller must not strand a button or start
         # a second observation. Ordinary owned Stop performs full cancellation
         # and keeps the production35s disposal/dirty-state policy authoritative.
-        if not poll.poll(0):
+        requested_stop = False
+        if ownership_verified and not poll.poll(0):
             try:
                 signal.pidfd_send_signal(fd, signal.SIGINT)
+                requested_stop = True
             except ProcessLookupError:
                 pass
         record({'error': str(error), 'finished_monotonic_ns': time.monotonic_ns(),
                 'guest_acceptance': False, 'no_clock_reset': True,
-                'ordinary_owned_Stop_requested': True})
+                'ordinary_owned_Stop_requested': requested_stop})
         raise
     finally:
         os.close(fd)
