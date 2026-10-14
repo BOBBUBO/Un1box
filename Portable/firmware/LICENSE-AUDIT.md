@@ -1,7 +1,8 @@
 # Selected native firmware licenses
 
-This audit covers the firmware ELF built from source commit
-`9d09845a56c19ec03905ef846a73b1f202deb7cf`, not the entire APK. The
+This audit first inspected the firmware ELF built from source commit
+`9d09845a56c19ec03905ef846a73b1f202deb7cf`; the subsequent baseline-only source
+exclusion is described below. This is not the entire APK audit. The
 selected compilation inputs and hashes are recorded in `selected-sources.json`.
 That file records archive inputs; section garbage collection means it does not
 assert that every object in an input archive survives in the final ELF.
@@ -16,7 +17,8 @@ would not describe this combination correctly. See the
 [GNU version compatibility explanation](https://www.gnu.org/licenses/gpl-faq.en.html#v2v3Compatibility),
 [Apache's compatibility statement](https://www.apache.org/licenses/GPL-compatibility.html)
 and [OpenSSL's versioned licenses](https://openssl-library.org/source/license/index.html).
-This conclusion does not resolve the bounded Apple provenance gap below.
+The original Apple sample grant remains unknown; the baseline-only build
+excludes that material as described below.
 
 | Selected input | Grant / retained notice |
 | --- | --- |
@@ -32,8 +34,8 @@ This conclusion does not resolve the bounded Apple provenance gap below.
 | Android platform `libz`, `libdl`, `libm`, `libc`; packaged `libc++_shared` | Platform/toolchain dependencies; retain applicable NDK runtime notices in the APK's dependency inventory |
 
 `ltf_common` compiles `abstractfile.c` and `base64.c`; `ltf_hfs` compiles generated
-`btree.c` and `rawfile.c`, plus catalog, extents, xattr, fastunicodecompare,
-flatfile, hfslib, utility, volume and hfscompress. `ltf_dmg` compiles checksum,
+`btree.c`, `rawfile.c`, `catalog.c` and `volume.c`, plus extents, xattr,
+flatfile, hfslib, utility and hfscompress. `ltf_dmg` compiles checksum,
 dmgfile, dmglib, filevault, io, partition, resources and udif. `ltf_zip` compiles
 unzip and ioapi, including their headers and crypt.h. CMake links those archives,
 the portable sources, tinyxml2, CActivation and target libcrypto into
@@ -59,8 +61,8 @@ rejected by the preparer, but password-decryption code and
 `unzOpenCurrentFilePassword` remain in the ELF, so their notice is retained.
 
 XPwn fastunicodecompare.c states that it adapts Apple's TN1150. Its
-FastUnicodeCompare function and gLowerCaseTable remain exported in the actual
-ARM64 ELF, even though this preparation route uses case-sensitive HFSX. The
+FastUnicodeCompare function and gLowerCaseTable were exported in the inspected
+ARM64 ELF before exclusion, even though this preparation route uses binary HFSX. The
 [official TN1150 sample](https://developer.apple.com/library/archive/technotes/tn/tn1150.html)
 was downloaded from Apple's linked BinHex archive and decoded with header/data
 CRC checks. The extracted FastUnicodeCompare.c has no copyright, license or
@@ -68,9 +70,22 @@ permission grant. All 2,816 table entries exactly match XPwn's retained table.
 The downloaded sample and decoded source hashes are recorded in the manifest;
 the sample is audit evidence outside Git and is not a new compilation input.
 The upstream GPLv3 umbrella and this sample do not establish the original grant
-for the Apple material. This is a specific unresolved provenance/permission gap,
-not evidence of an identified incompatible license. Obtain a documented grant
-or replace/exclude that material before claiming firmware distribution closure.
+for the Apple material. This is a specific provenance/permission gap, not
+evidence of an identified incompatible license.
+
+The stock n72 rootfs extracted during the earlier trial and the prepared trial6
+NAND were inspected without writes: both are HFSX (signature 0x4858), version 5,
+with catalog comparison type 0xBC. XPwn uses its binary catalogCompare for this
+mode; only the 0xCF case-folding alternative calls FastUnicodeCompare. The build
+now omits fastunicodecompare.c and generates catalog.c without that caller,
+preserving the binary comparator byte-for-byte. Generated catalog admission
+rejects all comparison types except 0xBC; generated volume admission rejects
+non-HFSX signatures and versions other than 5. Folding is not replaced by an
+incorrect binary fallback. These unsupported worker alternatives return failure
+without volume writes. Synthetic checks cover HFS+, case-folded HFSX, unknown
+comparison type and wrong version, alongside the existing case-distinct n72
+operations. Future folding support needs an independently licensed implementation
+and separate compatibility tests; the missing grant is not inferred from silence.
 
 For a release, include these notices and the complete GPLv3 corresponding source,
 including generated-source recipes and adapters. This document adds source-side
