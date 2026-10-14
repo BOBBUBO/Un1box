@@ -126,6 +126,26 @@ static void validate_base(const fs::path &base) {
     require(!j.at("board").string().empty() && !j.at("build").string().empty(), "missing board/build");
     const Json &outputs = j.at("outputs");
     require(outputs.kind == Json::Object, "invalid outputs");
+    const auto &nand = outputs.at("nand");
+    require(nand.at("path").string() == "nand" && nand.at("listing_sha256").string().size() == 64,
+            "missing authoritative NAND integrity record");
+    auto required_file = [&](const std::string &key, const std::string &name) {
+        const auto &r = outputs.at(key);
+        require(r.at("path").string() == name && r.at("sha256").string().size() == 64,
+                "missing authoritative " + name + " integrity record");
+    };
+    std::string board = j.at("board").string();
+    if (board == "n72ap") {
+        required_file("nor", "nor.bin");
+        required_file("gid_blobs", "gid-blobs.bin");
+        const auto *strategy = j.find("boot_strategy");
+        if (!strategy || strategy->string() == "iboot")
+            required_file("iboot", "iBoot.bin");
+    }
+    if (board == "n81ap") {
+        required_file("nor", "nor.bin");
+        required_file("kboot", "kboot.bin");
+    }
     for (const auto &pair : outputs.object) {
         const Json &o = pair.second;
         const Json *path = o.find("path");
@@ -401,6 +421,12 @@ lt_status lt_device_open(const lt_device_config *c, lt_device **out, lt_error *e
         lt::io(d->lease >= 0, "open device lease");
         lt::require(flock(d->lease, LOCK_EX | LOCK_NB) == 0, "device has another writer", LT_BUSY);
         lt::validate_base(d->base);
+        auto immutable = [](lt::fs::perms mode) {
+            return (mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
+                   lt::fs::perms::none;
+        };
+        lt::require(immutable(lt::fs::status(d->base).permissions()),
+                    "base root is writable: import into immutable storage first");
         for (const auto &entry : lt::fs::recursive_directory_iterator(d->base)) {
             lt::require(!entry.is_symlink(), "base symlink refused");
             auto mode = entry.status().permissions();
