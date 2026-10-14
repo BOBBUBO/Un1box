@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 import importlib.util
+import hashlib
+import json
 from pathlib import Path
 import signal
 import shlex
@@ -95,6 +97,36 @@ class Supervision(unittest.TestCase):
             self.assertIs(attempt.path_presence(str(root/"absent")),False)
             self.assertIs(attempt.path_presence(str(root/"missing-parent/absent")),None)
             self.assertIs(attempt.path_presence(str(root/"link")),True)
+
+    def test_record_gate_does_not_launch_old_application(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.arguments(directory)
+            args.record_id = "a"*32; args.record_sha256 = None
+            lock,rom,guest = b"verified lock",b"verified ROM",b"verified guest"
+            args.lock_sha256,args.rom_sha256,args.guest_sha256 = [hashlib.sha256(b).hexdigest() for b in (lock,rom,guest)]
+            root = f"files/library/records/{args.record_id}"
+            metadata = json.dumps({"schema":1,"id":args.record_id,"base_sha256":args.lock_sha256,
+                "bootrom_sha256":args.rom_sha256,"guest_package_sha256":args.guest_sha256}).encode()
+            files = {f"{root}/record.json":metadata,f"{root}/base/device.lock.json":lock,
+                f"{root}/assets/bootrom.bin":rom,f"{root}/assets/guest.itpack":guest,
+                "files/library/selected":args.record_id.encode()}
+            attempt = retry.Attempt(args)
+            attempt.path_presence = mock.Mock(side_effect=[True,True,True,True,False])
+            calls = []
+            def adb(*argv,**kwargs):
+                calls.append(argv)
+                if argv[:4] == ("exec-out","run-as",retry.PACKAGE,"cat"):
+                    return 0,files[argv[4]]
+                if argv == ("exec-out","run-as",retry.PACKAGE,"id","-u"):
+                    return 0,b"10200\n"
+                raise AssertionError(f"Unexpected controller operation in record gate: {argv}")
+            attempt.adb = adb
+            ready = attempt.verify_record("123")
+            self.assertTrue(ready["serviceGatePassed"] and ready["recordGatePassed"])
+            self.assertFalse(ready["uiGatePassed"])
+            self.assertTrue(ready["visualUIInspectionRequired"])
+            self.assertEqual(ready["uiGateDeadlineSeconds"],240)
+            self.assertFalse(any("am" in call for call in calls))
 
     def test_independent_deadline_disposes_hung_owned_child(self):
         # Actual OS subprocesses, no Android tools, compiler, window or guest.

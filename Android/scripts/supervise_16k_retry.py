@@ -245,10 +245,10 @@ class Attempt:
         code, uid = self.adb("exec-out", "run-as", PACKAGE, "id", "-u")
         if code or not uid.strip().isdigit() or int(uid) <= 10000:
             raise RuntimeError("Normal target app UID was not verified")
-        code, _ = self.adb("shell", "am", "start", "-W", "-n", PACKAGE+"/.MainActivity", timeout=8)
-        if code or time.monotonic()-self.start >= BOOT_LIMIT:
-            raise RuntimeError("Application foreground readiness failed or exceeded boot gate")
-        ready = {"serviceGatePassed": True, "visualUIInspectionRequired": True, "appUid": int(uid),
+        if time.monotonic()-self.start >= BOOT_LIMIT:
+            raise RuntimeError("Service/record readiness exceeded boot gate")
+        ready = {"serviceGatePassed": True, "recordGatePassed": True, "uiGatePassed":False,
+                 "visualUIInspectionRequired": True, "uiGateDeadlineSeconds":BOOT_LIMIT, "appUid": int(uid),
                  "pageBytes": 16384, "systemServerPid": system_pid, "recordId":record,
                  "elapsedSeconds":time.monotonic()-self.start, "guestStartedBySupervisor":False,
                  "guestAcceptancePassed":False, "stopAtSeconds":STOP_AT, "hardDeadlineSeconds":HARD_LIMIT}
@@ -365,7 +365,7 @@ def main():
     try:
         attempt.launch()
         attempt.gate()
-        print(f"READY: inspect UI and run only allocated same-worker guest stages; receipts: {args.output}",flush=True)
+        print(f"SERVICE/RECORD READY ONLY: verify/install frozen APKs, then foreground and visually inspect UI by original240s; receipts: {args.output}",flush=True)
         while time.monotonic()-attempt.start < STOP_AT and not (attempt.output/"request-stop").exists():
             if attempt.avd.poll() is not None:
                 raise RuntimeError("Owned emulator exited during guest observation")
