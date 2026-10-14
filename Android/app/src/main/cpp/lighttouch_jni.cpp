@@ -443,7 +443,7 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
 // Must hold guard. Routine attachment/detachment with no View-owned contacts
 // never cancels an unrelated Home/Power pulse. A real held-contact handoff uses
 // the existing full cancellation API, which also releases hardware buttons.
-std::string cancel_display_contacts() {
+void refresh_display_release() {
     // An admitted UP/CANCEL can empty the local ledger while its guest release
     // is still queued. Refresh terminal success before deciding whether that
     // outstanding obligation needs cancellation; do so before minting/retiring.
@@ -452,6 +452,9 @@ std::string cancel_display_contacts() {
         if(lt_runtime_input_status(runtime,&completed,&observed)==LT_OK && completed.state==2)
             display_lease.inputCompleted(completed.request_id);
     }
+}
+std::string cancel_display_contacts() {
+    refresh_display_release();
     if(!display_lease.needsOwnedRelease())return "";
     lt_error error=LT_INIT(lt_error);
     const auto status=runtime?lt_runtime_cancel_input(runtime,&error):LT_OK;
@@ -606,7 +609,8 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     // Guest portrait is kept upright within Android's rotated view. Mapping receives
     // view-local pixels; applying display rotation again would rotate contacts twice.
     (void)rotation;
-    const bool had_owned_contacts=lease && display_lease.contactsHeld();
+    refresh_display_release();
+    const bool had_owned_release=lease && display_lease.needsOwnedRelease();
     auto status=lt_runtime_touch(runtime,&batch,&error);
     std::string failure=result(status,error);
     if(status!=LT_OK) {
@@ -619,7 +623,7 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
         lt_input_status submitted=LT_INIT(lt_input_status);lt_error identity_error=LT_INIT(lt_error);
         const auto identity=lt_runtime_input_status(runtime,&submitted,&identity_error);
         if(identity==LT_OK && submitted.request_id) {
-            display_lease.submittedInput(submitted.request_id,lease,had_owned_contacts || display_lease.contactsHeld());
+            display_lease.submittedInput(submitted.request_id,lease,had_owned_release || display_lease.contactsHeld());
             if(submitted.state==2)display_lease.inputCompleted(submitted.request_id);
         } else {
             failure="Touch request identity unavailable; gesture cancelled";
