@@ -43,6 +43,10 @@ def build(seed, prepared, attempt, source, launcher, cold_recovery=False, token=
         '--cores','4','--pixel-memory-mb',option(old,'--pixel-memory-mb'),'--lock-sha256',p['recordPins']['base/device.lock.json'],
         '--rom-sha256',p['recordPins']['assets/bootrom.bin'],'--guest-sha256',p['recordPins']['assets/guest.itpack'],'--output',p['attempt']]
     p['supervisorArgv'] += ['--fresh-library'] if cold_recovery else ['--record-id',p['recordId'],'--record-sha256',p['recordPins']['record.json']]
+    if p.get('persistentOwnerReceipt'):
+        owner=Path(p['persistentOwnerReceipt']).resolve();p['persistentOwnerReceipt']=str(owner)
+        p['persistentOwnerSha256']=hashlib.sha256(owner.read_bytes()).hexdigest()
+        p['supervisorArgv'] += ['--attach-avd-owner',str(owner)]
     prefix=['python3',p['controller'],'--attempt',p['attempt']]
     p['preflightCommands']=[prefix+[stage] for stage in ('prepare-ui','bind-existing','diagnose')]
     p['approvalCommand']=prefix+['approve-ui','--image','ACTUAL_CAPTURE_BASENAME_OR_SAME_ATTEMPT_ABSOLUTE_PATH','--sha256','ACTUAL_MODEL_INSPECTED_SHA256']
@@ -77,6 +81,14 @@ def validate(p, files=False):
         if argv.count('--fresh-library')!=1 or '--record-id' in argv:raise ValueError('Explicit dirty service-only mode required')
     elif '--fresh-library' in argv or option(argv,'--record-id')!=p['recordId'] or option(argv,'--record-sha256')!=p['recordPins']['record.json']:
         raise ValueError('Normal clean Start must use actual pinned record gate')
+    if 'persistentOwnerReceipt' in p:
+        owner=Path(p['persistentOwnerReceipt'])
+        if not owner.is_absolute() or any((x/'.git').exists() for x in (owner,*owner.parents)):
+            raise ValueError('Persistent owner must be a private absolute receipt')
+        if option(argv,'--attach-avd-owner')!=str(owner) or not re.fullmatch('[0-9a-f]{64}',p.get('persistentOwnerSha256','')):
+            raise ValueError('Persistent attachment identity differs')
+    elif any(x=='--attach-avd-owner' or x.startswith('--attach-avd-owner=') for x in argv):
+        raise ValueError('Undeclared persistent attachment')
     manifest=str(Path(p['controller']).parent/'launch-command.json')
     if p['launchCheckedCommand']!=['python3',str(Path(p['sourceRoot'])/'plan_manifest.py'),'--manifest',manifest,'--launch']:raise ValueError('Unchecked VM entrypoint')
     if p['readyWatcherCommand']!=['python3','-u',str(Path(p['sourceRoot'])/'admit_ready.py'),'--manifest',manifest]:raise ValueError('Readiness watcher manifest differs')
@@ -97,7 +109,7 @@ def validate(p, files=False):
     for key,expected in (('pixelAttemptToken',p['attemptToken']),('recordId',p['recordId']),('pixelColdRecovery',str(p['coldRecovery']).lower()),
                          ('pixelObserveSeconds','300'),('expectedMainApkSha256',main['sha256']),('pixelOriginToken','ACTUAL_ORIGINAL_CLOCK_SHA256')):
         if extra(p['instrumentationArgs'],key)!=expected:raise ValueError('Instrumentation identity differs: '+key)
-    required={'pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py','host_lifecycle.py'}
+    required={'pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py','host_lifecycle.py','persistent_avd.py'}
     if not required.issubset(p['sourceHashes']):raise ValueError('Required stage/helper source hashes unavailable')
     hashes=list(p['recordPins'].values())+list(p['sourceHashes'].values())+[a['sha256'] for a in p['assets']]+[p['controllerSha256'],p['newLauncherSha256']]
     if any(not re.fullmatch('[0-9a-f]{64}',h) for h in hashes):raise ValueError('Invalid frozen hash')
@@ -106,6 +118,11 @@ def validate(p, files=False):
         if not isinstance(evidence,dict) or not re.fullmatch('[0-9a-f]{64}',evidence.get('sha256','')):
             raise ValueError('Normal next Start requires disclosed genuine prior clean Stop')
     if files:
+        if 'persistentOwnerReceipt' in p:
+            owner=Path(p['persistentOwnerReceipt'])
+            if hashlib.sha256(owner.read_bytes()).hexdigest()!=p['persistentOwnerSha256']:raise ValueError('Persistent owner receipt hash changed')
+            from persistent_avd import load_owner
+            load_owner(owner,p['avd'],option(argv,'--adb'))
         if not p['coldRecovery']:
             evidence=p['priorCleanStopReceipt'];path=Path(evidence['path'])
             if hashlib.sha256(path.read_bytes()).hexdigest()!=evidence['sha256']:raise ValueError('Prior clean Stop receipt hash changed')

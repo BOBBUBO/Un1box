@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 import copy,hashlib,json,subprocess,sys,tempfile,unittest
+from unittest import mock
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import plan_manifest as plans
@@ -8,7 +9,7 @@ import plan_manifest as plans
 class Manifest(unittest.TestCase):
     def fixture(self, root):
         source=root/'source';source.mkdir();prepared=root/'prepared';prepared.mkdir()
-        for name in ('pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py','host_lifecycle.py'):(source/name).write_text('raise RuntimeError("synthetic VM must not execute")\n')
+        for name in ('pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py','host_lifecycle.py','persistent_avd.py'):(source/name).write_text('raise RuntimeError("synthetic VM must not execute")\n')
         controller=prepared/'controller.py';controller.write_text('# synthetic controller\n');launcher=prepared/'launcher';launcher.write_text('# synthetic launcher\n')
         sha=lambda b:hashlib.sha256(b).hexdigest();assets=[]
         for name in ('app-debug.apk','app-debug-androidTest.apk'):
@@ -23,6 +24,19 @@ class Manifest(unittest.TestCase):
             self.assertEqual(plans.option(p['afterStartAdmissionCommand'],'--token'),p['attemptToken'])
             self.assertEqual(plans.extra(p['instrumentationArgs'],'pixelColdRecovery'),'false')
             self.assertIn('--record-id',p['supervisorArgv']);self.assertNotIn('--fresh-library',p['supervisorArgv'])
+
+    def test_attach_identity_is_declared_pinned_live_checked_and_never_a_new_launch_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);p=self.fixture(root);p['supervisorArgv']+=['--attach-avd-owner',str(root/'owner.json')]
+            with self.assertRaisesRegex(ValueError,'Undeclared'):plans.validate(p)
+            owner=root/'owner.json';owner.write_text('synthetic actual owner receipt')
+            p['persistentOwnerReceipt']=str(owner)
+            p=plans.build(p,root/'prepared',p['attempt'],root/'source',root/'prepared'/'launcher',token=p['attemptToken'])
+            import persistent_avd
+            with mock.patch.object(persistent_avd,'load_owner') as live:
+                plans.validate(p,files=True);live.assert_called_once()
+            owner.write_text('changed')
+            with self.assertRaisesRegex(ValueError,'receipt hash'):plans.validate(p,files=True)
 
     def test_actual03_stale_token_regression_rejected_before_launch(self):
         with tempfile.TemporaryDirectory() as d:
