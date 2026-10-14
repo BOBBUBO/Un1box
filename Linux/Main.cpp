@@ -1017,12 +1017,14 @@ static int frontend(const Options &o, int argc, char **argv) {
             audio_failure = "SDL opened an incompatible PCM specification";
         // Starts paused until a worker RUNNING acknowledgement. No packet is
         // played merely because opening the device succeeded.
-        std::cout << "audio_sink enabled=1 opened=" << bool(sound) << " device_id=" << sound
-                  << " device_name=unavailable(default-selection)" << " device_selection=default driver="
+        std::cout << "audio_sink enabled=1 opened=" << bool(sound)
+                  << " device_id=" << sound << " device_name=unavailable(default-selection)"
+                  << " device_selection=default driver="
                   << (SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "unavailable")
                   << " rate=" << audio_spec.freq << " channels=" << unsigned(audio_spec.channels)
                   << " format=" << audio_spec.format << " period_frames=" << audio_spec.samples
-                  << " device_names=" << SDL_GetNumAudioDevices(0) << " queue_cap_frames=" << lt::AudioQueue::cap_frames
+                  << " device_names=" << SDL_GetNumAudioDevices(0)
+                  << " queue_cap_frames=" << lt::AudioQueue::cap_frames
                   << " physical_audibility=unobserved underruns=unavailable" << std::endl;
         if (!audio_failure.empty())
             std::cerr << "audio device failed: " << audio_failure << "; requesting ordinary Stop\n";
@@ -1225,8 +1227,9 @@ static int frontend(const Options &o, int argc, char **argv) {
                           << " pcm_sdl_queued=" << sink.queued << " pcm_sdl_discarded=" << sink.discarded
                           << " pcm_adapter_discarded=" << pcm_adapter_discarded << " pcm_sdl_errors=" << sink.errors
                           << " pcm_sdl_depth=" << sink.depth << " pcm_sdl_peak_depth_bound=" << sink.peak_depth
-                          << " pcm_sdl_consumed_estimate=" << sink.consumed_estimate << " pcm_sink_muted=" << sink.muted
-                          << " pcm_sink_failed=" << sink.failed << " pcm_sink_enabled=" << o.audio
+                          << " pcm_sdl_consumed_estimate=" << sink.consumed_estimate
+                          << " pcm_sink_muted=" << sink.muted << " pcm_sink_failed=" << sink.failed
+                          << " pcm_sink_enabled=" << o.audio
                           << " pcm_epoch=" << update.audio_epoch << " pcm_command=" << update.audio_command
                           << " pcm_underruns=unavailable pcm_physical_audibility=unobserved" << std::endl;
                 if (window) {
@@ -1300,10 +1303,10 @@ static int frontend(const Options &o, int argc, char **argv) {
             if (o.trace_io && packet_nonzero)
                 std::cout << "trace_pcm observed_monotonic_ns=" << now_ns() << " frames=" << pcm.info.frames
                           << " transport_epoch=" << pcm.epoch << " sink_epoch=" << sink.epoch
-                          << " sink_muted=" << sink.muted << " capture_relative_ns=" << pcm.info.timestamp_ns
-                          << " nonzero_samples=" << packet_nonzero << " first_nonzero_sample=" << packet_first
-                          << " last_nonzero_sample=" << packet_last << " sample_rate=" << pcm.info.sample_rate
-                          << " channels=" << pcm.info.channels << std::endl;
+                          << " sink_muted=" << sink.muted
+                          << " capture_relative_ns=" << pcm.info.timestamp_ns << " nonzero_samples=" << packet_nonzero
+                          << " first_nonzero_sample=" << packet_first << " last_nonzero_sample=" << packet_last
+                          << " sample_rate=" << pcm.info.sample_rate << " channels=" << pcm.info.channels << std::endl;
             if (sound) {
                 bool failed = false;
                 uint32_t accepted = sink.append(pcm.epoch, pcm.info.frames, sink_bytes(), [&](uint32_t frames) {
@@ -1365,8 +1368,8 @@ static int frontend(const Options &o, int argc, char **argv) {
                     p.kind = Cancel;
                     submit(p);
                     if (o.trace_io)
-                        std::cout << "trace_viewport_cancel observed_monotonic_ns=" << now_ns() << " width=" << w
-                                  << " height=" << h << " reason=changed" << std::endl;
+                        std::cout << "trace_viewport_cancel observed_monotonic_ns=" << now_ns()
+                                  << " width=" << w << " height=" << h << " reason=changed" << std::endl;
                 });
             }
             if (event.type == SDL_QUIT)

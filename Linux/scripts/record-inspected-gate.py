@@ -223,9 +223,19 @@ def main():
         os.close(fd)
         # Conversion belongs after admission/rejection, never before freshness
         # checks. A failed capture is evidence, not permission to relabel it.
-        for bitmap in sorted(out.glob('attempt-*/native.bmp')):
-            subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', str(bitmap),
-                            '-frames:v', '1', str(bitmap.with_suffix('.png'))], timeout=3, check=False)
+        bitmaps = sorted(out.glob('attempt-*/native.bmp'))
+        if bitmaps:
+            # Retain every raw attempt, but preview only the admitted capture or
+            # last rejection. Converting24 attempts here could cost72 seconds.
+            selected = Path(gate.get('continuity', {}).get('capture_directory', out)) / 'native.bmp'
+            if selected not in bitmaps:
+                selected = bitmaps[-1]
+            try:
+                subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', str(selected),
+                                '-frames:v', '1', str(selected.with_suffix('.png'))], timeout=3, check=False)
+            except subprocess.TimeoutExpired:
+                save('preview-timeout.json', {'bitmap': str(selected), 'timeout_seconds': 3,
+                                              'raw_attempts_retained': True})
 
 
 if __name__ == '__main__':
