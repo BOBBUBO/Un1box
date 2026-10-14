@@ -40,8 +40,8 @@ class TcgSmokeTest {
             }
             assertTrue("QMP not ready; inspect ${File(directory, "engine.log")}", socketPath.exists())
             LocalSocket().use { socket ->
-                socket.soTimeout = 10_000
                 socket.connect(LocalSocketAddress(socketPath.absolutePath, LocalSocketAddress.Namespace.FILESYSTEM))
+                socket.soTimeout = 10_000
                 val reader = socket.inputStream.bufferedReader()
                 assertTrue(JSONObject(requireNotNull(reader.readLine())).has("QMP"))
                 fun command(name: String, arguments: JSONObject? = null): JSONObject {
