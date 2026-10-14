@@ -102,6 +102,25 @@ binary comparator is preserved unchanged. HFS+, case-folded HFSX and unknown
 comparison modes fail rather than receiving a different ordering. Their unused
 Apple-derived folding implementation/table is excluded from compilation.
 
+Generate deterministic Android offline notice assets with public legal sources:
+
+```sh
+python3 Portable/firmware/tools/package-notices.py /build/assets/licenses/firmware \
+  --ndk-notice /path/to/android-ndk-28.2.13676358/NOTICE.toolchain \
+  --source-reference https://publisher.example/source/ACTUAL_REVISION \
+  --source-revision FULL_40_HEX_REVISION
+```
+
+Use the revision and accessible corresponding-source URL for the conveyed binary.
+The generator verifies vendored notice hashes and the exact pinned NDK notice,
+copies complete legal texts without timestamps/private paths, and emits schema-1
+`manifest.json` with sorted `files` path/hash records and `source_reference` /
+`source_revision`. Bundle filenames are stable. The Android assets consumer can
+display the texts offline and link to the publisher's source reference. Repeating
+the command verifies a byte-identical existing bundle; differing contents require
+a fresh generated-assets destination. Generation does not verify the publisher's
+URL availability or complete source offer. See [source distribution](SOURCE-DISTRIBUTION.md).
+
 Synthetic format/transaction tests are source-only evidence. The format test
 compares all 50 NAND metadata pages against the independent upstream legacy
 golden hashes, including the corrected GPT geometry. The synthetic HFSX test
