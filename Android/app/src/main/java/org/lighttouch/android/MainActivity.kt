@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var detail by mutableStateOf("")
     private var error by mutableStateOf("")
     private var workerPid by mutableIntStateOf(0)
+    private var sessionOwned by mutableStateOf(false)
     private var busy by mutableStateOf(false)
     private var captureNotice by mutableStateOf("")
     private var devices by mutableStateOf<List<Bundle>>(emptyList())
@@ -108,6 +109,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     val reportedError = b.getString("error") ?: ""
                     if (reportedError.isNotEmpty() || status == "running") error = reportedError
                     workerPid = b.getInt("pid")
+                    sessionOwned = b.getBoolean("sessionStarted")
                     if (active && status == "running") startSensors() else stopSensors()
                 }
             } catch (e: RemoteException) { engine = null; error = "Worker unavailable: ${e.message}"; stopSensors() }
@@ -140,7 +142,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF71DCC8))) {
                 Surface(Modifier.fillMaxSize()) {
-                    Column(Modifier.fillMaxSize().padding(16.dp).semantics { testTagsAsResourceId = true }) {
+                    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp).semantics { testTagsAsResourceId = true }) {
                         Text("LightTouch", style = MaterialTheme.typography.headlineMedium)
                         Box {
                             OutlinedButton(onClick = { refreshDevices(); deviceMenu = true }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping"), modifier = Modifier.testTag("device_selector")) {
@@ -170,10 +172,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { startGuest() }, enabled = !busy && selected != null && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
-                            Button(onClick = { engine?.stop(); stopSensors(); status = "stopping" }, enabled = engine != null && status != "stopping", modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
+                            Button(onClick = { engine?.stop(); stopSensors(); status = "stopping" }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
                             Button(onClick = { engine?.pause(status != "paused") }, enabled = status in listOf("running", "paused")) { Text(if (status == "paused") "Resume" else "Pause") }
                         }
-                        AndroidView(factory = { GuestDisplay(it) { engine }.also { displayView = it } }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
+                        AndroidView(factory = { GuestDisplay(it) { engine }.also { displayView = it } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { pulse(0) }, enabled = status == "running", modifier = Modifier.testTag("home_button")) { Text("Home") }
                             Button(onClick = { pulse(1) }, enabled = status == "running", modifier = Modifier.testTag("power_button")) { Text("Power") }
@@ -440,7 +442,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         engine?.motion(kind, event.timestamp, event.values.copyOf(3), display?.rotation?.times(90) ?: 0)
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-    override fun onStart() { super.onStart(); active = true; handler.post(poll) }
-    override fun onStop() { active = false; stopSensors(); engine?.cancelInput(); if (status == "running") engine?.pause(true); handler.removeCallbacks(poll); super.onStop() }
+    override fun onStart() { super.onStart(); active = true; displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
+    override fun onStop() { active = false; displayView?.keepScreenOn = false; stopSensors(); engine?.cancelInput(); if (status == "running") engine?.pause(true); handler.removeCallbacks(poll); super.onStop() }
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }

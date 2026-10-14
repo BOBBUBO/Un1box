@@ -55,6 +55,7 @@ class EngineService : Service() {
                 putString("detail", s.getOrElse(1) { "" })
                 putString("error", error)
                 putInt("pid", Process.myPid())
+                putBoolean("sessionStarted", started.get())
             }
         }
         override fun surface(surface: Surface) { Native.surface(surface) }
