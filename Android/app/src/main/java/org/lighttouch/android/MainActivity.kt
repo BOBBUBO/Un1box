@@ -20,7 +20,6 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
 import java.util.Locale
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -327,12 +326,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                                 style = MaterialTheme.typography.bodySmall)
                         }
                         if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.", modifier = Modifier.testTag("guest_screen_asleep"))
-                        AndroidView(factory = { run {
-                            lateinit var view: GuestDisplay
-                            view = GuestDisplay(it, onError = { message -> error = message },
-                                isActiveOwner = { mayClaimDisplay() && displayView === view }, ownerTicket = { displayOwnerTicket }) { engine }
-                            displayView = view; view
-                        } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
+                        WorkerGuestSurface(worker = engine, currentWorker = { engine },
+                            mayClaim = { view -> mayClaimDisplay() && displayView === view },
+                            ownerTicket = { displayOwnerTicket }, onError = { error = it },
+                            onCreated = { displayView = it },
+                            onReleased = { view -> if (displayView === view) displayView = null },
+                            keepScreenOn = active && status in listOf("starting", "running", "stopping"),
+                            modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { pulse(0) }, enabled = status == "running", modifier = Modifier.testTag("home_button")) { Text("Home") }
                             Button(onClick = { pulse(1) }, enabled = status == "running", modifier = Modifier.testTag("power_button")) { Text("Power") }
