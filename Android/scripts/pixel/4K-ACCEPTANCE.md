@@ -135,9 +135,10 @@ not close this4KiB AVD gate.
 
 ## Private source snapshot sealed after review
 
-The reviewed substitutions and narrow initial-import admission now exist in the
+The proposed substitutions and narrow initial-import admission now exist in the
 private snapshot `builds/pixel/prepared-g5-api35-4k25d-source-01/`, separate from
-the original closed16KiB helpers. Its source-seal SHA-256 is
+the original closed16KiB helpers. Root independent review of this complete
+private snapshot remains pending. Its source-seal SHA-256 is
 `b79a6aaf253e3a8078e068bfc884b4e0094c0d83bdbb3b316d46541527761e04`.
 All65 host tests passed, including original-root PID reuse, unrelated5554
 nonsignalling, exact5556 routes, initial import versus prior-clean admission and
