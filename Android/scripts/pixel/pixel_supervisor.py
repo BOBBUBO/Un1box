@@ -22,9 +22,11 @@ base = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(base)
 
 
-def capture_child(adb, binding, output):
+def capture_child(adb, binding, output, original_signal_mask=None):
     # A stalled local file or ADB read cannot keep the parent from Stop/cleanup.
     os.setsid()
+    if original_signal_mask is not None:
+        signal.pthread_sigmask(signal.SIG_SETMASK, original_signal_mask)
     Capture(adb, binding, output).collect()
 
 
@@ -34,26 +36,42 @@ def bounded_capture(adb, binding, output, now=time.monotonic_ns, process_factory
     if end - begin < 300_000_000:
         return {"captureStarted": False, "expired": True, "guestAcceptancePassed": False}
     factory = process_factory or multiprocessing.get_context("fork").Process
-    child = factory(target=capture_child, args=(adb, binding, output))
-    child.start()
-    identity = base.process_identity(child.pid)
+    original_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set())
+    child = factory(target=capture_child, args=(adb, binding, output, original_mask))
+    identity = None
+    forced = False
     deadline = end - 200_000_000  # Reserve child disposal before the original gate.
     try:
+        try:
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGHUP, signal.SIGINT})
+            child.start()
+            identity = base.process_identity(child.pid)
+        finally:
+            # Publish the owned child identity before any pending host terminal
+            # signal can unwind; restoration itself remains inside outer try.
+            signal.pthread_sigmask(signal.SIG_SETMASK, original_mask)
         child.join(timeout=max(0, (deadline - now()) / 1e9))
     finally:
         # TERM/HUP/KeyboardInterrupt during join must retire this separately
         # grouped child before the outer finally retires the AVD watchdog.
-        forced = child.is_alive()
-        if forced and base.process_identity(child.pid) == identity and identity is not None:
-            try:
-                # The child creates its own group; never signal the parent's.
-                if os.getpgid(child.pid) == child.pid:
-                    os.killpg(child.pid, signal.SIGKILL)
-                else:
-                    os.kill(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        child.join(timeout=max(0, (end - now()) / 1e9))
+        if child.pid is not None:
+            forced = child.is_alive()
+            current = base.process_identity(child.pid) if forced else None
+            if identity is None and forced:
+                # Process.is_alive() polls this owned child's waitpid handle;
+                # a live, unreaped child PID cannot have been reused. This
+                # fallback covers an injected start/identity Python exception.
+                identity = current
+            if forced and current == identity and identity is not None:
+                try:
+                    # The child creates its own group; never signal the parent's.
+                    if os.getpgid(child.pid) == child.pid:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    else:
+                        os.kill(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            child.join(timeout=max(0, (end - now()) / 1e9))
     return {"captureStarted": True, "captureChildPid": child.pid, "forcedCaptureDisposal": forced,
             "captureChildExit": child.exitcode, "captureChildStillAlive": child.is_alive(),
             "beginNs": begin, "limitNs": end, "endedNs": now(), "guestAcceptancePassed": False}

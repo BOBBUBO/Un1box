@@ -15,6 +15,45 @@ SOURCE = Path(__file__).resolve().parents[1]
 
 
 class HostLifecycle(unittest.TestCase):
+    def test_actual_pending_term_during_start_and_identity_is_delivered_inside_disposal_scope(self):
+        for phase in ('start','identity'):
+            with self.subTest(phase=phase):
+                child=self.run_child('''
+import host_lifecycle,pixel_supervisor,multiprocessing,os,time,json,signal
+events=[];host_lifecycle.install(events)
+phase=sys.argv[1];owned=[];original=pixel_supervisor.base.process_identity
+def blocked(*args):
+    os.setsid()
+    signal.pthread_sigmask(signal.SIG_SETMASK,args[3])
+    while True:time.sleep(1)
+pixel_supervisor.capture_child=blocked
+class P(multiprocessing.get_context('fork').Process):
+    def start(self):
+        super().start()
+        if phase=='start':os.kill(os.getpid(),signal.SIGTERM)
+def factory(**kwargs):
+    p=P(**kwargs);owned.append(p);return p
+def identity(pid):
+    value=original(pid)
+    if phase=='identity':os.kill(os.getpid(),signal.SIGTERM)
+    return value
+pixel_supervisor.base.process_identity=identity
+try:
+    pixel_supervisor.bounded_capture('/synthetic/adb',{'originNs':time.monotonic_ns()},'/synthetic/out',process_factory=factory)
+except KeyboardInterrupt:
+    events.append({'unwound':True})
+finally:
+    p=owned[0]
+    print(json.dumps({'pid':p.pid,'alive':p.is_alive(),'exit':p.exitcode,'events':events}),flush=True)
+''',(phase,))
+                stdout,stderr=child.communicate(timeout=3)
+                self.assertEqual(child.returncode,0,stderr)
+                result=json.loads(stdout)
+                self.assertFalse(result['alive'])
+                self.assertEqual(result['exit'],-signal.SIGKILL)
+                self.assertEqual(result['events'][0]['signal'],signal.SIGTERM)
+                self.assertFalse(Path(f"/proc/{result['pid']}").exists())
+
     def test_actual_host_signal_during_capture_join_retires_blocked_child_before_outer_finally(self):
         for number in (signal.SIGTERM,signal.SIGHUP):
             with self.subTest(number=number):
