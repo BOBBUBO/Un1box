@@ -28,6 +28,14 @@ internal object PerformanceMemoryReading {
     fun workerPssKiB(reportedKiB: Long): Long? = reportedKiB.takeIf { it > 0 }
 }
 
+/** Absolute current-process CPU time, independent of rate baseline/guest state. */
+internal object PerformanceCpuReading {
+    fun cumulativeSeconds(samplePid: Int, currentPid: Int, processCpuMs: Long?): Double? {
+        if (currentPid <= 0 || samplePid != currentPid || processCpuMs == null || processCpuMs < 0) return null
+        return processCpuMs / 1_000.0
+    }
+}
+
 /** Tiny metadata-only monitor; platform memory reads always occur outside it. */
 internal class PerformanceSamplingGate(
     private val cadenceMs: Long = 2_000,

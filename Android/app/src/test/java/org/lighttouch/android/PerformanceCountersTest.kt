@@ -18,6 +18,31 @@ class PerformanceCountersTest {
         assertEquals("available", zero.state); assertEquals(0.0, zero.percent!!, 0.0)
     }
 
+    @Test fun cumulativeTimeIsAvailableBeforeRateAndKeepsFractionalSeconds() {
+        val cpu = PerformanceCounters()
+        assertNull(cpu.sample(counter(1000, 1501)).percent)
+        assertEquals(1.501, PerformanceCpuReading.cumulativeSeconds(12, 12, 1501)!!, 0.0)
+        assertEquals(0.0, PerformanceCpuReading.cumulativeSeconds(12, 12, 0)!!, 0.0)
+        assertTrue(PerformanceCpuReading.cumulativeSeconds(12, 12, Long.MAX_VALUE)!!.isFinite())
+    }
+
+    @Test fun missingFailedOrDifferentWorkerCumulativeTimeIsNotReused() {
+        assertNull(PerformanceCpuReading.cumulativeSeconds(12, 12, null))
+        assertNull(PerformanceCpuReading.cumulativeSeconds(12, 12, -1))
+        assertNull(PerformanceCpuReading.cumulativeSeconds(12, 13, 2500))
+        assertNull(PerformanceCpuReading.cumulativeSeconds(0, 0, 2500))
+        assertEquals(0.025, PerformanceCpuReading.cumulativeSeconds(13, 13, 25)!!, 0.0)
+    }
+
+    @Test fun absoluteCpuContinuesAcrossObserverResetWithoutInventedGuestPauseReset() {
+        val cpu = PerformanceCounters()
+        cpu.sample(counter(1000, 500))
+        assertNull(cpu.sample(counter(3000, 950, epoch = 2)).percent)
+        assertEquals(0.95, PerformanceCpuReading.cumulativeSeconds(12, 12, 950)!!, 0.0)
+        assertEquals(10.0, cpu.sample(counter(5000, 1150, epoch = 2)).percent!!, 0.0)
+        assertEquals(1.15, PerformanceCpuReading.cumulativeSeconds(12, 12, 1150)!!, 0.0)
+    }
+
     @Test fun newPidAndNewObservationNeverReuseAnOldCpuBaseline() {
         val cpu = PerformanceCounters()
         cpu.sample(counter(1000, 500))

@@ -39,6 +39,10 @@ counter intervals across PIDs or hide a reset inside one phase.
 The collector captures bounded UI XML observations before and after the counter
 window and the visible metric
 text/ages, including the PID. It rejects the wrong panel or running/paused state.
+Both label layouts are explicit: original candidate25's six rows with **Emulator
+CPU**, or a future producer's seven rows with **QEMU worker CPU** and cumulative
+**QEMU worker CPU time**. The result retains the recognized layout; mixed or
+missing CPU rows fail. Neither layout represents genuine iOS CPU/RAM accounting.
 It records independent process CPU tick deltas and positive PSS KiB samples,
 not guest usage. CPU bounds use the actual `CLK_TCK` and device `/proc/uptime`
 precision/read brackets; the UI's elapsedRealtime age is kept as visible text,

@@ -257,18 +257,23 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             TextButton(onClick = { licensesOpen = true }, modifier = Modifier.testTag("open_licenses"), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Licenses") }
                         }
                         if (performanceOpen) {
-                            val sample = performanceData.takeIf { engine != null }
+                            val sample = performanceData?.takeIf { engine != null && workerPid > 0 && it.getInt("pid") == workerPid }
                             val unavailable = performanceUnavailable || engine == null
                             val cpu = if (sample?.containsKey("workerCpuPercentOfOneCore") == true)
                                 performanceNumber(sample.getDouble("workerCpuPercentOfOneCore")) + "% of one core"
                                 else if (unavailable) "unavailable" else sample?.getString("cpuState") ?: "warming up"
+                            val cpuSeconds = PerformanceCpuReading.cumulativeSeconds(sample?.getInt("pid") ?: 0, workerPid,
+                                sample?.takeIf { it.containsKey("processCpuMs") }?.getLong("processCpuMs"))
+                            val cpuTotal = cpuSeconds?.let { performanceNumber(it) + "s total" }
+                                ?: if (!unavailable && sample?.containsKey("processCpuMs") != true) "warming up" else "unavailable"
                             val pss = if (sample?.containsKey("workerPssKiB") == true)
                                 performanceNumber(sample.getLong("workerPssKiB") / 1024.0) + " MiB PSS" else if (sample == null && !unavailable) "warming up" else "unavailable"
                             val ram = if (sample?.containsKey("deviceTotalBytes") == true)
                                 performanceNumber(sample.getLong("deviceAvailableBytes") / 1048576.0) + " / " + performanceNumber(sample.getLong("deviceTotalBytes") / 1048576.0) + " MiB available/total" else if (sample == null && !unavailable) "warming up" else "unavailable"
                             // Constant row geometry: changing samples do not resize the guest.
                             listOf(
-                                "Emulator CPU: $cpu" + performanceAge(sample, "cpuSampleElapsedMs"),
+                                "QEMU worker CPU: $cpu" + performanceAge(sample, "cpuSampleElapsedMs"),
+                                "QEMU worker CPU time: $cpuTotal" + performanceAge(sample, "cpuSampleElapsedMs"),
                                 "Emulator memory: $pss" + performanceAge(sample, "pssSampleElapsedMs"),
                                 "Android RAM: $ram" + performanceAge(sample, "deviceMemorySampleElapsedMs"),
                                 "Android whole-device CPU: unavailable",
