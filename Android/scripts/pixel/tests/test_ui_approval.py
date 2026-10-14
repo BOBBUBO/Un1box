@@ -37,7 +37,7 @@ class UI(unittest.TestCase):
     def test_unknown_outside_symlink_and_wrong_pin_are_local_preaction_errors(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);path,pin=self.fixture(root)
-            for image in ('../post-wait-current.png','unknown.png',str(root.parent/'post-wait-current.png')):
+            for image in (None, '../post-wait-current.png','unknown.png',str(root.parent/'post-wait-current.png')):
                 with self.assertRaises(ui.UIApprovalUsageError):ui.approve(self.controller(root),image,pin,lambda b:(1080,2424))
             with self.assertRaises(ui.UIApprovalUsageError):ui.approve(self.controller(root),str(path),'0'*64,lambda b:(1080,2424))
             path.unlink();path.symlink_to(root/'outside')
@@ -58,6 +58,16 @@ class UI(unittest.TestCase):
             (root/(path.stem+'-receipt.json')).write_text(json.dumps({'elapsedSeconds':250,'sha256':pin,'dimensions':[1080,2424]}))
             with self.assertRaises(RuntimeError) as error:ui.approve(self.controller(root),str(path),pin,lambda b:(1080,2424))
             self.assertFalse(ui.local_usage_rejection('approve-ui',error.exception))
+
+    def test_actual_cli_error_handler_local_rejection_keeps_original_attempt_running(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);c=self.controller(root)
+            self.assertTrue(ui.handle_controller_error(c,'approve-ui',ui.UIApprovalUsageError('unknown filename')))
+            self.assertFalse((root/'request-stop').exists())
+            self.assertTrue(json.loads((root/'approval-usage-rejected-approve-ui.json').read_text())['preactionLocalUsageError'])
+            self.assertFalse(ui.handle_controller_error(c,'approve-ui',RuntimeError('original deadline')))
+            self.assertTrue((root/'request-stop').exists())
+            self.assertFalse(json.loads((root/'controller-failure-approve-ui.json').read_text())['guestAcceptancePassed'])
 
     def test_cli_classification_only_preaction_approval_does_not_cancel(self):
         for stage,error,expected in (('approve-ui',ui.UIApprovalUsageError('bad argument'),True),('diagnose',ui.UIApprovalUsageError('bad argument'),False),('approve-ui',RuntimeError('lost ownership'),False),('approve-ui',ValueError('corrupt actual PNG'),False)):

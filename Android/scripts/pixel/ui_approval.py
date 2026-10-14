@@ -14,6 +14,8 @@ class UIApprovalUsageError(ValueError):
 
 def normalized_capture(attempt, image):
     root = Path(attempt).resolve()
+    if not isinstance(image, (str, Path)) or not str(image):
+        raise UIApprovalUsageError('Actual capture filename/path required')
     path = Path(image)
     if not path.is_absolute():
         if len(path.parts) != 1:
@@ -58,3 +60,13 @@ def approve(controller, image, pin, png_dimensions):
 
 def local_usage_rejection(stage, error):
     return stage == 'approve-ui' and isinstance(error, UIApprovalUsageError)
+
+
+def handle_controller_error(controller, stage, error):
+    local = local_usage_rejection(stage, error)
+    controller.write(('approval-usage-rejected-' if local else 'controller-failure-')+stage+'.json',
+        {'error': str(error), 'elapsedSeconds': controller.elapsed(), 'guestAcceptancePassed': False,
+         'preactionLocalUsageError': local, 'targetMutation': False if local else None})
+    if not local:
+        (controller.out/'request-stop').touch()
+    return local
