@@ -15,6 +15,8 @@ internal class AudioObservations {
     var shortWrites = 0L
     var writeFailures = 0L
     var nativePullFailures = 0L
+    var discardedReadPackets = 0L
+    var discardedReadSamples = 0L
     var underruns = 0L
     var playedFrames = 0L
     var focusLosses = 0L
@@ -50,6 +52,7 @@ internal class AudioObservations {
         putDouble("writtenRmsS16", if (writtenSamples == 0L) 0.0 else sqrt(writtenSquares / writtenSamples))
         putLong("writeCalls", writeCalls); putLong("shortWrites", shortWrites); putLong("writeFailures", writeFailures)
         putLong("nativePullFailures", nativePullFailures); putInt("lastWriteCode", lastWriteCode)
+        putLong("discardedReadPackets", discardedReadPackets); putLong("discardedReadSamples", discardedReadSamples)
         putLong("underruns", underruns); putLong("playedFrames", playedFrames)
         putLong("focusLosses", focusLosses); putLong("focusGains", focusGains); putLong("focusDenied", focusDenied)
         putLong("pauses", pauses); putLong("resumes", resumes); putLong("trackGenerations", trackGenerations)
