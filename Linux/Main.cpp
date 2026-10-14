@@ -661,8 +661,6 @@ static int frontend(const Options &o, int argc, char **argv) {
                 }
             }
             Packet p;
-            p.kind = Cancel;
-            submit(p);
             p.kind = Stop;
             submit(p);
             stopping = true;
