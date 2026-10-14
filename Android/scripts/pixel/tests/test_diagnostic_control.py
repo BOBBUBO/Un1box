@@ -267,6 +267,36 @@ class Admission(unittest.TestCase):
 
 
 class BoundedChild(unittest.TestCase):
+    def test_start_and_identity_interrupt_retire_only_actual_owned_child(self):
+        for phase in ('start','identity'):
+            with self.subTest(phase=phase):
+                child=mock.Mock(pid=543210,exitcode=-9)
+                child.is_alive.return_value=True
+                if phase=='start':child.start.side_effect=KeyboardInterrupt('start interrupted after spawn')
+                identities=[KeyboardInterrupt('identity interrupted'),(1,123)] if phase=='identity' else [(1,123)]
+                before=pixel_supervisor.signal.pthread_sigmask(pixel_supervisor.signal.SIG_BLOCK,set())
+                with mock.patch.object(pixel_supervisor.base,'process_identity',side_effect=identities), \
+                     mock.patch.object(pixel_supervisor.os,'getpgid',return_value=999), \
+                     mock.patch.object(pixel_supervisor.os,'kill') as kill, \
+                     mock.patch.object(pixel_supervisor.os,'killpg') as group:
+                    with self.assertRaises(KeyboardInterrupt):
+                        pixel_supervisor.bounded_capture('/synthetic/adb',binding(),'/synthetic/out',
+                            now=lambda:binding()['originNs']+809_000_000_000,process_factory=lambda **kw:child)
+                kill.assert_called_once_with(543210,pixel_supervisor.signal.SIGKILL)
+                group.assert_not_called()
+                child.join.assert_called_once()
+                self.assertLessEqual(child.join.call_args.kwargs['timeout'],1)
+                self.assertEqual(pixel_supervisor.signal.pthread_sigmask(pixel_supervisor.signal.SIG_BLOCK,set()),before)
+
+    def test_start_refusal_without_owned_pid_never_signals_or_joins(self):
+        child=mock.Mock(pid=None)
+        child.start.side_effect=RuntimeError('No child created')
+        with mock.patch.object(pixel_supervisor.os,'kill') as kill, mock.patch.object(pixel_supervisor.os,'killpg') as group:
+            with self.assertRaisesRegex(RuntimeError,'No child created'):
+                pixel_supervisor.bounded_capture('/synthetic/adb',binding(),'/synthetic/out',
+                    now=lambda:binding()['originNs']+809_000_000_000,process_factory=lambda **kw:child)
+        kill.assert_not_called();group.assert_not_called();child.join.assert_not_called();child.is_alive.assert_not_called()
+
     def test_interrupted_join_still_kills_original_owned_child_and_reaps_then_propagates(self):
         child=mock.Mock(pid=543210,exitcode=-9)
         child.is_alive.return_value=True
