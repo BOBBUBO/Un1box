@@ -21,6 +21,19 @@ checked before launching; source tests alone do not authorize a 4 GiB VM.
 Retained evidence showed the emulator raised RAM to 2560 MB; inspect the new
 actual startup log rather than labeling requested RAM as actual RAM.
 
+The closed `--cores` selector accepts 2 (default) or 4 only. Four guest cores
+require a separately reviewed allocation. The retained API36 run with actual
+4096 MB and two cores reported 91.91% guest CPU pressure and 99–100% aggregate
+CPU use around a 20.309-second Keyguard ANR, before application installation.
+This supports a CPU capacity experiment; it does not prove the ANR's cause or
+that four cores will resolve it. Startup work may also block on IPC or I/O.
+Keep RAM, image, emulator version, SwiftShader, heap policy, userdata and all
+deadlines fixed. Record actual CPU configuration, host affinity/quota/pressure
+and runtime KVM evidence; an acceleration capability check alone does not
+prove the running emulator used KVM. Repeated boots of retained userdata may
+change startup work independently. Android documents the
+[multi-core setting](https://developer.android.com/studio/run/managing-avds).
+
 Use the retained successfully imported record. This tool neither imports,
 selects, installs APKs nor starts a guest. Freeze the intended main/test APK and
 verify their actual installed identity separately. Supply the selected record
@@ -115,6 +128,13 @@ verifies and installs the frozen matching main/test APKs, runs scoped
 `am start -W` with a bounded 30-second timeout, then captures and views the
 actual new application's Android UI by the original 240-second deadline.
 Installation, foreground launch and image review do not reset either clock.
+An Android framework ANR overlay does not establish a usable application UI.
+If a bounded Wait action is appropriate, use the actual UI hierarchy's enabled
+Wait control bounds. A resized image displayed by an inspection tool may use
+different coordinates from the target's pixels; do not tap those displayed
+coordinates. Retain the hierarchy, action and a fresh screenshot, then visually
+verify the overlay cleared before the original 240-second deadline. A late
+correction does not extend the gate or establish guest acceptance.
 If this UI gate fails or misses that deadline, create `request-stop` and retain
 the failure; do not start a guest. An older APK's foreground timeout is not a
 new guest failure. The supervisor receipt is not UI, guest, provider or

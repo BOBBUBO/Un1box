@@ -36,6 +36,8 @@ class Supervision(unittest.TestCase):
             self.assertEqual(argv[argv.index("-port"):argv.index("-port")+2],["-port","5554"])
             self.assertEqual(argv[argv.index("-gpu"):argv.index("-gpu")+2],["-gpu","swiftshader"])
             self.assertEqual(argv[argv.index("-memory"):argv.index("-memory")+2],["-memory","2048"])
+            self.assertEqual(argv[argv.index("-cores"):argv.index("-cores")+2],["-cores","2"])
+            self.assertEqual(json.loads((attempt.output/"launch.json").read_text())["requestedGuestCores"],2)
 
     def test_reviewed_4096_request_is_recorded_without_heap_override(self):
         with tempfile.TemporaryDirectory() as directory, \
@@ -73,6 +75,32 @@ class Supervision(unittest.TestCase):
                     attempt.launch()
                 popen.assert_not_called()
                 self.assertIsNone(attempt.avd)
+
+    def test_reviewed_four_cores_changes_only_requested_cpu_argument(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(retry.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout=b"List of devices attached\n")), \
+             mock.patch.object(retry.subprocess,"Popen") as popen, \
+             mock.patch.object(retry.PROCESS_CONTEXT,"Process"):
+            popen.return_value.pid=987654
+            args=self.arguments(directory);args.memory_mb=4096;args.cores=4
+            attempt=retry.Attempt(args);attempt.launch()
+            self.assertEqual(popen.call_args.args[0],["sudo","-n","-u","synthetic","xvfb-run","-a","-s",
+                "-screen 0 1280x1024x24","/synthetic/emulator","-avd","synthetic_16k","-port","5554",
+                "-no-window","-no-snapshot","-no-audio","-gpu","swiftshader","-cores","4","-memory","4096"])
+            receipt=json.loads((attempt.output/"launch.json").read_text())
+            self.assertEqual((receipt["requestedGuestCores"],receipt["requestedRamMB"]),(4,4096))
+            self.assertEqual((receipt["bootLimitSeconds"],receipt["stopAtSeconds"],receipt["hardLimitSeconds"]),(240,840,900))
+
+    def test_unreviewed_cpu_value_fails_before_any_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args=[sys.executable,str(Path(retry.__file__)),"--allocation-granted","--user","synthetic",
+                  "--adb","/synthetic/adb","--emulator","/synthetic/emulator","--fresh-library",
+                  "--lock-sha256","a"*64,"--rom-sha256","b"*64,"--guest-sha256","c"*64,
+                  "--output",str(Path(directory)/"attempt"),"--cores","3"]
+            result=subprocess.run(args,capture_output=True)
+            self.assertEqual(result.returncode,2)
+            self.assertIn(b"invalid choice",result.stderr)
+            self.assertFalse((Path(directory)/"attempt").exists())
 
     def test_failed_enumeration_refuses_launch(self):
         with tempfile.TemporaryDirectory() as directory, \

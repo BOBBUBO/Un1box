@@ -166,9 +166,10 @@ class Attempt:
         if any(line.split() and line.split()[0] == b"emulator-5554" for line in result.stdout.splitlines()):
             raise RuntimeError("emulator-5554 already exists; no launch or cleanup authorized")
         memory_mb = getattr(self.args,"memory_mb",2048)
+        cores = getattr(self.args,"cores",2)
         command = ["sudo", "-n", "-u", self.args.user, "xvfb-run", "-a", "-s", "-screen 0 1280x1024x24",
                    self.args.emulator, "-avd", self.args.avd, "-port", "5554", "-no-window", "-no-snapshot", "-no-audio",
-                   "-gpu", "swiftshader", "-cores", "2", "-memory", str(memory_mb)]
+                   "-gpu", "swiftshader", "-cores", str(cores), "-memory", str(memory_mb)]
         log = (self.output/"avd.log").open("wb")
         self.avd = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         log.close()
@@ -176,7 +177,8 @@ class Attempt:
             args=(self.avd.pid, self.deadline, self.complete, str(self.output/"hard-deadline.json")))
         self.watcher.start()
         self.write("launch.json", {"argv": command, "wrapperPid": self.avd.pid,
-            "requestedRamMB": memory_mb, "priorActualRamMB": 2560, "hardLimitSeconds": HARD_LIMIT,
+            "requestedRamMB": memory_mb, "requestedGuestCores": cores,
+            "priorActualRamMB": 2560, "hardLimitSeconds": HARD_LIMIT,
             "bootLimitSeconds": BOOT_LIMIT, "stopAtSeconds": STOP_AT})
 
     def gate(self):
@@ -413,6 +415,7 @@ def main():
     parser.add_argument("--emulator", required=True)
     parser.add_argument("--avd", default="LightTouch_API35_16K")
     parser.add_argument("--memory-mb",type=int,choices=(2048,4096),default=2048)
+    parser.add_argument("--cores",type=int,choices=(2,4),default=2)
     parser.add_argument("--user", required=True)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--record-id")
