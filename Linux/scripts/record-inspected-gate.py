@@ -152,7 +152,10 @@ def main():
                         line = row.decode()
                         value = dict(re.findall(r'(\w+)=([^ ]+)', line))
                         value['path'] = line.split(' path=', 1)[1]
-                        if int(value['observed_monotonic_ns']) >= trigger:
+                        if (int(value['observed_monotonic_ns']) >= trigger and
+                                Path(value['path']).resolve() == (root / 'live.bmp').resolve()):
+                            # A scheduled screenshot uses another destination;
+                            # it cannot satisfy this explicit S request.
                             if row.startswith(b'screenshot_retry '):
                                 transient = True
                                 (target / 'retry.json').write_text(json.dumps(value, indent=2) + '\n')
