@@ -160,6 +160,14 @@ python3 Linux/scripts/run-photos-concurrency.py --window 2097173 \
   --output-dir /private/photos-concurrent --execute
 ```
 
+Launch with `--trace-io` to retain worker touch admission request IDs/phases,
+engine application timestamps/results, actual frame-copy sequence/source times,
+and individual nonzero PCM packet receipt times/sample indices. These are host
+CLOCK_MONOTONIC observations. PCM capture-relative timestamps retain their separate
+epoch; receipt does not prove hardware playback. Match applied begin/move/lift
+requests to the two contact IDs and require nonzero packets and actual frame
+updates inside that observed interval. Queued admission alone is insufficient.
+
 Supply the actual private display/window and a new output directory; omit
 `--execute` to inspect the plan without sending input. The controller captures the
 actual X11 display, balances Power1/Home0, admits F6, then starts another complete

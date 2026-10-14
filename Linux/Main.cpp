@@ -134,7 +134,7 @@ static void peer(int socket) {
 struct Options {
     std::string base, state, rom, engine, package, import, sha, screenshot, script, library, record, name;
     bool recover = false, headless = false, audio = true, worker = false, list = false, library_operation = false;
-    bool debug_qmp = false;
+    bool debug_qmp = false, trace_io = false;
     int control = -1, pcm = -1;
     double seconds = 0;
 };
@@ -158,6 +158,8 @@ static Options options(int argc, char **argv) {
             o.headless = true;
         else if (key == "--no-audio")
             o.audio = false;
+        else if (key == "--trace-io")
+            o.trace_io = true;
         else if (key == "--debug-qmp")
             o.debug_qmp = true;
         else if (key == "--seconds") {
@@ -173,7 +175,8 @@ static Options options(int argc, char **argv) {
             std::cout
                 << "lighttouch-linux --base DIR --state DIR --engine LIB [--rom FILE] [--package ITPACK]\n  [--import "
                    "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
-                   "[--no-audio]\n\nMouse left/right: contacts 1/2. H: Home, P: Power, Space: pause, Escape: orderly "
+                   "[--no-audio] [--trace-io]\n\nMouse left/right: contacts 1/2. H: Home, P: Power, Space: pause, "
+                   "Escape: orderly "
                    "stop.\nF6: labeled deterministic two-contact pinch. Arrows: acceleration replay (not hardware "
                    "gyro).\nScript: seconds touch ID phase x y; button ID down; pause 0/1; cancel; stop.\n";
             std::exit(0);
@@ -288,6 +291,20 @@ static int worker(const Options &o) {
             switch (p.kind) {
             case Touch:
                 result = lt_runtime_touch(r, &p.touch, &error);
+                if (o.trace_io) {
+                    lt_input_status admitted{sizeof(admitted), 1, 0, 0, 0};
+                    lt_error trace_error{sizeof(trace_error), 1, 0, {}};
+                    auto status = lt_runtime_input_status(r, &admitted, &trace_error);
+                    std::ostringstream line;
+                    line << "trace_touch observed_monotonic_ns=" << now_ns() << " result=" << result
+                         << " request=" << (status == LT_OK ? admitted.request_id : 0) << " contacts=" << p.touch.count;
+                    for (uint32_t index = 0; index < std::min(p.touch.count, LT_MAX_CONTACTS); ++index) {
+                        const auto &contact = p.touch.contacts[index];
+                        line << " contact=" << contact.id << ":" << contact.phase << ":" << contact.x << ":"
+                             << contact.y;
+                    }
+                    std::cout << line.str() << std::endl;
+                }
                 break;
             case Button:
                 result = lt_runtime_button(r, p.button, p.value, &error);
@@ -329,6 +346,9 @@ static int worker(const Options &o) {
         if (lt_runtime_input_status(r, &input, &error) == LT_OK && input.request_id && input.state != 1 &&
             input.request_id != reported_input) {
             reported_input = input.request_id;
+            if (o.trace_io)
+                std::cout << "trace_applied observed_monotonic_ns=" << now_ns() << " request=" << input.request_id
+                          << " state=" << input.state << " engine_result=" << input.engine_result << std::endl;
             Packet report;
             report.kind = InputStatus;
             report.input_status = input;
@@ -810,12 +830,24 @@ static int frontend(const Options &o, int argc, char **argv) {
             require(n == sizeof pcm && pcm.version == 1 && pcm.info.frames <= 4096 && pcm.info.channels == 2,
                     "invalid PCM packet");
             pcm_received += pcm.info.frames;
+            uint32_t packet_nonzero = 0, packet_first = 0, packet_last = 0;
             for (uint32_t i = 0; i < pcm.info.frames * 2; i++) {
                 pcm_nonzero_samples += pcm.samples[i] != 0;
+                if (pcm.samples[i]) {
+                    if (!packet_nonzero)
+                        packet_first = i;
+                    packet_last = i;
+                    packet_nonzero++;
+                }
                 uint32_t magnitude = uint32_t(std::abs(int(pcm.samples[i])));
                 pcm_loud_samples += magnitude > 1000;
                 pcm_peak_abs = std::max(pcm_peak_abs, magnitude);
             }
+            if (o.trace_io && packet_nonzero)
+                std::cout << "trace_pcm observed_monotonic_ns=" << now_ns() << " frames=" << pcm.info.frames
+                          << " capture_relative_ns=" << pcm.info.timestamp_ns << " nonzero_samples=" << packet_nonzero
+                          << " first_nonzero_sample=" << packet_first << " last_nonzero_sample=" << packet_last
+                          << " sample_rate=" << pcm.info.sample_rate << " channels=" << pcm.info.channels << std::endl;
             if (sound) {
                 if (SDL_GetQueuedAudioSize(sound) > 17640) {
                     pcm_sdl_discarded += SDL_GetQueuedAudioSize(sound) / 4;
@@ -828,6 +860,9 @@ static int frontend(const Options &o, int argc, char **argv) {
             }
         }
         if (frame_copy(shared, pixels, frame, sequence) && renderer) {
+            if (o.trace_io)
+                std::cout << "trace_frame observed_monotonic_ns=" << now_ns() << " sequence=" << frame.sequence
+                          << " source_monotonic_ns=" << frame.timestamp_ns << std::endl;
             if (!texture) {
                 texture = lt::opaque_texture(renderer, int(frame.width), int(frame.height));
                 require(texture, SDL_GetError());
