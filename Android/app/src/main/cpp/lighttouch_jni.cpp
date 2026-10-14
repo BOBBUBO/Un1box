@@ -27,7 +27,7 @@ lt_pcm_info pcm = LT_INIT(lt_pcm_info);
 lt_board_info board = LT_INIT(lt_board_info);
 uint64_t sequence = 0;
 bool presenter_started = false;
-bool starting = false, startup_stop_requested = false;
+bool starting = false, startup_stop_requested = false, startup_pause_requested = false;
 uint64_t last_rejected_input = 0;
 std::string diagnostic;
 struct Utf {
@@ -141,10 +141,10 @@ JNI(records) jobjectArray JNICALL Java_org_lighttouch_android_Native_records(JNI
     auto rows=env->NewObjectArray(count,strings,nullptr);
     for(uint32_t i=0;i<count;++i) {
         lt_record_info record=LT_INIT(lt_record_info);status=lt_library_record_at(library,i,&record,&error);
-        auto row=env->NewObjectArray(9,str,nullptr);
+        auto row=env->NewObjectArray(11,str,nullptr);
         lt_board_info facts=LT_INIT(lt_board_info);
         if(status==LT_OK)status=lt_engine_board("libqemu-arm.so",record.board,&facts,&error);
-        std::vector<std::string> values=status==LT_OK?std::vector<std::string>{record.id,record.display_name,record.board,record.build,std::to_string(record.selected),std::to_string(record.dirty),std::to_string(facts.max_contacts),(facts.capabilities&2)?"1":"0",(facts.capabilities&1)?"1":"0"}:std::vector<std::string>{"",result(status,error)};
+        std::vector<std::string> values=status==LT_OK?std::vector<std::string>{record.id,record.display_name,record.board,record.build,std::to_string(record.selected),std::to_string(record.dirty),std::to_string(facts.max_contacts),(facts.capabilities&2)?"1":"0",(facts.capabilities&1)?"1":"0",record.bootrom_path[0] && access(record.bootrom_path,R_OK)==0?"1":"0",record.guest_package_path[0] && access(record.guest_package_path,R_OK)==0?"1":"0"}:std::vector<std::string>{"",result(status,error)};
         for(size_t index=0;index<values.size();++index)env->SetObjectArrayElement(row,index,string(env,values[index]));
         env->SetObjectArrayElement(rows,i,row);env->DeleteLocalRef(row);
     }
@@ -189,6 +189,11 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
     }
     std::lock_guard<std::mutex> lock(guard);
     runtime=prepared_runtime;device=prepared_device;board=prepared_board;starting=false;
+    if(startup_pause_requested && !startup_stop_requested) {
+        lt_error pause_error=LT_INIT(lt_error);
+        auto paused=lt_runtime_pause(runtime,1,&pause_error);
+        if(paused!=LT_OK)diagnostic=result(paused,pause_error);
+    }
     if(startup_stop_requested) {
         lt_error stop_error=LT_INIT(lt_error);
         auto stopped=lt_runtime_request_shutdown(runtime,&stop_error);
@@ -218,6 +223,7 @@ JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env
 }
 JNI(pause) jstring JNICALL Java_org_lighttouch_android_Native_pause(JNIEnv *env,jobject,jboolean paused) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);
+    if(starting){startup_pause_requested=paused;return string(env,"");}
     return string(env,runtime?result(lt_runtime_pause(runtime,paused,&error),error):"No active session");
 }
 JNI(stop) jstring JNICALL Java_org_lighttouch_android_Native_stop(JNIEnv *env,jobject) {

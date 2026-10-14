@@ -89,6 +89,8 @@ class FirmwareAcceptanceTest {
                                 assertTrue("Existing baseline lost", after.map { it.getString("id") }.containsAll(before))
                                 val record = after.single { it.getString("id") !in before }
                                 assertEquals("n72ap", record.getString("board")); assertEquals("7E18", record.getString("build"))
+                                assertTrue("n72 ROM must be preserved for later boot", record.getBoolean("bootromAvailable"))
+                                assertTrue("Native prepared package must be available", record.getBoolean("guestPackageAvailable"))
                                 result.put("recordId", record.getString("id")).put("importElapsedMs", SystemClock.elapsedRealtime() - importStart)
                                 result.put("preparedManifestSha256", acceptanceSha256(File(destination, "device.lock.json")))
                             }

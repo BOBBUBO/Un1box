@@ -22,12 +22,13 @@ class EngineService : Service() {
     private val binder = object : IEngine.Stub() {
         override fun importBase(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath,
             displayName, File(filesDir, "bootrom.bin").absolutePath, File(filesDir, "guest.itpack").absolutePath)
-        override fun importPrepared(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath, displayName, "", "")
+        override fun importPrepared(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath, displayName, File(filesDir, "bootrom.bin").absolutePath, "")
         override fun records(): Array<Bundle> = Native.records(File(filesDir, "library").absolutePath).mapNotNull { row ->
             if (row[0].isEmpty()) { error = row.getOrElse(1) { "Device library unavailable" }; null }
             else Bundle().apply {
                 putString("id", row[0]); putString("name", row[1]); putString("board", row[2]); putString("build", row[3])
                 putBoolean("selected", row[4] == "1"); putBoolean("dirty", row[5] == "1")
+                putBoolean("bootromAvailable", row.getOrElse(9) { "0" } == "1"); putBoolean("guestPackageAvailable", row.getOrElse(10) { "0" } == "1")
                 putString("contacts", row[6]); putBoolean("gyro", row[7] == "1"); putBoolean("acceleration", row[8] == "1")
             }
         }.toTypedArray()
@@ -36,7 +37,7 @@ class EngineService : Service() {
             if (!started.compareAndSet(false, true)) return status()
             foreground()
             error = Native.start(File(filesDir, "library").absolutePath, recordId)
-            if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); requestAudioFocus() }
+            if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) requestAudioFocus() }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
                 persistStopError(error)
