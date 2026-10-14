@@ -15,6 +15,44 @@ SOURCE = Path(__file__).resolve().parents[1]
 
 
 class HostLifecycle(unittest.TestCase):
+    def test_actual_host_signal_during_capture_join_retires_blocked_child_before_outer_finally(self):
+        for number in (signal.SIGTERM,signal.SIGHUP):
+            with self.subTest(number=number):
+                child=self.run_child('''
+import host_lifecycle,pixel_supervisor,multiprocessing,os,time,json,signal
+events=[];host_lifecycle.install(events)
+def blocked(*args):
+    os.setsid()
+    print(json.dumps({'capturePid':os.getpid()}),flush=True)
+    while True:time.sleep(1)
+pixel_supervisor.capture_child=blocked
+owned=[]
+def factory(**kwargs):
+    p=multiprocessing.get_context('fork').Process(**kwargs);owned.append(p);return p
+try:
+    pixel_supervisor.bounded_capture('/synthetic/adb',{'originNs':time.monotonic_ns()},'/synthetic/out',process_factory=factory)
+except KeyboardInterrupt:
+    events.append({'unwound':True})
+finally:
+    p=owned[0]
+    print(json.dumps({'aliveBeforeOuterCleanup':p.is_alive(),'captureExit':p.exitcode,'events':events}),flush=True)
+''')
+                capture_pid=None
+                try:
+                    capture_pid=json.loads(child.stdout.readline())['capturePid']
+                    child.send_signal(number)
+                    stdout,stderr=child.communicate(timeout=3)
+                    self.assertEqual(child.returncode,0,stderr)
+                    result=json.loads(stdout)
+                    self.assertFalse(result['aliveBeforeOuterCleanup'])
+                    self.assertEqual(result['captureExit'],-signal.SIGKILL)
+                    self.assertEqual(result['events'][0]['signal'],number)
+                    self.assertFalse(Path(f'/proc/{capture_pid}').exists())
+                finally:
+                    if child.poll() is None:child.kill();child.wait()
+                    if capture_pid and Path(f'/proc/{capture_pid}').exists():
+                        os.kill(capture_pid,signal.SIGKILL)
+
     def test_signal_stop_or_receipt_failure_cannot_suppress_owned_cleanup(self):
         for fail_receipt in (False, True):
             with self.subTest(fail_receipt=fail_receipt):
