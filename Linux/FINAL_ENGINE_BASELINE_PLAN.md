@@ -55,6 +55,22 @@ For the bounded Notes portion, create the private script before launch with thes
 times measured from HELLO/session start. The operator must stop before a scripted
 action if its prerequisite is not met; scripts are loaded once, not a live RPC
 console. This avoids asserting a fixed boot duration while retaining typed calls.
+The independent `watch-visual-gates.py --run <write-run> --execute` must run before
+HELLO. It uses the first complete HELLO timestamp without restarting deadlines,
+binds the exact frontend UID/argv/PID/startticks/pidfd, and automatically sends
+ordinary INT at129s/179s unless the corresponding inspected gate exists. Operator
+polling alone is insufficient. A watchdog error after ownership is established
+also requests Stop; the owning supervisor remains responsible for bounded disposal.
+
+After independently inspecting the actual current pixels, write `home-gate.json`
+or `editor-gate.json` with exact frontend PID, startticks, HELLO monotonic timestamp,
+`model_inspected: true`, `inspected_monotonic_ns`, scene (`Home Screen` or
+`Notes focused new editor`), capture-directory path, receipt-file SHA256 and native
+BMP SHA256. Both source and diagnostics must be fresh and the capture awake/agent1;
+late inspection, another worker, stale capture, wrong scene or cumulative counters
+cannot qualify a gate. The script never generates a scene assertion. A read attempt
+needs its own read-specific gate policy; do not apply the new-editor typing gate
+or silently reuse the previous worker's Home receipt.
 
 ```text
 140 guest launch com.apple.mobilenotes
@@ -93,3 +109,15 @@ from clean shutdown/process disposal. No intentional interruption is included.
 This bounded no-audio plan cannot qualify audio, audibility, sustained workload,
 Android, physical16KiB pages, n81 input/preparation, gyro or broad gate closure.
 Old n72 evidence remains intact; root independently reviews the final receipts.
+
+Allocated run01 used frozen engine SHA256
+`da0292f0ac5bff6ce067f0545c3ddb0b5da6a855c90d7fbf285853820384e4ad`, source
+`b59b3620b01da9285dea3a9ee6f58c1bb3cecfc2`. Its first capture was the Apple boot
+logo; delayed captures were black and the later fast Home-wake capture showed the
+colored Lock Screen. Home was not inspected before the timed launch. The operator
+missed the planned stop gate, retained that failure, and requested Stop before
+typing. The attempt ended before type190/sync220 and did not start a read worker.
+Its exit1 frontend LeakSanitizer report and missing final confirmed status remain
+unqualified despite absent dirty marker and available lease. Source changes to
+script suppression, flushed final receipts and scoped SDL cleanup require a new
+build/test allocation; they have not been exercised by that original run.
