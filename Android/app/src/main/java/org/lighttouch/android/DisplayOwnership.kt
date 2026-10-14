@@ -69,6 +69,13 @@ internal class DisplayCancellationHistory {
     companion object { const val LIMIT = 8 }
 }
 
+/** Compose and callbacks use the same strict Binder incarnation identity. */
+internal class WorkerSurfaceIdentity(private val worker: Any?) {
+    fun matches(current: Any?) = worker === current
+    override fun equals(other: Any?) = other is WorkerSurfaceIdentity && worker === other.worker
+    override fun hashCode() = if (worker == null) 0 else System.identityHashCode(worker)
+}
+
 /** The numeric token is never reused via a newly bound worker closure. */
 internal class WorkerDisplayLease {
     private var worker: Any? = null

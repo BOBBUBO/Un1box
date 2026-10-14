@@ -1,0 +1,124 @@
+package org.lighttouch.android
+
+import android.content.Intent
+import android.os.Binder
+import android.os.SystemClock
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.lang.reflect.Proxy
+
+/** Actual Compose/SurfaceView lifecycle with fake workers; no guest or dead-process
+ * producer acceptance. Requires an unused real service before replacing its UI. */
+@RunWith(AndroidJUnit4::class)
+class WorkerGuestSurfaceTest {
+    private class Endpoint {
+        val identity = Binder()
+        val calls = mutableListOf<String>()
+        val worker = Proxy.newProxyInstance(IEngine::class.java.classLoader, arrayOf(IEngine::class.java)) { _, method, _ ->
+            when (method.name) {
+                "asBinder" -> identity
+                "claimDisplay" -> { calls += "claim"; 1L }
+                "attachDisplay" -> { calls += "attach"; "" }
+                "releaseDisplay" -> { calls += "release"; null }
+                "detachDisplay" -> { calls += "detach"; null }
+                "cancelDisplayInput" -> { calls += "cancel"; null }
+                "backgroundDisplay" -> { calls += "background"; null }
+                "toString" -> "Fake Surface worker"
+                else -> error("Unexpected Surface control: ${method.name}")
+            }
+        } as IEngine
+    }
+    @Test fun newWorkerCreatesNewSurfaceViewAndRetiredCallbacksCannotReachIt() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue("Explicit isolated Surface test required", args.getString("exerciseWorkerSurfaceReplacement") == "true")
+        val context = instrumentation.targetContext
+        val expected = requireNotNull(args.getString("expectedMainApkSha256"))
+        require(expected.matches(Regex("[0-9a-f]{64}")))
+        assertEquals(expected, acceptanceSha256(File(context.applicationInfo.sourceDir)))
+        val evidence = File(context.filesDir, "surface-worker-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
+        val result = JSONObject().put("guestAcceptancePassed", false).put("crossProcessProducerRecoveryProven", false)
+        try {
+            AcceptanceBinding(context, Intent(context, EngineService::class.java), IEngine.Stub::asInterface).use { binding ->
+                val initial = binding.get().status()
+                assertFalse("No live/consumed guest may be replaced by this test", initial.getBoolean("sessionStarted"))
+                assertEquals("stopped", initial.getString("state"))
+                assertEquals("", initial.getString("error"))
+                val a = Endpoint(); val b = Endpoint()
+                val selected = mutableStateOf<IEngine?>(a.worker)
+                val screenOn = mutableStateOf(false)
+                var latest: GuestDisplay? = null
+                val created = mutableListOf<GuestDisplay>()
+                val released = mutableListOf<GuestDisplay>()
+                val errors = mutableListOf<String>()
+                ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                    scenario.onActivity { activity -> activity.setContent {
+                        WorkerGuestSurface(worker = selected.value, currentWorker = { selected.value },
+                            mayClaim = { latest === it }, ownerTicket = { 1L }, onError = { errors += it },
+                            onCreated = { latest = it; created += it }, onReleased = { released += it },
+                            keepScreenOn = screenOn.value, modifier = Modifier.fillMaxSize())
+                    } }
+                    fun awaitSurface(different: GuestDisplay? = null): GuestDisplay {
+                        val deadline = SystemClock.uptimeMillis() + 5000
+                        while (SystemClock.uptimeMillis() < deadline) {
+                            var ready: GuestDisplay? = null
+                            scenario.onActivity {
+                                latest?.takeIf { it !== different && it.holder.surface.isValid }?.let { ready = it }
+                            }
+                            ready?.let { return it }
+                            SystemClock.sleep(20)
+                        }
+                        error("Fresh actual SurfaceView was not ready within5s")
+                    }
+                    val first = awaitSurface()
+                    scenario.onActivity { screenOn.value = true }
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity {
+                        assertSame("Same worker recomposition must retain its View", first, latest)
+                        assertEquals(1, created.size)
+                        selected.value = b.worker
+                        // This callback runs before Compose can replace A. It must
+                        // not attach A's old holder/queue to newly selected B.
+                        first.attachActiveSurface()
+                        first.cancelOwnedGesture()
+                        assertTrue(b.calls.isEmpty())
+                    }
+                    val second = awaitSurface(first)
+                    scenario.onActivity {
+                        assertNotSame(first, second)
+                        assertNotSame(first.holder, second.holder)
+                        assertEquals(2, created.size)
+                        assertTrue("A must be disposed, not pooled/reused", first in released)
+                        assertTrue(second.holder.surface.isValid)
+                        val before = b.calls.toList()
+                        first.surfaceDestroyed(first.holder)
+                        first.onWindowFocusChanged(true)
+                        first.cancelOwnedGesture()
+                        first.backgroundOwnedDisplay()
+                        first.retireDisplay()
+                        assertEquals("Late old callbacks reached new worker", before, b.calls)
+                        assertTrue(errors.isEmpty())
+                    }
+                    result.put("sameWorkerViewRetained", true).put("newWorkerViewAndHolderReplaced", true)
+                        .put("lateCallbacksSuppressed", true).put("actualNewSurfaceValid", true)
+                }
+            }
+        } catch (failure: Throwable) {
+            result.put("failure", failure.message ?: failure.javaClass.name)
+            throw failure
+        } finally {
+            File(evidence, "result.json").writeText(result.toString(2))
+        }
+    }
+}
