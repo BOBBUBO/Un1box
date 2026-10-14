@@ -144,6 +144,13 @@ typedef struct {
  * launch a fresh service/worker process. device outlives runtime. */
 lt_status lt_runtime_create(const lt_runtime_config *, lt_runtime **, lt_error *);
 lt_status lt_runtime_start(lt_runtime *, lt_error *);
+/* Explicit diagnostic opt-in before start; compiled OFF unless
+ * LIGHTTOUCH_ENABLE_DEBUG_QMP is enabled. No caller argv/path/command accepted.
+ * Socket is derived private state/work/qmp-PID.sock. Long socket paths require
+ * a client directory-FD alias (backend fixed readonly snapshot client handles
+ * this). Does not expose arbitrary monitor commands through this product ABI. */
+lt_status lt_runtime_debug_qmp_enable(lt_runtime *, lt_error *);
+lt_status lt_runtime_debug_qmp_path(lt_runtime *, char *path, uint32_t capacity, lt_error *);
 lt_status lt_runtime_poll(lt_runtime *, lt_runtime_status *, lt_error *);
 /* Display power is separate from black pixels. Shutdown phase: 0 idle,
  * 1 host queued,2 cancelling inputs,3 engine request,4 admitted,5 PMU confirmed.
