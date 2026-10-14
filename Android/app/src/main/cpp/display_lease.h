@@ -34,7 +34,7 @@ public:
     bool current(Request request) const { return owns(request.owner) && request.order==order_; }
     bool detach(uint64_t token) {
         if(!owns(token))return false;
-        ++order_;contacts_.clear();return true; // Activity authority survives.
+        ++order_;return true; // Keep authority and any failed release obligation.
     }
     bool release(uint64_t token) {
         if(!owns(token))return false;

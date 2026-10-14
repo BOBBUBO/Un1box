@@ -517,7 +517,11 @@ JNI(releaseDisplay) void JNICALL Java_org_lighttouch_android_Native_releaseDispl
         if(!display_lease.owns(uint64_t(lease)))return;
         const auto cancelled=cancel_display_contacts();
         if(!cancelled.empty())diagnostic="Display release failed: "+cancelled;
-        display_lease.release(uint64_t(lease));++surface_request;
+        // Failed cancellation must remain retryable before a new claim. Retire
+        // only after release admission succeeded; window detachment is separate.
+        if(cancelled.empty())display_lease.release(uint64_t(lease));
+        else display_lease.detach(uint64_t(lease));
+        ++surface_request;
         retired=window;window=nullptr;window_attached.store(0);
         ++surface_generation;++presentation_epoch;previous_present_ns=0;
     }
