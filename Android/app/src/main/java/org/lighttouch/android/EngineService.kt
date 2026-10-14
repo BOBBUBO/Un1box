@@ -55,6 +55,7 @@ class EngineService : Service() {
                 putString("detail", s.getOrElse(1) { "" })
                 putString("error", error)
                 putInt("pid", Process.myPid())
+                putInt("uid", Process.myUid())
                 putBoolean("sessionStarted", started.get())
             }
         }

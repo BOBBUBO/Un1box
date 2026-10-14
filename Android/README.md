@@ -201,3 +201,14 @@ OpenSSL prefix at `nativeDepsRoot/{arm64-v8a,x86_64}/prefix` (include/openssl an
 lib/libcrypto.a), built with the same NDK. External symlinks may adapt a private
 build layout. Preparation is not G6 acceptance until the resulting base boots on
 Linux and unrooted Android with actual guest rendering and usable input.
+
+Private fixture import is explicit opt-in instrumentation:
+`-e class org.lighttouch.android.PrivateFixtureImportTest -e importPrivateFixture true`.
+Provision `files/private-fixtures/n72ap-7E18.itbase`, `files/bootrom.bin`, and
+`files/guest.itpack` privately with the verified handoff hashes. The harness
+uses production `IEngine.importBase`, checks record preservation and selection,
+checks that status remains responsive during native validation, and writes
+`files/import-evidence-*/result.json`. Import success does not prove guest boot.
+UI status polling uses one background request at a time; native startup does
+integrity admission outside the frame/control mutex and publishes handles only
+when ready. Stop during admission is retained and applied when startup returns.

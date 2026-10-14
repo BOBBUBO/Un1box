@@ -99,21 +99,43 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }
         override fun onServiceDisconnected(name: ComponentName) { engine = null; workerPid = 0; status = "Worker exited"; stopSensors() }
     }
+    private var pollInFlight = false
     private val poll = object : Runnable {
         override fun run() {
-            try {
-                if (preparationOpen) pollPreparation()
-                engine?.status()?.let { b ->
-                    status = b.getString("state") ?: "Unknown"
-                    detail = b.getString("detail") ?: ""
-                    val reportedError = b.getString("error") ?: ""
-                    if (reportedError.isNotEmpty() || status == "running") error = reportedError
-                    workerPid = b.getInt("pid")
-                    sessionOwned = b.getBoolean("sessionStarted")
-                    if (active && status == "running") startSensors() else stopSensors()
+            if (!active || pollInFlight) return
+            pollInFlight = true
+            val observedEngine = engine
+            val observedFirmware = if (preparationOpen && !firmwareRestarting) firmware else null
+            Thread({
+                var engineState: Bundle? = null
+                var firmwareState: Bundle? = null
+                var engineFailure: String? = null
+                var firmwareFailure: String? = null
+                try { engineState = observedEngine?.status() } catch (e: RemoteException) { engineFailure = e.message ?: "Worker exited" }
+                try { firmwareState = observedFirmware?.status() } catch (e: RemoteException) { firmwareFailure = e.message ?: "Firmware worker exited" }
+                handler.post {
+                    pollInFlight = false
+                    if (!active) return@post
+                    if (engine?.asBinder() == observedEngine?.asBinder()) {
+                        engineState?.let { b ->
+                            status = b.getString("state") ?: "Unknown"
+                            detail = b.getString("detail") ?: ""
+                            val reportedError = b.getString("error") ?: ""
+                            if (reportedError.isNotEmpty() || status == "running") error = reportedError
+                            workerPid = b.getInt("pid")
+                            sessionOwned = b.getBoolean("sessionStarted")
+                            displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
+                            if (status == "running") startSensors() else stopSensors()
+                        }
+                        engineFailure?.let { engine = null; error = "Worker unavailable: $it"; stopSensors() }
+                    }
+                    if (firmware?.asBinder() == observedFirmware?.asBinder() && !firmwareRestarting) {
+                        firmwareState?.let { pollPreparation(it) }
+                        firmwareFailure?.let { error = "Firmware worker unavailable: $it" }
+                    }
+                    handler.postDelayed(this, 500)
                 }
-            } catch (e: RemoteException) { engine = null; error = "Worker unavailable: ${e.message}"; stopSensors() }
-            handler.postDelayed(this, 500)
+            }, "worker-status").start()
         }
     }
     private val importTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -150,9 +172,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             }
                             DropdownMenu(expanded = deviceMenu, onDismissRequest = { deviceMenu = false }) {
                                 for (device in devices) DropdownMenuItem(text = { Text("${device.getString("name")} · ${device.getString("board")} ${device.getString("build")}") }, onClick = {
-                                    val result = engine?.select(device.getString("id")) ?: "Worker unavailable"
-                                    if (result.isNotEmpty()) error = result
-                                    refreshDevices(); deviceMenu = false
+                                    busy = true; deviceMenu = false
+                                    val worker = engine
+                                    Thread({
+                                        val result = try { worker?.select(device.getString("id")) ?: "Worker unavailable" }
+                                            catch (e: RemoteException) { e.message ?: "Device selection failed" }
+                                        handler.post { error = result; busy = false; refreshDevices() }
+                                    }, "device-selection").start()
                                 })
                             }
                         }
@@ -273,9 +299,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             finally { try { oldBinder.unlinkToDeath(recipient, 0) } catch (_: java.util.NoSuchElementException) { } }
         }, "firmware-worker-restart").start()
     }
-    private fun pollPreparation() {
+    private fun pollPreparation(state: Bundle) {
         if (firmwareRestarting) return
-        val state = firmware?.status() ?: return
         if (state.getString("state") == "idle" && retainedPreparedOutput.isNotEmpty()) return
         preparation = state
         if (state.getString("state") == "complete" && state.getString("destination") != preparedImported) {
