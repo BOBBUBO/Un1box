@@ -55,7 +55,7 @@ class GuestWakeDiagnosisTest {
                         assertEquals("Worker replaced", workerPid, state.getInt("pid"))
                         val item = JSONObject().put("label", label).put("hostElapsedMs", SystemClock.elapsedRealtime()).put("status", encode(state))
                         timeline.put(item); persist()
-                        val capture = File(evidence, "$label.png")
+                        val capture = File(context.filesDir, "screenshots/${evidence.name}/$label.png")
                         val error = worker.screenshot(capture.absolutePath)
                         item.put("captureError", error).put("capture", capture.absolutePath); persist()
                         assertEquals("Real copied-frame capture", "", error)

@@ -105,7 +105,7 @@ class GuestOrientationLifecycleTest {
                         }
                         observations.put(item); persist()
                         if (screenshot) {
-                            val path = File(evidence, "$label.png")
+                            val path = File(context.filesDir, "screenshots/${evidence.name}/$label.png")
                             assertEquals("Actual frame screenshot", "", worker.screenshot(path.absolutePath))
                             item.put("screenshot", path.absolutePath); persist()
                         }
