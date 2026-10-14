@@ -3,6 +3,17 @@ its scene. A frame counter, live guest agent or nonzero RGB bytes cannot establi
 Home, a focused editor or a successful gesture. Keep capture bytes and diagnostics
 with the same worker PID/startticks and retain failed or sleeping captures.
 
+Arm `scripts/watch-sleep-wake.py` before the first HELLO, alongside the independent
+visual deadline watchdog. It watches complete status records for current RUNNING
+and Sleep1 only, with live owning PID/window checks in the balanced wake handler.
+There is no current or historical guest-agent precondition before hardware wake.
+Waiting for agent1 before waking can block the wake itself. The handler waits for
+fresh awake/agent1 diagnostics and returns an actual PNG after the balanced Power
+press; no counters establish its scene. Await that persistent command and emit
+the PNG immediately for actual model inspection. Do not detach the waiter and
+spend the interval doing other analysis. A witness error requests ordinary owned
+Stop and preserves evidence; it never restarts a clock or guest.
+
 For a previously inspected Lock Screen only, `scripts/inspected-continuity.py`
 provides a bounded admission policy for a private controller. The controller keeps
 the original inspection timestamp unchanged, validates the owning UID/PID/startticks,
@@ -59,6 +70,7 @@ Run the target-free policy regression with:
 ```sh
 python3 Linux/scripts/test-inspected-continuity.py
 python3 Linux/scripts/test-visual-gates.py
+python3 Linux/scripts/test-sleep-wake.py
 ```
 
 It exercises the production admission policy with a controlled clock and retained
