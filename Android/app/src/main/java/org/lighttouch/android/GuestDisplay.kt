@@ -11,6 +11,8 @@ import android.view.SurfaceView
 class GuestDisplay(context: Context, private val onError: (String) -> Unit = {}, private val engine: () -> IEngine?) : SurfaceView(context), SurfaceHolder.Callback {
     // A newly created view cannot continue contacts owned by the previous Surface.
     private var rejectedGesture = true
+    private var surfaceWidth = 0
+    private var surfaceHeight = 0
     private var forwardedBatches = 0L
     private var rejectedBatches = 0L
     private var cancellationRequests = 0L
@@ -44,7 +46,13 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
     /** A user Pause ends the Android gesture as well as the native contact lease. */
     internal fun cancelOwnedGesture() = cancelGesture()
     override fun surfaceCreated(holder: SurfaceHolder) { control { it.surface(holder.surface) } }
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { control { it.surface(holder.surface) } }
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        // A retained contact cannot cross into a different pixel-to-guest viewport.
+        // First attach and duplicate callbacks preserve the current ownership state.
+        if (surfaceWidth > 0 && surfaceHeight > 0 && (surfaceWidth != width || surfaceHeight != height)) cancelOwnedGesture()
+        surfaceWidth = width; surfaceHeight = height
+        control { it.surface(holder.surface) }
+    }
     override fun surfaceDestroyed(holder: SurfaceHolder) { cancelGesture(); control { it.clearSurface() } }
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
