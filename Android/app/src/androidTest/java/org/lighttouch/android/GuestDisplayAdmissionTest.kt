@@ -41,6 +41,7 @@ class GuestDisplayAdmissionTest {
                 "detachDisplay" -> { check(args!![0] == 1L); calls += "detach"; null }
                 "backgroundDisplay" -> { check(args!![0] == 1L); calls += "background"; null }
                 "releaseDisplay" -> { check(args!![0] == 1L); calls += "release"; null }
+                "performance" -> android.os.Bundle().apply { putString("cpuState", "warming up") }
                 "asBinder" -> identity
                 "toString" -> "Fake View admission endpoint"
                 else -> error("Unexpected View control: ${method.name}")

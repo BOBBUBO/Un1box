@@ -34,7 +34,9 @@ class EngineService : Service() {
         requestNativeStop = { Native.stop() }, cancelNativeContacts = { Native.cancelInput() },
         nativeStatus = { Native.status() }, dispose = { receipt -> disposeAfterShutdown(receipt) },
         persistTerminal = { receipt -> persistTerminalReceipt(receipt) })
+    private val performanceSampler by lazy { WorkerPerformanceSampler(applicationContext) }
     private val binder = object : IEngine.Stub() {
+        override fun performance(observationEpoch: Long): Bundle = performanceSampler.request(Binder.getCallingPid(), observationEpoch)
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
         override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
         override fun debugEnableTouchTrace(): String {
@@ -454,5 +456,5 @@ class EngineService : Service() {
         startForeground(1, Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("LightTouch guest").setContentText("Tap to return; Stop ends this worker").setContentIntent(launch).setOngoing(true).build())
     }
-    override fun onDestroy() { alive.set(false); Native.cancelInput(); abandonAudioFocus(); super.onDestroy() }
+    override fun onDestroy() { performanceSampler.close(); alive.set(false); Native.cancelInput(); abandonAudioFocus(); super.onDestroy() }
 }

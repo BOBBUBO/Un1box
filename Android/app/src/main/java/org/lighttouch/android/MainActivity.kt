@@ -18,6 +18,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import java.util.Locale
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
@@ -43,6 +45,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var busy by mutableStateOf(false)
     private var captureNotice by mutableStateOf("")
     private var licensesOpen by mutableStateOf(false)
+    private var performanceOpen by mutableStateOf(false)
+    private var performanceData by mutableStateOf<Bundle?>(null)
+    private var performanceUnavailable by mutableStateOf(false)
+    // Observation identity only; this grants no input/display/control authority.
+    private var performanceEpoch = SystemClock.elapsedRealtimeNanos()
+    private var performanceInFlight = false
+    private var performanceNowMs by mutableLongStateOf(0L)
     private var devices by mutableStateOf<List<Bundle>>(emptyList())
     private var selected by mutableStateOf<Bundle?>(null)
     private var deviceMenu by mutableStateOf(false)
@@ -107,6 +116,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             workerEvidenceDelivery.advance()
             engine = IEngine.Stub.asInterface(binder)
+            resetPerformanceObservation()
             refreshDevices()
             binder.linkToDeath({ handler.post { if (engine?.asBinder() == binder) workerExited() } }, 0)
             if (pendingGuestStart) {
@@ -167,6 +177,51 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             }, "worker-status").start()
         }
     }
+    // Independent from Native.status: even a blocked status poll cannot queue PSS
+    // reads or hold up this cached request. At most one UI Binder read is in flight.
+    private val performancePoll = object : Runnable {
+        override fun run() {
+            if (!active || !performanceOpen) return
+            performanceNowMs = SystemClock.elapsedRealtime()
+            val worker = engine
+            if (worker == null) { performanceData = null; performanceUnavailable = true }
+            val epoch = performanceEpoch
+            if (!performanceInFlight && worker != null) {
+                performanceInFlight = true
+                Thread({
+                    val sample = try { worker.performance(epoch) } catch (_: RemoteException) { null }
+                    handler.post {
+                        performanceInFlight = false
+                        if (active && performanceOpen && performanceEpoch == epoch && engine?.asBinder() == worker.asBinder()) {
+                            performanceData = sample
+                            performanceUnavailable = sample == null
+                            performanceNowMs = SystemClock.elapsedRealtime()
+                        }
+                    }
+                }, "performance-cache-read").start()
+            }
+            handler.postDelayed(this, 1_000)
+        }
+    }
+    private fun resetPerformanceObservation() {
+        performanceEpoch++
+        performanceData = null
+        performanceUnavailable = false
+        handler.removeCallbacks(performancePoll)
+        if (active && performanceOpen) handler.post(performancePoll)
+    }
+    private fun togglePerformance() {
+        performanceOpen = !performanceOpen
+        resetPerformanceObservation()
+    }
+    private fun performanceAge(sample: Bundle?, key: String): String {
+        if (sample == null || !sample.containsKey(key)) return ""
+        val stamp = sample.getLong(key)
+        if (performanceNowMs < stamp) return " · age unavailable"
+        return " · ${(performanceNowMs - stamp) / 1_000}s ago"
+    }
+    private fun performanceNumber(value: Double) = String.format(Locale.ROOT, "%.1f", value)
+
     private val importTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) importDirectory(uri)
     }
@@ -198,8 +253,29 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp).semantics { testTagsAsResourceId = true }) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("LightTouch", style = MaterialTheme.typography.headlineMedium)
-                            TextButton(onClick = { licensesOpen = true }, modifier = Modifier.testTag("open_licenses")) { Text("Licenses") }
+                            Text("LightTouch", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1)
+                            TextButton(onClick = { togglePerformance() }, modifier = Modifier.testTag("toggle_performance").semantics { stateDescription = if (performanceOpen) "Expanded" else "Collapsed" }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Performance") }
+                            TextButton(onClick = { licensesOpen = true }, modifier = Modifier.testTag("open_licenses"), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Licenses") }
+                        }
+                        if (performanceOpen) {
+                            val sample = performanceData.takeIf { engine != null }
+                            val unavailable = performanceUnavailable || engine == null
+                            val cpu = if (sample?.containsKey("workerCpuPercentOfOneCore") == true)
+                                performanceNumber(sample.getDouble("workerCpuPercentOfOneCore")) + "% of one core"
+                                else if (unavailable) "unavailable" else sample?.getString("cpuState") ?: "warming up"
+                            val pss = if (sample?.containsKey("workerPssKiB") == true)
+                                performanceNumber(sample.getLong("workerPssKiB") / 1024.0) + " MiB PSS" else if (sample == null && !unavailable) "warming up" else "unavailable"
+                            val ram = if (sample?.containsKey("deviceTotalBytes") == true)
+                                performanceNumber(sample.getLong("deviceAvailableBytes") / 1048576.0) + " / " + performanceNumber(sample.getLong("deviceTotalBytes") / 1048576.0) + " MiB available/total" else if (sample == null && !unavailable) "warming up" else "unavailable"
+                            // Constant row geometry: changing samples do not resize the guest.
+                            listOf(
+                                "Emulator CPU: $cpu" + performanceAge(sample, "cpuSampleElapsedMs"),
+                                "Emulator memory: $pss" + performanceAge(sample, "pssSampleElapsedMs"),
+                                "Android RAM: $ram" + performanceAge(sample, "deviceMemorySampleElapsedMs"),
+                                "Android whole-device CPU: unavailable",
+                                "iOS guest CPU / RAM: unavailable",
+                                "Worker PID: " + (sample?.getInt("pid")?.toString() ?: "unavailable") + " · sampled every 2s while open"
+                            ).forEach { line -> Text(line, modifier = Modifier.fillMaxWidth().height(22.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         }
                         Box {
                             OutlinedButton(onClick = { refreshDevices(); deviceMenu = true }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping"), modifier = Modifier.testTag("device_selector")) {
@@ -429,7 +505,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         val evidenceGeneration = workerEvidenceDelivery.retire(engine != null || workerPid != 0) ?: return
         val unexpected = !engineExpectedExit && (guestStartRequested || sessionOwned || status in listOf("running", "starting", "paused"))
         val exitedPid = workerPid
-        engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
+        engine = null; resetPerformanceObservation(); workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
         status = if (unexpected) "failed" else "stopped"
         if (unexpected) error = "Guest worker exited unexpectedly; writable state retained. Start creates a fresh worker. Private diagnostics are retained."
         else if (engineExpectedExit) error = "Guest worker disposed; writable state retained. Shutdown confirmation receipt is unavailable."
@@ -498,7 +574,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     try { old.stop() } catch (_: DeadObjectException) { died.countDown() }
                     check(!binder.isBinderAlive || died.await(45, TimeUnit.SECONDS)) { "Previous guest worker has not exited. Retry after it stops." }
                 }
-                handler.post { engine = null; sessionOwned = false; engineRestarting = false; bindWorker() }
+                handler.post { engine = null; resetPerformanceObservation(); sessionOwned = false; engineRestarting = false; bindWorker() }
             } catch (failure: Exception) { handler.post { engineRestarting = false; pendingGuestStart = false; error = failure.message ?: "Guest worker restart failed"; status = "failed" } }
             finally { try { binder.unlinkToDeath(recipient, 0) } catch (_: java.util.NoSuchElementException) { } }
         }, "guest-worker-restart").start()
@@ -602,7 +678,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         engine?.motion(kind, event.timestamp, event.values.copyOf(3), display?.rotation?.times(90) ?: 0)
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-    override fun onStart() { super.onStart(); active = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
+    override fun onStart() { super.onStart(); active = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll); resetPerformanceObservation() }
     override fun onResume() {
         super.onResume(); displayResumed = true
         displayOwnerTicket = DisplayOwners.active.resumed(this, hasWindowFocus())
@@ -632,7 +708,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             displayView?.backgroundOwnedDisplay()
         else displayView?.retireDisplay()
         DisplayOwners.active.stopped(this, displayOwnerTicket)
-        handler.removeCallbacks(poll); super.onStop()
+        handler.removeCallbacks(poll); resetPerformanceObservation(); super.onStop()
     }
     override fun onDestroy() { displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }
