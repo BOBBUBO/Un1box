@@ -27,6 +27,9 @@ class GuestPixelBootDiagnosisTest {
         require(Regex("[0-9a-f]{64}").matches(expectedMainSha)) { "Explicit sealed main APK SHA-256 required" }
         assertEquals("Installed production APK differs from sealed main artifact", expectedMainSha,
             acceptanceSha256(File(context.applicationInfo.sourceDir)))
+        val recoveryArg = args.getString("pixelColdRecovery", "false")
+        require(recoveryArg in listOf("true", "false")) { "Explicit boolean recovery mode required" }
+        val coldRecovery = recoveryArg == "true"
         val record = requireNotNull(args.getString("recordId"))
         require(Regex("[0-9a-f]{32}").matches(record))
         val seconds = args.getString("pixelObserveSeconds", "300").toLong()
@@ -40,6 +43,7 @@ class GuestPixelBootDiagnosisTest {
         val receipt = JSONObject().put("diagnosisCaptured", false).put("guestAcceptancePassed", false).put("visibleGuestVerified", false)
             .put("physicalPixelEquivalent", false).put("audiblePlaybackVerified", false)
             .put("recordId", record).put("observationSeconds", seconds).put("expectedMainApkSha256", expectedMainSha)
+            .put("coldRecoveryUsed", coldRecovery).put("recoveryStartUsed", coldRecovery).put("cleanInitialAdmissionClaimed", false)
         @Suppress("DEPRECATION")
         fun encode(b: Bundle): JSONObject = JSONObject().apply {
             for (key in b.keySet()) when (val value = b.get(key)) {
@@ -67,11 +71,16 @@ class GuestPixelBootDiagnosisTest {
                     assertNotEquals(Process.myPid(), initial.getInt("pid"))
                     assertFalse("Fresh unused worker required", initial.getBoolean("sessionStarted"))
                     assertEquals("stopped", initial.getString("state"))
+                    val selected = requireNotNull(worker.records().singleOrNull { it.getString("id") == record })
+                    assertTrue("Allocated record must be selected", selected.getBoolean("selected"))
+                    val priorDirty = selected.getBoolean("dirty")
+                    assertEquals("Recovery is explicit only for retained dirty state", coldRecovery, priorDirty)
+                    receipt.put("priorDirty", priorDirty)
                     assertEquals("", worker.debugSelectGraphicsProvider(1))
                     assertEquals("", worker.debugArmQmp())
                     scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
                     val beforeStartMs = SystemClock.elapsedRealtime()
-                    val started = worker.start(record)
+                    val started = if (coldRecovery) worker.recoverStart(record) else worker.start(record)
                     val afterStartMs = SystemClock.elapsedRealtime()
                     assertEquals(started.toString(), "", started.getString("error"))
                     val pid = started.getInt("pid")
@@ -83,6 +92,7 @@ class GuestPixelBootDiagnosisTest {
                     val ready = JSONObject().put("schema", 1).put("workerPid", pid).put("appUid", Process.myUid())
                         .put("workerStartTicks", startTicks).put("bootId", bootId).put("recordId", record)
                         .put("attemptToken", token).put("originToken", originToken)
+                        .put("coldRecoveryUsed", coldRecovery).put("recoveryStartUsed", coldRecovery).put("priorDirty", priorDirty)
                         .put("beforeStartElapsedMs", beforeStartMs).put("afterStartElapsedMs", afterStartMs)
                         .put("nativeAfterStartMonotonicNs", started.getBundle("observations")?.getLong("hostMonotonicNs"))
                         .put("guestAcceptancePassed", false)
