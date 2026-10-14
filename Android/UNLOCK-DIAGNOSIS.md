@@ -23,9 +23,14 @@ This is a planned invocation, not a recorded unlock pass. A paused session needs
 explicit `resumeExisting`; a stopped/failed/unused worker is rejected. If asleep,
 the test admits balanced Power DOWN/UP with500ms host hold, then polls for at most
 15s for running, native sleep0, positive backlight, producer growth and nonzero
-RGB samples. UID/PID/session identity must remain unchanged. An already-awake
-static frame can fail this strict producer-growth gate; cached presentation is
-not substituted for a fresh producer observation.
+RGB samples. UID/PID/session identity must remain unchanged. If already awake,
+a separate gate has a500ms host deadline: statusA, actual raw capture and statusB
+must agree on positive copied/producer sequence and timestamp, with running,
+sleep0, positive backlight and nonzero RGB at both observations. A static Lock
+need not repaint. Each capture attempt has a distinct retained filename; the
+accepted path and whether new producer growth occurred are recorded. Neither
+gate identifies the scene or proves guest input consumption. Binder calls still
+need the owner's external deadline if they block beyond either polling budget.
 
 While one ActivityScenario remains resumed, it captures the raw frame and sends
 one stable pointer7 through the production GuestDisplay: guest-image fractions
