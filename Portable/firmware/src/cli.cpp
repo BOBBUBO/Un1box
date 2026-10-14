@@ -7,7 +7,8 @@ static int progress(void *, const char *s, uint64_t d, uint64_t t) {
 }
 int main(int argc, char **argv) {
     if (argc != 7) {
-        fprintf(stderr, "usage: lighttouch-prepare CATALOG ID STOCK_IPSW GUEST_TOOLS GUEST_MANIFEST NEW_DESTINATION\n");
+        fprintf(stderr,
+                "usage: lighttouch-prepare CATALOG ID STOCK_IPSW GUEST_TOOLS GUEST_INVENTORY NEW_DESTINATION\n");
         return 2;
     }
     lt_fw_request r{};
@@ -17,7 +18,7 @@ int main(int argc, char **argv) {
     r.firmware_id = argv[2];
     r.ipsw_path = argv[3];
     r.guest_tools_path = argv[4];
-    r.guest_manifest_path = argv[5];
+    r.guest_inventory_path = argv[5];
     r.destination = argv[6];
     r.progress = progress;
     lt_fw_error e{};

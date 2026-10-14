@@ -3,8 +3,8 @@
 `lighttouch_firmware` implements a blocking versioned C API for local stock
 `n72ap-7E18` IPSW preparation. Linux's `lighttouch-prepare` calls the same library
 that Android can package through JNI. It never executes extracted binaries,
-requires root, mounts images, or invokes macOS tools. Other catalog routes return
-an explicit unsupported result.
+requires root, mounts images, or invokes macOS tools. `lt_firmware_supports(id)` advertises the implemented route. Other catalog routes
+return an explicit unsupported result.
 
 Build from the pinned XPwn checkout, outside the source tree:
 
@@ -20,14 +20,20 @@ ctest --test-dir /private/build/firmware --output-on-failure
 ```
 
 Stock input must match the catalog's SHA1 **and** exact byte count. The guest
-manifest is a trusted local handoff inventory with `entries` containing `path`,
+inventory is a trusted local handoff inventory with `entries` containing `path`,
 `type` and `sha256`; paths use `release-guest-unpacked/guest-tools/` or
-`guest-tools/`. Verify the inventory's provenance before supplying it. Seven
+`guest-tools/`. Verify the inventory's provenance before supplying it. The original exporter
+manifest is unavailable; a local handoff/extraction inventory establishes file
+integrity, and original itpack manifests establish package payload hashes. These
+checks do not reconstruct or prove the missing exporter manifest, rebuild the
+release assets, or replace the missing historical SDKs. Seven
 exported files are required: `OpenGLES`, `libappsync.dylib`, `armv6.itpack`,
 `it_agent`, `it_typein.dylib`, `sblaunch`, and `sbdlicon`. The
 itpack loader, manifests, payload hashes and Mach-O architecture are validated.
 It installs the package's real agent/preferences/hooks rather than fabricating
-helper binaries. Source firmware, ROMs, exported guests and prepared outputs stay
+helper binaries, and writes the matched `guest.itpack` with an original-schema
+`outputs.guest_package` path/hash record. Domain import/boot can discover that
+package without frontend architecture choices. Source firmware, ROMs, exported guests and prepared outputs stay
 outside Git; the library reads all sources without modifying them.
 
 The baseline recipe decrypts IMG3 iBoot, generates SysCfg/NVRAM and UID-wrapped
@@ -95,3 +101,18 @@ a failure through the C guard. Hard-link/resource-fork copy routes remain explic
 unsupported worker operations; preparing in place retains stock filesystem data. A real stock
 prepare followed by a guest boot on Linux and Android is the decisive gate. A
 prepared Mac fixture or host-only library test does not establish that gate.
+
+Optional private acceptance checks (outside public CI):
+
+```sh
+python3 Portable/firmware/tests/private-acceptance.py /private/new-prepared-device
+python3 Portable/firmware/tests/private-cancel.py /private/build/firmware/liblighttouch_firmware.so \
+  LightTouchMac/Resources/firmware-catalog.json /private/stock.ipsw \
+  /private/verified/guest-tools /private/verified/inventory.json /private/cancelled-output
+```
+
+The cancellation check stops at NAND writing after real system edits and verifies
+source hashes, stage removal and absence of promotion. XPwn diagnostic output may
+precede the final JSON result. Keep the raw diagnostics as local evidence and
+capture the last JSON line separately. Both checks explicitly leave guest boot
+and Android preparation untested; they cannot establish those acceptance gates.
