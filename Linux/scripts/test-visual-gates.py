@@ -56,7 +56,7 @@ class Gates(unittest.TestCase):
         self.receipt['frame_monotonic_ns'] = 100_000_000_000
         self.assertFalse(self.check())
 
-    def test_missing_gate_signals_only_owned_host_fixture(self):
+    def watch_fixture(self, home):
         # A disposable Python process, not SDL/QEMU/a guest. This exercises
         # production PID/startticks/argv/pidfd and deadline handling directly.
         script = ('import signal,time\n'
@@ -74,17 +74,32 @@ class Gates(unittest.TestCase):
                 (root / 'started.json').write_text(json.dumps({
                     'uid': os.geteuid(), 'frontend': {'pid': fixture.pid, 'start_ticks': ticks}}))
                 (root / 'command.json').write_text(json.dumps({'argv': command}))
-                hello = time.monotonic_ns() - 130_000_000_000
+                hello = time.monotonic_ns() - (180 if home else 130) * 1_000_000_000
                 (root / 'session.log').write_text(
                     f'admission hello_verified_observed_monotonic_ns={hello} fixture=host-only\n')
+                if home:
+                    capture = root / 'host-fixture-capture'
+                    capture.mkdir()
+                    receipt = dict(self.receipt, observed_monotonic_ns=hello + 120_000_000_000,
+                                   frame_monotonic_ns=hello + 119_900_000_000,
+                                   diagnostics_monotonic_ns=hello + 119_950_000_000)
+                    (capture / 'receipt.json').write_text(json.dumps(receipt))
+                    (capture / 'native.bmp').write_bytes(b'host-fixture; not a guest image')
+                    import hashlib
+                    gate = dict(self.gate, frontend_pid=fixture.pid, start_ticks=ticks,
+                                hello_monotonic_ns=hello, inspected_monotonic_ns=hello + 121_000_000_000,
+                                capture_directory=str(capture),
+                                receipt_sha256=hashlib.sha256((capture / 'receipt.json').read_bytes()).hexdigest(),
+                                bmp_sha256=hashlib.sha256((capture / 'native.bmp').read_bytes()).hexdigest())
+                    (root / 'home-gate.json').write_text(json.dumps(gate))
                 result = subprocess.run([sys.executable, str(Path(module.__file__)), '--run', str(root), '--execute'],
                                         capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 receipt = json.loads((root / 'visual-gate-stop.json').read_text())
                 self.assertEqual(receipt['identity']['frontend_pid'], fixture.pid)
                 self.assertEqual(receipt['identity']['start_ticks'], ticks)
-                self.assertEqual(receipt['deadline_monotonic_ns'], hello + 129_000_000_000)
-                self.assertEqual(receipt['missing_gate'], 'home-gate.json')
+                self.assertEqual(receipt['deadline_monotonic_ns'], hello + (179 if home else 129) * 1_000_000_000)
+                self.assertEqual(receipt['missing_gate'], 'editor-gate.json' if home else 'home-gate.json')
                 self.assertFalse(receipt['guest_acceptance'])
                 self.assertEqual(fixture.wait(timeout=5), 0)
         finally:
@@ -92,6 +107,12 @@ class Gates(unittest.TestCase):
                 fixture.kill()
                 fixture.wait(timeout=5)
             fixture.stdout.close()
+
+    def test_missing_home_gate_signals_only_owned_host_fixture(self):
+        self.watch_fixture(False)
+
+    def test_home_gate_cannot_restart_missing_editor_deadline(self):
+        self.watch_fixture(True)
 
 
 if __name__ == '__main__':
