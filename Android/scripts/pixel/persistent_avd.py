@@ -98,6 +98,8 @@ def guest_watchdog(adb,out,deadline,complete):
 def attach_attempt(attempt,path):
     owner,pin=load_owner(path,attempt.args.avd,attempt.args.adb)
     attempt.avd=Handle(owner);attempt.attached_owner=owner
+    # Identity for ordinary guest Stop only; Android ownership stays external.
+    attempt.avd_start_ticks=owner['wrapperStartTicks']
     clock=(attempt.output/'clock-context.json').read_bytes()
     attempt.write('attached-owner.json',{'ownerReceipt':str(private(path)),'ownerReceiptSha256':pin,
         'owner':owner,'originToken':hashlib.sha256(clock).hexdigest(),
