@@ -117,3 +117,31 @@ Each frontend must pause/flush its sink and fence reader/transport packets at it
 own lifecycle boundary. Linux uses private command/epoch receipts; Android must
 independently reject its reader's in-flight packets before AudioTrack writes.
 These source invariants do not establish physical playback or target acceptance.
+
+Post-APK23 frame storage uses the existing engine metadata probe before allocating
+publisher scratch pixels. No64MiB scratch buffer is allocated at runtime creation.
+Valid new metadata grows storage to the required byte count; at most three copy/
+growth attempts follow each probe. Repeated growth, no frame or not ready leaves
+the published frame, serial and counters unchanged. Malformed/oversize metadata
+fails rather than allocating beyond the shared-frame bound. Storage is retained
+for reuse; growth can transiently hold old and new allocations. The sealed shared
+FD still reserves64MiB of virtual capacity, and this change does not reduce engine
+frame buffers, frontend buffers, GPU allocations or prove an RSS improvement.
+
+The additive `lt_runtime_frame_metadata` query returns published metadata only:
+`LT_OK` copies no pixels, `LT_AGAIN` means absent/not newer/unstable publication.
+It accepts since_sequence by value and never advances a consumer's sequence.
+Fields are validated only after up to three equal/even generation snapshots;
+publication and metadata reads use per-field atomic operations under the same
+generation bracket without changing the physical structs/layout/version. Empty
+or failed queries leave caller metadata unchanged. Invalid coherent bounds report
+`LT_ENGINE`; invalid caller size/version remains an ABI error.
+
+Published metadata may lag the direct engine `copy_frame` path. A caller must
+bound its grow/copy retry count, validate the actual successful copy's shape/
+stride/byte count and update its retained sequence only after accepting pixels.
+If storage becomes insufficient, retain the prior sequence and retry a fresh
+metadata query later; never parse an error message for a required size. No64MiB
+fallback or unchanged-frame busy loop is necessary. APK23/sealed Linux32c5 use
+the earlier producer; these post-freeze source changes and host regressions need
+a separate build/allocation and do not qualify guest rendering or memory savings.

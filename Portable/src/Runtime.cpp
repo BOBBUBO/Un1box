@@ -3,6 +3,7 @@
 #include "Lifecycle.hpp"
 #include "PcmEpoch.hpp"
 #include "VmPauseControl.hpp"
+#include "FrameStorage.hpp"
 #include "Base64.hpp"
 #include "qemu-ios-ui.h"
 #include "qemu-macos-extras.h"
@@ -265,26 +266,31 @@ struct lt_runtime {
                             quit_sent = true;
                         }
                     }
-                    QemuIosPortableFrame f{sizeof(f), 1, 0, 0, 0, 0, 0, 0, 0};
-                    int r = engine->frame(scratch.data(), scratch.size(), serial, &f);
-                    if (r == QEMU_IOS_OK) {
-                        lt::require(f.required_bytes <= LT_FRAME_CAPACITY && f.stride >= f.width * 4u &&
-                                        f.width <= 4096 && f.height <= 4096,
-                                    "engine returned invalid frame", LT_ENGINE);
-                        __atomic_add_fetch(&shared->generation, 1, __ATOMIC_SEQ_CST);
-                        shared->frame = {
-                            sizeof(lt_frame_info), 1, f.width, f.height, f.stride, f.format, f.serial, f.timestamp_ns,
-                            f.required_bytes};
-                        memcpy(reinterpret_cast<uint8_t *>(shared) + sizeof(*shared), scratch.data(),
-                               size_t(f.required_bytes));
-                        __atomic_add_fetch(&shared->generation, 1, __ATOMIC_SEQ_CST);
-                        serial = f.serial;
-                        frame_sequence = f.serial;
+                    lt_frame_info f{sizeof(f), 1, 0, 0, 0, 0, 0, 0, 0};
+                    const auto acquired = lt::acquire_frame(
+                        scratch, serial, f, [&](void *pixels, size_t capacity, uint64_t since, lt_frame_info &out) {
+                            QemuIosPortableFrame meta{sizeof(meta), 1, 0, 0, 0, 0, 0, 0, 0};
+                            const int result = engine->frame(pixels, capacity, since, &meta);
+                            if (result == QEMU_IOS_NO_FRAME)
+                                return lt::FrameCopy::no_frame;
+                            if (result == QEMU_IOS_NOT_READY)
+                                return lt::FrameCopy::not_ready;
+                            if (result != QEMU_IOS_BUFFER_SMALL)
+                                lt::result(result);
+                            out = {sizeof(out), 1, meta.width, meta.height, meta.stride, meta.format,
+                                   meta.serial, meta.timestamp_ns, meta.required_bytes};
+                            return result == QEMU_IOS_OK ? lt::FrameCopy::copied : lt::FrameCopy::small;
+                        });
+                    lt::require(acquired != lt::FrameAcquire::invalid, "engine returned invalid frame", LT_ENGINE);
+                    if (acquired == lt::FrameAcquire::copied) {
+                        lt::require(lt::publish_frame(shared, f, scratch.data(), scratch.size()),
+                                    "invalid shared frame publication", LT_ENGINE);
+                        serial = f.sequence;
+                        frame_sequence = f.sequence;
                         frame_timestamp = f.timestamp_ns;
                         frame_published = lt::now_ns();
                         frame_count++;
-                    } else if (r != QEMU_IOS_NO_FRAME && r != QEMU_IOS_NOT_READY)
-                        lt::result(r);
+                    }
                     if (audio_enabled) {
                         uint64_t read_epoch;
                         bool suspended;
@@ -411,7 +417,6 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         runtime->shared->size = sizeof(lt_shared_frame);
         runtime->shared->version = 1;
         runtime->shared->capacity = LT_FRAME_CAPACITY;
-        runtime->scratch.resize(LT_FRAME_CAPACITY);
         lt::io(fcntl(runtime->frame_fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) == 0,
                "seal frame size");
         *out = runtime.release();
@@ -632,6 +637,15 @@ lt_status lt_runtime_copy_frame(lt_runtime *r, void *p, uint64_t capacity, uint6
         lt::result(result);
         *out = {sizeof(*out), 1, f.width, f.height, f.stride, f.format, f.serial, f.timestamp_ns, f.required_bytes};
         *seq = f.serial;
+    });
+}
+lt_status lt_runtime_frame_metadata(lt_runtime *r, uint64_t since, lt_frame_info *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "invalid frame metadata runtime");
+        lt::abi(out);
+        const auto result = lt::read_frame_metadata(r->shared, since, *out);
+        lt::require(result != lt::MetadataRead::invalid, "invalid published frame metadata", LT_ENGINE);
+        lt::require(result == lt::MetadataRead::fresh, "no newer coherent published frame", LT_AGAIN);
     });
 }
 lt_status lt_runtime_frame_fd(lt_runtime *r, int *fd, uint64_t *bytes, lt_error *e) {
