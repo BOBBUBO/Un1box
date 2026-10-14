@@ -152,3 +152,14 @@ main25/test25d pair without SDK/device commands. `OPERATOR.md` and the emitted
 still requires a fresh resource check and Root grant. No4KiB image child,
 firmware read/copy/import or VM launch occurred. Physical Pixel debugging takes
 priority over executing this separately required AVD qualification.
+
+Version01 remains immutable historical evidence: its initial-import binding
+reported importer retirement from tuple inequality without proving the old
+process exited. It must not be used for allocation. The replacement private
+snapshot `prepared-g5-api35-4k25d-source-02` has source seal
+`5b1eda957823d4e77a35a16e6601ef3bc82817098f6c4928e792967e6ba2bae7`.
+It requires bounded original-process absence/reuse evidence in the same Android
+boot, or a fresh matching bracket proving the prior Android boot ended; failed
+reads do not mean absent. All72 host tests pass, including live-importer rejection,
+permission/read failures, PID reuse, boot changes and a real host process exit.
+Complete Root review and actual4KiB guest qualification remain pending.
