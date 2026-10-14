@@ -25,7 +25,7 @@ int main() {
     r.firmware_id = "n72ap-7E18";
     r.ipsw_path = stock.c_str();
     r.guest_tools_path = tmp;
-    r.guest_manifest_path = "unneeded";
+    r.guest_inventory_path = "unneeded";
     r.destination = dest.c_str();
     lt_fw_error error{};
     error.size = sizeof(error);

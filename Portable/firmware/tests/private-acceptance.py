@@ -11,12 +11,13 @@ base = args.prepared.resolve()
 lock = json.loads((base / "device.lock.json").read_text())
 assert lock["format"] == 1 and lock["board"] == "n72ap" and lock["build"] == "7E18"
 assert lock["boot_strategy"] == "iboot"
+assert lock["guest_package"]["itpack"]["path"] == "guest.itpack"
 assert lock["guest_package"]["family"] == "n72-ios3"
 assert "/usr/lib/it_typein.dylib" in lock["guest_package"]["hooks"]
 assert lock["derived"]["kernelcache_path"] == "System/Library/Caches/com.apple.kernelcaches/kernelcache.s5l8720x"
 sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
 assert lock["identity"]["sha256"] == sha(base / "identity.json")
-for name in ["nor", "iboot", "gid_blobs"]:
+for name in ["nor", "iboot", "gid_blobs", "guest_package"]:
     entry = lock["outputs"][name]
     assert entry["sha256"] == sha(base / entry["path"])
 nand = lock["outputs"]["nand"]

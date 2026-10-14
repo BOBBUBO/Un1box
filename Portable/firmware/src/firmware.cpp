@@ -475,7 +475,7 @@ static void prepare(const lt_fw_request &r) {
     if (hash_file(r.ipsw_path, r, true) != entry.at("source").at("sha1").get<std::string>())
         throw Error(LT_FW_CHECKSUM, "Stock IPSW SHA1 does not match n72ap-7E18");
     require(fs::file_size(r.ipsw_path) == entry.at("source").at("bytes").get<uint64_t>(), "IPSW byte count");
-    auto manifest = Json::parse(read(r.guest_manifest_path, 32 * 1024 * 1024));
+    auto manifest = Json::parse(read(r.guest_inventory_path, 32 * 1024 * 1024));
     require(manifest.at("schema") == 1, "unsupported guest inventory schema");
     std::map<std::string, std::string> hashes;
     for (auto &e : manifest.at("entries")) {
@@ -495,7 +495,7 @@ static void prepare(const lt_fw_request &r) {
          {"OpenGLES", "libappsync.dylib", "armv6.itpack", "it_agent", "it_typein.dylib", "sblaunch", "sbdlicon"}) {
         auto b = read(fs::path(r.guest_tools_path) / name);
         if (!hashes.count(name) || digest(b) != hashes.at(name))
-            throw Error(LT_FW_CHECKSUM, "Guest export checksum missing/mismatch " + std::string(name));
+            throw Error(LT_FW_CHECKSUM, "Guest asset checksum missing/mismatch " + std::string(name));
         if (std::string(name) != "armv6.itpack")
             guest_macho(b);
         tools[name] = std::move(b);
@@ -743,6 +743,8 @@ static void prepare(const lt_fw_request &r) {
         oldorder = neworder;
         v.putfile(netpath, xml(prefs));
         auto package = seed(v, tools.at("armv6.itpack"));
+        write(stage / "guest.itpack", tools.at("armv6.itpack"));
+        package["itpack"]["path"] = "guest.itpack";
         progress(r, "write NAND");
         fs::create_directory(stage / "nand");
         for (int cs = 0; cs < 4; cs++)
@@ -754,13 +756,14 @@ static void prepare(const lt_fw_request &r) {
             pagewrite(m.first, m.second);
         std::ifstream volume(image, std::ios::binary);
         Bytes b(4160);
+        const Bytes zero(4096);
         b[4104] = 255;
         b[4106] = 255;
         for (int i = 0; i < blocks; i++) {
             if (i % 1024 == 0)
                 progress(r, "write NAND", i, blocks);
             require(bool(volume.read((char *)b.data(), 4096)), "volume short read");
-            if (std::any_of(b.begin(), b.begin() + 4096, [](uint8_t x) { return x != 0; }))
+            if (std::memcmp(b.data(), zero.data(), zero.size()) != 0)
                 pagewrite(page(i), b);
         }
         volume.close();
@@ -799,8 +802,10 @@ static void prepare(const lt_fw_request &r) {
                                    {"listing_sha256", digest(bytes(listing))},
                                    {"built_listing_sha256", digest(bytes(listing))},
                                    {"pages", pages}};
-        for (auto item : std::vector<std::pair<std::string, std::string>>{
-                 {"nor", "nor.bin"}, {"iboot", "iBoot.bin"}, {"gid_blobs", "gid-blobs.bin"}})
+        for (auto item : std::vector<std::pair<std::string, std::string>>{{"nor", "nor.bin"},
+                                                                          {"iboot", "iBoot.bin"},
+                                                                          {"gid_blobs", "gid-blobs.bin"},
+                                                                          {"guest_package", "guest.itpack"}})
             lock["outputs"][item.first] = {{"path", item.second}, {"sha256", checks.at(item.second)}};
         lock["entry"] = {{"id", "n72ap-7E18"}, {"content", entry}, {"sha256", digest(bytes(entry.dump()))}};
         lock["storage"] = "8g";
@@ -814,6 +819,10 @@ static void prepare(const lt_fw_request &r) {
         lock["derived"]["wrap_shsh_types"] = order;
         for (auto &tool : tools)
             lock["tool"]["built"]["guest tools"][tool.first] = digest(tool.second);
+        lock["tool"]["asset_inventory"] = {{"kind", "local-handoff-inventory"},
+                                           {"path", r.guest_inventory_path},
+                                           {"sha256", digest(read(r.guest_inventory_path, 32 * 1024 * 1024))},
+                                           {"original_exporter_manifest", "unavailable"}};
         lock["inputs"] = {{"ipsw", {{"path", r.ipsw_path}, {"sha1", entry.at("source").at("sha1")}}},
                           {"identity", "identity.json"},
                           {"guest_tools", r.guest_tools_path},
@@ -829,7 +838,7 @@ static void prepare(const lt_fw_request &r) {
         for (auto &file : fs::recursive_directory_iterator(stage / "nand"))
             fs::permissions(file.path(), fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write,
                             fs::perm_options::remove);
-        for (auto name : {"nand", "nor.bin", "iBoot.bin", "gid-blobs.bin"})
+        for (auto name : {"nand", "nor.bin", "iBoot.bin", "gid-blobs.bin", "guest.itpack"})
             fs::permissions(stage / name, fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write,
                             fs::perm_options::remove);
         progress(r, "flush transaction");
@@ -867,6 +876,7 @@ static void prepare(const lt_fw_request &r) {
 }
 } // namespace ltf
 extern "C" uint32_t lt_firmware_api_version() { return LT_FIRMWARE_ABI; }
+extern "C" uint32_t lt_firmware_supports(const char *id) { return id && std::strcmp(id, "n72ap-7E18") == 0; }
 extern "C" lt_fw_status lt_firmware_prepare(const lt_fw_request *r, lt_fw_error *error) {
     auto fail = [&](lt_fw_status s, const char *m) {
         if (error && error->size >= sizeof(*error) && error->version == LT_FIRMWARE_ABI) {
@@ -876,7 +886,7 @@ extern "C" lt_fw_status lt_firmware_prepare(const lt_fw_request *r, lt_fw_error 
         return s;
     };
     if (!r || r->size < sizeof(*r) || r->version != LT_FIRMWARE_ABI || !r->catalog_path || !r->firmware_id ||
-        !r->ipsw_path || !r->guest_tools_path || !r->destination || !r->guest_manifest_path)
+        !r->ipsw_path || !r->guest_tools_path || !r->destination || !r->guest_inventory_path)
         return fail(LT_FW_ARGUMENT, "invalid versioned firmware request");
     if (ltf::busy.test_and_set())
         return fail(LT_FW_BUSY, "another preparation owns XPwn state");

@@ -23,8 +23,9 @@ typedef int (*lt_fw_progress)(void *user, const char *stage, uint64_t done, uint
 typedef struct {
     uint32_t size, version;
     const char *catalog_path, *firmware_id, *ipsw_path, *guest_tools_path, *destination;
-    /* Required verified guest export manifest, never downloaded by this API. */
-    const char *guest_manifest_path;
+    /* Required trusted local asset hash inventory, never downloaded by this API.
+     * Does not claim the unavailable original exporter manifest. */
+    const char *guest_inventory_path;
     lt_fw_progress progress;
     void *user;
 } lt_fw_request;
@@ -34,6 +35,8 @@ typedef struct {
     char message[512];
 } lt_fw_error;
 uint32_t lt_firmware_api_version(void);
+/* Implemented recipe discovery; does not imply measured target acceptance. */
+uint32_t lt_firmware_supports(const char *firmware_id);
 /* Blocking userspace implementation; never launches executables or mounts disks.
  * Destination must be absent. Stages in private sibling directory, fsyncs files
  * and directories, promotes with rename-no-replace, then fsyncs parent. Failure
