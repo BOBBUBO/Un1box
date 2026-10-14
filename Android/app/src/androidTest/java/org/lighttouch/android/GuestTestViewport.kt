@@ -26,6 +26,8 @@ internal class GuestTestViewport(status: Bundle, private val viewWidth: Int, pri
     }
 
     fun receipt(): JSONObject = JSONObject().put("viewWidth", viewWidth).put("viewHeight", viewHeight)
+        .put("nativeContactMappingRotationDegrees", 0)
+        .put("axisContract", "upright raw guest framebuffer in aspect-fit view; physical display rotation is recorded separately")
         .put("guestFrameWidth", frameWidth).put("guestFrameHeight", frameHeight)
         .put("guestImageLeftPx", left).put("guestImageTopPx", top)
         .put("guestImageWidthPx", frameWidth * scale).put("guestImageHeightPx", frameHeight * scale)
