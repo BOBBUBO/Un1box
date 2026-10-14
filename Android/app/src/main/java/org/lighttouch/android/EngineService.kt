@@ -129,12 +129,17 @@ class EngineService : Service() {
         override fun cancelDisplayInput(lease: Long) { Native.cancelDisplayInput(lease, 0L) }
         override fun backgroundDisplay(lease: Long) { lifecycleAdmission.run {
             if (stopping.get()) return@run
-            val result = Native.backgroundDisplay(lease)
+            // Keep the sink monitor across the authoritative native owner check.
+            // Stale owners change nothing; no write can cross accepted pause
+            // admission before the epoch closes and the retained track flushes.
+            val result = audioGuard.closeAfterAdmission({ Native.backgroundDisplay(lease) }) {
+                userPaused = true
+                audioObservations.pauses++
+                flushAudioLocked()
+            }
             if (result == "Display ownership retired") return@run
             if (result.isNotEmpty()) { error = result; return@run }
-            userPaused = true
-            synchronized(audioGuard) { audioObservations.pauses++ }
-            pauseAudio(); abandonAudioFocus()
+            abandonAudioFocus()
         } }
         override fun pause(paused: Boolean) { lifecycleAdmission.run {
             // A background callback can race the stop button. Shutdown already
@@ -361,6 +366,10 @@ class EngineService : Service() {
     }
     private fun pauseAudio() = synchronized(audioGuard) {
         audioGuard.pause()
+        flushAudioLocked()
+    }
+    /** Caller holds audioGuard; no JNI call or display ownership change here. */
+    private fun flushAudioLocked() {
         audio?.let { audioObservations.observeTrack(it.playbackHeadPosition, it.underrunCount); it.pause(); it.flush(); audioObservations.flushed() }
     }
     private fun playAudio() = synchronized(audioGuard) { audio?.play(); audioGuard.resume() }
