@@ -87,6 +87,17 @@ comparison type and wrong version, alongside the existing case-distinct n72
 operations. Future folding support needs an independently licensed implementation
 and separate compatibility tests; the missing grant is not inferred from silence.
 
+The exclusion was built on Linux and actual Android ARM64 from source commit
+`0799c2ec72a16acba02cc2ec431cbadfd5ff1f75`. All three host regression tests pass,
+including the unsupported-mode no-write checks. Both rebuilt ELFs contain neither
+FastUnicodeCompare, gLowerCaseTable nor catalogCompareCS, neither HFS archive
+contains the folding object, and the complete Apple table byte sequence is absent
+from both ELFs. All public firmware C API exports remain present; the ARM64 ELF
+retains 16 KiB LOAD alignment. The manifest records exact artifact hashes.
+This validates the native source exclusion, not a new Android preparation or
+guest boot with the excluded build; earlier preparation evidence belongs to its
+earlier source revision until separately qualified.
+
 For a release, include these notices and the complete GPLv3 corresponding source,
 including generated-source recipes and adapters. This document adds source-side
 notices; it does not prove that the APK already carries them. The separate
