@@ -135,8 +135,10 @@ silently substituted into the comparison.
    for five seconds. Record host-worker CPU ticks and clock tick frequency.
 2. Inspect a fresh actual Settings icon ROI. Retain the before Android/raw image,
    device BOOTTIME brackets around the one production tap and the input receipt.
-   Sample counters and real images at a bounded250ms cadence for at most30seconds;
-   retain polling/observer overhead. Do not retry the tap on timeout.
+   Sample counters and real images at250ms cadence for at most20pairs/5seconds;
+   stop after two inspected completed captures. If incomplete, retain one
+   separately labelled10-second capture, then end the transition as censored.
+   Keep actual achieved times and observer overhead. Do not retry the tap.
 3. Manually inspect the earliest completed **Settings list** image. A new frame,
    process admission, title/frontmost label or boot logo is not that endpoint.
    Report an interval: last image not yet complete to first inspected complete
@@ -159,3 +161,11 @@ These are operator steps pending target allocation and inspected current ROIs,
 not a remote-control script or a benchmark result. No guest setting writes,
 existing note edits, host audio substitution or device/security changes are part
 of this comparison.
+
+For the subsequent matched CPU-only window, Backend's reviewed proposal is20s
+with intended Settings/General/Back/Home actions near2/7/12/17s. Each remains
+gated by the actually completed prior scene; skip/censor late actions rather
+than blindly catching up. Capture full images only before/after that profile.
+The preceding250ms image series is a separate, perturbed visual-latency run.
+Use the independently reviewed platform simpleperf command and validated live
+TIDs; this keyboard controller does not launch profiling or add trace events.
