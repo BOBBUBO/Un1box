@@ -12,9 +12,11 @@ class FirmwareService : Service() {
     @Volatile private var destination = ""
     @Volatile private var failure = ""
     @Volatile private var currentFirmwareId = ""
+    @Volatile private var cancelling = false
     private val binder = object : IFirmware.Stub() {
         override fun supports(firmwareId: String): Boolean = FirmwareNative.supports(firmwareId)
         override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String): Bundle {
+            check(FirmwareNative.status().getOrElse(6) { "0" } == "0") { "The native preparer requires a fresh process" }
             check(consumed.compareAndSet(false, true)) { "A fresh firmware worker is required" }
             foreground()
             currentFirmwareId = firmwareId
@@ -34,15 +36,25 @@ class FirmwareService : Service() {
         }
         override fun status(): Bundle {
             val values = FirmwareNative.status()
+            val phase = when {
+                failure.isNotEmpty() -> "failed"
+                consumed.get() && values[0] == "idle" -> if (cancelling) "cancelling" else "starting"
+                values[0] == "preparing" && cancelling -> "cancelling"
+                else -> values[0]
+            }
             return Bundle().apply {
-                putString("state", if (failure.isNotEmpty()) "failed" else values[0]); putString("stage", values[1])
+                putString("state", phase); putString("stage", values[1])
+                putBoolean("consumed", consumed.get() || values.getOrElse(6) { "0" } == "1")
                 putLong("done", values[2].toLong()); putLong("total", values[3].toLong()); putInt("code", values[4].toInt())
                 putString("error", if (failure.isNotEmpty()) failure else values[5]); putString("destination", destination)
                 putInt("pid", Process.myPid()); putString("firmwareId", currentFirmwareId)
             }
         }
-        override fun cancel() { FirmwareNative.cancel() }
-        override fun finish() { Handler(mainLooper).postDelayed({ stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); Process.killProcess(Process.myPid()) }, 200) }
+        override fun cancel() { cancelling = true; FirmwareNative.cancel() }
+        override fun finish() {
+            check(status().getString("state") !in listOf("starting", "preparing", "cancelling")) { "Cancel preparation and wait for a terminal result before closing the worker" }
+            Handler(mainLooper).postDelayed({ stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); Process.killProcess(Process.myPid()) }, 200)
+        }
     }
     override fun onBind(intent: Intent): IBinder = binder
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { foreground(); return START_NOT_STICKY }

@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 class MainActivity : ComponentActivity(), SensorEventListener {
@@ -36,6 +38,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var deviceMenu by mutableStateOf(false)
     private var firmware: IFirmware? = null
     private var firmwareBound = false
+    private var firmwareRestarting by mutableStateOf(false)
+    private var pendingFirmwareStart = false
+    private var firmwareExpectedExit = false
+    private var retainedPreparedOutput = ""
+    private var preparedImportInFlight = false
     private var preparationOpen by mutableStateOf(false)
     private var firmwareIds by mutableStateOf<List<Pair<String, Boolean>>>(emptyList())
     private var firmwareId by mutableStateOf("")
@@ -49,16 +56,31 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var ipswPath = ""
     private val firmwareConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            firmware = IFirmware.Stub.asInterface(binder)
+            val worker = IFirmware.Stub.asInterface(binder)
+            firmware = worker
+            firmwareExpectedExit = false
+            binder.linkToDeath({ handler.post {
+                if (firmware?.asBinder() == binder) {
+                    firmware = null
+                    if (!firmwareRestarting && !firmwareExpectedExit) preparation = Bundle().apply { putString("state", "failed"); putString("error", "Firmware worker exited; completed output is retained and interrupted staging is not admitted.") }
+                }
+            } }, 0)
+            val workerState = worker.status()
+            preparation = if (workerState.getString("state") == "idle" && retainedPreparedOutput.isNotEmpty()) retainedPreparation() else workerState
+            if (pendingFirmwareStart) {
+                pendingFirmwareStart = false
+                firmwareRestarting = false
+                if (preparation?.getBoolean("consumed") == true) restartFirmwareForPreparation() else beginPreparation()
+            }
             Thread({
                 try {
                     val entries = JSONObject(assets.open("firmware-catalog.json").bufferedReader().use { it.readText() }).getJSONArray("entries")
-                    val choices = (0 until entries.length()).map { entries.getJSONObject(it).getString("id") }.map { it to (firmware?.supports(it) == true) }
-                    handler.post { firmwareIds = choices; if (firmwareId.isEmpty()) firmwareId = choices.firstOrNull { it.second }?.first ?: "" }
-                } catch (e: Exception) { handler.post { error = e.message ?: "Cannot load firmware catalog" } }
+                    val choices = (0 until entries.length()).map { entries.getJSONObject(it).getString("id") }.map { it to worker.supports(it) }
+                    handler.post { if (firmware?.asBinder() != binder) return@post; firmwareIds = choices; if (firmwareId.isEmpty()) firmwareId = choices.firstOrNull { it.second }?.first ?: "" }
+                } catch (e: Exception) { handler.post { if (firmware?.asBinder() == binder) error = e.message ?: "Cannot load firmware catalog" } }
             }, "firmware-catalog").start()
         }
-        override fun onServiceDisconnected(name: ComponentName) { firmware = null; preparation = Bundle().apply { putString("state", "failed"); putString("error", "Firmware worker exited. Interrupted staging is preserved and cannot be imported.") } }
+        override fun onServiceDisconnected(name: ComponentName) { firmware = null; if (!firmwareRestarting && !firmwareExpectedExit) preparation = Bundle().apply { putString("state", "failed"); putString("error", "Firmware worker exited; completed output is retained and interrupted staging is not admitted.") } }
     }
     private val stockIpsw = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importStockIpsw(uri) }
     private val trustedTools = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) importTrustedTools(uri) }
@@ -109,6 +131,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         ipswSelected = File(ipswPath).isFile; toolsSelected = File(toolsPath).isDirectory
         firmwareId = imports.getString("firmwareId", "") ?: ""
         preparedImported = imports.getString("preparedImported", "") ?: ""
+        retainedPreparedOutput = imports.getString("pendingPrepared", "") ?: ""
+        if (retainedPreparedOutput.isNotEmpty()) {
+            preparation = retainedPreparation(); preparedImported = retainedPreparedOutput
+            preparedImportError = "Completed preparation is retained; retry importing it as a device."
+        }
         bindWorker()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF71DCC8))) {
@@ -162,20 +189,21 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
     @Composable
     private fun PreparationDialog() {
-        AlertDialog(onDismissRequest = { if (preparation?.getString("state") != "preparing") preparationOpen = false },
+        val inputsLocked = busy || preparationActive()
+        AlertDialog(onDismissRequest = { if (!inputsLocked) closePreparation() },
             title = { Text("Prepare firmware") },
             text = {
                 Column {
                     Text("Choose a legitimate stock IPSW and the verified guest tools folder. Preparation runs locally without root.")
                     Box {
-                        OutlinedButton(onClick = { firmwareMenu = true }, enabled = preparation?.getString("state") != "preparing") { Text(firmwareId.ifEmpty { "Choose firmware" }) }
+                        OutlinedButton(onClick = { firmwareMenu = true }, enabled = !inputsLocked) { Text(firmwareId.ifEmpty { "Choose firmware" }) }
                         DropdownMenu(expanded = firmwareMenu, onDismissRequest = { firmwareMenu = false }) {
-                            for ((id, supported) in firmwareIds) DropdownMenuItem(text = { Text(if (supported) id else "$id · unsupported route") }, onClick = { firmwareId = id; getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("firmwareId", id).apply(); firmwareMenu = false })
+                            for ((id, supported) in firmwareIds) DropdownMenuItem(enabled = !inputsLocked, text = { Text(if (supported) id else "$id · unsupported route") }, onClick = { firmwareId = id; getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("firmwareId", id).apply(); firmwareMenu = false })
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !busy) { Text("Stock IPSW") }
-                        Button(onClick = { trustedTools.launch(null) }, enabled = !busy) { Text("Verified tools") }
+                        Button(onClick = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !inputsLocked) { Text("Stock IPSW") }
+                        Button(onClick = { trustedTools.launch(null) }, enabled = !inputsLocked) { Text("Verified tools") }
                     }
                     Text(if (ipswSelected) "Stock IPSW selected" else "Select the stock IPSW")
                     Text(if (toolsSelected) "Verified tools selected" else "Select the verified handoff tools folder")
@@ -189,47 +217,90 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             },
             confirmButton = {
                 if (preparation?.getString("state") == "complete" && preparedImportError.isNotEmpty()) TextButton(onClick = { preparation?.let { importPreparedOutput(it) } }, enabled = !busy) { Text("Retry import") }
-                else if (preparation?.getString("state") == "preparing") TextButton(onClick = { firmware?.cancel() }, modifier = Modifier.testTag("cancel_preparation")) { Text("Cancel") }
-                else TextButton(onClick = { beginPreparation() }, enabled = !busy && ipswSelected && toolsSelected && firmwareIds.any { it.first == firmwareId && it.second }, modifier = Modifier.testTag("start_preparation")) { Text("Prepare") }
+                else if (preparationActive()) TextButton(onClick = { firmware?.cancel(); preparation = preparation?.apply { putString("state", "cancelling") } }, enabled = !firmwareRestarting && preparation?.getString("state") != "cancelling", modifier = Modifier.testTag("cancel_preparation")) { Text("Cancel") }
+                else TextButton(onClick = { beginPreparation() }, enabled = !inputsLocked && ipswSelected && toolsSelected && firmwareIds.any { it.first == firmwareId && it.second }, modifier = Modifier.testTag("start_preparation")) { Text("Prepare") }
             },
-            dismissButton = { TextButton(onClick = { if (preparation?.getString("state") != "preparing") { firmware?.finish(); preparationOpen = false } }, enabled = preparation?.getString("state") != "preparing") { Text("Close") } })
+            dismissButton = { TextButton(onClick = { closePreparation() }, enabled = !inputsLocked) { Text("Close") } })
+    }
+    private fun retainedPreparation() = Bundle().apply {
+        putString("state", "complete"); putString("stage", "Prepared output retained")
+        putString("destination", retainedPreparedOutput); putString("firmwareId", firmwareId)
+        putBoolean("consumed", false)
+    }
+    private fun preparationActive() = firmwareRestarting || preparation?.getString("state") in listOf("starting", "preparing", "cancelling")
+    private fun closePreparation() {
+        if (busy || preparationActive()) return
+        preparationOpen = false
+        firmwareExpectedExit = true
+        try { firmware?.finish() } catch (e: RemoteException) { error = e.message ?: "Firmware worker unavailable" }
     }
     private fun bindFirmware() {
         if (firmwareBound) { unbindService(firmwareConnection); firmwareBound = false }
         firmwareBound = bindService(Intent(this, FirmwareService::class.java), firmwareConnection, BIND_AUTO_CREATE)
     }
     private fun beginPreparation() {
-        if (preparation?.getString("state") in listOf("failed", "cancelled", "complete")) {
-            firmware?.finish(); preparation = null; firmware = null
-            handler.postDelayed({ bindFirmware(); handler.postDelayed({ beginPreparation() }, 500) }, 500)
-            return
-        }
-        if (firmware == null) { error = "Firmware worker unavailable"; return }
+        if (preparationActive() || busy) return
+        if (preparation?.getBoolean("consumed") == true) { restartFirmwareForPreparation(); return }
+        val worker = firmware ?: run { pendingFirmwareStart = true; firmwareRestarting = true; bindFirmware(); return }
+        val selectedId = firmwareId; val selectedIpsw = ipswPath; val selectedTools = toolsPath
+        preparedImportError = ""
+        preparation = Bundle().apply { putString("state", "starting") }
         startForegroundService(Intent(this, FirmwareService::class.java))
-        Thread({ try { val state = firmware!!.start(firmwareId, ipswPath, toolsPath); handler.post { preparation = state } }
-            catch (e: Exception) { handler.post { error = e.message ?: "Cannot start preparation" } } }, "prepare-start").start()
+        Thread({ try { val state = worker.start(selectedId, selectedIpsw, selectedTools); handler.post { preparation = state } }
+            catch (e: Exception) { handler.post { error = e.message ?: "Cannot start preparation"; preparation = Bundle().apply { putString("state", "failed"); putString("error", error); putBoolean("consumed", true) } } } }, "prepare-start").start()
+    }
+    private fun restartFirmwareForPreparation() {
+        if (firmwareRestarting) return
+        val old = firmware ?: run { pendingFirmwareStart = true; firmwareRestarting = true; bindFirmware(); return }
+        val oldBinder = old.asBinder()
+        firmwareRestarting = true
+        firmwareExpectedExit = true
+        pendingFirmwareStart = true
+        if (firmwareBound) { unbindService(firmwareConnection); firmwareBound = false }
+        Thread({
+            val died = CountDownLatch(1)
+            val recipient = IBinder.DeathRecipient { died.countDown() }
+            try {
+                if (oldBinder.isBinderAlive) {
+                    try { oldBinder.linkToDeath(recipient, 0) } catch (_: DeadObjectException) { died.countDown() }
+                    try { old.finish() } catch (_: DeadObjectException) { died.countDown() }
+                    check(!oldBinder.isBinderAlive || died.await(5, TimeUnit.SECONDS)) { "Previous firmware worker has not exited. Retry after it stops." }
+                }
+                handler.post { firmware = null; preparation = null; bindFirmware() }
+            } catch (e: Exception) { handler.post { pendingFirmwareStart = false; firmwareRestarting = false; error = e.message ?: "Firmware worker restart failed" } }
+            finally { try { oldBinder.unlinkToDeath(recipient, 0) } catch (_: java.util.NoSuchElementException) { } }
+        }, "firmware-worker-restart").start()
     }
     private fun pollPreparation() {
+        if (firmwareRestarting) return
         val state = firmware?.status() ?: return
+        if (state.getString("state") == "idle" && retainedPreparedOutput.isNotEmpty()) return
         preparation = state
+        if (state.getString("state") == "complete" && state.getString("destination") != preparedImported) {
+            retainedPreparedOutput = state.getString("destination") ?: ""
+            getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("pendingPrepared", retainedPreparedOutput).apply()
+        }
         state.getString("firmwareId")?.takeIf { it.isNotEmpty() }?.let { firmwareId = it }
-        if (state.getString("state") == "complete" && state.getString("destination") != preparedImported) importPreparedOutput(state)
+        if (!preparedImportInFlight && state.getString("state") == "complete" && state.getString("destination") != preparedImported) importPreparedOutput(state)
     }
     private fun importPreparedOutput(state: Bundle) {
-        val destination = requireNotNull(state.getString("destination")); preparedImported = destination; busy = true
+        if (preparedImportInFlight) return
+        val destination = requireNotNull(state.getString("destination")); preparedImported = destination; busy = true; preparedImportInFlight = true
         Thread({
             val result = try { engine?.importPrepared(destination, "$firmwareId prepared") ?: "Device worker unavailable" }
                 catch (e: RemoteException) { e.message ?: "Device worker exited during import" }
             handler.post {
-                busy = false; error = result; preparedImportError = result
+                busy = false; preparedImportInFlight = false; error = result; preparedImportError = result
                 if (result.isEmpty()) {
-                    getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("preparedImported", destination).apply()
-                    detail = "Prepared firmware imported as a new device"; refreshDevices(); firmware?.finish()
+                    retainedPreparedOutput = ""
+                    getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("preparedImported", destination).remove("pendingPrepared").apply()
+                    detail = "Prepared firmware imported as a new device"; refreshDevices(); firmwareExpectedExit = true; firmware?.finish()
                 }
             }
         }, "prepared-device-import").start()
     }
     private fun importStockIpsw(uri: Uri) {
+        if (preparationActive() || busy) return
         busy = true
         Thread({
             try {
@@ -240,6 +311,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }, "stock-ipsw-import").start()
     }
     private fun importTrustedTools(uri: Uri) {
+        if (preparationActive() || busy) return
         busy = true
         Thread({
             val target = File(filesDir, "verified-tools-${System.nanoTime()}")
