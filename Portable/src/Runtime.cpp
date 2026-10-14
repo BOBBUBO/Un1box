@@ -640,13 +640,17 @@ lt_status lt_runtime_copy_frame(lt_runtime *r, void *p, uint64_t capacity, uint6
     });
 }
 lt_status lt_runtime_frame_metadata(lt_runtime *r, uint64_t since, lt_frame_info *out, lt_error *e) {
-    return lt::guard(e, [&] {
+    bool ready = false;
+    const auto status = lt::guard(e, [&] {
         lt::require(r, "invalid frame metadata runtime");
         lt::abi(out);
         const auto result = lt::read_frame_metadata(r->shared, since, *out);
         lt::require(result != lt::MetadataRead::invalid, "invalid published frame metadata", LT_ENGINE);
-        lt::require(result == lt::MetadataRead::fresh, "no newer coherent published frame", LT_AGAIN);
+        ready = result == lt::MetadataRead::fresh;
     });
+    if (status != LT_OK)
+        return status;
+    return ready ? status : lt::error(e, LT_AGAIN, "no newer coherent published frame");
 }
 lt_status lt_runtime_frame_fd(lt_runtime *r, int *fd, uint64_t *bytes, lt_error *e) {
     return lt::guard(e, [&] {
