@@ -3,6 +3,7 @@
 #include "TouchScript.hpp"
 #include "ControlDelivery.hpp"
 #include "Presentation.hpp"
+#include "ReplayQueue.hpp"
 #include <SDL.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
@@ -177,7 +178,8 @@ static Options options(int argc, char **argv) {
                    "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
                    "[--no-audio] [--trace-io]\n\nMouse left/right: contacts 1/2. H: Home, P: Power, Space: pause, "
                    "Escape: orderly "
-                   "stop.\nF6: labeled deterministic two-contact pinch. Arrows: acceleration replay (not hardware "
+                   "stop.\nC: release all contacts. F6: labeled two-contact pinch. F7: crossing/independent lift. "
+                   "Arrows: acceleration replay (not hardware "
                    "gyro).\nScript: seconds touch ID phase x y; button ID down; pause 0/1; cancel; stop.\n";
             std::exit(0);
         } else
@@ -334,6 +336,9 @@ static int worker(const Options &o) {
             default:
                 break;
             }
+            if (o.trace_io && (p.kind == Cancel || p.kind == Pause))
+                std::cout << "trace_control observed_monotonic_ns=" << now_ns() << " kind=" << p.kind
+                          << " value=" << p.value << " result=" << result << std::endl;
             if (result != LT_OK) {
                 Packet reply;
                 reply.kind = Reply;
@@ -423,6 +428,7 @@ static int worker(const Options &o) {
 struct Script {
     double at;
     Packet packet;
+    bool replay = false;
 };
 static std::vector<Script> script_file(const std::string &path) {
     std::vector<Script> script;
@@ -679,9 +685,13 @@ static int frontend(const Options &o, int argc, char **argv) {
                     : p.kind == Pause                                       ? lt::ControlDelivery::Kind::pause
                                                                             : lt::ControlDelivery::Kind::lifecycle;
         bool sent = delivery.send(kind, [&] { return send_packet(sockets[0], p); });
-        if (delivery.needs_cancel() || p.kind == Cancel || p.kind == Pause) {
+        if (delivery.needs_cancel() || p.kind == Cancel || p.kind == Pause || p.kind == Stop) {
             contacts.clear();
             fingers.clear();
+            const auto dropped = lt::discard_replay(script, next_script);
+            if (o.trace_io)
+                std::cout << "trace_replay_cancel observed_monotonic_ns=" << now_ns() << " pending_dropped=" << dropped
+                          << std::endl;
         }
         if (!sent)
             std::cerr << "control backpressure: command " << p.kind << " rejected\n";
@@ -746,17 +756,17 @@ static int frontend(const Options &o, int argc, char **argv) {
         uint64_t now = now_ns();
         double elapsed = double(now - start) / 1e9;
         while (next_script < script.size() && elapsed >= script[next_script].at) {
-            if (script[next_script].packet.kind == Stop)
+            const auto command = script[next_script++];
+            if (command.packet.kind == Stop)
                 stop();
-            else if (script[next_script].packet.kind == Screenshot) {
+            else if (command.packet.kind == Screenshot) {
                 try {
-                    capture(script[next_script].packet.guest_argument);
+                    capture(command.packet.guest_argument);
                 } catch (const std::exception &e) {
                     std::cerr << "checkpoint screenshot failed: " << e.what() << "\n";
                 }
             } else
-                submit(script[next_script].packet);
-            next_script++;
+                submit(command.packet);
         }
         if (o.seconds > 0 && elapsed >= o.seconds)
             stop();
@@ -802,6 +812,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                 std::cerr << "command failed: " << update.error.message << "\n";
                 contacts.clear();
                 fingers.clear();
+                lt::discard_replay(script, next_script);
                 Packet cancel;
                 cancel.kind = Cancel;
                 // Cancellation can be rejected before the engine becomes ready.
@@ -821,6 +832,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                 if (update.input_status.state == 3) {
                     contacts.clear();
                     fingers.clear();
+                    lt::discard_replay(script, next_script);
                     std::cerr << update.error.message << "\n";
                 }
             }
@@ -932,13 +944,14 @@ static int frontend(const Options &o, int argc, char **argv) {
                     } catch (const std::exception &e) {
                         std::cerr << "live screenshot failed: " << e.what() << "\n";
                     }
-                } else if (key == SDLK_r && down) {
+                } else if ((key == SDLK_r || key == SDLK_c) && down) {
                     Packet p;
                     p.kind = Cancel;
                     submit(p);
                     contacts.clear();
                     fingers.clear();
-                    display_rotation = (display_rotation + 90) % 360;
+                    if (key == SDLK_r)
+                        display_rotation = (display_rotation + 90) % 360;
                 } else if (key == SDLK_h || key == SDLK_p || key == SDLK_EQUALS || key == SDLK_MINUS) {
                     Packet p;
                     p.kind = Button;
@@ -955,7 +968,29 @@ static int frontend(const Options &o, int argc, char **argv) {
                         double delta = .1 + step * .015;
                         p.touch.contacts[0] = {sizeof(lt_contact), 1, 101, phase, .5 - delta, .5};
                         p.touch.contacts[1] = {sizeof(lt_contact), 1, 102, phase, .5 + delta, .5};
-                        script.push_back({elapsed + step * .08, p});
+                        script.push_back({elapsed + step * .08, p, true});
+                    }
+                    std::sort(script.begin() + next_script, script.end(),
+                              [](const Script &a, const Script &b) { return a.at < b.at; });
+                } else if (key == SDLK_F7 && down) {
+                    std::cerr << "crossing/independent-lift replay (guest acceptance requires observation)\n";
+                    for (int step = 0; step <= 16; step++) {
+                        Packet p;
+                        p.kind = Touch;
+                        p.touch = {sizeof(p.touch), 1, 0, step <= 13 ? 2u : 1u, 0, {}};
+                        if (step <= 12) {
+                            const double offset = .46 * step / 12;
+                            const uint32_t phase = step == 0 ? 0 : 1;
+                            p.touch.contacts[0] = {sizeof(lt_contact), 1, 201, phase, .32 + offset, .46};
+                            p.touch.contacts[1] = {sizeof(lt_contact), 1, 202, phase, .68 - offset, .54};
+                        } else if (step == 13) {
+                            p.touch.contacts[0] = {sizeof(lt_contact), 1, 201, 2, .78, .46};
+                            p.touch.contacts[1] = {sizeof(lt_contact), 1, 202, 1, .22, .54};
+                        } else {
+                            p.touch.contacts[0] = {sizeof(lt_contact),      1,  202, step == 16 ? 2u : 1u,
+                                                   .22 + .08 * (step - 13), .54};
+                        }
+                        script.push_back({elapsed + step * .08, p, true});
                     }
                     std::sort(script.begin() + next_script, script.end(),
                               [](const Script &a, const Script &b) { return a.at < b.at; });
