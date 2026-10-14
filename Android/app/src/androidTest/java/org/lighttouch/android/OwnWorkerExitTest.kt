@@ -1,7 +1,6 @@
 package org.lighttouch.android
 
 import android.os.Build
-import android.app.ApplicationExitInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
@@ -13,7 +12,7 @@ import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class OwnWorkerExitTest {
-    @Test fun retainBoundedNativeTraceForExplicitOwnEnginePid() {
+    @Test fun retainBoundedExitEvidenceForExplicitOwnEnginePid() {
         val pidArgument = InstrumentationRegistry.getArguments().getString("workerPid")
         assumeTrue("Explicit workerPid and API30+ required", pidArgument != null && Build.VERSION.SDK_INT >= 30)
         val pid = requireNotNull(pidArgument).toInt()
@@ -27,16 +26,20 @@ class OwnWorkerExitTest {
         val metadata = JSONObject(receipt.readText())
         assertEquals(pid, metadata.getInt("pid"))
         assertEquals("${context.packageName}:engine", metadata.getString("process"))
-        assertEquals("Requested known native crash", ApplicationExitInfo.REASON_CRASH_NATIVE, metadata.getInt("reason"))
-        assertFalse("Own trace unavailable: $metadata", metadata.optBoolean("traceUnavailable"))
-        assertFalse("Own trace read failed: $metadata", metadata.has("traceError"))
-        val trace = File(metadata.getString("tracePath"))
-        assertTrue("Native trace is empty", trace.length() > 0)
-        assertTrue("Trace exceeded fixed 4MiB cap", trace.length() <= 4 * 1024 * 1024)
-        // Preserve the raw bytes for tombstone/protobuf decoding by the integration
-        // owner. A retrieved trace diagnoses evidence availability, not guest success.
-        File(directory, "requested-$pid-result.json").writeText(JSONObject().put("ownNativeTraceRetrieved", true)
-            .put("pid", pid).put("receipt", receipt.absolutePath).put("trace", trace.absolutePath)
-            .put("guestBootProven", false).toString(2))
+        val result = JSONObject().put("ownWorkerExitCaptured", true).put("pid", pid)
+            .put("reason", metadata.getInt("reason")).put("status", metadata.getInt("status"))
+            .put("receipt", receipt.absolutePath).put("guestBootProven", false).put("ownNativeTraceRetrieved", false)
+        if (metadata.has("tracePath")) {
+            val trace = File(metadata.getString("tracePath"))
+            assertTrue("Trace exceeded fixed 4MiB cap", trace.length() <= 4 * 1024 * 1024)
+            result.put("trace", trace.absolutePath).put("traceBytes", trace.length())
+                .put("ownNativeTraceRetrieved", trace.length() > 0).put("traceTruncated", metadata.optBoolean("traceTruncated"))
+        }
+        if (metadata.optBoolean("traceUnavailable")) result.put("traceUnavailable", true)
+        if (metadata.has("traceError")) result.put("traceError", metadata.getString("traceError"))
+        // Android may report EXIT_SELF/status1 for QEMU init exit even if a
+        // concurrent destructor FORTIFY is logged. Never relabel the platform's
+        // exit reason or claim a native trace was retrieved when none is supplied.
+        File(directory, "requested-$pid-result.json").writeText(result.toString(2))
     }
 }
