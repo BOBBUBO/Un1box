@@ -26,7 +26,7 @@ int main() {
     };
     auto color = [&](int x, int y, uint8_t r, uint8_t g, uint8_t b) {
         auto p = rendered.data() + (y * 80 + x) * 4;
-        assert(p[0] == r && p[1] == g && p[2] == b);
+        assert(p[0] == r && p[1] == g && p[2] == b && p[3] == 255);
     };
     read(0);
     color(35, 25, 255, 0, 0);
