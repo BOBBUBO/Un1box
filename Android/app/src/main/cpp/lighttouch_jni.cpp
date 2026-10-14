@@ -14,6 +14,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstdio>
+#include <cstdlib>
+#include <dlfcn.h>
 
 namespace {
 std::mutex guard;
@@ -41,6 +43,11 @@ bool presenter_started = false;
 bool starting = false, startup_stop_requested = false, startup_pause_requested = false;
 uint64_t last_rejected_input = 0;
 std::string diagnostic;
+unsigned graphics_provider_choice=0;
+bool graphics_provider_fixed=false;
+std::string graphics_provider_failure;
+void *angle_provider_handles[3]={};
+const char *graphics_provider_name() { return graphics_provider_choice==1?"angle-gl":"platform"; }
 std::string engine_log_path;
 std::string debug_qmp_path;
 bool debug_qmp_armed=false;
@@ -217,6 +224,13 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
         std::lock_guard<std::mutex> lock(guard);
         if(runtime || starting)return string(env,"Worker already consumed; stop and start a fresh worker");
         starting=true;diagnostic.clear();qmp_requested=debug_qmp_armed;debug_qmp_armed=false;
+        graphics_provider_fixed=true;
+        if(!graphics_provider_failure.empty()) {
+            starting=false;diagnostic=graphics_provider_failure;return string(env,diagnostic);
+        }
+        if(setenv("LIGHTTOUCH_GLES_PROVIDER",graphics_provider_name(),1)!=0) {
+            starting=false;diagnostic="Cannot select the fixed guest graphics provider";return string(env,diagnostic);
+        }
     }
     // Integrity admission can hash many gigabytes. It must not hold the frame,
     // status, input or lifecycle mutex while the library performs that work.
@@ -291,10 +305,12 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
             detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
         }
     }
-    auto arr=env->NewObjectArray(5,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(7,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
-    env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));return arr;
+    env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));
+    env->SetObjectArrayElement(arr,5,string(env,graphics_provider_name()));
+    env->SetObjectArrayElement(arr,6,string(env,graphics_provider_fixed?"1":"0"));return arr;
 }
 JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env,jobject,jobject surface) {
     std::lock_guard<std::mutex> lock(guard);
@@ -445,6 +461,40 @@ JNI(observations) jlongArray JNICALL Java_org_lighttouch_android_Native_observat
 
 JNI(shutdownGraceMillis) jint JNICALL Java_org_lighttouch_android_Native_shutdownGraceMillis(JNIEnv *,jobject) {
     return jint(LT_SHUTDOWN_GRACE_MS);
+}
+
+
+JNI(debugSelectGraphicsProvider) jstring JNICALL Java_org_lighttouch_android_Native_debugSelectGraphicsProvider(JNIEnv *env,jobject,jint choice) {
+#ifndef LT_ANDROID_DEBUG
+    return string(env,"Graphics provider diagnosis is unavailable in this build");
+#else
+    std::lock_guard<std::mutex> lock(guard);
+    if(choice!=0 && choice!=1)return string(env,"Unsupported fixed graphics provider");
+    if(runtime || starting)return string(env,"Graphics provider selection requires a fresh unused worker");
+    if(graphics_provider_fixed)return string(env,!graphics_provider_failure.empty()?graphics_provider_failure:
+        unsigned(choice)==graphics_provider_choice?"":"Graphics provider is fixed; use a fresh worker to change it");
+#ifndef __x86_64__
+    if(choice==1)return string(env,"The packaged ANGLE experiment is available only for x86-64");
+#endif
+    graphics_provider_choice=unsigned(choice);graphics_provider_fixed=true;
+    if(choice==1) {
+        // Fixed public SONAMEs resolve inside this app's linker namespace. No
+        // caller path, environment variable name or general library loader.
+        const char *names[]={"libGLESv2_lighttouch_angle.so","libEGL_lighttouch_angle.so","libGLESv1_CM_lighttouch_angle.so"};
+        for(unsigned i=0;i<3;++i) {
+            angle_provider_handles[i]=dlopen(names[i],RTLD_NOW|RTLD_LOCAL);
+            if(!angle_provider_handles[i]) {
+                const char *reason=dlerror();
+                graphics_provider_failure="Packaged ANGLE provider is unavailable: "+std::string(reason?reason:"library load failed").substr(0,512)+"; start a fresh worker after correcting the package";
+                return string(env,graphics_provider_failure);
+            }
+        }
+        if(setenv("LT_GLES_DRIVER_DIAGNOSTIC","1",1)!=0) {
+            graphics_provider_failure="Cannot retain graphics provider diagnostics; use a fresh worker";return string(env,graphics_provider_failure);
+        }
+    }
+    return string(env,"");
+#endif
 }
 
 JNI(debugArmQmp) jstring JNICALL Java_org_lighttouch_android_Native_debugArmQmp(JNIEnv *env,jobject) {
