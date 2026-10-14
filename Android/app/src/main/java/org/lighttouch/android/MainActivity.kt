@@ -164,6 +164,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var assetName = "bootrom.bin"
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Retain the previous own-worker crash even when it happened before this
+        // activity/process was running. Never request another application's trace.
+        Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
         val imports = getSharedPreferences("preparation-imports", MODE_PRIVATE)
         ipswPath = imports.getString("ipsw", "") ?: ""; toolsPath = imports.getString("tools", "") ?: ""
         ipswSelected = File(ipswPath).isFile; toolsSelected = File(toolsPath).isDirectory
