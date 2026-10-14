@@ -144,9 +144,19 @@ class GuestOrientationLifecycleTest {
                     fun clickControl(text: String) {
                         val deadline = SystemClock.elapsedRealtime() + 5_000
                         do {
-                            val node = instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text)
-                                ?.firstOrNull { it.packageName?.toString() == context.packageName && it.text?.toString() == text && it.isClickable && it.isEnabled }
-                            if (node != null && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
+                            val matches = instrumentation.uiAutomation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text)
+                                ?.filter { it.packageName?.toString() == context.packageName && it.text?.toString() == text }
+                                .orEmpty()
+                            val controls = matches.mapNotNull { label ->
+                                var node: AccessibilityNodeInfo? = label
+                                while (node != null && node.packageName?.toString() == context.packageName) {
+                                    if (node.isClickable && node.isEnabled) return@mapNotNull node
+                                    node = node.parent
+                                }
+                                null
+                            }.distinct()
+                            check(controls.size <= 1) { "Ambiguous semantic production control: $text" }
+                            if (controls.singleOrNull()?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return
                             Thread.sleep(100)
                         } while (SystemClock.elapsedRealtime() < deadline)
                         error("Semantic production control unavailable: $text")
