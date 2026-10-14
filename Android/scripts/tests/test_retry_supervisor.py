@@ -229,6 +229,64 @@ class Supervision(unittest.TestCase):
         attempt.verify_record=mock.Mock(return_value={})
         return attempt,command
 
+    def test_closed_page_selector_rejects_invalid_values_before_launch(self):
+        for size in (8192,0,65536):
+            with self.subTest(size=size),tempfile.TemporaryDirectory() as directory:
+                args=[sys.executable,str(Path(retry.__file__)),"--allocation-granted","--user","synthetic",
+                    "--adb","/synthetic/adb","--emulator","/synthetic/emulator","--fresh-library",
+                    "--lock-sha256","a"*64,"--rom-sha256","b"*64,"--guest-sha256","c"*64,
+                    "--output",str(Path(directory)/"attempt"),"--expected-page-bytes",str(size)]
+                result=subprocess.run(args,capture_output=True)
+                self.assertEqual(result.returncode,2)
+                self.assertIn(b"invalid choice",result.stderr)
+                self.assertFalse((Path(directory)/"attempt").exists())
+
+    def test_page_gate_default16k_explicit4k_and_exact_mismatch(self):
+        for selector,actual in ((None,16384),(4096,4096),(None,4096),(4096,16384)):
+            with self.subTest(selector=selector,actual=actual),tempfile.TemporaryDirectory() as directory:
+                args=self.arguments(directory);args.fresh_library=True
+                if selector is not None:args.expected_page_bytes=selector
+                attempt=retry.Attempt(args);attempt.start=0;attempt.deadline=900
+                attempt.avd=mock.Mock();attempt.avd.poll.return_value=None;attempt.logcat=mock.Mock()
+                now=[0];calls=[]
+                def adb(*argv,**kwargs):
+                    calls.append(argv)
+                    if argv==("shell","getconf","PAGE_SIZE"):return 0,str(actual).encode()+b"\n"
+                    if argv==("shell","getprop","sys.boot_completed"):return 0,b"1\n"
+                    if argv[:3]==("shell","service","check"):return 0,b"Service: found\n"
+                    if argv==("shell","pidof","system_server"):return 0,b"123\n"
+                    return 0,b""
+                attempt.adb=adb;expected=16384 if selector is None else selector
+                with mock.patch.object(retry.time,"monotonic",side_effect=lambda:now[0]), \
+                     mock.patch.object(retry.time,"sleep",side_effect=lambda _:now.__setitem__(0,now[0]+31)):
+                    if actual==expected:
+                        ready=attempt.gate()
+                        self.assertEqual((ready["pageBytes"],ready["expectedPageBytes"]),(actual,expected))
+                        self.assertTrue(ready["serviceGatePassed"])
+                        self.assertFalse(ready["uiGatePassed"] or ready["guestAcceptancePassed"])
+                    else:
+                        with self.assertRaisesRegex(RuntimeError,"differs from expected"):attempt.gate()
+                        self.assertIsNone(attempt.actual_page_bytes)
+                        self.assertFalse((attempt.output/"ready.json").exists())
+                self.assertEqual((attempt.start,attempt.deadline),(0,900))
+                self.assertIn(("shell","getconf","PAGE_SIZE"),calls)
+                self.assertFalse(any("run-as" in argv or "am" in argv for argv in calls))
+
+    def test_4k_selection_changes_receipt_without_launch_argument_or_deadline_changes(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(retry.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout=b"List of devices attached\n")), \
+             mock.patch.object(retry.subprocess,"Popen") as popen, \
+             mock.patch.object(retry.PROCESS_CONTEXT,"Process"):
+            popen.return_value.pid=987654
+            args=self.arguments(directory);args.expected_page_bytes=4096;args.cores=4;args.memory_mb=4096
+            attempt=retry.Attempt(args);origin,deadline=attempt.start,attempt.deadline;attempt.launch()
+            self.assertEqual(popen.call_args.args[0],["sudo","-n","-u","synthetic","xvfb-run","-a","-s",
+                "-screen 0 1280x1024x24","/synthetic/emulator","-avd","synthetic_16k","-port","5554",
+                "-no-window","-no-snapshot","-no-audio","-gpu","swiftshader","-cores","4","-memory","4096"])
+            receipt=json.loads((attempt.output/"launch.json").read_text());self.assertEqual(receipt["expectedPageBytes"],4096)
+            self.assertEqual((receipt["bootLimitSeconds"],receipt["stopAtSeconds"],receipt["hardLimitSeconds"]),(240,840,900))
+            self.assertEqual((attempt.start,attempt.deadline),(origin,deadline))
+
     def test_actual_import_receipt_binds_once_after_boot_gate_without_clock_reset(self):
         with tempfile.TemporaryDirectory() as directory:
             attempt,command=self.import_attempt(directory)

@@ -827,7 +827,7 @@ static int frontend(const Options &o, int argc, char **argv) {
     SDL_Renderer *&renderer = sdl.renderer;
     SDL_Texture *&texture = sdl.texture;
     SDL_AudioDeviceID &sound = sdl.sound;
-    std::string last_window_title = "LightTouch — starting";
+    std::string last_window_title = "LightTouch - starting";
     auto set_window_title = [&](const std::string &title) {
         if (window && title != last_window_title) {
             SDL_SetWindowTitle(window, title.c_str());
@@ -913,8 +913,8 @@ static int frontend(const Options &o, int argc, char **argv) {
                       << " total=" << progress.total << " phase=" << lt::admission_phase_name(progress.phase)
                       << " worker_pid=" << pid << " start_ticks=" << child.ticks << std::endl;
             if (window) {
-                const std::string title = "LightTouch — validating prepared device: " + std::to_string(progress.done) +
-                                          "/" + std::to_string(progress.total) + " bytes — Escape cancels";
+                const std::string title = "LightTouch - validating prepared device: " + std::to_string(progress.done) +
+                                          "/" + std::to_string(progress.total) + " bytes - Escape cancels";
                 set_window_title(title);
             }
         }
@@ -942,7 +942,7 @@ static int frontend(const Options &o, int argc, char **argv) {
     std::cout << "admission hello_verified_observed_monotonic_ns=" << now_ns() << " worker_pid=" << pid
               << " start_ticks=" << child.ticks << " mapping_bytes=" << hello.mapping_bytes
               << "; guest readiness still pending" << std::endl;
-    set_window_title("LightTouch — starting guest");
+    set_window_title("LightTouch - starting guest");
     struct Mapping {
         const void *p;
         size_t n;
@@ -1116,7 +1116,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                           << " pcm_sdl_queued=" << pcm_sdl_queued << " pcm_sdl_discarded=" << pcm_sdl_discarded
                           << " pcm_sdl_errors=" << pcm_sdl_errors << std::endl;
                 if (window) {
-                    std::string title = "LightTouch — " + std::string(s.state == LT_RUNNING    ? "running"
+                    std::string title = "LightTouch - " + std::string(s.state == LT_RUNNING    ? "running"
                                                                       : s.state == LT_PAUSED   ? "paused"
                                                                       : s.state == LT_STOPPING ? "stopping"
                                                                       : s.state == LT_STARTING ? "starting"

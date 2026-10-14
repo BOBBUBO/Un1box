@@ -161,8 +161,10 @@ void present() {
                                 diagnostic += "; contact release requested";
                                 if(lt_runtime_cancel_input(runtime,&error)!=LT_OK)diagnostic += "; input release failed: "+std::string(error.message);
                                 else display_lease.contactsReleased();
-                            } else diagnostic += "; no owned contacts require release";
-                            display_lease.inputCompleted(delivered.request_id);
+                            } else {
+                                diagnostic += "; no owned contacts require release";
+                                display_lease.inputCompleted(delivered.request_id);
+                            }
                         } else {
                             ++ignored_input_rejections;last_ignored_input_request=delivered.request_id;
                         }
@@ -422,34 +424,44 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     lt_runtime_status s=LT_INIT(lt_runtime_status);lt_error poll_error=LT_INIT(lt_error);
     // Poll errors belong to this operation; observations uses its own lt_error.
     // A later successful native call must never clear the actionable poll message.
-    std::string detail=diagnostic;
-    if(runtime) { auto status=lt_runtime_poll(runtime,&s,&poll_error);if(status!=LT_OK) { diagnostic=result(status,poll_error);detail=diagnostic; }
+    std::string detail=diagnostic;bool poll_snapshot_valid=false;
+    if(runtime) { auto status=lt_runtime_poll(runtime,&s,&poll_error);poll_snapshot_valid=status==LT_OK;if(status!=LT_OK) { diagnostic=result(status,poll_error);detail=diagnostic; }
         else {
             if(s.state==LT_STOPPED && (s.dirty || !s.guest_shutdown_confirmed))s.state=LT_FAILED;
             if(s.state==LT_FAILED && diagnostic.empty())diagnostic="Guest exited without a confirmed clean shutdown (code "+std::to_string(s.engine_exit)+"); writable state retained. Stop this worker, then explicitly recover in a fresh worker. Diagnostics are retained.";
             detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
         }
     }
-    auto arr=env->NewObjectArray(8,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(13,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
     env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));
     env->SetObjectArrayElement(arr,5,string(env,graphics_provider_name()));
     env->SetObjectArrayElement(arr,6,string(env,graphics_provider_fixed?"1":"0"));
-    env->SetObjectArrayElement(arr,7,string(env,debug_touch_trace_configured?"1":"0"));return arr;
+    env->SetObjectArrayElement(arr,7,string(env,debug_touch_trace_configured?"1":"0"));
+    // Append facts from this same poll snapshot. Invalid/default fields never
+    // establish a clean shutdown; the consumer must require index 8 == "1".
+    env->SetObjectArrayElement(arr,8,string(env,poll_snapshot_valid?"1":"0"));
+    env->SetObjectArrayElement(arr,9,string(env,std::to_string(s.guest_shutdown_confirmed)));
+    env->SetObjectArrayElement(arr,10,string(env,std::to_string(s.dirty)));
+    env->SetObjectArrayElement(arr,11,string(env,std::to_string(s.storage_failed)));
+    env->SetObjectArrayElement(arr,12,string(env,std::to_string(s.engine_exit)));return arr;
 }
 // Must hold guard. Routine attachment/detachment with no View-owned contacts
 // never cancels an unrelated Home/Power pulse. A real held-contact handoff uses
 // the existing full cancellation API, which also releases hardware buttons.
-std::string cancel_display_contacts() {
+void refresh_display_release() {
     // An admitted UP/CANCEL can empty the local ledger while its guest release
     // is still queued. Refresh terminal success before deciding whether that
     // outstanding obligation needs cancellation; do so before minting/retiring.
-    if(runtime && !display_lease.contactsHeld() && display_lease.pendingOwnedRelease()) {
+    if(runtime && display_lease.pendingOwnedRelease()) {
         lt_input_status completed=LT_INIT(lt_input_status);lt_error observed=LT_INIT(lt_error);
         if(lt_runtime_input_status(runtime,&completed,&observed)==LT_OK && completed.state==2)
             display_lease.inputCompleted(completed.request_id);
     }
+}
+std::string cancel_display_contacts() {
+    refresh_display_release();
     if(!display_lease.needsOwnedRelease())return "";
     lt_error error=LT_INIT(lt_error);
     const auto status=runtime?lt_runtime_cancel_input(runtime,&error):LT_OK;
@@ -517,7 +529,11 @@ JNI(releaseDisplay) void JNICALL Java_org_lighttouch_android_Native_releaseDispl
         if(!display_lease.owns(uint64_t(lease)))return;
         const auto cancelled=cancel_display_contacts();
         if(!cancelled.empty())diagnostic="Display release failed: "+cancelled;
-        display_lease.release(uint64_t(lease));++surface_request;
+        // Failed cancellation must remain retryable before a new claim. Retire
+        // only after release admission succeeded; window detachment is separate.
+        if(cancelled.empty())display_lease.release(uint64_t(lease));
+        else display_lease.detach(uint64_t(lease));
+        ++surface_request;
         retired=window;window=nullptr;window_attached.store(0);
         ++surface_generation;++presentation_epoch;previous_present_ns=0;
     }
@@ -570,12 +586,17 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     const jsize count=env->GetArrayLength(ids);
     if(count<1 || count>jsize(LT_MAX_CONTACTS) || env->GetArrayLength(phases)!=count || env->GetArrayLength(xy)!=count*2) return string(env,"Invalid contact batch");
     if(!runtime) return string(env,"No active guest session; touch was not admitted");
-    if(!frame.width || !frame.height) {
+    auto release_input=[&]() -> std::string {
+        if(lease)return cancel_display_contacts();
         lt_error cancelled=LT_INIT(lt_error);
-        const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&cancelled));
+        const auto cancellation=lt_runtime_cancel_input(runtime,&cancelled);
         if(cancellation==LT_OK)display_lease.contactsReleased();
+        return result(cancellation,cancelled);
+    };
+    if(!frame.width || !frame.height) {
+        const auto cancellation=release_input();
         std::string failure="No active guest frame; gesture cancelled";
-        if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
+        if(!cancellation.empty())failure += "; input release failed: "+cancellation;
         return string(env,failure);
     }
     jint id[LT_MAX_CONTACTS], phase[LT_MAX_CONTACTS];jfloat coords[LT_MAX_CONTACTS*2];
@@ -586,32 +607,30 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
         batch.contacts[i]=lt_contact LT_INIT(lt_contact);batch.contacts[i].id=id[i];batch.contacts[i].phase=phase[i];
         auto status=lt_map_contact(coords[i*2],coords[i*2+1],view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
         if(status!=LT_OK) {
-            const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&error));
-            if(cancellation==LT_OK)display_lease.contactsReleased();
+            const auto cancellation=release_input();
             std::string failure="Touch left guest viewport; gesture cancelled";
-            if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,error);
+            if(!cancellation.empty())failure += "; input release failed: "+cancellation;
             return string(env,failure);
         }
     }
     // Guest portrait is kept upright within Android's rotated view. Mapping receives
     // view-local pixels; applying display rotation again would rotate contacts twice.
     (void)rotation;
-    const bool had_owned_contacts=lease && display_lease.contactsHeld();
+    refresh_display_release();
     auto status=lt_runtime_touch(runtime,&batch,&error);
     std::string failure=result(status,error);
     if(status!=LT_OK) {
-        lt_error cancelled=LT_INIT(lt_error);
-        const auto cancellation=(lease && !display_lease.contactsHeld()?LT_OK:lt_runtime_cancel_input(runtime,&cancelled));
-        if(cancellation==LT_OK)display_lease.contactsReleased();
-        if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
+        const auto cancellation=release_input();
+        if(!cancellation.empty())failure += "; input release failed: "+cancellation;
     } else {
+        display_lease.beginAdmittedBatch();
         if(lease)for(jsize i=0;i<count;++i)display_lease.admittedContact(id[i],phase[i]);
         // Read the real submitted ID while this JNI guard still serializes all
         // touch admissions. A separate error buffer cannot erase touch failures.
         lt_input_status submitted=LT_INIT(lt_input_status);lt_error identity_error=LT_INIT(lt_error);
         const auto identity=lt_runtime_input_status(runtime,&submitted,&identity_error);
         if(identity==LT_OK && submitted.request_id) {
-            display_lease.submittedInput(submitted.request_id,lease,had_owned_contacts || display_lease.contactsHeld());
+            display_lease.submittedInput(submitted.request_id,lease);
             if(submitted.state==2)display_lease.inputCompleted(submitted.request_id);
         } else {
             failure="Touch request identity unavailable; gesture cancelled";
