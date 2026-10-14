@@ -270,7 +270,7 @@ JNI(select) jstring JNICALL Java_org_lighttouch_android_Native_select(JNIEnv *en
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_select(library,record.value,&error);
     return string(env,result(status,error));
 }
-JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,jobject,jstring root,jstring id) {
+static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirty) {
     bool qmp_requested=false;
     bool touch_trace_requested=false;
     {
@@ -296,7 +296,7 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
     if(status==LT_OK)status=lt_library_select(library,record.value,&error);
     lt_record_info selected=LT_INIT(lt_record_info);
     if(status==LT_OK)status=lt_library_selected(library,&selected,&error);
-    if(status==LT_OK)status=lt_library_device_open(library,record.value,1,&prepared_device,&error);
+    if(status==LT_OK)status=lt_library_device_open(library,record.value,allow_dirty?1u:0u,&prepared_device,&error);
     if(status==LT_OK) {
         const std::string path=std::string(selected.state_path)+"/engine-"+std::to_string(getpid())+".log";
         const int log_fd=open(path.c_str(),O_CREAT|O_WRONLY|O_APPEND|O_CLOEXEC,0600);
@@ -353,6 +353,14 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
     return string(env,diagnostic);
 }
 
+JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,jobject,jstring root,jstring id) {
+    // Ordinary startup must not silently admit an interrupted writable state.
+    return start_runtime(env,root,id,false);
+}
+JNI(recoverStart) jstring JNICALL Java_org_lighttouch_android_Native_recoverStart(JNIEnv *env,jobject,jstring root,jstring id) {
+    return start_runtime(env,root,id,true);
+}
+
 JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);
     const char *states[]={"stopped","starting","running","paused","stopping","failed"};
@@ -363,7 +371,7 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     if(runtime) { auto status=lt_runtime_poll(runtime,&s,&poll_error);if(status!=LT_OK) { diagnostic=result(status,poll_error);detail=diagnostic; }
         else {
             if(s.state==LT_STOPPED && (s.dirty || !s.guest_shutdown_confirmed))s.state=LT_FAILED;
-            if(s.state==LT_FAILED && diagnostic.empty())diagnostic="Guest exited without a confirmed clean shutdown (code "+std::to_string(s.engine_exit)+"); writable state retained. Stop this worker, then Start to retry. Diagnostics are retained.";
+            if(s.state==LT_FAILED && diagnostic.empty())diagnostic="Guest exited without a confirmed clean shutdown (code "+std::to_string(s.engine_exit)+"); writable state retained. Stop this worker, then explicitly recover in a fresh worker. Diagnostics are retained.";
             detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
         }
     }
