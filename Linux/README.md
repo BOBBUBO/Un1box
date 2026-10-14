@@ -483,3 +483,15 @@ or establish that the guest accepted its checksum. Retain the transaction lines,
 paired image/diagnostic receipts and the independent visible scale response;
 label reconstructed delivery as an inference. Never equate admission/APPLIED
 with guest acceptance.
+
+A later bounded Linux run also exercised X focus loss and pause/resume with the
+fixed transition FIFO. Each stage began from an independently inspected fit
+photograph; between stages the Back→album→grid→viewer route was inspected and
+restored fit. Focus loss cancelled nine future replay batches. Pause cancelled
+ten, published actual state3, then resumed to state2. After each interruption,
+paired native during/after captures showed progressive enlargement from a fresh
+two-contact pinch. Complete transfer counts support inferred release-before-reuse
+ordering under the same trace limits above. The fresh worker ended with confirmed
+shutdown, exit0 and clean state. Concurrent AVD host load was retained; this is
+bounded Linux behavior evidence, not sustained performance or Android acceptance.
+Rotation with held contacts remains unqualified for this fixed candidate.
