@@ -75,7 +75,9 @@ int main() {
     std::string listing = "cs0/0.page " + hash(page) + "\n";
     std::string lock = "{\"format\":1,\"board\":\"n72ap\",\"build\":\"7E18\",\"boot_strategy\":\"iboot\",\"outputs\":{"
                        "\"nor\":{\"path\":\"nor.bin\",\"sha256\":\"" +
-                       hash(nor) + "\"},\"nand\":{\"path\":\"nand\",\"listing_sha256\":\"" + hash(listing) +
+                       hash(nor) + "\"},\"iboot\":{\"path\":\"iBoot.bin\",\"sha256\":\"" + hash(iboot) +
+                       "\"},\"gid_blobs\":{\"path\":\"gid-blobs.bin\",\"sha256\":\"" + hash(gid) +
+                       "\"},\"nand\":{\"path\":\"nand\",\"listing_sha256\":\"" + hash(listing) +
                        "\",\"pages\":1}},\"machine\":{\"ecid\":\"0x123\"}}";
     std::vector<std::pair<std::string, std::string>> entries = {{"device.lock.json", lock},
                                                                 {"nor.bin", nor},

@@ -24,7 +24,9 @@ a fresh worker, never reinitializes QEMU in the SDL process.
 
 Left/right mouse buttons own stable contacts 1/2. Native SDL touch IDs map to stable
 per-contact IDs; synthesized touch mouse events are ignored. H/P/+/- control Home,
-Power and volume; Space pauses. Focus loss cancels all input. F6 schedules a clearly
+Power and volume; Space pauses and R rotates the displayed guest. Focus loss and
+display rotation cancel all input; native mapping uses the same rotation/letterbox
+transform as Android. F6 schedules a clearly
 labeled two-contact pinch, not guest acceptance evidence. Arrow keys replay labeled
 acceleration only. `--script FILE` runs deterministic production input commands:
 

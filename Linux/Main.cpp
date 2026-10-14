@@ -467,7 +467,7 @@ static int frontend(const Options &o, int argc, char **argv) {
     uint64_t stop_since = 0;
     std::map<uint32_t, std::pair<double, double>> contacts;
     std::map<SDL_FingerID, uint32_t> fingers;
-    uint32_t next_finger = 10000;
+    uint32_t next_finger = 10000, display_rotation = 0;
     auto script = script_file(o.script);
     size_t next_script = 0;
     auto submit = [&](Packet p) {
@@ -565,12 +565,14 @@ static int frontend(const Options &o, int argc, char **argv) {
         if (renderer && texture) {
             int width = 0, height = 0;
             SDL_GetRendererOutputSize(renderer, &width, &height);
-            double scale = std::min(double(width) / frame.width, double(height) / frame.height);
+            double display_width = (display_rotation % 180) ? frame.height : frame.width;
+            double display_height = (display_rotation % 180) ? frame.width : frame.height;
+            double scale = std::min(double(width) / display_width, double(height) / display_height);
             SDL_Rect dest{int((width - frame.width * scale) / 2), int((height - frame.height * scale) / 2),
                           int(frame.width * scale), int(frame.height * scale)};
             SDL_SetRenderDrawColor(renderer, 24, 24, 24, 255);
             SDL_RenderClear(renderer);
-            SDL_RenderCopy(renderer, texture, nullptr, &dest);
+            SDL_RenderCopyEx(renderer, texture, nullptr, &dest, display_rotation, nullptr, SDL_FLIP_NONE);
             SDL_RenderPresent(renderer);
         }
         SDL_Event event;
@@ -596,6 +598,13 @@ static int frontend(const Options &o, int argc, char **argv) {
                     p.kind = Pause;
                     p.value = paused;
                     submit(p);
+                } else if (key == SDLK_r && down) {
+                    Packet p;
+                    p.kind = Cancel;
+                    submit(p);
+                    contacts.clear();
+                    fingers.clear();
+                    display_rotation = (display_rotation + 90) % 360;
                 } else if (key == SDLK_h || key == SDLK_p || key == SDLK_EQUALS || key == SDLK_MINUS) {
                     Packet p;
                     p.kind = Button;
@@ -631,11 +640,14 @@ static int frontend(const Options &o, int argc, char **argv) {
                        (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP)) {
                 int width = 0, height = 0;
                 SDL_GetWindowSize(window, &width, &height);
-                double scale = std::min(double(width) / frame.width, double(height) / frame.height),
-                       left = (width - frame.width * scale) / 2, top = (height - frame.height * scale) / 2, x = 0,
+                double display_width = (display_rotation % 180) ? frame.height : frame.width,
+                       display_height = (display_rotation % 180) ? frame.width : frame.height;
+                double scale = std::min(double(width) / display_width, double(height) / display_height),
+                       left = (width - display_width * scale) / 2, top = (height - display_height * scale) / 2, x = 0,
                        y = 0;
-                lt_status mapped = lt_map_contact(event.tfinger.x * width, event.tfinger.y * height, left, top,
-                                                  frame.width * scale, frame.height * scale, 0, &x, &y);
+                lt_status mapped =
+                    lt_map_contact(event.tfinger.x * width, event.tfinger.y * height, left, top, display_width * scale,
+                                   display_height * scale, display_rotation, &x, &y);
                 if (event.type == SDL_FINGERDOWN && mapped == LT_OK) {
                     uint32_t id = next_finger++;
                     fingers[event.tfinger.fingerId] = id;
@@ -660,13 +672,15 @@ static int frontend(const Options &o, int argc, char **argv) {
                     continue;
                 int width = 0, height = 0;
                 SDL_GetWindowSize(window, &width, &height);
-                double scale = std::min(double(width) / frame.width, double(height) / frame.height),
-                       left = (width - frame.width * scale) / 2, top = (height - frame.height * scale) / 2;
+                double display_width = (display_rotation % 180) ? frame.height : frame.width,
+                       display_height = (display_rotation % 180) ? frame.width : frame.height;
+                double scale = std::min(double(width) / display_width, double(height) / display_height),
+                       left = (width - display_width * scale) / 2, top = (height - display_height * scale) / 2;
                 double x = 0, y = 0;
                 int px = event.type == SDL_MOUSEMOTION ? event.motion.x : event.button.x,
                     py = event.type == SDL_MOUSEMOTION ? event.motion.y : event.button.y;
-                lt_status mapped =
-                    lt_map_contact(px, py, left, top, frame.width * scale, frame.height * scale, 0, &x, &y);
+                lt_status mapped = lt_map_contact(px, py, left, top, display_width * scale, display_height * scale,
+                                                  display_rotation, &x, &y);
                 if (event.type == SDL_MOUSEMOTION) {
                     for (auto &c : contacts) {
                         if (mapped == LT_OK) {
