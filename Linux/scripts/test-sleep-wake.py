@@ -31,6 +31,24 @@ class WakeAdmission(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'epoch changed'):
             wake.first_hello([row, row.replace(b'=100 ', b'=101 ')])
 
+    def test_unverified_or_retired_owner_never_signaled(self):
+        calls = []
+        for verified, retired in ((False, False), (False, True), (True, True)):
+            self.assertFalse(wake.request_owned_stop(verified, 9, lambda: retired,
+                                                     lambda *args: calls.append(args)))
+        self.assertEqual(calls, [])
+
+    def test_verified_live_owner_gets_only_ordinary_stop(self):
+        calls = []
+        self.assertTrue(wake.request_owned_stop(True, 9, lambda: False,
+                                                lambda *args: calls.append(args)))
+        self.assertEqual(calls, [(9, wake.signal.SIGINT)])
+
+    def test_owner_exit_race_is_not_reported_as_signal_delivery(self):
+        def gone(*args):
+            raise ProcessLookupError()
+        self.assertFalse(wake.request_owned_stop(True, 9, lambda: False, gone))
+
 
 if __name__ == '__main__':
     unittest.main()
