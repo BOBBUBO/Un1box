@@ -100,15 +100,32 @@ class GuestUnlockTest {
                         scenario.onActivity { activity -> try { action(activity) } catch (caught: Throwable) { failure = caught } }
                         failure?.let { throw it }
                     }
-                    fun capture(label: String) {
+                    fun capture(label: String, snapshot: Bundle? = null): String {
                         assertEquals("Activity must remain resumed through captures", Lifecycle.State.RESUMED, scenario.state)
-                        val state = status(label)
+                        val state = snapshot ?: status(label)
                         val target = File(context.filesDir, "screenshots/${evidence.name}/$label.png")
                         val error = worker.screenshot(target.absolutePath)
                         timeline.put(JSONObject().put("capture", target.absolutePath).put("label", label)
                             .put("hostElapsedMs", SystemClock.elapsedRealtime()).put("captureError", error)
-                            .put("producerFrames", state.getBundle("observations")?.getLong("producedFrames")))
+                            .put("producerFrames", state.getBundle("observations")?.getLong("producedFrames"))
+                            .put("copiedFrameSequence", state.getBundle("observations")?.getLong("guestFrameSequence")))
                         assertEquals("Actual raw frame capture", "", error)
+                        return target.absolutePath
+                    }
+                    fun awakePixels(state: Bundle): Boolean {
+                        val io = state.getBundle("observations") ?: return false
+                        return state.getString("state") == "running" && io.getBoolean("runtimeDiagnosticsAvailable") &&
+                            io.getLong("engineReady") == 1L && io.getLong("displaySleeping") == 0L && io.getLong("backlightLevel") > 0L &&
+                            io.getLong("guestFrameWidth") == 320L && io.getLong("guestFrameHeight") == 480L &&
+                            io.getLong("guestFrameNonzeroRgbSamples") > 0L
+                    }
+                    fun coherentPixels(state: Bundle): Boolean {
+                        if (!awakePixels(state)) return false
+                        val io = requireNotNull(state.getBundle("observations"))
+                        return io.getLong("guestFrameSequence") > 0L &&
+                            io.getLong("guestFrameSequence") == io.getLong("producerFrameSequence") &&
+                            io.getLong("guestFrameTimestampNs") > 0L &&
+                            io.getLong("guestFrameTimestampNs") == io.getLong("producerFrameTimestampNs")
                     }
                     var wire: GuestTouchWireEvidence? = null
                     var gestureDisplay: GuestDisplay? = null
@@ -155,33 +172,57 @@ class GuestUnlockTest {
                         assertTrue("Native diagnostics required", prior.getBoolean("runtimeDiagnosticsAvailable"))
                         wire = if (initial.getBoolean("touchTraceConfigured")) GuestTouchWireEvidence(context.filesDir, initial, evidence) else null
                         result.put("touchWireTraceAlreadyConfigured", wire != null)
-                        if (prior.getLong("displaySleeping") == 1L) {
+                        val wasSleeping = prior.getLong("displaySleeping") == 1L
+                        var beforeCapturePath: String? = null
+                        var awake: Bundle? = null
+                        if (wasSleeping) {
+                            result.put("readinessPath", "wake-new-producer").put("newProducerGrowthRequired", true)
                             val pulse = JSONObject().put("label", "power-wake").put("requestedHostHoldMs", 500)
                                 .put("downHostElapsedMs", SystemClock.elapsedRealtime())
                             timeline.put(pulse)
                             try { worker.button(1, true); pulse.put("downReturnedHostElapsedMs", SystemClock.elapsedRealtime()); Thread.sleep(500) }
                             finally { worker.button(1, false); pulse.put("upHostElapsedMs", SystemClock.elapsedRealtime()) }
+                            val deadline = SystemClock.elapsedRealtime() + 15_000
+                            do {
+                                val observed = status("await-awake")
+                                if (awakePixels(observed) && requireNotNull(observed.getBundle("observations")).getLong("producedFrames") > baselineFrames) {
+                                    awake = observed; break
+                                }
+                                Thread.sleep(minOf(50, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
+                            } while (SystemClock.elapsedRealtime() < deadline)
+                        } else {
+                            // An already-awake static Lock need not repaint. Pair its
+                            // actual raw capture with the same latest producer/copy.
+                            result.put("readinessPath", "already-awake-coherent-capture").put("newProducerGrowthRequired", false)
+                            val started = SystemClock.elapsedRealtime()
+                            val deadline = started + 500
+                            var captureAttempt = 0
+                            do {
+                                val a = status("awake-coherence-before")
+                                if (coherentPixels(a)) {
+                                    val path = capture("before-swipe-coherence-${captureAttempt++}", a)
+                                    val b = status("awake-coherence-after")
+                                    val ai = requireNotNull(a.getBundle("observations"))
+                                    val bi = requireNotNull(b.getBundle("observations"))
+                                    if (SystemClock.elapsedRealtime() <= deadline && coherentPixels(b) &&
+                                        ai.getLong("guestFrameSequence") == bi.getLong("guestFrameSequence") &&
+                                        ai.getLong("guestFrameTimestampNs") == bi.getLong("guestFrameTimestampNs")) {
+                                        awake = b; beforeCapturePath = path; break
+                                    }
+                                }
+                                Thread.sleep(minOf(25, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
+                            } while (SystemClock.elapsedRealtime() < deadline)
+                            result.put("alreadyAwakeCoherenceElapsedMs", SystemClock.elapsedRealtime() - started)
                         }
-                        val deadline = SystemClock.elapsedRealtime() + 15_000
-                        var awake: Bundle? = null
-                        do {
-                            val observed = status("await-awake")
-                            val io = requireNotNull(observed.getBundle("observations"))
-                            if (observed.getString("state") == "running" && io.getBoolean("runtimeDiagnosticsAvailable") &&
-                                io.getLong("displaySleeping") == 0L && io.getLong("backlightLevel") > 0L &&
-                                io.getLong("producedFrames") > baselineFrames && io.getLong("guestFrameNonzeroRgbSamples") > 0L) {
-                                awake = observed; break
-                            }
-                            Thread.sleep(minOf(50, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
-                        } while (SystemClock.elapsedRealtime() < deadline)
-                        persist()
-                        val ready = requireNotNull(awake) { "No awake/backlit/fresh nonzero producer frame within 15 seconds" }
+                        val ready = requireNotNull(awake) { if (wasSleeping) "No awake/backlit/fresh nonzero producer frame within 15 seconds" else "No coherent awake raw capture within 500ms" }
                         val io = requireNotNull(ready.getBundle("observations"))
                         assertEquals(320L, io.getLong("guestFrameWidth")); assertEquals(480L, io.getLong("guestFrameHeight"))
                         assertEquals("Resolve existing native error before unlock diagnosis", "", ready.getString("error"))
                         result.put("awakeReadinessObserved", true).put("awakeObservedHostElapsedMs", SystemClock.elapsedRealtime())
+                            .put("newProducerFrameObserved", io.getLong("producedFrames") > baselineFrames)
                             .put("beforeGesture", encode(ready))
-                        capture("before-swipe")
+                        if (beforeCapturePath == null) beforeCapturePath = capture("before-swipe", ready)
+                        result.put("beforeGestureCapturePath", beforeCapturePath)
                         assertEquals(Lifecycle.State.RESUMED, scenario.state)
                         downTime = SystemClock.uptimeMillis()
                         send(MotionEvent.ACTION_DOWN, .20f, ready)
