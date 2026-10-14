@@ -353,3 +353,45 @@ changed. Absence of the test's evidence folder indicates it has not entered the
 test body (the wake folder is created before activity launch/Binder observers).
 Retain the initial pending-command log and foreground-launch receipt separately;
 this observation does not establish a native observer deadlock or guest pass.
+
+## Debug x86 packaged graphics provider
+
+The optional ANGLE path is an unqualified debug candidate. A fresh `:engine`
+worker accepts only the closed choice platform0 or angle-gl1; ANGLE is rejected
+on ARM and release builds. The selected choice is fixed before start/context
+creation; a failed library preflight also requires a fresh worker. The native
+adapter uses fixed suffixed SONAMEs inside the app's linker namespace, with no
+user paths, environment names or settings changes. Platform remains default.
+A choice recorded in status alone does not prove renderer dispatch.
+
+Supply all five controlled build properties together:
+
+```sh
+-PangleLibraries=/verified/provider/lib \
+-PangleManifest=/verified/provider/elf-closure.json \
+-PangleManifestSha256=ACTUAL_64_HEX_SHA \
+-PangleNotices=/verified/provider/notices \
+-PangleNoticesSha256=ACTUAL_64_HEX_SHA
+```
+
+`prepareAngleRuntime` verifies manifest pins, the exact three library hashes,
+x86 ELF identity, SONAME/closed public Android dependency set, 16KiB LOAD
+alignment and every declared notice before copying into owned debug outputs.
+Notice paths use the offline viewer's checked component grammar. Provider DSOs
+are packaged without stripping to preserve their pinned hashes; `check-apk.py`
+verifies uncompressed ZIP alignment and packaged library/notice identities.
+Release source sets omit these staged libraries/assets. The engine artifact
+must also contain the optional dispatch implementation; older a95/c22 inputs
+cannot satisfy the opt-in experiment.
+
+`GuestAngleProviderTest` requires `exerciseAngleGuest=true`, a fresh unused x86
+worker and a legitimately imported native device record. It checks packaged
+hashes, same normal app UID, choice immutability and the actual engine's retained
+public entry-owner/verified-dispatch diagnostics. `angleObserveSeconds` defaults
+to180 (bounded10..1200); `requireNonzeroGuestFrame=true` can require a nonzero
+sample for the chosen workload. The screenshot stays in `files/screenshots`.
+The test preserves diagnostics and false manual guest/visible/audio flags;
+actual app-UID loading and normal guest operation remain target acceptance work.
+Source and selected-license notices do not establish complete application
+compatibility or source/relink coverage. Root chooses the qualified library
+candidate and controls the subsequent build/device execution.
