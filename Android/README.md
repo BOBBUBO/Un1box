@@ -338,6 +338,13 @@ separate deferred rotation mapping. A fresh or cancelled view ignores MOVE/UP
 until a new DOWN, including after recreation. For continuation root uses the
 instrumentation `--no-restart` policy described above; closing the scenario
 normally pauses the session and ordinary instrumentation may force-stop it.
+Both gesture harnesses construct their stimuli inside the actual aspect-fit
+image using observed guest frame dimensions and current View dimensions. Their
+traces retain normalized guest coordinates, injected View pixels and expected
+image bounds. They fail when actual dimensions are unavailable; whole-View
+fractions could otherwise silently reach landscape letterbox margins and cause
+native cancellation. This test geometry does not replace the production native
+input mapper or prove guest consumption.
 
 [The APK notice/source matrix](DEPENDENCY-NOTICES.md) separates conveyed components,
 verified per-ABI notice coverage, selected frontend runtime inputs and outstanding

@@ -108,17 +108,24 @@ class GuestInputTest {
             val down = SystemClock.uptimeMillis()
             var eventIndex = 0
             fun send(action: Int, contacts: List<Triple<Int, Float, Float>>) {
+                // Fetch Binder observations off the activity thread. Fractions describe
+                // the guest image; landscape View margins are deliberately excluded.
+                val status = worker.status()
                 scenario.onActivity { activity ->
                     val display = requireNotNull(findDisplay(activity.window.decorView)) { "Production GuestDisplay missing" }
+                    val viewport = GuestTestViewport(status, display.width, display.height)
                     require(contacts.all { it.first in 0..31 }) { "Android pointer IDs must fit the platform range" }
                     val properties = contacts.map { MotionEvent.PointerProperties().apply { id = it.first; toolType = MotionEvent.TOOL_TYPE_FINGER } }.toTypedArray()
-                    val coordinates = contacts.map { MotionEvent.PointerCoords().apply { x = it.second * display.width; y = it.third * display.height; pressure = 1f; size = .05f } }.toTypedArray()
+                    val points = contacts.map { viewport.point(it.second, it.third) }
+                    val coordinates = points.map { MotionEvent.PointerCoords().apply { x = it.first; y = it.second; pressure = 1f; size = .05f } }.toTypedArray()
                     val time = SystemClock.uptimeMillis()
                     val event = MotionEvent.obtain(down, time, action, contacts.size, properties, coordinates, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
                     try { assertTrue(display.dispatchTouchEvent(event)) } finally { event.recycle() }
                     val entries = JSONArray()
-                    for (contact in contacts) entries.put(JSONObject().put("id", contact.first).put("viewX", contact.second).put("viewY", contact.third))
-                    trace.put(JSONObject().put("gesture", kind).put("index", eventIndex++).put("action", action).put("uptimeMs", time).put("contacts", entries))
+                    for ((index, contact) in contacts.withIndex()) entries.put(JSONObject().put("id", contact.first)
+                        .put("guestX", contact.second).put("guestY", contact.third).put("viewXPx", points[index].first).put("viewYPx", points[index].second))
+                    trace.put(JSONObject().put("gesture", kind).put("index", eventIndex++).put("action", action).put("uptimeMs", time)
+                        .put("viewport", viewport.receipt()).put("displayRotation", display.display.rotation).put("contacts", entries))
                 }
                 File(evidence, "touch.json").writeText(JSONObject().put("events", trace).put("guestOutcomeRequiresReview", true).put("guestAcceptancePassed", false).toString(2))
                 Thread.sleep(20)
