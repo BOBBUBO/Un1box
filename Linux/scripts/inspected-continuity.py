@@ -31,7 +31,7 @@ def identity_matches(gate, owner):
 
 
 def admit_rewake(gate, inspected_bytes, owner, *, now, status, pulse,
-                 capture, verify_window, wait):
+                 capture, verify_window, wait, compare_scene=None):
     """Return an identical fresh capture or reject before contact input.
 
     verify_window returns a validated viewport and must independently check the
@@ -40,7 +40,10 @@ def admit_rewake(gate, inspected_bytes, owner, *, now, status, pulse,
     It must enforce that absolute deadline in its waits/subprocesses and retain
     every actual capture, including rejected black/changed ones. Defer image
     conversion until input admission finishes. pulse sends one balanced
-    150ms Power press. The adapter immediately admits its gesture on return.
+    150ms Power press. compare_scene optionally provides an explicit reviewed
+    stable-region policy for this already-inspected Lock scene. It never infers
+    a new scene. Unmatched frames stay retained while boundedly awaiting matching
+    anchors; the adapter immediately admits its gesture on return.
     """
     start = now()
     require(gate['model_inspected'] is True and gate['scene'] == 'Lock Screen',
@@ -75,10 +78,14 @@ def admit_rewake(gate, inspected_bytes, owner, *, now, status, pulse,
         awake = (int(receipt['sleeping']) == 0 and int(receipt['agent']) == 1
                  and int(receipt['backlight']) > 0)
         if not awake:
-            wait(.02)
+            wait(.5 if compare_scene else .02)
             continue
-        require(data == inspected_bytes,
-                'awake BMP changed; inspect the retained new image')
+        comparison = (compare_scene(inspected_bytes, data) if compare_scene else
+                      {'matched': data == inspected_bytes, 'policy': 'legacy-full-BMP'})
+        if compare_scene and not comparison['matched']:
+            wait(.5)  # At most2Hz; no unbounded fade/animation capture storm.
+            continue
+        require(comparison['matched'], 'awake BMP changed; inspect the retained new image')
         require(recent(finished, receipt['observed_monotonic_ns'], SOURCE_AGE_NS)
                 and recent(finished, receipt['frame_monotonic_ns'], SOURCE_AGE_NS),
                 'stale current frame/capture')
@@ -99,5 +106,6 @@ def admit_rewake(gate, inspected_bytes, owner, *, now, status, pulse,
                 'admission aged before gesture')
         return {'saved_capture': saved_capture, 'viewport': viewport,
                 'pulsed': pulsed, 'original_inspected_monotonic_ns': gate['inspected_monotonic_ns'],
-                'admitted_monotonic_ns': final, 'byte_identical': True,
+                'admitted_monotonic_ns': final, 'byte_identical': data == inspected_bytes,
+                'comparison': comparison,
                 'no_new_scene_asserted': True, 'guest_acceptance': False}
