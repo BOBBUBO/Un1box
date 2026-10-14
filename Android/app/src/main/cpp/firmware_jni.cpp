@@ -35,9 +35,9 @@ extern "C" JNIEXPORT jint JNICALL Java_org_lighttouch_android_FirmwareNative_pre
 }
 extern "C" JNIEXPORT jobjectArray JNICALL Java_org_lighttouch_android_FirmwareNative_status(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(fw_guard);
-    auto values=env->NewObjectArray(6,env->FindClass("java/lang/String"),nullptr);
-    std::string row[]={fw_state,fw_stage,std::to_string(fw_done),std::to_string(fw_total),std::to_string(fw_code),fw_message};
-    for(int i=0;i<6;++i) { auto text=env->NewStringUTF(row[i].c_str());env->SetObjectArrayElement(values,i,text);env->DeleteLocalRef(text); }
+    auto values=env->NewObjectArray(7,env->FindClass("java/lang/String"),nullptr);
+    std::string row[]={fw_state,fw_stage,std::to_string(fw_done),std::to_string(fw_total),std::to_string(fw_code),fw_message,fw_consumed.load()?"1":"0"};
+    for(int i=0;i<7;++i) { auto text=env->NewStringUTF(row[i].c_str());env->SetObjectArrayElement(values,i,text);env->DeleteLocalRef(text); }
     return values;
 }
 extern "C" JNIEXPORT void JNICALL Java_org_lighttouch_android_FirmwareNative_cancel(JNIEnv *,jobject) { fw_cancel=true; }
