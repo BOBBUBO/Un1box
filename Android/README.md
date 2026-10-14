@@ -165,7 +165,7 @@ imported/selected device. Instrumentation may restart the app and its worker;
 never launch it assuming a prior running guest stays alive. `settleSeconds`
 (default60) gives the device owner time to confirm guest Home and open the chosen
 built-in gesture workload. `gesture` selects pinch/cross/cancel/all. Pointer IDs7
-and42 travel via real MotionEvents into GuestDisplay, Binder, JNI and native
+and23 travel via real MotionEvents into GuestDisplay, Binder, JNI and native
 controller input; independent lift changes pointer index without changing ID.
 Screenshots and a trajectory manifest stay in private app storage. The retained motion
 test is separately disabled unless experimentalMotion=true and is excluded from

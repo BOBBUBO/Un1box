@@ -234,9 +234,11 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
 JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);
     const char *states[]={"stopped","starting","running","paused","stopping","failed"};
-    lt_runtime_status s=LT_INIT(lt_runtime_status);lt_error error=LT_INIT(lt_error);
+    lt_runtime_status s=LT_INIT(lt_runtime_status);lt_error poll_error=LT_INIT(lt_error);
+    // Poll errors belong to this operation; observations uses its own lt_error.
+    // A later successful native call must never clear the actionable poll message.
     std::string detail=diagnostic;
-    if(runtime) { auto status=lt_runtime_poll(runtime,&s,&error);if(status!=LT_OK) { diagnostic=result(status,error);detail=diagnostic; }
+    if(runtime) { auto status=lt_runtime_poll(runtime,&s,&poll_error);if(status!=LT_OK) { diagnostic=result(status,poll_error);detail=diagnostic; }
         else {
             if(s.state==LT_STOPPED && (s.dirty || !s.guest_shutdown_confirmed))s.state=LT_FAILED;
             if(s.state==LT_FAILED && diagnostic.empty())diagnostic="Guest exited without a confirmed clean shutdown (code "+std::to_string(s.engine_exit)+"); writable state retained. Stop this worker, then Start to retry. Diagnostics are retained.";
