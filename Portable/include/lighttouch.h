@@ -153,6 +153,18 @@ typedef struct {
     uint32_t shutdown_reply_received;
 } lt_runtime_diagnostics;
 lt_status lt_runtime_diagnose(lt_runtime *, lt_runtime_diagnostics *, lt_error *);
+/* Producer/pull observations, not guest receipt or audible playback evidence.
+ * frame_timestamp_ns uses host CLOCK_MONOTONIC on Linux/Android, as does
+ * frame_published_monotonic_ns. PCM timestamps below use a separate capture
+ * generation-relative epoch and cannot be subtracted from these timestamps.
+ * input_requests counts attempted batches, not delivered contacts. */
+typedef struct {
+    uint32_t size, version;
+    uint64_t frame_count, frame_sequence, frame_timestamp_ns, frame_published_monotonic_ns;
+    uint64_t pcm_captured_frames, pcm_pulled_frames, pcm_dropped_frames, input_requests;
+    uint32_t pcm_queued_packets, reserved;
+} lt_runtime_io_stats;
+lt_status lt_runtime_io_statistics(lt_runtime *, lt_runtime_io_stats *, lt_error *);
 
 lt_status lt_runtime_pause(lt_runtime *, uint32_t paused, lt_error *);
 /* Stop requests semantic guest shutdown; poll confirmation. Timeout/kill leaves
@@ -231,6 +243,8 @@ lt_status lt_map_motion(uint32_t rotation, uint64_t source_timestamp_ns, uint64_
 lt_status lt_map_contact(double px, double py, double left, double top, double width, double height, uint32_t rotation,
                          double *x, double *y);
 /* Bounded PCM pull. Interleaved signed little-endian 16-bit; caller owns buffer.
+ * frames counts sample frames (channels samples each). timestamp_ns is relative
+ * to the active capture generation, not the frame/input host monotonic epoch.
  * LT_UNSUPPORTED until engine advertises PCM callback; never synthesizes audio. */
 typedef struct {
     uint32_t size, version;

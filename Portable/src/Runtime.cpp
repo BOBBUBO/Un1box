@@ -155,6 +155,7 @@ struct lt_runtime {
     std::atomic<uint32_t> shutdown_phase{0}, shutdown_route{0}, agent_state{0};
     std::atomic<int32_t> shutdown_reply_status{0};
     std::atomic<uint64_t> frame_count{0};
+    std::atomic<uint64_t> frame_sequence{0}, frame_timestamp{0}, frame_published{0}, pcm_captured{0}, pcm_pulled{0};
     std::mutex mutex;
     int frame_fd = -1;
     lt_shared_frame *shared = nullptr;
@@ -251,6 +252,9 @@ struct lt_runtime {
                                size_t(f.required_bytes));
                         __atomic_add_fetch(&shared->generation, 1, __ATOMIC_SEQ_CST);
                         serial = f.serial;
+                        frame_sequence = f.serial;
+                        frame_timestamp = f.timestamp_ns;
+                        frame_published = lt::now_ns();
                         frame_count++;
                     } else if (r != QEMU_IOS_NO_FRAME && r != QEMU_IOS_NOT_READY)
                         lt::result(r);
@@ -271,6 +275,7 @@ struct lt_runtime {
                                 lt::require(bytes <= int(sizeof p.samples) && bytes % 4 == 0,
                                             "invalid engine PCM packet", LT_ENGINE);
                                 p.bytes = uint32_t(bytes);
+                                pcm_captured += p.bytes / 4;
                                 p.timestamp = uint64_t(std::max(0.0, seconds) * 1e9);
                                 std::lock_guard<std::mutex> lock(mutex);
                                 if (pcm.size() == 16) {
@@ -462,6 +467,25 @@ lt_status lt_runtime_diagnose(lt_runtime *r, lt_runtime_diagnostics *out, lt_err
         out->shutdown_route = r->shutdown_route;
         out->shutdown_reply_status = r->shutdown_reply_status;
         out->shutdown_reply_received = r->shutdown_reply_received;
+    });
+}
+lt_status lt_runtime_io_statistics(lt_runtime *r, lt_runtime_io_stats *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        lt::abi(out);
+        std::lock_guard<std::mutex> lock(r->mutex);
+        *out = {sizeof(*out),
+                1,
+                r->frame_count,
+                r->frame_sequence,
+                r->frame_timestamp,
+                r->frame_published,
+                r->pcm_captured,
+                r->pcm_pulled,
+                r->pcm_dropped,
+                r->input_id,
+                uint32_t(r->pcm.size()),
+                0};
     });
 }
 lt_status lt_runtime_destroy(lt_runtime *r, lt_error *e) {
@@ -663,6 +687,7 @@ lt_status lt_runtime_pcm(lt_runtime *r, int16_t *out, uint32_t capacity, lt_pcm_
         auto &p = r->pcm.front();
         memcpy(out, p.samples.data(), p.bytes);
         *info = {sizeof(*info), 1, 44100, 2, p.bytes / 4, 0, p.timestamp, r->pcm_dropped};
+        r->pcm_pulled += p.bytes / 4;
         r->pcm.pop_front();
     });
 }
