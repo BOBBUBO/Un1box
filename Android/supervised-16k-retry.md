@@ -8,6 +8,16 @@ binds emulator port 5554. Every target Android command specifies that serial.
 It launches one AVD in an isolated Xvfb as the current user, using fresh
 sudo credentials, two cores, requested 2048 MB RAM, `-gpu swiftshader`, no window,
 no snapshot and no audio. It never wipes data or changes the GPU/image/version.
+The closed `--memory-mb` selector accepts 2048 (default) or 4096 only. Use 4096
+only for a reviewed allocation: retained API36 first-boot evidence showed
+minimum-watermark LMKd kills and framework ANRs at actual 2560 MB before the
+secondary SystemServer death. This supports a controlled RAM hypothesis, not a
+proven fix. Preserve the same emulator, GPU, CPU count and AVD data. No manual
+heap override is applied; record the actual RAM and derived heap from startup
+logs/hardware-qemu.ini and retain host/guest pressure observations. The published
+emulator [memory option](https://developer.android.com/studio/run/emulator-commandline)
+supports overriding AVD RAM. Capacity and the exclusive allocation must be
+checked before launching; source tests alone do not authorize a 4 GiB VM.
 Retained evidence showed the emulator raised RAM to 2560 MB; inspect the new
 actual startup log rather than labeling requested RAM as actual RAM.
 
