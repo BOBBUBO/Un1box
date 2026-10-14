@@ -111,6 +111,10 @@ class GuestInputTest {
     }
     @Test fun stableTwoPointerTrajectoriesUseProductionDisplayPath() = withGuest { scenario, worker, evidence ->
         val trace = JSONArray()
+        val ready = worker.status()
+        assertEquals("Existing worker error must be resolved before gesture acceptance: $ready", "", ready.getString("error"))
+        val postGestureSettleSeconds = arguments.getString("postGestureSettleSeconds", "0").toInt().coerceIn(0, 30)
+        trace.put(JSONObject().put("postGestureSettleSeconds", postGestureSettleSeconds).put("guestAcceptancePassed", false))
         val wire = if (arguments.getString("touchWireTrace") == "true") GuestTouchWireEvidence(instrumentation.targetContext.filesDir, worker.status(), evidence) else null
         var touchIndex = 0
         val selected = arguments.getString("gesture", "all")
@@ -169,6 +173,14 @@ class GuestInputTest {
                 send(MotionEvent.ACTION_UP, listOf(Triple(23, b, .58f)))
             }
             screenshot("after")
+            if (postGestureSettleSeconds > 0) {
+                val waitingAt = SystemClock.elapsedRealtime()
+                Thread.sleep(postGestureSettleSeconds * 1000L)
+                trace.put(JSONObject().put("gesture", kind).put("settleStartedHostMs", waitingAt)
+                    .put("settleCompletedHostMs", SystemClock.elapsedRealtime()).put("guestOutcomeRequiresReview", true))
+                wire?.drain(touchIndex - 1)
+                screenshot("after-settled") // Before ActivityScenario.close/background pause.
+            }
             Thread.sleep(200)
             val status = worker.status()
             assertEquals("Production path rejected input: $status", "", status.getString("error"))
