@@ -39,7 +39,7 @@ a fresh worker, never reinitializes QEMU in the SDL process.
 
 Left/right mouse buttons own stable contacts 1/2. Native SDL touch IDs map to stable
 per-contact IDs; synthesized touch mouse events are ignored. H/P/+/- control Home,
-Power and volume; Space pauses and R rotates the displayed guest. Focus loss and
+Power and volume; Space pauses and R rotates the displayed guest. S captures a live screenshot. Focus loss and
 display rotation cancel all input; native mapping uses the same rotation/letterbox
 transform as Android. F6 schedules a clearly
 labeled two-contact pinch, not guest acceptance evidence. Arrow keys replay labeled
@@ -75,7 +75,7 @@ Touch phases: down=0, move=1, up=2, cancel=3. Motion arguments: field bits (1 ac
 evidence. Observe actual guest responses to qualify gestures/gyro. No guest gyro
 capability is fabricated from host hardware.
 
-`--headless --seconds N --screenshot /private/frame.bmp` exercises the same worker,
+`--headless --seconds N --screenshot /private/frame.bmp` captures at the duration checkpoint before requesting shutdown, then exercises the same worker,
 input and frame transport without a window. Screenshots require an actual published
 guest frame; there is no fallback image. Use `--no-audio` only when testing unrelated
 headless behavior; default audio uses the real mixer/SDL path. Keep screenshots,
@@ -87,3 +87,9 @@ Guest script commands are typed domain requests: ping/frontmost/launch/type/sync
 its actual guest status/output is printed when received. Requests are not retried.
 Missing/stale guest agents and absent guest gyro capability are explicit errors.
 Native package selection uses a checksum-declared prepared guest.itpack when present.
+
+A requested screenshot is written at the stop checkpoint before any power-off input;
+it survives shutdown timeout/worker failure. A live S capture uses the configured
+path or state/screenshot-SEQ.bmp. Atomic BMP encoding is in the shared native domain,
+so it needs no Photos or SDL image encoder. Capture requires an actual complete
+published frame and never invents one.

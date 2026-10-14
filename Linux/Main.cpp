@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -615,8 +616,36 @@ static int frontend(const Options &o, int argc, char **argv) {
         if (!send_packet(sockets[0], p))
             std::cerr << "control backpressure: command rejected; cancel input\n";
     };
+    bool screenshot_written = false;
+    auto capture = [&](const std::string &path) {
+        require(frame.sequence && pixels.size(), "no actual guest frame for screenshot");
+        lt_error error{sizeof(error), 1, 0, {}};
+        check(lt_frame_write_bmp(&frame, pixels.data(), pixels.size(), path.c_str(), &error), error);
+        if (path == o.screenshot)
+            screenshot_written = true;
+        std::cout << "screenshot sequence=" << frame.sequence << " path=" << path << "\n";
+    };
+    struct CaptureOnExit {
+        std::function<void()> function;
+        ~CaptureOnExit() { function(); }
+    } capture_on_exit{[&] {
+        if (!o.screenshot.empty() && !screenshot_written && frame.sequence) {
+            try {
+                capture(o.screenshot);
+            } catch (const std::exception &e) {
+                std::cerr << "failure screenshot unavailable: " << e.what() << "\n";
+            }
+        }
+    }};
     auto stop = [&] {
         if (!stopping) {
+            if (!o.screenshot.empty() && frame.sequence) {
+                try {
+                    capture(o.screenshot);
+                } catch (const std::exception &e) {
+                    std::cerr << "screenshot checkpoint failed: " << e.what() << "\n";
+                }
+            }
             Packet p;
             p.kind = Cancel;
             submit(p);
@@ -637,11 +666,10 @@ static int frontend(const Options &o, int argc, char **argv) {
         uint64_t now = now_ns();
         double elapsed = double(now - start) / 1e9;
         while (next_script < script.size() && elapsed >= script[next_script].at) {
-            submit(script[next_script].packet);
-            if (script[next_script].packet.kind == Stop) {
-                stopping = true;
-                stop_since = now;
-            }
+            if (script[next_script].packet.kind == Stop)
+                stop();
+            else
+                submit(script[next_script].packet);
             next_script++;
         }
         if (o.seconds > 0 && elapsed >= o.seconds)
@@ -756,6 +784,15 @@ static int frontend(const Options &o, int argc, char **argv) {
                     p.kind = Pause;
                     p.value = paused;
                     submit(p);
+                } else if (key == SDLK_s && down) {
+                    std::string path = o.screenshot.empty()
+                                           ? o.state + "/screenshot-" + std::to_string(frame.sequence) + ".bmp"
+                                           : o.screenshot;
+                    try {
+                        capture(path);
+                    } catch (const std::exception &e) {
+                        std::cerr << "live screenshot failed: " << e.what() << "\n";
+                    }
                 } else if (key == SDLK_r && down) {
                     Packet p;
                     p.kind = Cancel;
@@ -864,14 +901,8 @@ static int frontend(const Options &o, int argc, char **argv) {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    if (!o.screenshot.empty()) {
-        require(frame.width && pixels.size(), "no guest frame for screenshot");
-        SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormatFrom(pixels.data(), int(frame.width), int(frame.height),
-                                                                  32, int(frame.stride), SDL_PIXELFORMAT_BGRA32);
-        require(surface, SDL_GetError());
-        require(SDL_SaveBMP(surface, o.screenshot.c_str()) == 0, SDL_GetError());
-        SDL_FreeSurface(surface);
-    }
+    if (!o.screenshot.empty() && !screenshot_written)
+        capture(o.screenshot);
     if (sound)
         SDL_CloseAudioDevice(sound);
     if (texture)
