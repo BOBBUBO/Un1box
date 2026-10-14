@@ -61,7 +61,10 @@ def main():
     parser.add_argument("--engine-pid", type=int, required=True)
     parser.add_argument("--arch", choices=["arm64", "x86_64"], default="arm64")
     parser.add_argument("--scope", choices=["engine", "engine-threads", "app"], default="engine")
-    parser.add_argument("--event", choices=["task-clock:u", "cpu-cycles:u"], default="task-clock:u")
+    # Some Android kernels report zero samples for task-clock:u despite CPU
+    # counter growth. Allow the explicit unfiltered event used by successful
+    # target recordings, retaining the same permission and zero-sample checks.
+    parser.add_argument("--event", choices=["task-clock:u", "task-clock", "cpu-cycles:u"], default="task-clock:u")
     parser.add_argument("--out", type=Path, required=True, help="New private host evidence directory")
     parser.add_argument("--adb", default="adb")
     parser.add_argument("--execute", action="store_true", help="Run reviewed plan against the named existing worker")
