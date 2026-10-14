@@ -14,7 +14,7 @@ class EngineService : Service() {
     @Volatile private var error = ""
     @Volatile private var userPaused = false
     @Volatile private var focusPaused = false
-    private val started = AtomicBoolean(false)
+    private val started = WorkerStartAdmission()
     private val failureRecorded = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
     private val alive = AtomicBoolean(true)
@@ -40,14 +40,19 @@ class EngineService : Service() {
         override fun performance(observationEpoch: Long): Bundle = performanceSampler.request(Binder.getCallingPid(), observationEpoch)
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
         override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
+        override fun debugArmVcpuAccounting(): String {
+            requireDebugDiagnosis()
+            if (stopping.get()) return "This worker is disposing; vCPU accounting requires a fresh worker"
+            return started.configureUnused { Native.debugArmVcpuAccounting() }
+        }
         override fun debugEnableTouchTrace(): String {
             requireDebugDiagnosis()
-            if (started.get()) return "Touch trace selection requires a fresh unused worker"
+            if (started.isConsumed()) return "Touch trace selection requires a fresh unused worker"
             return Native.debugEnableTouchTrace()
         }
         override fun debugSelectGraphicsProvider(choice: Int): String {
             requireDebugDiagnosis()
-            if (started.get()) return "Graphics provider selection requires a fresh unused worker"
+            if (started.isConsumed()) return "Graphics provider selection requires a fresh unused worker"
             return Native.debugSelectGraphicsProvider(choice)
         }
         override fun debugQmpSnapshot(): Bundle {
@@ -74,7 +79,7 @@ class EngineService : Service() {
             if (stopping.get()) return Bundle().apply {
                 putString("state", "stopping"); putString("error", "This worker is disposing; recovery and Start require a fresh worker.")
             }
-            if (!started.compareAndSet(false, true)) return status().apply {
+            if (!started.tryConsume()) return status().apply {
                 putString("error", "Start and recovery require a fresh unused guest worker. Stop this worker first.")
             }
             foreground()
@@ -95,7 +100,7 @@ class EngineService : Service() {
         override fun status(): Bundle {
             val s = Native.status()
             s.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { error = it }
-            if (s.firstOrNull() == "failed" && started.get() && failureRecorded.compareAndSet(false, true)) {
+            if (s.firstOrNull() == "failed" && started.isConsumed() && failureRecorded.compareAndSet(false, true)) {
                 val retainedError = error.ifEmpty { "Guest worker failed; writable state and diagnostics retained. Start a fresh worker." }
                 Thread({ persistStopError(retainedError); persistObservations("unexpected-engine-exit") }, "guest-failure-record").start()
             }
@@ -107,6 +112,7 @@ class EngineService : Service() {
                 putString("graphicsProviderChoice", s.getOrElse(5) { "platform" })
                 putBoolean("graphicsProviderFixed", s.getOrElse(6) { "0" } == "1")
                 putBoolean("touchTraceConfigured", s.getOrElse(7) { "0" } == "1")
+                putBoolean("vcpuAccountingConfigured", s.getOrElse(15) { "0" } == "1")
                 putLong("displayInputGeneration", s.getOrElse(13) { "0" }.toLongOrNull() ?: 0L)
                 putLong("displayInputOwner", s.getOrElse(14) { "0" }.toLongOrNull() ?: 0L)
                 val shutdown = ShutdownNativeSnapshot.from(s)
@@ -118,7 +124,7 @@ class EngineService : Service() {
                 putString("error", error.ifEmpty { audioError })
                 putInt("pid", Process.myPid())
                 putInt("uid", Process.myUid())
-                putBoolean("sessionStarted", started.get())
+                putBoolean("sessionStarted", started.isConsumed())
                 putBundle("observations", observations())
             }
         }

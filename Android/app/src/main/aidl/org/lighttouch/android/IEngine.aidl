@@ -32,4 +32,5 @@ interface IEngine {
     Bundle recoverStart(String recordId);
     long displayInputGeneration(long lease);
     Bundle performance(long observationEpoch);
+    String debugArmVcpuAccounting();
 }
