@@ -131,3 +131,31 @@ records the resulting coverage gap. The sampler never retries/restarts an AVD,
 changes swap/memory settings, or accepts a guest. A final host-only lifecycle
 snapshot is recorded even after emulator disposal. Monitor failure cannot
 suppress the original cleanup. COMPARISON.md defines the controlled experiment.
+
+## Explicit existing dirty recovery binding
+
+The retained dirty library uses `--fresh-library` only for the existing
+supervisor's service/UI gate. It does not mean a fresh/clean library and does not
+run import. Do not create an `import-record.json` receipt. Before Start use the
+allocated attempt's token and actual original-record pins:
+
+```sh
+python3 Android/scripts/pixel/bind_recovery.py \
+  --adb /path/to/selected/adb --attempt /private/current-attempt \
+  --token SAME_UNIQUE_32_LOWERCASE_HEX --record DECLARED_RETAINED_RECORD_ID \
+  --record-sha256 VERIFIED_RECORD_SHA256 --lock-sha256 VERIFIED_LOCK_SHA256 \
+  --rom-sha256 VERIFIED_ROM_SHA256 --guest-sha256 VERIFIED_GUEST_SHA256
+```
+
+The readonly preflight caps10s and original490, verifies the original supervisor
+and owned AVD process, current app UID/boot, unique engine PID/start/role, selected
+record, metadata/base/bootrom/guest hashes and successful regular dirty-marker
+read. It publishes `recovery-record-bound.json` once and writes no app state.
+The sealed Kotlin still checks its actual worker is unused before recoverStart.
+Run the test with `pixelColdRecovery=true`; after-Start admission rejects any
+change from the preflight worker/record/clock/token or recovery mode.
+
+Stop rechecks the original PID/start/UID/role/boot/selection and records that
+record's dirty marker. Missing/mismatched identity produces unconfirmed Stop
+admission, never a Stop sent to a replacement worker. Owned cleanup still runs.
+No import, normal clean-record admission or lifecycle pass is inferred.

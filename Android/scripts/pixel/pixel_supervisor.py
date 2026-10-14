@@ -12,7 +12,8 @@ import signal
 import time
 import sys
 import memory_monitor
-from diagnostic_control import Capture
+import bind_recovery
+from diagnostic_control import Capture, validate_binding
 
 spec = importlib.util.spec_from_file_location("base_retry", Path(__file__).resolve().parents[1] / "supervise_16k_retry.py")
 base = importlib.util.module_from_spec(spec)
@@ -125,11 +126,23 @@ class PixelAttempt(base.Attempt):
         try:
             raw = (self.output / "clock-context.json").read_bytes()
             context = json.loads(raw)
-            binding = json.loads((self.output / "pixel-bound.json").read_text())
+            binding = validate_binding(json.loads((self.output / "pixel-bound.json").read_text()))
             if binding["originToken"] != hashlib.sha256(raw).hexdigest() or binding["originNs"] != context["originNs"]:
                 raise ValueError("Bound original clock differs")
             if context["supervisorStartTicks"] * 1_000_000_000 // context["clockTicksPerSecond"] != context["originNs"]:
                 raise ValueError("Original process clock was backdated/reset")
+            prior_path = self.output / "recovery-record-bound.json"
+            if binding.get("coldRecoveryUsed") is True or prior_path.exists():
+                from bind_recovery import match_ready
+                prior = json.loads(prior_path.read_text())
+                if prior["originNs"] != context["originNs"]:
+                    raise ValueError("Recovery binding original origin differs")
+                match_ready(prior, binding)
+                self.record_id = binding["recordId"]
+                self.worker_pid = str(binding["workerPid"])
+                self.write("recovery-stop-binding.json", {"recordId": self.record_id, "workerPid": self.worker_pid,
+                    "workerStartTicks": binding["workerStartTicks"], "originalWorkerBound": True,
+                    "cleanInitialAdmissionClaimed": False, "guestShutdownConfirmed": False})
             outcome = bounded_capture(self.args.adb, binding, self.output / "pixel-precleanup")
             self.write("pixel-precleanup-process.json", outcome)
         except Exception as error:
@@ -139,12 +152,52 @@ class PixelAttempt(base.Attempt):
             except Exception:
                 pass  # Receipt failure cannot suppress owned disposal.
 
+    def recovery_stop_allowed(self):
+        if not (self.output / "recovery-record-bound.json").exists():
+            return True
+        try:
+            prior = validate_binding(json.loads((self.output / "recovery-record-bound.json").read_text()))
+            if prior.get("priorDirty") is not True or prior.get("pinsVerified") is not True:
+                raise ValueError("No actual recovery binding")
+            raw = (self.output / "clock-context.json").read_bytes()
+            if prior["originToken"] != hashlib.sha256(raw).hexdigest():
+                raise ValueError("Recovery Stop original clock differs")
+            self.record_id = prior["recordId"]
+            self.worker_pid = str(prior["workerPid"])
+            observations = {}
+            for name in ("stat", "status", "cmdline"):
+                code, data = self.adb("exec-out", "run-as", base.PACKAGE, "cat", f"/proc/{self.worker_pid}/{name}", timeout=1)
+                if code: raise ValueError("Original worker unavailable before Stop")
+                observations[name] = data.decode()
+            if not memory_monitor.worker_identity(observations["stat"], observations["status"], observations["cmdline"], prior):
+                raise ValueError("Original recovery worker identity changed before Stop")
+            for path, expected in (("/proc/sys/kernel/random/boot_id", prior["bootId"]),
+                                   ("files/library/selected", prior["recordId"])):
+                code, data = self.adb("exec-out", "run-as", base.PACKAGE, "cat", path, timeout=1)
+                if code or data.strip().decode() != expected:
+                    raise ValueError("Recovery Stop boot/selection changed")
+            code, pid = self.adb("shell", "pidof", base.PACKAGE+":engine", timeout=1)
+            if code or pid.strip() != self.worker_pid.encode():
+                raise ValueError("Unique original recovery worker unavailable")
+        except Exception as error:
+            # Stop was requested; never send it to a replacement PID.
+            self.stop_attempted = True
+            self.write("stop-admission.json", {"error": str(error), "guestShutdownConfirmed": False,
+                "originalWorkerOnly": True, "replacementWorkerStopAdmitted": False})
+            if self.record_id is not None:
+                self.write("record-marker-stop.json", {"recordId": self.record_id,
+                    "dirtyMarkerPresent": self.path_presence(f"files/library/records/{self.record_id}/state/.dirty"),
+                    "guestShutdownConfirmed": False})
+            return False
+        return True
+
     def stop(self):
         self.memory_phase("stop-requested")
         try:
             self.pixel_readback()
         finally:
-            super().stop()
+            if self.recovery_stop_allowed():
+                super().stop()
 
     def cleanup(self):
         try:
