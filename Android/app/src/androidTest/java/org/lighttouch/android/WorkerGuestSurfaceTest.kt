@@ -71,10 +71,11 @@ class WorkerGuestSurfaceTest {
                     } }
                     fun awaitSurface(different: GuestDisplay? = null): GuestDisplay {
                         val deadline = SystemClock.uptimeMillis() + 5000
+                        val expectedEndpoint = if (different == null) a else b
                         while (SystemClock.uptimeMillis() < deadline) {
                             var ready: GuestDisplay? = null
                             scenario.onActivity {
-                                latest?.takeIf { it !== different && it.holder.surface.isValid }?.let { ready = it }
+                                latest?.takeIf { it !== different && it.holder.surface.isValid && "attach" in expectedEndpoint.calls }?.let { ready = it }
                             }
                             ready?.let { return it }
                             SystemClock.sleep(20)
