@@ -732,11 +732,13 @@ static int frontend(const Options &o, int argc, char **argv) {
         pid_t pid;
         int control, audio, status = 0;
         std::string ticks;
+        bool reaped = false, disposed = false, termination_sent = false;
         bool wait_bounded(uint64_t budget) {
             const uint64_t began = now_ns();
             do {
                 const pid_t found = waitpid(pid, &status, WNOHANG);
                 if (found == pid) {
+                    reaped = true;
                     pid = -1;
                     return true;
                 }
@@ -748,13 +750,20 @@ static int frontend(const Options &o, int argc, char **argv) {
             } while (!lt::admission_elapsed(now_ns(), began, budget));
             return false;
         }
-        ~Child() {
-            close(control);
-            close(audio);
+        void dispose() {
+            if (disposed)
+                return;
+            disposed = true;
+            if (control >= 0)
+                close(control);
+            if (audio >= 0)
+                close(audio);
+            control = audio = -1;
             if (pid <= 0 || wait_bounded(100000000ull))
                 return;
             if (pid <= 0)
                 return; // No longer an unreaped child; never signal a reused PID.
+            termination_sent = true;
             kill(pid, SIGTERM);
             if (wait_bounded(500000000ull) || pid <= 0)
                 return;
@@ -763,24 +772,64 @@ static int frontend(const Options &o, int argc, char **argv) {
                 std::cerr << "worker disposal pending pid=" << pid << " start_ticks=" << ticks
                           << "; lease/state may remain owned; no clean exit inferred" << std::endl;
         }
+        ~Child() { dispose(); }
     } child{pid, sockets[0], audio[0], 0, child_start_ticks(pid)};
+    struct FinalReceipt {
+        Child &child;
+        pid_t worker;
+        lt_runtime_status latest{};
+        bool status_available = false;
+        int frontend_return = -1;
+        ~FinalReceipt() {
+            child.dispose();
+            const int worker_exit = !child.reaped ? -1 : WIFEXITED(child.status) ? WEXITSTATUS(child.status) : -2;
+            std::cout << "FINAL observed_monotonic_ns=" << now_ns() << " worker_pid=" << worker
+                      << " start_ticks=" << child.ticks << " status_available=" << status_available
+                      << " state=" << (status_available ? int(latest.state) : -1)
+                      << " confirmed=" << (status_available ? int(latest.guest_shutdown_confirmed) : -1)
+                      << " dirty=" << (status_available ? int(latest.dirty) : -1) << " worker_reaped=" << child.reaped
+                      << " worker_exit=" << worker_exit << " worker_disposal_requested=" << child.termination_sent
+                      << " frontend_return=" << frontend_return << std::endl;
+        }
+    } final_receipt{child, pid};
     peer(sockets[0]);
     peer(audio[0]);
     std::cout << "admission worker_pid=" << pid << " start_ticks=" << child.ticks
               << " parent_started_monotonic_ns=" << admission_started
               << " absolute_budget_ns=" << lt::admission_absolute_ns
               << " checkpoint_stall_budget_ns=" << lt::admission_stall_ns << std::endl;
-    uint32_t flags = o.headless ? 0 : SDL_INIT_VIDEO | SDL_INIT_EVENTS;
-    if (!o.headless)
-        require(SDL_Init(flags) == 0, SDL_GetError());
     struct Sdl {
-        ~Sdl() { SDL_Quit(); }
+        bool initialized = false;
+        SDL_Window *window = nullptr;
+        SDL_Renderer *renderer = nullptr;
+        SDL_Texture *texture = nullptr;
+        SDL_AudioDeviceID sound = 0;
+        void release() {
+            if (sound)
+                SDL_CloseAudioDevice(sound);
+            if (texture)
+                SDL_DestroyTexture(texture);
+            if (renderer)
+                SDL_DestroyRenderer(renderer);
+            if (window)
+                SDL_DestroyWindow(window);
+            sound = 0;
+            texture = nullptr;
+            renderer = nullptr;
+            window = nullptr;
+            if (initialized)
+                SDL_Quit();
+            initialized = false;
+        }
+        ~Sdl() { release(); }
     } sdl;
-    SDL_Window *window = nullptr;
-    SDL_Renderer *renderer = nullptr;
-    SDL_Texture *texture = nullptr;
-    SDL_AudioDeviceID sound = 0;
+    SDL_Window *&window = sdl.window;
+    SDL_Renderer *&renderer = sdl.renderer;
+    SDL_Texture *&texture = sdl.texture;
+    SDL_AudioDeviceID &sound = sdl.sound;
     if (!o.headless) {
+        sdl.initialized = true; // SDL_Quit also cleans a partially failed init.
+        require(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0, SDL_GetError());
         window = SDL_CreateWindow("LightTouch — starting", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 480, 800,
                                   SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
         require(window, SDL_GetError());
@@ -894,6 +943,7 @@ static int frontend(const Options &o, int argc, char **argv) {
         ~Mapping() { munmap(const_cast<void *>(p), n); }
     } mapping{shared, size_t(hello.mapping_bytes)};
     if (o.audio) {
+        sdl.initialized = true;
         require(SDL_InitSubSystem(SDL_INIT_AUDIO) == 0, SDL_GetError());
         SDL_AudioSpec want{}, got{};
         want.freq = 44100;
@@ -920,7 +970,12 @@ static int frontend(const Options &o, int argc, char **argv) {
     auto script = script_file(o.script);
     size_t next_script = 0;
     lt::ControlDelivery delivery;
+    auto mutates_guest = [](uint32_t kind) {
+        return kind == Touch || kind == Button || kind == Motion || kind == Pause || kind == GuestRequest;
+    };
     auto submit = [&](Packet p) {
+        if ((stopping || interrupt_requested) && mutates_guest(p.kind))
+            return false;
         if (p.kind == Touch)
             p.touch.timestamp_ns = now_ns();
         if (p.kind == Motion)
@@ -1002,25 +1057,36 @@ static int frontend(const Options &o, int argc, char **argv) {
         });
         uint64_t now = now_ns();
         double elapsed = double(now - start) / 1e9;
-        while (next_script < script.size() && elapsed >= script[next_script].at) {
-            const auto command = script[next_script++];
-            if (command.packet.kind == Stop)
-                stop();
-            else if (command.packet.kind == Screenshot) {
-                try {
-                    capture(command.packet.guest_argument);
-                } catch (const std::exception &e) {
-                    std::cerr << "checkpoint screenshot failed: " << e.what() << "\n";
-                }
-            } else
-                submit(command.packet);
-        }
         if (interrupt_requested || (o.seconds > 0 && elapsed >= o.seconds))
             stop();
+        lt::dispatch_due_script(
+            script, next_script, elapsed, [&] { return interrupt_requested != 0; }, stop,
+            [&](const Script &command) {
+                const bool admit = !stopping || !mutates_guest(command.packet.kind);
+                if (!admit && o.trace_io)
+                    std::cout << "trace_script_suppressed observed_monotonic_ns=" << now_ns()
+                              << " kind=" << command.packet.kind << " reason=stopping" << std::endl;
+                return admit;
+            },
+            [&](const Script &command) {
+                if (command.packet.kind == Stop)
+                    stop();
+                else if (command.packet.kind == Screenshot) {
+                    try {
+                        capture(command.packet.guest_argument);
+                    } catch (const std::exception &e) {
+                        std::cerr << "checkpoint screenshot failed: " << e.what() << "\n";
+                    }
+                } else {
+                    submit(command.packet);
+                }
+            });
         Packet update;
         while (receive(sockets[0], update)) {
             if (update.kind == Status) {
                 const auto &s = update.status;
+                final_receipt.latest = s;
+                final_receipt.status_available = true;
                 if (s.state == LT_PAUSED || s.state == LT_RUNNING)
                     paused = s.state == LT_PAUSED;
                 diagnostics = update.diagnostics;
@@ -1042,7 +1108,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                           << " pcm_nonzero_samples=" << pcm_nonzero_samples << " pcm_loud_samples=" << pcm_loud_samples
                           << " pcm_peak_abs=" << pcm_peak_abs << " pcm_socket_dropped=" << pcm_socket_dropped
                           << " pcm_sdl_queued=" << pcm_sdl_queued << " pcm_sdl_discarded=" << pcm_sdl_discarded
-                          << " pcm_sdl_errors=" << pcm_sdl_errors << "\n";
+                          << " pcm_sdl_errors=" << pcm_sdl_errors << std::endl;
                 if (window) {
                     std::string title = "LightTouch — " + std::string(s.state == LT_RUNNING    ? "running"
                                                                       : s.state == LT_PAUSED   ? "paused"
@@ -1328,14 +1394,7 @@ static int frontend(const Options &o, int argc, char **argv) {
     }
     if (!o.screenshot.empty() && !screenshot_written)
         capture(o.screenshot);
-    if (sound)
-        SDL_CloseAudioDevice(sound);
-    if (texture)
-        SDL_DestroyTexture(texture);
-    if (renderer)
-        SDL_DestroyRenderer(renderer);
-    if (window)
-        SDL_DestroyWindow(window);
+    sdl.release();
     uint64_t exit_budget = 5000000000ull;
     const uint64_t exiting = now_ns();
     if (stopping && exiting >= stop_since) {
@@ -1345,7 +1404,8 @@ static int frontend(const Options &o, int argc, char **argv) {
                           : std::min(exit_budget, lt::parent_shutdown_timeout_ns - elapsed_stop);
     }
     require(child.wait_bounded(exit_budget), "worker process exit deadline after terminal receipt; state retained");
-    return WIFEXITED(child.status) ? WEXITSTATUS(child.status) : 2;
+    final_receipt.frontend_return = WIFEXITED(child.status) ? WEXITSTATUS(child.status) : 2;
+    return final_receipt.frontend_return;
 }
 int main(int argc, char **argv) {
     try {
