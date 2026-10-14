@@ -151,6 +151,10 @@ lt_status lt_runtime_start(lt_runtime *, lt_error *);
  * this). Does not expose arbitrary monitor commands through this product ABI. */
 lt_status lt_runtime_debug_qmp_enable(lt_runtime *, lt_error *);
 lt_status lt_runtime_debug_qmp_path(lt_runtime *, char *path, uint32_t capacity, lt_error *);
+/* Optional pre-start wire diagnosis behind the same debug build gate.
+ * Enables only ipod_touch_multitouch_log; accepts no caller argv or command.
+ * Guest virtual-time wire reads are distinct from host/model acknowledgments. */
+lt_status lt_runtime_debug_touch_trace_enable(lt_runtime *, lt_error *);
 lt_status lt_runtime_poll(lt_runtime *, lt_runtime_status *, lt_error *);
 /* Display power is separate from black pixels. Shutdown phase: 0 idle,
  * 1 host queued,2 cancelling inputs,3 engine request,4 admitted,5 PMU confirmed.
