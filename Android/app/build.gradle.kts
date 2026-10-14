@@ -10,8 +10,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1-port"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",") }
-        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared", "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get()) } }
+        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared", "-DLT_FIRMWARE_DIR=" + providers.gradleProperty("firmwareDir").orElse(file("../../Portable/firmware").absolutePath).get(), "-DXPWN_SOURCE=" + providers.gradleProperty("xpwnSource").orElse("").get(), "-DLT_NATIVE_DEPS_ROOT=" + providers.gradleProperty("nativeDepsRoot").orElse("").get(), "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get()) } }
     }
     buildFeatures { compose = true; aidl = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
@@ -25,9 +26,19 @@ dependencies {
     implementation("androidx.compose.foundation:foundation:1.7.8")
     implementation("androidx.compose.material3:material3:1.3.2")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
 providers.gradleProperty("buildRoot").orNull?.let { output ->
     layout.buildDirectory.set(file("$output/app"))
     android.externalNativeBuild.cmake.buildStagingDirectory = file("$output/native")
 }
+
+val catalogAssets = layout.buildDirectory.dir("generated/catalogAssets")
+val prepareCatalog = tasks.register<Copy>("prepareFirmwareCatalog") {
+    from(file("../../LightTouchMac/Resources/firmware-catalog.json"))
+    into(catalogAssets)
+}
+android.sourceSets["main"].assets.srcDir(catalogAssets)
+tasks.named("preBuild").configure { dependsOn(prepareCatalog) }

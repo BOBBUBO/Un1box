@@ -5,8 +5,10 @@ import android.view.Surface
 /** Loaded only in :engine. UI never loads QEMU or constructs boot arguments. */
 internal object Native {
     init { System.loadLibrary("lighttouch_jni") }
-    external fun importBase(source: String, destination: String): String
-    external fun start(device: String): String
+    external fun importBase(source: String, libraryRoot: String, displayName: String, rom: String, guest: String): String
+    external fun records(libraryRoot: String): Array<Array<String>>
+    external fun select(libraryRoot: String, id: String): String
+    external fun start(libraryRoot: String, id: String): String
     external fun status(): Array<String>
     external fun surface(surface: Surface?)
     external fun pause(paused: Boolean): String
@@ -17,5 +19,8 @@ internal object Native {
     external fun motion(kind: Int, time: Long, xyz: FloatArray, rotation: Int): String
     external fun capture(): android.graphics.Bitmap?
     external fun audioInfo(): IntArray
+    external fun guestRequest(operation: Int, argument: String, timeoutMs: Int): Array<String>
+    external fun guestPoll(requestId: Long): Array<String>
+    external fun guestCancel(requestId: Long)
     external fun audio(buffer: ShortArray): Int
 }
