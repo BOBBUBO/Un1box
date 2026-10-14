@@ -35,6 +35,18 @@ class SessionDeliveryGateTest {
             assertTrue(returned.await(1, TimeUnit.SECONDS)); assertFalse(io.isAlive)
         }
     }
+    @Test fun duplicateDeathAndDisconnectPreserveFirstPidReceipt() {
+        val gate = SessionDeliveryGate()
+        gate.advance() // Connected worker.
+        val ownExit = requireNotNull(gate.retire(workerPresent = true))
+        assertNull(gate.retire(workerPresent = false)) // Second callback sees cleared identity.
+        var error = "Confirmation unavailable"
+        assertTrue(gate.deliver(ownExit) { error = "" })
+        assertEquals("", error)
+        gate.advance() // A replacement worker still invalidates that receipt.
+        assertFalse(gate.deliver(ownExit) { error = "Old timeout" })
+        assertEquals("", error)
+    }
     @Test fun currentTerminalReceiptStillClearsOnlyItsOwnError() {
         val gate = SessionDeliveryGate()
         val ownExit = gate.advance()

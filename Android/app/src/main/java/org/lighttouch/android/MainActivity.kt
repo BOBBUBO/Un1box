@@ -403,7 +403,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         bound = bindService(Intent(this, EngineService::class.java), connection, BIND_AUTO_CREATE)
     }
     private fun workerExited() {
-        val evidenceGeneration = workerEvidenceDelivery.advance()
+        val evidenceGeneration = workerEvidenceDelivery.retire(engine != null || workerPid != 0) ?: return
         val unexpected = !engineExpectedExit && (guestStartRequested || sessionOwned || status in listOf("running", "starting", "paused"))
         val exitedPid = workerPid
         engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false

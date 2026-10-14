@@ -7,6 +7,9 @@ package org.lighttouch.android
 internal class SessionDeliveryGate {
     private var generation = 0L
     fun advance(): Long = ++generation
+    // Binder death and service disconnection can describe the same retirement.
+    // A duplicate callback must preserve the first own-PID receipt token.
+    fun retire(workerPresent: Boolean): Long? = if (workerPresent) advance() else null
     fun deliver(expected: Long, action: () -> Unit): Boolean {
         if (expected != generation) return false
         action()
