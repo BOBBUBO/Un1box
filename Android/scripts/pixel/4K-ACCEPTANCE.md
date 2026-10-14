@@ -31,8 +31,8 @@ new small external QCOW children and a separately named private configuration
 creation command uses `system-images;android-35;default;x86_64`, profile `pixel_6`,
 no `--force`, and stdin `no`. None of these creation commands has run.
 
-Reserve emulator port5556/serial `emulator-5556`. Port5554 belongs to the separately
-restored persistent16KiB session and must never be stopped, restarted, reparented
+Reserve emulator port5556/serial `emulator-5556`. Port5554 is reserved for restoration of the existing
+persistent16KiB session and must never be stopped, restarted, reparented
 or targeted by these tests.
 The new test uses4GiB Android RAM,2 virtual CPUs and outer SwiftShader. KVM applies
 to Android's x86 machine; iOS still uses QEMU TCG. Host GPU passthrough is absent.

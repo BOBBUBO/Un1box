@@ -19,7 +19,7 @@ reachable. No active worker branch or worktree was deleted or reset.
 | `port/android` | Retained port checkpoint and compatibility entry; the integrator keeps it synchronized with `main`, not a separate product. |
 | `work/android-product` | Active Android source and target-test lane; reviewed checkpoint `a80142ca` reconciled. Historical frame-cache overlay instructions were superseded by current build/run documentation. |
 | `work/android-runtime` | Active shared runtime/Linux lane; `c687df78` reconciled. Older diagnosis/operator variants were replaced by reviewed canonical workflows. |
-| `work/android-pixel` | Active compatibility lane; `50d299ac` reconciled, including scoped physical Pixel renderer/shutdown evidence and the private 4 KiB importer-retirement correction. |
+| `work/android-pixel` | Active compatibility lane; `f4be6a52` reconciled, including scoped physical Pixel renderer/shutdown evidence and the private 4 KiB importer-retirement correction. |
 | `work/android-firmware` | Retained producer/provenance lane; `57a019fa` reconciled. Its patches have integration equivalents. Reuse only after explicit assignment. |
 | `work/android-presentation` | Superseded presentation lane; `800f14e0` reconciled through adapted integration equivalents. Retained for history; do not base new independent work here. |
 | `work/android-viewport-cancel` | Active graphics/input ownership lane; `2ae48cc0` reconciled. Current canonical cancellation code supersedes old variants; current acceptance plans replace the historical candidate25-only allocation text. |
