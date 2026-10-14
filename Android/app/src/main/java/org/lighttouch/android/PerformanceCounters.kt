@@ -23,6 +23,11 @@ internal class PerformanceCounters(private val maximumGapMs: Long = 10_000) {
     }
 }
 
+/** The public void memory read can leave an unfilled zero-valued result. */
+internal object PerformanceMemoryReading {
+    fun workerPssKiB(reportedKiB: Long): Long? = reportedKiB.takeIf { it > 0 }
+}
+
 /** Tiny metadata-only monitor; platform memory reads always occur outside it. */
 internal class PerformanceSamplingGate(
     private val cadenceMs: Long = 2_000,

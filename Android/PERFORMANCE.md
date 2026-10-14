@@ -30,7 +30,10 @@ Each metric includes its own elapsed-time sample/read-completion age and the
 worker PID. Platform memory reads are not an atomic snapshot with CPU or each
 other; the Bundle additionally retains collection completion/cost and raw units.
 A slow read leaves prior values visible with increasing ages. Missing/failed
-reads are unavailable, never silently substituted with zero. Six fixed-height,
+reads are unavailable, never silently substituted with zero. A nonpositive PSS
+from a live worker is also unavailable: the public void memory wrapper does not
+expose successful map reading and can leave a zero-initialized result unchanged.
+This differs from a valid measured zero CPU delta. Six fixed-height,
 single-line rows prevent sample updates from changing the viewport; opening or
 closing the panel can resize it and retains existing gesture cancellation rules.
 
@@ -43,10 +46,10 @@ sampling epoch. Late UI responses are accepted only for the same Binder and
 current observation token. There are no changes to Native/status/observations,
 Portable APIs, audio policy, settings or gyro support.
 
-`PerformanceCountersTest` contains ten source regression cases covering multicore
+`PerformanceCountersTest` contains eleven source regression cases covering multicore
 and zero usage, PID/epoch changes, invalid counters/clocks, long gaps without
 invented guest-pause semantics, cadence/single-flight, observer handoff, blocked
-read closure, and duplicate completions. They are written but **not run** pending
+read closure, duplicate completions, and an unfilled void-memory-read result. They are written but **not run** pending
 the owner's compiler allocation. Main/AIDL/Compose and instrumentation compilation
 and an actual target inspection are also pending. Sealed candidate 24 and its
 24b helper runner are not modified or qualified by this source change.
@@ -58,3 +61,10 @@ Primary API definitions checked for this implementation:
 - [Own-process memory information and protected-allocation limitation](https://developer.android.com/reference/android/os/Debug#getMemoryInfo(android.os.Debug.MemoryInfo))
 - [PSS in kB](https://developer.android.com/reference/android/os/Debug.MemoryInfo#getTotalPss())
 - [Available and total device memory](https://developer.android.com/reference/android/app/ActivityManager.MemoryInfo)
+
+PSS failure semantics are grounded in the pinned Android 14 public
+[void self-memory wrapper](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-14.0.0_r1/core/java/android/os/Debug.java)
+and [native failed map-load branch](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-14.0.0_r1/core/jni/android_os_Debug.cpp).
+The hidden PID overload's boolean result is not used. A positive-only live-worker
+PSS check avoids interpreting an unfilled result as a successful zero measurement;
+it does not diagnose the cause of an unavailable read.

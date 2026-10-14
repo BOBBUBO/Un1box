@@ -53,6 +53,20 @@ class PerformanceCountersTest {
         assertEquals(5.0, cpu.sample(counter(22000, 5100)).percent!!, 0.00001)
     }
 
+    @Test fun unfilledMemoryResultIsUnavailableRatherThanFreshZeroPss() {
+        // Model the public void wrapper returning without populating MemoryInfo.
+        class MemoryResult { var totalPssKiB = 0L }
+        val result = MemoryResult()
+        val failedVoidRead: (MemoryResult) -> Unit = { /* No fields populated. */ }
+        failedVoidRead(result)
+        assertNull(PerformanceMemoryReading.workerPssKiB(result.totalPssKiB))
+        assertNull(PerformanceMemoryReading.workerPssKiB(-1))
+        result.totalPssKiB = 32768
+        assertEquals(32768L, PerformanceMemoryReading.workerPssKiB(result.totalPssKiB)!!)
+        // A later unfilled read must not reuse the earlier positive result.
+        assertNull(PerformanceMemoryReading.workerPssKiB(MemoryResult().totalPssKiB))
+    }
+
     @Test fun frequentCacheRequestsNeverQueueAdditionalMemoryReads() {
         val gate = PerformanceSamplingGate()
         val first = gate.request(observer, 0).ticket!!
