@@ -63,7 +63,14 @@ class WorkerGuestSurfaceTest {
                 val released = mutableListOf<GuestDisplay>()
                 val errors = mutableListOf<String>()
                 ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                    scenario.onActivity { activity -> activity.setContent {
+                    fun ui(action: (MainActivity) -> Unit) {
+                        var failure: Throwable? = null
+                        scenario.onActivity { activity ->
+                            try { action(activity) } catch (caught: Throwable) { failure = caught }
+                        }
+                        failure?.let { throw it } // Fail JUnit, never the application's Looper.
+                    }
+                    ui { activity -> activity.setContent {
                         WorkerGuestSurface(worker = selected.value, currentWorker = { selected.value },
                             mayClaim = { latest === it }, ownerTicket = { 1L }, onError = { errors += it },
                             onCreated = { latest = it; created += it }, onReleased = { released += it },
@@ -74,7 +81,7 @@ class WorkerGuestSurfaceTest {
                         val expectedEndpoint = if (different == null) a else b
                         while (SystemClock.uptimeMillis() < deadline) {
                             var ready: GuestDisplay? = null
-                            scenario.onActivity {
+                            ui {
                                 latest?.takeIf { it !== different && it.holder.surface.isValid && "attach" in expectedEndpoint.calls }?.let { ready = it }
                             }
                             ready?.let { return it }
@@ -83,9 +90,9 @@ class WorkerGuestSurfaceTest {
                         error("Fresh actual SurfaceView was not ready within5s")
                     }
                     val first = awaitSurface()
-                    scenario.onActivity { screenOn.value = true }
+                    ui { screenOn.value = true }
                     instrumentation.waitForIdleSync()
-                    scenario.onActivity {
+                    ui {
                         assertSame("Same worker recomposition must retain its View", first, latest)
                         assertEquals(1, created.size)
                         selected.value = b.worker
@@ -99,7 +106,7 @@ class WorkerGuestSurfaceTest {
                         assertTrue(b.calls.isEmpty())
                     }
                     val second = awaitSurface(first)
-                    scenario.onActivity {
+                    ui {
                         assertNotSame(first, second)
                         assertNotSame(first.holder, second.holder)
                         assertEquals(2, created.size)
