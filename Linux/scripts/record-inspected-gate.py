@@ -27,6 +27,9 @@ def main():
     parser.add_argument('--capture', type=Path, required=True)
     parser.add_argument('--scene', choices=('home', 'editor'), required=True)
     parser.add_argument('--output', required=True, help='new relative evidence directory')
+    transitions = parser.add_mutually_exclusive_group()
+    transitions.add_argument('--transition-from', type=Path, help='actual pre-action native capture')
+    transitions.add_argument('--transition-record', type=Path, help='paired unlock content-continuity.json')
     parser.add_argument('--model-inspected', action='store_true')
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
@@ -35,6 +38,8 @@ def main():
                           'full_BMP_continuity_required': True, 'max_reuse_seconds': 60,
                           'deadlines_unchanged_seconds': [129, 179], 'guest_acceptance': False}))
         return
+    if not (args.transition_from or args.transition_record):
+        raise RuntimeError('actual pre-action capture required; counters do not classify scenes')
     if not args.model_inspected:
         raise RuntimeError('actual caller model inspection required')
     # Honest completion receipt, after the caller actually inspected the image.
@@ -111,6 +116,20 @@ def main():
 
     try:
         original, original_bmp = gates.read_capture(root, gate)
+        before_path = args.transition_from
+        if args.transition_record:
+            record = args.transition_record.resolve()
+            if root not in record.parents:
+                raise RuntimeError('transition record outside run')
+            before_path = Path(json.loads(record.read_text())['saved_capture'])
+        before_path = before_path.resolve()
+        gate['transition_from'] = dict(capture_directory=str(before_path),
+                                       receipt_sha256=sha(before_path / 'receipt.json'),
+                                       bmp_sha256=sha(before_path / 'native.bmp'))
+        before, before_bmp = gates.read_capture(root, gate['transition_from'])
+        if (int(before['observed_monotonic_ns']) < hello or
+                not gates.valid_scene_transition(before, original, before_bmp, original_bmp)):
+            raise RuntimeError('no observed changed pixels/newer source after input; scene transition unproved')
         gate['window'], gate['viewport'] = window, viewport()
         # Sole native screenshot writer: no watcher is started here. Existing
         # readiness/wake capture handlers must have returned before invocation.
@@ -138,6 +157,7 @@ def main():
         if (root / 'live.bmp').stat().st_size > 64 * 1024 * 1024 + 54:
             raise RuntimeError('frame file bounds')
         shutil.copyfile(root / 'live.bmp', out / 'native.bmp')
+        receipt['copy_finished_monotonic_ns'] = time.monotonic_ns()
         (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
         fresh, fresh_bmp = gates.read_capture(root, dict(
             capture_directory=str(out), receipt_sha256=sha(out / 'receipt.json'),
@@ -151,6 +171,11 @@ def main():
                      worker_pid=worker['pid'], worker_start_ticks=worker['start_ticks'],
                      bmp_sha256=sha(out / 'native.bmp'), window=window, viewport=checked_viewport,
                      owner_checked_monotonic_ns=checked, status=status,
+                     metadata_readback=dict(sequence=int(status['frame_sequence']),
+                                            frame_monotonic_ns=int(status['frame_monotonic_ns']),
+                                            observed_monotonic_ns=int(status['observed_monotonic_ns'])),
+                     policy='static-awake-full-image-v1',
+                     static_source=int(fresh['sequence']) == int(original['sequence']),
                      verified_monotonic_ns=time.monotonic_ns())
         gate['continuity'] = proof
         save('admission-attempt.json', gate)
