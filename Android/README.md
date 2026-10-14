@@ -343,3 +343,13 @@ normally pauses the session and ordinary instrumentation may force-stop it.
 verified per-ABI notice coverage, selected frontend runtime inputs and outstanding
 source/relink materials. `recordApkRuntimeArtifacts` exports the actual main
 variant graph without building; its private paths stay outside public assets/Git.
+
+When root continues a worker with `--no-restart`, foreground the normal
+`MainActivity` immediately before **each** instrumentation invocation, including
+back-to-back tests. A measured second test remained pending before test entry
+while Android had frozen the cached target process; normal foreground activity
+launch unfroze it and the test completed. No system freezer/security setting was
+changed. Absence of the test's evidence folder indicates it has not entered the
+test body (the wake folder is created before activity launch/Binder observers).
+Retain the initial pending-command log and foreground-launch receipt separately;
+this observation does not establish a native observer deadlock or guest pass.
