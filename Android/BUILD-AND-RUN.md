@@ -10,6 +10,21 @@ This guide follows the verified candidate18 build. It is a Debug development APK
 
 All62 tracked native/JNI/CActivation files at the two app revisions were checked byte-identical. Candidate18 adds the viewport ownership fix and bounded wake diagnosis without changing native input APIs. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `LightTouchMac/Resources/firmware-catalog.json`.
 
+For an archived Android build, export the catalog explicitly alongside Android:
+
+```sh
+git archive "$LT_APP_REVISION" Android LightTouchMac/Resources/firmware-catalog.json \
+  > android-source.tar
+```
+
+An Android-only archive silently makes Gradle's `prepareFirmwareCatalog` task
+`NO-SOURCE`. Candidate19's APK lacked the asset; preparation could rely on a
+previously provisioned app-private catalog. Candidate20 exports the tracked
+catalog from its Android revision `3409cce3b21d9617723c80ac88665944f51553c3` and
+verifies `assets/firmware-catalog.json` against that source before handoff. A
+successful APK build alone does not catch this omission. Check the archive and
+packaged asset even when using a warm build cache.
+
 ## Inputs and build
 
 Use the tool versions in [README](README.md#pinned-tools): JDK17, NDK28.2.13676358, CMake3.22.1, SDK/build-tools35, pinned Gradle8.11.1/AGP8.9.2/Kotlin2.1.20. Obtain the pinned sources and a verified artifact cache before an offline build. Keep sources, compiled outputs and guest inputs separate.
