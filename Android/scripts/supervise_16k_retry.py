@@ -78,9 +78,9 @@ def signal_owned(identities, sig):
     return denied
 
 
-def watchdog(root, deadline, complete, output):
+def watchdog(root, deadline, complete, output, root_start_ticks):
     """Separate OS process: model turns/main-thread window or adb stalls cannot postpone it."""
-    owned = {}
+    owned = {root:root_start_ticks}
     while not complete.wait(.25):
         retain_descendants(root, owned)
         remaining = deadline - time.monotonic()
@@ -129,6 +129,8 @@ class Attempt:
         self.deadline = self.start + HARD_LIMIT
         self.commands = self.output / "commands.jsonl"
         self.avd = None
+        self.avd_start_ticks = None
+        self.owned_avd_identities = {}
         self.logcat = None
         self.watcher = None
         self.complete = PROCESS_CONTEXT.Event()
@@ -177,10 +179,14 @@ class Attempt:
         log = (self.output/"avd.log").open("wb")
         self.avd = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         log.close()
+        original = process_identity(self.avd.pid)
+        if original is None:raise RuntimeError('Original launched wrapper identity unavailable')
+        self.avd_start_ticks = original[1]
+        self.owned_avd_identities = {self.avd.pid:self.avd_start_ticks}
         self.watcher = PROCESS_CONTEXT.Process(target=watchdog,
-            args=(self.avd.pid, self.deadline, self.complete, str(self.output/"hard-deadline.json")))
+            args=(self.avd.pid, self.deadline, self.complete, str(self.output/"hard-deadline.json"), self.avd_start_ticks))
         self.watcher.start()
-        self.write("launch.json", {"argv": command, "wrapperPid": self.avd.pid,
+        self.write("launch.json", {"argv": command, "wrapperPid": self.avd.pid,"wrapperStartTicks":self.avd_start_ticks,
             "requestedRamMB": memory_mb, "requestedGuestCores": cores,
             "expectedPageBytes": self.expected_page_bytes,
             "priorActualRamMB": 2560, "hardLimitSeconds": HARD_LIMIT,
@@ -190,6 +196,7 @@ class Attempt:
         stable_pid = None
         stable_since = None
         while time.monotonic()-self.start < BOOT_LIMIT:
+            retain_descendants(self.avd.pid,self.owned_avd_identities)
             if self.avd.poll() is not None:
                 raise RuntimeError("Owned emulator exited before readiness")
             code, pages = self.adb("shell", "getconf", "PAGE_SIZE", timeout=4)
@@ -336,6 +343,10 @@ class Attempt:
 
     def stop(self):
         self.stop_attempted = True
+        original=process_identity(self.avd.pid) if self.avd is not None else None
+        if self.avd_start_ticks is None or not original or original[1]!=self.avd_start_ticks:
+            self.write("stop-admission.json",{"guestShutdownConfirmed":False,"originalWrapperIdentityMatched":False})
+            return
         code, pid = self.adb("shell", "pidof", PACKAGE+":engine", timeout=3)
         if code == 0 and pid.strip().isdigit():
             self.worker_pid = pid.strip().decode()
@@ -382,9 +393,11 @@ class Attempt:
     def cleanup(self):
         if self.avd is None:
             return
-        owned = {}
-        retain_descendants(self.avd.pid, owned)
-        self.adb("emu", "kill", timeout=3)
+        owned = dict(self.owned_avd_identities)
+        if self.avd_start_ticks is not None:retain_descendants(self.avd.pid, owned)
+        original=process_identity(self.avd.pid)
+        if self.avd_start_ticks is not None and original and original[1]==self.avd_start_ticks:
+            self.adb("emu", "kill", timeout=3)
         try:
             self.avd.wait(timeout=min(5,max(.1,self.deadline-time.monotonic())))
         except subprocess.TimeoutExpired:
@@ -446,6 +459,7 @@ def main():
         attempt.gate()
         print(f"SERVICE/RECORD READY ONLY: verify/install frozen APKs, then foreground and visually inspect UI by original240s; receipts: {args.output}",flush=True)
         while time.monotonic()-attempt.start < STOP_AT and not (attempt.output/"request-stop").exists():
+            retain_descendants(attempt.avd.pid,attempt.owned_avd_identities)
             if attempt.avd.poll() is not None:
                 raise RuntimeError("Owned emulator exited during guest observation")
             if attempt.fresh_library:
