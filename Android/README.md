@@ -338,3 +338,8 @@ separate deferred rotation mapping. A fresh or cancelled view ignores MOVE/UP
 until a new DOWN, including after recreation. For continuation root uses the
 instrumentation `--no-restart` policy described above; closing the scenario
 normally pauses the session and ordinary instrumentation may force-stop it.
+
+[The APK notice/source matrix](DEPENDENCY-NOTICES.md) separates conveyed components,
+verified per-ABI notice coverage, selected frontend runtime inputs and outstanding
+source/relink materials. `recordApkRuntimeArtifacts` exports the actual main
+variant graph without building; its private paths stay outside public assets/Git.
