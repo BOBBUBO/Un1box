@@ -55,7 +55,6 @@ acceleration only. `--script FILE` runs deterministic production input commands:
 30.3 touch 2 2 0.8 0.5
 31 button 0 1
 31.1 button 0 0
-32 motion 1 0 9.80665 0 0 0 0
 45 guest frontmost
 46 guest launch com.apple.mobilenotes
 # tap the actual Notes editing field through the shared input path before typing
@@ -105,6 +104,13 @@ shutdown confirmation. Home is button0; Power is button1. The verified original 
 wake/unlock driver taps Home150ms, waits2s, then drags (.18,.9) to (.92,.9), waits5s
 and checks guest lock status. A lock screen sleeps about12s after becoming lit, so
 sending a swipe to an already sleeping panel does not establish an input-map defect.
+
+The reusable [n72 wake/unlock script](scripts/n72-wake-unlock.txt) captures the awake
+lock screen and the result after the measured slider gesture. Replace its private
+output paths and adjust the schedule for the observed boot time. Inspect the pixels
+and guest frontmost replies before claiming an unlock. Notes text persistence needs
+a separate capture after editing, confirmed shutdown, then a fresh worker reopening
+the same state; an initial type reply alone does not verify persistence.
 
 Shutdown is queued to the runtime supervisor. Control/status continue to respond
 while the engine admits the agent halt or board gesture. Observer phase1 is host
