@@ -1,0 +1,724 @@
+#include "lighttouch.h"
+#include <SDL.h>
+#include <sys/socket.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <time.h>
+#include <array>
+#include <algorithm>
+#include <sstream>
+#include <chrono>
+#include <cstring>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <thread>
+#include <vector>
+namespace fs = std::filesystem;
+static uint64_t now_ns() {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
+}
+static void check(lt_status status, const lt_error &e) {
+    if (status != LT_OK)
+        throw std::runtime_error(e.message);
+}
+static void require(bool ok, const std::string &m) {
+    if (!ok)
+        throw std::runtime_error(m);
+}
+// Private inherited SOCK_SEQPACKET sockets: control/status and bounded PCM are
+// separate channels, shared-frame bytes travel only through readonly memfd.
+enum Kind : uint32_t {
+    Hello = 1,
+    Status = 2,
+    Touch = 3,
+    Button = 4,
+    Pause = 5,
+    Stop = 6,
+    Cancel = 7,
+    Motion = 8,
+    Reply = 9
+};
+struct Packet {
+    uint32_t size = sizeof(Packet), version = 1, kind = 0, reserved = 0;
+    lt_runtime_status status{};
+    lt_touch_batch touch{};
+    lt_motion motion{};
+    lt_error error{};
+    uint32_t button = 0, value = 0;
+    uint64_t mapping_bytes = 0;
+};
+struct AudioPacket {
+    uint32_t size = sizeof(AudioPacket), version = 1;
+    lt_pcm_info info{sizeof(lt_pcm_info), 1, 0, 0, 0, 0, 0, 0};
+    std::array<int16_t, 8192> samples{};
+};
+static bool send_packet(int socket, const Packet &p, int fd = -1) {
+    iovec iov{const_cast<Packet *>(&p), sizeof p};
+    msghdr message{};
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1;
+    char control[CMSG_SPACE(sizeof(int))]{};
+    if (fd >= 0) {
+        message.msg_control = control;
+        message.msg_controllen = sizeof control;
+        auto *c = CMSG_FIRSTHDR(&message);
+        c->cmsg_level = SOL_SOCKET;
+        c->cmsg_type = SCM_RIGHTS;
+        c->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(c), &fd, sizeof fd);
+    }
+    ssize_t n = sendmsg(socket, &message, MSG_DONTWAIT | MSG_NOSIGNAL);
+    return n == sizeof p;
+}
+static bool receive(int socket, Packet &p, int *fd = nullptr) {
+    iovec iov{&p, sizeof p};
+    msghdr message{};
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1;
+    char control[CMSG_SPACE(sizeof(int))]{};
+    message.msg_control = control;
+    message.msg_controllen = sizeof control;
+    ssize_t n = recvmsg(socket, &message, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return false;
+    if (n == 0)
+        throw std::runtime_error("worker control channel closed");
+    require(n == sizeof p && !(message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) && p.size == sizeof p && p.version == 1,
+            "invalid worker protocol");
+    for (auto *c = CMSG_FIRSTHDR(&message); c; c = CMSG_NXTHDR(&message, c))
+        if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS) {
+            require(c->cmsg_len == CMSG_LEN(sizeof(int)), "invalid frame FD");
+            int passed = -1;
+            memcpy(&passed, CMSG_DATA(c), sizeof passed);
+            if (fd)
+                *fd = passed;
+            else
+                close(passed);
+        }
+    return true;
+}
+static void peer(int socket) {
+    ucred credentials{};
+    socklen_t length = sizeof credentials;
+    require(getsockopt(socket, SOL_SOCKET, SO_PEERCRED, &credentials, &length) == 0 && credentials.uid == geteuid(),
+            "worker peer UID mismatch");
+}
+struct Options {
+    std::string base, state, rom, engine, package, import, sha, screenshot, script;
+    bool recover = false, headless = false, audio = true, worker = false;
+    int control = -1, pcm = -1;
+    double seconds = 0;
+};
+static Options options(int argc, char **argv) {
+    Options o;
+    std::map<std::string, std::string *> fields = {
+        {"--base", &o.base},     {"--state", &o.state},           {"--rom", &o.rom},
+        {"--engine", &o.engine}, {"--package", &o.package},       {"--import", &o.import},
+        {"--sha256", &o.sha},    {"--screenshot", &o.screenshot}, {"--script", &o.script}};
+    for (int i = 1; i < argc; i++) {
+        std::string key = argv[i];
+        if (fields.count(key)) {
+            require(i + 1 < argc, "missing " + key);
+            *fields[key] = argv[++i];
+        } else if (key == "--recover")
+            o.recover = true;
+        else if (key == "--headless")
+            o.headless = true;
+        else if (key == "--no-audio")
+            o.audio = false;
+        else if (key == "--seconds") {
+            require(i + 1 < argc, "missing duration");
+            o.seconds = std::stod(argv[++i]);
+            require(o.seconds >= 0, "invalid duration");
+        } else if (key == "--worker") {
+            require(i + 2 < argc, "missing worker descriptors");
+            o.worker = true;
+            o.control = std::stoi(argv[++i]);
+            o.pcm = std::stoi(argv[++i]);
+        } else if (key == "--help") {
+            std::cout
+                << "lighttouch-linux --base DIR --state DIR --engine LIB [--rom FILE] [--package ITPACK]\n  [--import "
+                   "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
+                   "[--no-audio]\n\nMouse left/right: contacts 1/2. H: Home, P: Power, Space: pause, Escape: orderly "
+                   "stop.\nF6: labeled deterministic two-contact pinch. Arrows: acceleration replay (not hardware "
+                   "gyro).\nScript: seconds touch ID phase x y; button ID down; pause 0/1; cancel; stop.\n";
+            std::exit(0);
+        } else
+            throw std::runtime_error("unknown option: " + key);
+    }
+    require(!o.base.empty(), "--base required");
+    if (o.state.empty())
+        o.state = fs::absolute(o.base).parent_path().string() + "/state";
+    for (auto *p : {&o.base, &o.state, &o.rom, &o.engine, &o.package, &o.import, &o.screenshot, &o.script})
+        if (!p->empty())
+            *p = fs::absolute(*p).string();
+    return o;
+}
+static int worker(const Options &o) {
+    peer(o.control);
+    peer(o.pcm);
+    lt_error error{sizeof(error), 1, 0, {}};
+    lt_device *d = nullptr;
+    lt_device_config dc{sizeof(dc), 1, o.base.c_str(), o.state.c_str(), uint32_t(o.recover)};
+    check(lt_device_open(&dc, &d, &error), error);
+    lt_runtime *r = nullptr;
+    std::string serial = o.state + "/serial.log";
+    lt_runtime_config config{sizeof(config),
+                             1,
+                             o.engine.c_str(),
+                             d,
+                             {sizeof(lt_boot_config), 1, nullptr, o.rom.empty() ? nullptr : o.rom.c_str(),
+                              o.package.empty() ? nullptr : o.package.c_str(), serial.c_str(), uint32_t(o.audio)}};
+    check(lt_runtime_create(&config, &r, &error), error);
+    Packet hello;
+    hello.kind = Hello;
+    int fd = -1;
+    check(lt_runtime_frame_fd(r, &fd, &hello.mapping_bytes, &error), error);
+    require(send_packet(o.control, hello, fd), "send worker frame FD");
+    close(fd);
+    check(lt_runtime_start(r, &error), error);
+    uint64_t last_status = 0, stopping_since = 0;
+    for (;;) {
+        Packet p;
+        for (int budget = 0; budget < 32 && receive(o.control, p); budget++) {
+            lt_status result = LT_INVALID;
+            switch (p.kind) {
+            case Touch:
+                result = lt_runtime_touch(r, &p.touch, &error);
+                break;
+            case Button:
+                result = lt_runtime_button(r, p.button, p.value, &error);
+                break;
+            case Pause:
+                result = lt_runtime_pause(r, p.value, &error);
+                break;
+            case Stop:
+                result = lt_runtime_request_shutdown(r, &error);
+                if (result == LT_OK && !stopping_since)
+                    stopping_since = now_ns();
+                break;
+            case Cancel:
+                result = lt_runtime_cancel_input(r, &error);
+                break;
+            case Motion:
+                result = lt_runtime_motion(r, &p.motion, &error);
+                break;
+            default:
+                break;
+            }
+            if (result != LT_OK) {
+                Packet reply;
+                reply.kind = Reply;
+                reply.error = error;
+                send_packet(o.control, reply);
+            }
+        }
+        lt_runtime_status status{sizeof(status), 1, 0, 0, 0, 0, 0, 0};
+        lt_status result = lt_runtime_poll(r, &status, &error);
+        uint64_t now = now_ns();
+        if (now - last_status >= 250000000 || status.state == LT_STOPPED || status.state == LT_FAILED) {
+            Packet update;
+            update.kind = Status;
+            update.status = status;
+            if (result != LT_OK)
+                update.error = error;
+            send_packet(o.control, update);
+            last_status = now;
+        }
+        if (status.state == LT_STOPPED) {
+            check(lt_runtime_destroy(r, &error), error);
+            lt_device_close(d);
+            return status.guest_shutdown_confirmed ? 0 : 2;
+        }
+        if (status.state == LT_FAILED) {
+            std::cerr << "runtime failed: " << error.message << "; dirty state retained\n";
+            return 2;
+        }
+        if (o.audio) {
+            for (int budget = 0; budget < 8; budget++) {
+                AudioPacket pcm;
+                lt_status res = lt_runtime_pcm(r, pcm.samples.data(), 4096, &pcm.info, &error);
+                if (res != LT_OK)
+                    break;
+                send(o.pcm, &pcm, sizeof pcm, MSG_DONTWAIT | MSG_NOSIGNAL);
+            }
+        }
+        if (stopping_since && now - stopping_since > 30000000000ull) {
+            std::cerr << "guest shutdown timeout; dirty state retained\n";
+            return 3;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+struct Script {
+    double at;
+    Packet packet;
+};
+static std::vector<Script> script_file(const std::string &path) {
+    std::vector<Script> script;
+    if (path.empty())
+        return script;
+    std::ifstream f(path);
+    require(bool(f), "script missing");
+    std::string line;
+    double previous = -1;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#')
+            continue;
+        std::istringstream input(line);
+        Script s{};
+        std::string cmd;
+        require(bool(input >> s.at >> cmd) && s.at >= previous, "invalid script order");
+        previous = s.at;
+        auto &p = s.packet;
+        if (cmd == "touch") {
+            p.kind = Touch;
+            p.touch = {sizeof(p.touch), 1, 0, 1, 0, {}};
+            auto &c = p.touch.contacts[0];
+            c = {sizeof(c), 1, 0, 0, 0, 0};
+            require(bool(input >> c.id >> c.phase >> c.x >> c.y), "invalid scripted touch");
+        } else if (cmd == "button") {
+            p.kind = Button;
+            require(bool(input >> p.button >> p.value), "invalid button");
+        } else if (cmd == "pause") {
+            p.kind = Pause;
+            require(bool(input >> p.value), "invalid pause");
+        } else if (cmd == "motion") {
+            p.kind = Motion;
+            p.motion = {sizeof(lt_motion), 1, 0, 0, 0, {}, {}};
+            require(bool(input >> p.motion.kinds >> p.motion.acceleration[0] >> p.motion.acceleration[1] >>
+                         p.motion.acceleration[2] >> p.motion.angular_velocity[0] >> p.motion.angular_velocity[1] >>
+                         p.motion.angular_velocity[2]),
+                    "invalid labeled motion replay");
+        } else if (cmd == "cancel")
+            p.kind = Cancel;
+        else if (cmd == "stop")
+            p.kind = Stop;
+        else
+            throw std::runtime_error("unknown script command");
+        script.push_back(s);
+    }
+    return script;
+}
+static bool frame_copy(const lt_shared_frame *shared, std::vector<uint8_t> &pixels, lt_frame_info &frame,
+                       uint64_t &sequence) {
+    for (int attempt = 0; attempt < 3; attempt++) {
+        uint64_t before = __atomic_load_n(&shared->generation, __ATOMIC_SEQ_CST);
+        if (before & 1)
+            continue;
+        auto f = shared->frame;
+        if (!f.sequence || f.sequence == sequence)
+            return false;
+        require(f.version == 1 && f.size == sizeof f && f.bytes <= LT_FRAME_CAPACITY && f.stride >= f.width * 4ull &&
+                    f.bytes >= uint64_t(f.stride) * f.height && f.width <= 4096 && f.height <= 4096,
+                "invalid shared frame bounds");
+        pixels.resize(size_t(f.bytes));
+        memcpy(pixels.data(), reinterpret_cast<const uint8_t *>(shared) + sizeof(*shared), size_t(f.bytes));
+        uint64_t after = __atomic_load_n(&shared->generation, __ATOMIC_SEQ_CST);
+        if (before == after && !(after & 1)) {
+            frame = f;
+            sequence = f.sequence;
+            return true;
+        }
+    }
+    return false;
+}
+static int frontend(const Options &o, int argc, char **argv) {
+    if (!o.import.empty()) {
+        lt_error e{sizeof(e), 1, 0, {}};
+        lt_import_config config{sizeof(config),
+                                1,
+                                o.import.c_str(),
+                                o.base.c_str(),
+                                o.sha.c_str(),
+                                0,
+                                [](void *, uint64_t n, uint64_t total) {
+                                    static int last = -1;
+                                    int p = int(n * 100 / (total ? total : 1));
+                                    if (p != last) {
+                                        std::cerr << "import " << p << "%\n";
+                                        last = p;
+                                    }
+                                    return 0;
+                                },
+                                nullptr};
+        check(fs::is_directory(o.import) ? lt_import_directory(&config, &e) : lt_import_archive(&config, &e), e);
+    }
+    if (o.engine.empty() && !o.import.empty()) {
+        std::cout << "prepared base imported: " << o.base << "\n";
+        return 0;
+    }
+    require(!o.engine.empty(), "--engine required for session");
+    int sockets[2], audio[2];
+    require(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == 0, "control socketpair");
+    require(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, audio) == 0, "audio socketpair");
+    pid_t pid = fork();
+    require(pid >= 0, "worker fork");
+    if (pid == 0) {
+        close(sockets[0]);
+        close(audio[0]);
+        fcntl(sockets[1], F_SETFD, 0);
+        fcntl(audio[1], F_SETFD, 0);
+        std::string control = std::to_string(sockets[1]), pcm = std::to_string(audio[1]);
+        std::vector<char *> args;
+        for (int i = 0; i < argc; i++)
+            args.push_back(argv[i]);
+        args.push_back(const_cast<char *>("--worker"));
+        args.push_back(control.data());
+        args.push_back(pcm.data());
+        args.push_back(nullptr);
+        execv("/proc/self/exe", args.data());
+        _exit(127);
+    }
+    close(sockets[1]);
+    close(audio[1]);
+    peer(sockets[0]);
+    peer(audio[0]);
+    struct Child {
+        pid_t pid;
+        int control, audio;
+        ~Child() {
+            close(control);
+            close(audio);
+            int status = 0;
+            if (pid > 0 && waitpid(pid, &status, WNOHANG) == 0) {
+                kill(pid, SIGTERM);
+                bool exited = false;
+                for (int i = 0; i < 50; i++) {
+                    if (waitpid(pid, &status, WNOHANG) == pid) {
+                        exited = true;
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                if (!exited) {
+                    kill(pid, SIGKILL);
+                    waitpid(pid, &status, 0);
+                }
+            }
+        }
+    } child{pid, sockets[0], audio[0]};
+    Packet hello;
+    int fd = -1;
+    uint64_t deadline = now_ns() + 60000000000ull;
+    while (!receive(sockets[0], hello, &fd)) {
+        require(now_ns() < deadline, "worker startup timeout");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    require(hello.kind == Hello && fd >= 0 && hello.mapping_bytes == sizeof(lt_shared_frame) + LT_FRAME_CAPACITY,
+            "worker handshake invalid");
+    auto *shared =
+        static_cast<const lt_shared_frame *>(mmap(nullptr, size_t(hello.mapping_bytes), PROT_READ, MAP_SHARED, fd, 0));
+    close(fd);
+    require(shared != MAP_FAILED, "map shared guest frame");
+    require(shared->size == sizeof(*shared) && shared->version == 1 && shared->capacity == LT_FRAME_CAPACITY,
+            "frame ABI mismatch");
+    struct Mapping {
+        const void *p;
+        size_t n;
+        ~Mapping() { munmap(const_cast<void *>(p), n); }
+    } mapping{shared, size_t(hello.mapping_bytes)};
+    uint32_t flags = o.headless ? 0 : SDL_INIT_VIDEO | SDL_INIT_EVENTS;
+    if (o.audio)
+        flags |= SDL_INIT_AUDIO;
+    require(SDL_Init(flags) == 0, SDL_GetError());
+    struct Sdl {
+        ~Sdl() { SDL_Quit(); }
+    } sdl;
+    SDL_Window *window = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_Texture *texture = nullptr;
+    SDL_AudioDeviceID sound = 0;
+    if (!o.headless) {
+        window = SDL_CreateWindow("LightTouch — starting", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 480, 800,
+                                  SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+        require(window, SDL_GetError());
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+        if (!renderer)
+            renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+        require(renderer, SDL_GetError());
+    }
+    if (o.audio) {
+        SDL_AudioSpec want{}, got{};
+        want.freq = 44100;
+        want.format = AUDIO_S16LSB;
+        want.channels = 2;
+        want.samples = 1024;
+        sound = SDL_OpenAudioDevice(nullptr, 0, &want, &got, 0);
+        if (sound)
+            SDL_PauseAudioDevice(sound, 0);
+        else
+            std::cerr << "audio device unavailable: " << SDL_GetError() << "\n";
+    }
+    std::vector<uint8_t> pixels;
+    lt_frame_info frame{sizeof(frame), 1, 0, 0, 0, 0, 0, 0, 0};
+    uint64_t sequence = 0, start = now_ns();
+    bool stopping = false, paused = false, terminal = false;
+    uint64_t stop_since = 0;
+    std::map<uint32_t, std::pair<double, double>> contacts;
+    std::map<SDL_FingerID, uint32_t> fingers;
+    uint32_t next_finger = 10000;
+    auto script = script_file(o.script);
+    size_t next_script = 0;
+    auto submit = [&](Packet p) {
+        if (p.kind == Touch)
+            p.touch.timestamp_ns = now_ns();
+        if (p.kind == Motion)
+            p.motion.timestamp_ns = now_ns();
+        if (!send_packet(sockets[0], p))
+            std::cerr << "control backpressure: command rejected; cancel input\n";
+    };
+    auto stop = [&] {
+        if (!stopping) {
+            Packet p;
+            p.kind = Cancel;
+            submit(p);
+            p.kind = Stop;
+            submit(p);
+            stopping = true;
+            stop_since = now_ns();
+        }
+    };
+    auto touch = [&](uint32_t id, uint32_t phase, double x, double y) {
+        Packet p;
+        p.kind = Touch;
+        p.touch = {sizeof(p.touch), 1, now_ns(), 1, 0, {}};
+        p.touch.contacts[0] = {sizeof(lt_contact), 1, id, phase, x, y};
+        submit(p);
+    };
+    while (!terminal) {
+        uint64_t now = now_ns();
+        double elapsed = double(now - start) / 1e9;
+        while (next_script < script.size() && elapsed >= script[next_script].at) {
+            submit(script[next_script].packet);
+            if (script[next_script].packet.kind == Stop) {
+                stopping = true;
+                stop_since = now;
+            }
+            next_script++;
+        }
+        if (o.seconds > 0 && elapsed >= o.seconds)
+            stop();
+        Packet update;
+        while (receive(sockets[0], update)) {
+            if (update.kind == Status) {
+                const auto &s = update.status;
+                std::cout << "status state=" << s.state << " confirmed=" << s.guest_shutdown_confirmed
+                          << " dirty=" << s.dirty << " frames=" << s.frames << "\n";
+                if (window) {
+                    std::string title = "LightTouch — " + std::string(s.state == LT_RUNNING    ? "running"
+                                                                      : s.state == LT_PAUSED   ? "paused"
+                                                                      : s.state == LT_STOPPING ? "stopping"
+                                                                      : s.state == LT_STARTING ? "starting"
+                                                                                               : "stopped");
+                    SDL_SetWindowTitle(window, title.c_str());
+                }
+                if (s.state == LT_STOPPED || s.state == LT_FAILED) {
+                    terminal = true;
+                    break;
+                }
+            } else if (update.kind == Reply)
+                std::cerr << "command failed: " << update.error.message << "\n";
+        }
+        AudioPacket pcm;
+        for (int budget = 0; budget < 16; budget++) {
+            ssize_t n = recv(audio[0], &pcm, sizeof pcm, MSG_DONTWAIT);
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                break;
+            if (n == 0)
+                break;
+            require(n == sizeof pcm && pcm.version == 1 && pcm.info.frames <= 4096 && pcm.info.channels == 2,
+                    "invalid PCM packet");
+            if (sound) {
+                if (SDL_GetQueuedAudioSize(sound) > 17640)
+                    SDL_ClearQueuedAudio(sound);
+                SDL_QueueAudio(sound, pcm.samples.data(), pcm.info.frames * 4);
+            }
+        }
+        if (frame_copy(shared, pixels, frame, sequence) && renderer) {
+            if (!texture) {
+                texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING,
+                                            int(frame.width), int(frame.height));
+                require(texture, SDL_GetError());
+            } else {
+                int width = 0, height = 0;
+                SDL_QueryTexture(texture, nullptr, nullptr, &width, &height);
+                if (width != int(frame.width) || height != int(frame.height)) {
+                    SDL_DestroyTexture(texture);
+                    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_BGRA32, SDL_TEXTUREACCESS_STREAMING,
+                                                int(frame.width), int(frame.height));
+                    require(texture, SDL_GetError());
+                }
+            }
+            SDL_UpdateTexture(texture, nullptr, pixels.data(), int(frame.stride));
+        }
+        if (renderer && texture) {
+            int width = 0, height = 0;
+            SDL_GetRendererOutputSize(renderer, &width, &height);
+            double scale = std::min(double(width) / frame.width, double(height) / frame.height);
+            SDL_Rect dest{int((width - frame.width * scale) / 2), int((height - frame.height * scale) / 2),
+                          int(frame.width * scale), int(frame.height * scale)};
+            SDL_SetRenderDrawColor(renderer, 24, 24, 24, 255);
+            SDL_RenderClear(renderer);
+            SDL_RenderCopy(renderer, texture, nullptr, &dest);
+            SDL_RenderPresent(renderer);
+        }
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT)
+                stop();
+            else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                Packet p;
+                p.kind = Cancel;
+                submit(p);
+                contacts.clear();
+                fingers.clear();
+            } else if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                bool down = event.type == SDL_KEYDOWN;
+                if (event.key.repeat)
+                    continue;
+                auto key = event.key.keysym.sym;
+                if (key == SDLK_ESCAPE && down)
+                    stop();
+                else if (key == SDLK_SPACE && down) {
+                    paused = !paused;
+                    Packet p;
+                    p.kind = Pause;
+                    p.value = paused;
+                    submit(p);
+                } else if (key == SDLK_h || key == SDLK_p || key == SDLK_EQUALS || key == SDLK_MINUS) {
+                    Packet p;
+                    p.kind = Button;
+                    p.button = key == SDLK_h ? 0 : key == SDLK_p ? 1 : key == SDLK_EQUALS ? 2 : 3;
+                    p.value = down;
+                    submit(p);
+                } else if (key == SDLK_F6 && down) {
+                    std::cerr << "deterministic touch replay (guest acceptance requires observation)\n";
+                    for (int step = 0; step <= 12; step++) {
+                        Packet p;
+                        p.kind = Touch;
+                        p.touch = {sizeof(p.touch), 1, 0, 2, 0, {}};
+                        uint32_t phase = step == 0 ? 0 : step == 12 ? 2 : 1;
+                        double delta = .1 + step * .015;
+                        p.touch.contacts[0] = {sizeof(lt_contact), 1, 101, phase, .5 - delta, .5};
+                        p.touch.contacts[1] = {sizeof(lt_contact), 1, 102, phase, .5 + delta, .5};
+                        script.push_back({elapsed + step * .08, p});
+                    }
+                    std::sort(script.begin() + next_script, script.end(),
+                              [](const Script &a, const Script &b) { return a.at < b.at; });
+                } else if (down && (key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_UP || key == SDLK_DOWN)) {
+                    Packet p;
+                    p.kind = Motion;
+                    p.motion = {sizeof(lt_motion), 1, now_ns(), 1, 0, {0, 9.80665, 0}, {0, 0, 0}};
+                    if (key == SDLK_LEFT || key == SDLK_RIGHT)
+                        p.motion.acceleration[0] = key == SDLK_LEFT ? -9.80665 : 9.80665;
+                    else
+                        p.motion.acceleration[1] = key == SDLK_UP ? 9.80665 : -9.80665;
+                    submit(p);
+                    std::cerr << "manual acceleration replay; not physical gyro\n";
+                }
+            } else if (frame.width &&
+                       (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP)) {
+                int width = 0, height = 0;
+                SDL_GetWindowSize(window, &width, &height);
+                double scale = std::min(double(width) / frame.width, double(height) / frame.height),
+                       left = (width - frame.width * scale) / 2, top = (height - frame.height * scale) / 2, x = 0,
+                       y = 0;
+                lt_status mapped = lt_map_contact(event.tfinger.x * width, event.tfinger.y * height, left, top,
+                                                  frame.width * scale, frame.height * scale, 0, &x, &y);
+                if (event.type == SDL_FINGERDOWN && mapped == LT_OK) {
+                    uint32_t id = next_finger++;
+                    fingers[event.tfinger.fingerId] = id;
+                    contacts[id] = {x, y};
+                    touch(id, 0, x, y);
+                } else if (fingers.count(event.tfinger.fingerId)) {
+                    uint32_t id = fingers[event.tfinger.fingerId];
+                    if (event.type == SDL_FINGERUP) {
+                        auto c = contacts[id];
+                        touch(id, 2, c.first, c.second);
+                        contacts.erase(id);
+                        fingers.erase(event.tfinger.fingerId);
+                    } else if (mapped == LT_OK) {
+                        contacts[id] = {x, y};
+                        touch(id, 1, x, y);
+                    }
+                }
+            } else if (frame.width && (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP ||
+                                       event.type == SDL_MOUSEMOTION)) {
+                if ((event.type == SDL_MOUSEMOTION && event.motion.which == SDL_TOUCH_MOUSEID) ||
+                    (event.type != SDL_MOUSEMOTION && event.button.which == SDL_TOUCH_MOUSEID))
+                    continue;
+                int width = 0, height = 0;
+                SDL_GetWindowSize(window, &width, &height);
+                double scale = std::min(double(width) / frame.width, double(height) / frame.height),
+                       left = (width - frame.width * scale) / 2, top = (height - frame.height * scale) / 2;
+                double x = 0, y = 0;
+                int px = event.type == SDL_MOUSEMOTION ? event.motion.x : event.button.x,
+                    py = event.type == SDL_MOUSEMOTION ? event.motion.y : event.button.y;
+                lt_status mapped =
+                    lt_map_contact(px, py, left, top, frame.width * scale, frame.height * scale, 0, &x, &y);
+                if (event.type == SDL_MOUSEMOTION) {
+                    for (auto &c : contacts) {
+                        if (mapped == LT_OK) {
+                            c.second = {x, y};
+                            touch(c.first, 1, x, y);
+                        }
+                    }
+                } else {
+                    uint32_t id = event.button.button == SDL_BUTTON_LEFT ? 1 : 2;
+                    if (event.type == SDL_MOUSEBUTTONDOWN && mapped == LT_OK) {
+                        contacts[id] = {x, y};
+                        touch(id, 0, x, y);
+                    } else if (event.type == SDL_MOUSEBUTTONUP && contacts.count(id)) {
+                        auto c = contacts[id];
+                        touch(id, 2, c.first, c.second);
+                        contacts.erase(id);
+                    }
+                }
+            }
+        }
+        if (stopping && now - stop_since > 35000000000ull) {
+            throw std::runtime_error("shutdown timeout; worker terminated, dirty state preserved");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!o.screenshot.empty()) {
+        require(frame.width && pixels.size(), "no guest frame for screenshot");
+        SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormatFrom(pixels.data(), int(frame.width), int(frame.height),
+                                                                  32, int(frame.stride), SDL_PIXELFORMAT_BGRA32);
+        require(surface, SDL_GetError());
+        require(SDL_SaveBMP(surface, o.screenshot.c_str()) == 0, SDL_GetError());
+        SDL_FreeSurface(surface);
+    }
+    if (sound)
+        SDL_CloseAudioDevice(sound);
+    if (texture)
+        SDL_DestroyTexture(texture);
+    if (renderer)
+        SDL_DestroyRenderer(renderer);
+    if (window)
+        SDL_DestroyWindow(window);
+    int status = 0;
+    waitpid(pid, &status, 0);
+    child.pid = -1;
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 2;
+}
+int main(int argc, char **argv) {
+    try {
+        auto o = options(argc, argv);
+        return o.worker ? worker(o) : frontend(o, argc, argv);
+    } catch (const std::exception &e) {
+        std::cerr << "LightTouch: " << e.what() << "\n";
+        return 1;
+    }
+}
