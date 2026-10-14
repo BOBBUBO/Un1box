@@ -85,11 +85,14 @@ class GuestQmpSnapshotTest {
                         val lines = File(requireNotNull(captured.getString("path"))).readLines().map { JSONObject(it) }
                         assertTrue("Missing QMP greeting", lines.first().has("QMP"))
                         val responses = lines.drop(1).associateBy { it.getString("id") }
-                        for (id in listOf("lt-cap", "lt-status", "lt-cpus", "lt-registers")) {
+                        for (id in listOf("lt-cap", "lt-status", "lt-cpus", "lt-registers", "lt-cpu-state", "lt-instructions", "lt-caller")) {
                             val response = requireNotNull(responses[id]); assertFalse(response.toString(), response.has("error"))
                         }
                         item.put("status", responses.getValue("lt-status").getJSONObject("return"))
                             .put("registers", responses.getValue("lt-registers").getString("return"))
+                            .put("cpuState", responses.getValue("lt-cpu-state").getString("return"))
+                            .put("fixedKernelInstructions", responses.getValue("lt-instructions").getString("return"))
+                            .put("fixedCallerInstructions", responses.getValue("lt-caller").getString("return"))
                         File(evidence, "snapshots.json").writeText(snapshots.toString(2))
                     }
                     val count = arguments.getString("qmpSamples", "3").toInt().coerceIn(1, 12)
