@@ -27,3 +27,11 @@ meaning. These two values describe the guarded Android lease state, rather than
 the runtime poll's shutdown facts; zero means no current owner/generation.
 They do not acknowledge guest input delivery. Historical candidate22 still
 contains the thirteen-entry producer and is unchanged by this source patch.
+
+Index15 adds `vcpuAccountingConfigured`. It is `1` only after the debug-only
+fresh-worker `debugArmVcpuAccounting()` successfully sets the fixed process
+environment value `IT_VCPU_ACCT=5`. All fifteen prior entries retain their order;
+the observations array and shared native ABI are unchanged. This flag describes
+configuration, not actual accounting output or genuine iOS scheduler usage.
+Ordinary workers never call this setter and report false. Release builds refuse
+the operation without setting the environment.
