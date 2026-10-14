@@ -6,6 +6,11 @@
 #include <stdio.h>
 #include <dmg/dmg.h>
 #include <dmg/filevault.h>
+extern char endianness;
+void lt_fw_init_byte_order(void) {
+    short word = 1;
+    endianness = *(char *)&word ? IS_LITTLE_ENDIAN : IS_BIG_ENDIAN;
+}
 static _Thread_local jmp_buf failure;
 static _Thread_local int guarded;
 static int poisoned;
