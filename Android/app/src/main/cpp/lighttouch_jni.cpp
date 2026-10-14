@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cstdio>
+#include <cerrno>
 #include <cstdlib>
 #include <dlfcn.h>
 
@@ -522,6 +523,10 @@ JNI(debugArmQmp) jstring JNICALL Java_org_lighttouch_android_Native_debugArmQmp(
 #ifdef LT_ANDROID_DEBUG
     std::lock_guard<std::mutex> lock(guard);
     if(runtime || starting)return string(env,"Debug diagnosis requires a fresh unused worker");
+    // Fixed copied-buffer metrics only: no caller environment name or value,
+    // and no change to default workers or release builds.
+    if(setenv("IT_GLES_FRAME_METRICS","1",1)!=0)
+        return string(env,"Cannot enable copied-frame diagnosis: "+std::string(std::strerror(errno)).substr(0,256));
     debug_qmp_armed=true;return string(env,"");
 #else
     return string(env,"Debug diagnosis is unavailable in this build");
