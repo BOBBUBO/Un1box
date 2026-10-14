@@ -35,7 +35,10 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
 
     This records a past admission, not a new model inspection. Its verification
     must precede the original deadline; later watchdog polls do not age or reset
-    that already-admitted gate. The loader supplies actual bounded file bytes.
+    that already-admitted gate. Static publication is permitted only with fresh
+    capture/diagnostics and exact same-worker metadata readback. Publication
+    timestamps use host CLOCK_MONOTONIC; they do not measure observation age.
+    The loader supplies actual bounded file bytes.
     """
     try:
         proof = gate['continuity']
@@ -45,7 +48,9 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
         checked = int(proof['owner_checked_monotonic_ns'])
         status = proof['status']
         viewport = proof['viewport']
-        return (gate['model_inspected'] is True and gate['scene'] == scene and
+        readback = proof['metadata_readback']
+        return (proof['policy'] == 'static-awake-full-image-v1' and
+                gate['model_inspected'] is True and gate['scene'] == scene and
                 all(gate[k] == proof[k] == identity[k] for k in identity) and
                 gate['worker_pid'] == proof['worker_pid'] and
                 gate['worker_start_ticks'] == proof['worker_start_ticks'] and
@@ -57,10 +62,16 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
                 bool(original_bmp) and original_bmp == current_bmp and
                 all(int(r['sequence']) > 1 and int(r['sleeping']) == 0 and
                     int(r['agent']) == 1 and int(r['backlight']) > 0 for r in (original, current)) and
-                0 <= int(original['observed_monotonic_ns']) - int(original['frame_monotonic_ns']) <= 2_000_000_000 and
+                0 < int(original['frame_monotonic_ns']) <= int(original['observed_monotonic_ns']) and
                 0 <= int(original['observed_monotonic_ns']) - int(original['diagnostics_monotonic_ns']) <= 1_000_000_000 and
                 0 <= verified - captured <= 2_000_000_000 and
-                0 <= verified - int(current['frame_monotonic_ns']) <= 2_000_000_000 and
+                int(current['sequence']) >= int(original['sequence']) and
+                0 < int(original['frame_monotonic_ns']) <= int(current['frame_monotonic_ns']) <= captured and
+                0 <= verified - int(current['copy_finished_monotonic_ns']) <= 2_000_000_000 and
+                captured <= int(current['copy_finished_monotonic_ns']) <= checked and
+                int(readback['sequence']) == int(current['sequence']) == int(status['frame_sequence']) and
+                int(readback['frame_monotonic_ns']) == int(current['frame_monotonic_ns']) == int(status['frame_monotonic_ns']) and
+                int(readback['observed_monotonic_ns']) == int(status['observed_monotonic_ns']) and
                 0 <= verified - int(current['diagnostics_monotonic_ns']) <= 1_000_000_000 and
                 0 <= verified - int(status['observed_monotonic_ns']) <= 1_000_000_000 and
                 int(status['state']) == 2 and int(status['sleeping']) == 0 and
@@ -68,6 +79,18 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
                 isinstance(proof['window'], int) and proof['window'] > 0 and
                 gate['window'] == proof['window'] and gate['viewport'] == viewport and
                 len(viewport) == 2 and all(isinstance(v, int) and 0 < v <= 16384 for v in viewport))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def valid_scene_transition(before, after, before_bmp, after_bmp):
+    """Actual changed pixels and a newer source after input, never a scene label."""
+    try:
+        return (bool(before_bmp) and bool(after_bmp) and before_bmp != after_bmp and
+                int(after['sequence']) > int(before['sequence']) > 1 and
+                int(after['observed_monotonic_ns']) > int(before['observed_monotonic_ns']) and
+                0 < int(before['frame_monotonic_ns']) <= int(after['frame_monotonic_ns']) <=
+                int(after['observed_monotonic_ns']))
     except (KeyError, TypeError, ValueError):
         return False
 
@@ -96,6 +119,10 @@ def load_gate(root, name, identity, scene, deadline_ns, now_ns):
             if gate['worker_pid'] != worker['pid'] or gate['worker_start_ticks'] != worker['start_ticks']:
                 return False
             current, current_bitmap = read_capture(root, gate['continuity'])
+            before, before_bitmap = read_capture(root, gate['transition_from'])
+            if (int(before['observed_monotonic_ns']) < identity['hello_monotonic_ns'] or
+                    not valid_scene_transition(before, receipt, before_bitmap, bitmap)):
+                return False
             return valid_continuity_gate(gate, receipt, current, bitmap, current_bitmap,
                                          identity, scene, deadline_ns, now_ns)
         return valid_gate(gate, receipt, identity, scene, deadline_ns, now_ns)

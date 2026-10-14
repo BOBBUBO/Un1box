@@ -1,11 +1,13 @@
 # Planned final-engine n72 verification
 
-This next plan has not launched a guest. Root must supply the cleanup23 Linux
-engine source/hash/manifest/dependency receipt and explicitly allocate the GUI.
-Engine fields remain unset; do not substitute old1ff, b59 or1398 producer bytes.
-The sealed frontend is source51736577 with system SDL2, bounded audio/contacts and
-acknowledged pause/shutdown controls. Its eight ASAN/UBSAN CTests passed; this is
-host regression evidence, not guest input, audio or persistence acceptance.
+This next plan has not launched a guest. The prospective write controller is
+`builds/runtime/final-upstream-n72/run-08-stock-staged/manager.py` in the private
+workspace. Its producer pins are complete; execution remains disabled until Root
+reviews this exact plan and grants one GUI. Do not substitute older engine or
+frontend bytes. Source592 includes the tested contact/audio lifecycle fixes plus
+lazy publisher frame storage and coherent metadata. Nine ASAN/UBSAN CTests passed;
+this is host regression and SDL compile evidence, not guest input, audio,
+persistence, teardown or measured memory evidence.
 
 Use the retained **generated-stock** `n72ap/7E18` userspace base directly. This
 is distinct from the imported handoff base used in final-engine attempts01–06.
@@ -15,19 +17,68 @@ NAND hash: allocated production admission validates every required byte.
 
 | Input | Path under the port workspace | Identity |
 | --- | --- | --- |
-| Frontend | `builds/runtime/linux-lifecycle-source-10/debug-sanitized/lighttouch-linux` | SHA256 `32c5bb84745663732663bff629e4a3b657ede212b174aa024976f869ad3efbba`, source51736577; mode0500 |
+| Frontend | `builds/runtime/linux-frame-storage-source-11/debug-sanitized/lighttouch-linux` | SHA256 `ea78673b10978304f358af4bf3d3c167973a29f005580670d5c8dd705ec5df3b`, source592b4fc3; mode0500 |
 | Read-only generated base | `private-assets/native-prepared-n72-trial6` | n72ap/7E18/iboot; DeviceLock SHA256 `eec93b0c9c9d33fe65e760d747d5a47d9bf1e0bca659dca280ba4c8b53ffb2f2` |
 | Matched ROM | `private-assets/runtime-inputs/bootrom_240_4` | SHA256 `55f4d8ea2791ba51dd89934168f38f0fb21ce8762ff614c1e742407c0d3ca054` |
 | Matched package | `private-assets/native-prepared-n72-trial6/guest.itpack` | Declared raw armv6 package; SHA256 `fe25b1406b1153837075c56944fadbac7406840667215f232d16fafca079f45b` |
 | New write state | `builds/runtime/final-upstream-n72/stock-state-08` | Must not exist; never reset retained prior state |
-| Engine | Unset | Root cleanup23 frozen source/SHA256/manifest/dependency receipt required |
+| Engine | `builds/backend/frozen/a85e640b791aa8e1260ed2c2349e7807a14cf71e3864805b5bd3fd03717c5737/libqemu-arm.so` | SHA256 `a85e640b791aa8e1260ed2c2349e7807a14cf71e3864805b5bd3fd03717c5737`, clean source259e4ad3 |
+| Complete engine manifest | Same frozen directory, `portable-manifest.json` | SHA256 `5ef1ab85eddf22b43d3183ba443bea697c79ba874248a863ef105fcbfeae046e` |
+| Frontend producer receipt | `builds/runtime/linux-frame-storage-source-11/producer-receipt.json` | SHA256 `42d1f9625f1c9a934265868a62e26214c89a378ae35c315ae2c2d12f29d53970` |
+| Runtime dependency pins | `builds/runtime/final-upstream-n72/run-08-stock-staged/dependencies-pins.json` | SHA256 `b0203797cb4c64fb5e1a6a39574e81b26f83320ece9b6c12b2cac74d869eb582`; 65 exact file identities |
 
 The domain creates its own lease/base pin, sparse NAND overlay and small private
 NOR. The frontend producer receipt is retained at
-`builds/runtime/linux-lifecycle-source-10/producer-receipt.json`; the failed prior
+`builds/runtime/linux-frame-storage-source-11/producer-receipt.json`; the failed prior
 Homebrew SDL2 compatibility binding remains separately retained. The new native
-producer's actual guest/SDL teardown is still untested. Keep original warnings,
+producer's actual guest/SDL teardown is still untested. The source-plan update
+read hashes only for frontend/engine/receipts/dependencies; it did not read NAND
+content, copy the base or create state. Manager startup rechecks the complete
+manifest, both producer hashes and every dependency hash before spawning. The
+Mesa/GLVND files are prospective dependencies; record actual mappings separately
+during the allocated run. Keep original warnings,
 errors, captures and failed gate receipts.
+
+Execution-ready entrypoints are retained in the staged directory. After Root
+sets its explicit execution authorization and grants one GUI, launch only:
+
+```sh
+xvfb-run -a -s '-screen 0 1000x1000x24 -nolisten tcp' python3 /home/blake/Documents/LightTouch-Development/port-workspace/builds/runtime/final-upstream-n72/run-08-stock-staged/manager.py --execute
+```
+
+Keep the manager session live. In that same awaited tool execution, wait for its
+`started.json`, then await `await-first-png.py --execute` and emit its exact PNG
+with `view_image` immediately. The expected initial target is
+`wake-auto-01/paired/capture-01/native.png`; the returned path is authoritative.
+The next tool after actual Lock inspection runs `inspect-and-unlock.py --capture
+<actual-capture-directory> --output unlock-fast-01 --model-inspected-lock
+--execute`. This single handler records the honest after-view time, validates a
+fresh capture against the inspected Lock anchors, performs any bounded rewake,
+and immediately applies the mapped slider. Do not insert a status poll or wait
+for Root image review between inspection and that call. A mismatch retains both
+images and requires actual inspection again, within the original deadline.
+
+Immediately inspect `unlock-fast-01/after/native.png`; if it shows Home, the next
+call is repository `Linux/scripts/record-inspected-gate.py --run <write-run>
+--capture <write-run>/unlock-fast-01/after --scene home --transition-record <write-run>/unlock-fast-01/content-continuity.json --output home-continuity-01
+--model-inspected --execute`. The Home/editor gate still uses full-image matching,
+fresh capture2s/diagnostic1s bounds, exact current worker metadata readback and original129/179s deadlines. No ROI mask is added
+for these scenes. A changed image or aged capture/diagnostics can reject despite a previously viewed
+scene; that is a retained failed prerequisite, never permission to type anyway.
+The independent watchdog then requests ordinary Stop and Main suppresses the
+later guest/touch/button/pause script dispatches.
+
+At Noteslaunch140/frontmost145, capture `notes-scene-01`, actually inspect the
+current create control, and use the private `control.py tap .93 .085 --execute`
+then `control.py capture editor-scene-01 --execute` in one tool only if that
+control is currently seen at that measured location. Inspect the new empty
+focused editor, then immediately record the `editor` gate from that actual
+capture. A Notes list, highlight or saved body cannot admit typing. Inspect the
+full unique marker after type190, save via the currently visible Done/list
+control before sync220, retain typed request completion and actual pixels.
+Manager `result.json` retains FINAL fields independently from real process exit
+and sanitizer reports; all three must satisfy the strict checks below. It never
+sets visual-text verification or guest acceptance from counters.
 
 Proposed write-session argv, with each path expanded to the absolute workspace:
 
@@ -91,9 +142,20 @@ After independently viewing actual Home or a new focused Notes editor, call the
 committed `record-inspected-gate.py --run <write-run> --capture <actually-viewed>
 --scene home|editor --output <unique> --model-inspected --execute` immediately.
 It records actual original inspection time and a separate fresh full-byte-matching
-capture/owner verification time. Do not hand-write a gate, copy another worker's
+capture/owner/readback verification time. Supply `--transition-record
+<write-run>/unlock-fast-01/content-continuity.json` for Home, or
+`--transition-from <write-run>/notes-scene-01` for the new editor. The original
+inspected post-action image must differ from the retained pre-action image and
+have a newer sequence; those facts do not classify its scene. Do not hand-write a gate, copy another worker's
 gate or relabel a Notes list/saved note as a new editor. Its current image must be
-awake/agent1 with source2s/diagnostic1s freshness. Changed clock/caret pixels can
+awake/agent1 with capture2s/diagnostic1s freshness and exact current worker
+sequence/timestamp readback. An unchanged source sequence/publication timestamp
+is allowed; this is current retained scene observation, not redraw-performance
+evidence. Publication timestamps are host CLOCK_MONOTONIC. The worker sends HELLO
+then starts the engine while the parent later receives HELLO, so a first engine
+publication may precede the parent HELLO receipt. Require positive/nonfuture
+source timestamps, captures/inspection in this HELLO epoch and current worker
+identity instead of an incorrect source>=parentHELLO check. Changed clock/caret pixels can
 reject full-image continuity; retain the rejection and inspect the new image only
 within the original129/179 deadlines. The admission time is not a new model-view
 time. A read worker needs a separately reviewed, honestly named saved-marker gate.

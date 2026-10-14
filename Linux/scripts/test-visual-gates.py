@@ -124,11 +124,16 @@ class ContinuityGates(unittest.TestCase):
                              frame_monotonic_ns=99_900_000_000, diagnostics_monotonic_ns=99_950_000_000,
                              sleeping=0, agent=1, backlight=245)
         self.current = dict(self.original, observed_monotonic_ns=115_000_000_000, sequence=11,
+                            copy_finished_monotonic_ns=115_005_000_000,
                             frame_monotonic_ns=114_900_000_000, diagnostics_monotonic_ns=114_950_000_000)
         self.proof = dict(self.identity, owner_checked_monotonic_ns=115_010_000_000,
                           worker_pid=13, worker_start_ticks='35',
                           verified_monotonic_ns=115_020_000_000, window=42, viewport=[480, 800],
+                          policy='static-awake-full-image-v1',
+                          metadata_readback=dict(sequence=11, frame_monotonic_ns=114_900_000_000,
+                                                 observed_monotonic_ns=115_000_000_000),
                           status=dict(state=2, observed_monotonic_ns=115_000_000_000,
+                                      frame_sequence=11, frame_monotonic_ns=114_900_000_000,
                                       sleeping=0, agent=1, backlight=245))
         self.gate = dict(self.identity, model_inspected=True, scene='Home Screen',
                          worker_pid=13, worker_start_ticks='35',
@@ -180,7 +185,7 @@ class ContinuityGates(unittest.TestCase):
         self.assertFalse(self.check())
 
     def test_stale_source_diagnostics_or_running_state_rejects(self):
-        for field, value in [('frame_monotonic_ns', 100_000_000_000),
+        for field, value in [('frame_monotonic_ns', 116_000_000_000),
                              ('diagnostics_monotonic_ns', 110_000_000_000), ('sleeping', 1), ('agent', 2)]:
             before = self.current[field]
             self.current[field] = value
@@ -199,19 +204,72 @@ class ContinuityGates(unittest.TestCase):
             self.proof[field] = before
         self.assertFalse(self.check(now=114_000_000_000))
 
+    def test_static_awake_same_worker_current_readback_admits_without_redraw(self):
+        # An actual static screen can be retained for many seconds. Fresh
+        # capture/readback/diagnostics, not publication age, proves observation.
+        self.current['sequence'] = self.original['sequence']
+        self.current['frame_monotonic_ns'] = self.original['frame_monotonic_ns'] = 500_000_000
+        self.proof['metadata_readback']['sequence'] = self.proof['status']['frame_sequence'] = 10
+        self.proof['metadata_readback']['frame_monotonic_ns'] = self.proof['status']['frame_monotonic_ns'] = 500_000_000
+        self.assertTrue(self.check())  # First source may precede parent HELLO.
+        self.assertEqual(self.gate['inspected_monotonic_ns'], 110_000_000_000)
+
+    def test_capture_readback_sequence_timestamp_and_future_clock_reject(self):
+        for owner, key, value in [(self.proof['metadata_readback'], 'sequence', 12),
+                                  (self.proof['status'], 'frame_monotonic_ns', 114_800_000_000),
+                                  (self.current, 'frame_monotonic_ns', 0),
+                                  (self.current, 'frame_monotonic_ns', 116_000_000_000),
+                                  (self.current, 'copy_finished_monotonic_ns', 115_030_000_000),
+                                  (self.current, 'copy_finished_monotonic_ns', 110_000_000_000)]:
+            before = owner[key]
+            owner[key] = value
+            self.assertFalse(self.check(), key)
+            owner[key] = before
+
+    def test_consistent_but_rolled_back_source_rejects(self):
+        self.current['sequence'] = self.proof['status']['frame_sequence'] = self.proof['metadata_readback']['sequence'] = 9
+        self.assertFalse(self.check())
+        self.current['sequence'] = self.proof['status']['frame_sequence'] = self.proof['metadata_readback']['sequence'] = 11
+        self.current['frame_monotonic_ns'] = self.proof['status']['frame_monotonic_ns'] = self.proof['metadata_readback']['frame_monotonic_ns'] = 99_000_000_000
+        self.assertFalse(self.check())
+
+    def test_capture_and_diagnostics_age_never_relaxed_by_static_policy(self):
+        for owner, key, value in [(self.proof, 'verified_monotonic_ns', 118_000_000_000),
+                                  (self.proof['status'], 'observed_monotonic_ns', 110_000_000_000),
+                                  (self.current, 'backlight', 0),
+                                  (self.current, 'agent', 0),
+                                  (self.current, 'sleeping', 1),
+                                  (self.proof['status'], 'state', 5)]:
+            before = owner[key]
+            owner[key] = value
+            self.assertFalse(self.check(), key)
+            owner[key] = before
+
+    def test_transition_requires_actual_changed_pixels_and_newer_source(self):
+        before = dict(self.original, sequence=9, observed_monotonic_ns=90_000_000_000,
+                      frame_monotonic_ns=89_000_000_000)
+        self.assertTrue(module.valid_scene_transition(before, self.original, b'Lock fixture', b'Home fixture'))
+        self.assertFalse(module.valid_scene_transition(before, self.original, b'same', b'same'))
+        self.assertFalse(module.valid_scene_transition(self.original, self.original, b'Lock', b'Home'))
+        self.assertFalse(module.valid_scene_transition(before, dict(self.original, sequence=8), b'Lock', b'Home'))
+        self.assertFalse(module.valid_scene_transition(before, dict(self.original, frame_monotonic_ns=101_000_000_000), b'Lock', b'Home'))
+
     def test_loader_reads_both_bounded_hashed_captures_and_checks_actual_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             (root / 'worker.json').write_text(json.dumps({'pid': 13, 'start_ticks': '35'}))
-            for name, receipt in [('original', self.original), ('fresh', self.current)]:
+            for name, receipt in [('before', dict(self.original, sequence=9, observed_monotonic_ns=90_000_000_000, frame_monotonic_ns=89_000_000_000)), ('original', self.original), ('fresh', self.current)]:
                 path = root / name
                 path.mkdir()
                 (path / 'receipt.json').write_text(json.dumps(receipt))
-                (path / 'native.bmp').write_bytes(self.current_bytes)
+                (path / 'native.bmp').write_bytes(b'pre-action fixture' if name == 'before' else self.current_bytes)
                 description = dict(capture_directory=str(path),
                                    receipt_sha256=hashlib.sha256((path / 'receipt.json').read_bytes()).hexdigest(),
                                    bmp_sha256=hashlib.sha256((path / 'native.bmp').read_bytes()).hexdigest())
-                (self.gate if name == 'original' else self.proof).update(description)
+                if name == 'before':
+                    self.gate['transition_from'] = description
+                else:
+                    (self.gate if name == 'original' else self.proof).update(description)
             (root / 'home-gate.json').write_text(json.dumps(self.gate))
             self.assertTrue(module.load_gate(root, 'home-gate.json', self.identity,
                                              'Home Screen', 130_000_000_000, 180_000_000_000))
