@@ -1,0 +1,16 @@
+appId: org.lighttouch.android
+---
+- launchApp
+- assertVisible: "LightTouch"
+- assertVisible:
+    id: "import_base"
+- assertVisible:
+    id: "start_guest"
+- assertVisible:
+    id: "home_button"
+- assertVisible:
+    id: "power_button"
+- assertVisible:
+    id: "screenshot_button"
+- assertVisible: "Guest display"
+# Shell-only. Never use this flow as guest boot/input acceptance.
