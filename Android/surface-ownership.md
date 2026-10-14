@@ -57,7 +57,10 @@ replace its diagnostic; ignored IDs are retained in fixed telemetry counters.
 Current-owner failures remain actionable. An empty batch needs no full release,
 but a failed UP can require it even after the admitted-ID ledger became empty.
 Successful full cancellation or terminal model success discharges that request's
-cleanup obligation. Legacy direct diagnostic input remains explicitly global.
+cleanup obligation. Before handoff, detach or retirement, a pending owned
+UP/CANCEL obligation is balanced even when the local admitted-ID ledger is empty.
+A fresh status check first discharges an already successful release, preserving
+an unrelated later button pulse. Legacy direct diagnostic input remains explicitly global.
 
 The phase telemetry from `121936c8` remains in this source. Its stage codes,
 timestamps and window presence are diagnostic metadata, never guest acceptance.

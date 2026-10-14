@@ -92,6 +92,26 @@ void delayed_rejection_cannot_release_new_owner_but_current_rejected_up_can() {
     state.submittedInput(46,0,true);state.claim();
     assert(state.reportsRejectedInput(46) && state.cancelsRejectedInput(46)); // Explicit legacy/global input.
 }
+void pending_release_is_balanced_before_handoff_or_detach_and_completed_release_is_not_cancelled() {
+    for(const int phase:{2,3})for(const bool detach:{false,true}) {
+        DisplayLease state;const auto a=state.claim();bool guest_contact_held=true;int cancellations=0;
+        state.admittedContact(7,0);state.admittedContact(7,phase);
+        state.submittedInput(71,a,true); // Guest DOWN delivered, release queued but not delivered.
+        assert(!state.contactsHeld() && state.pendingOwnedRelease());
+        if(state.needsOwnedRelease()){++cancellations;guest_contact_held=false;state.contactsReleased();}
+        if(detach)assert(state.detach(a));
+        const auto b=state.claim();bool power_held=true;
+        assert(!guest_contact_held && cancellations==1 && state.owns(b));
+        // The queued old release now fails; it cannot issue a second cancellation.
+        assert(!state.reportsRejectedInput(71) && !state.cancelsRejectedInput(71));
+        assert(power_held && cancellations==1);
+    }
+    DisplayLease state;auto a=state.claim();state.admittedContact(7,0);state.admittedContact(7,2);
+    state.submittedInput(72,a,true);bool guest_contact_held=false,power_held=true;
+    state.inputCompleted(72); // The pre-handoff status refresh observes terminal success.
+    assert(!state.needsOwnedRelease());assert(state.detach(a));state.claim();
+    assert(!guest_contact_held && power_held && !state.reportsRejectedInput(72));
+}
 }
 int main() {
     obsolete_conversion_and_release();retired_controls_and_duplicate_callbacks();
@@ -100,5 +120,6 @@ int main() {
     no_contact_attach_preserves_buttons_and_held_takeover_requires_cancel();
     admitted_cancel_releases_only_its_id_and_last_cancel_preserves_new_pulse();
     delayed_rejection_cannot_release_new_owner_but_current_rejected_up_can();
+    pending_release_is_balanced_before_handoff_or_detach_and_completed_release_is_not_cancelled();
     std::cout<<"PASS display lease stale controls/conversion, converted refs, contact handoff and empty callback pulse preservation\n";
 }
