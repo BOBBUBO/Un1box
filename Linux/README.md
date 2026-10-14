@@ -147,6 +147,25 @@ then perform rotation/letterbox and focus-loss checks in the live SDL window usi
 R and actual focus changes; a headless cancellation replay does not qualify those
 window transitions. Scripts and admission logs alone do not verify guest gestures.
 
+Explicit screenshots force a fresh copy from the current worker's readonly
+shared-frame mapping, including an unchanged source sequence. A successful
+`screenshot` receipt includes `coherent_readback=1`, the accepted equal/even
+`shared_generation`, and host-monotonic copy start/finish times. Metadata and
+pixels belong to that single publication bracket. Three conflicting native copy
+attempts produce `screenshot_retry` and do not reuse a cached screenshot. Normal
+presentation still uses its existing latest-sequence path. This coherence proof
+replaces equality with independently sampled250ms Status frame counters, which
+can legitimately skip the captured sequence.
+
+The inspected Home/editor recorder retries current captures at most2Hz within
+its original12s operation and129/179s scene deadlines. Every caret phase and
+transient-copy rejection is retained; admission requires full BMP equality to
+the actual inspected image, fresh coherent copy/diagnostics and current owner.
+It never masks the caret, refreshes the honest inspection time or classifies a
+new scene. The earlier Lock/source-freshness and direct legacy gates are unchanged.
+These source changes need a new frontend build; prior sealed binaries and failed
+run09 receipts do not gain the new proof retroactively.
+
 Status logs report native produced frames and their host-monotonic timestamp,
 captured/pulled/dropped PCM frames, bounded native queued packets, socket drops,
 received nonzero samples, SDL queued/discarded frames and SDL queue errors. These

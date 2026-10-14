@@ -131,57 +131,74 @@ def main():
                 not gates.valid_scene_transition(before, original, before_bmp, original_bmp)):
             raise RuntimeError('no observed changed pixels/newer source after input; scene transition unproved')
         gate['window'], gate['viewport'] = window, viewport()
-        # Sole native screenshot writer: no watcher is started here. Existing
-        # readiness/wake capture handlers must have returned before invocation.
-        offset = (root / 'session.log').stat().st_size
-        trigger = time.monotonic_ns()
-        call('key', 's')
-        capture_deadline = min(operation_deadline, time.monotonic_ns() + 2_000_000_000)
-        receipt = None
-        while time.monotonic_ns() < capture_deadline and receipt is None:
-            with (root / 'session.log').open('rb') as log:
-                log.seek(offset)
-                rows = log.read().split(b'\n')[:-1]
-            for row in rows:
-                if row.startswith(b'screenshot sequence='):
-                    line = row.decode()
-                    value = dict(re.findall(r'(\w+)=([^ ]+)', line))
-                    value['path'] = line.split(' path=', 1)[1]
-                    if int(value['observed_monotonic_ns']) >= trigger:
-                        receipt = value
-                        break
-            if receipt is None:
-                time.sleep(.02)
-        if receipt is None or Path(receipt['path']).resolve() != (root / 'live.bmp').resolve():
-            raise RuntimeError('no bounded matching native screenshot')
-        if (root / 'live.bmp').stat().st_size > 64 * 1024 * 1024 + 54:
-            raise RuntimeError('frame file bounds')
-        shutil.copyfile(root / 'live.bmp', out / 'native.bmp')
-        receipt['copy_finished_monotonic_ns'] = time.monotonic_ns()
-        (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        fresh, fresh_bmp = gates.read_capture(root, dict(
-            capture_directory=str(out), receipt_sha256=sha(out / 'receipt.json'),
-            bmp_sha256=sha(out / 'native.bmp')))
-        checked_viewport = viewport()
-        checked = time.monotonic_ns()
-        status_row = next(x.decode() for x in reversed((root / 'session.log').read_bytes().split(b'\n')[:-1])
-                          if x.startswith(b'status '))
-        status = dict(re.findall(r'(\w+)=([^ ]+)', status_row))
-        proof = dict(identity, capture_directory=str(out), receipt_sha256=sha(out / 'receipt.json'),
-                     worker_pid=worker['pid'], worker_start_ticks=worker['start_ticks'],
-                     bmp_sha256=sha(out / 'native.bmp'), window=window, viewport=checked_viewport,
-                     owner_checked_monotonic_ns=checked, status=status,
-                     metadata_readback=dict(sequence=int(status['frame_sequence']),
-                                            frame_monotonic_ns=int(status['frame_monotonic_ns']),
-                                            observed_monotonic_ns=int(status['observed_monotonic_ns'])),
-                     policy='static-awake-full-image-v1',
-                     static_source=int(fresh['sequence']) == int(original['sequence']),
-                     verified_monotonic_ns=time.monotonic_ns())
-        gate['continuity'] = proof
-        save('admission-attempt.json', gate)
-        if not gates.valid_continuity_gate(gate, original, fresh, original_bmp, fresh_bmp,
+        # Sole native screenshot writer. Every retry keeps the original model
+        # timestamp, viewport and operation deadline; cadence never exceeds2Hz.
+        admitted = False
+        for attempt in gates.capture_attempts(time.monotonic_ns, time.sleep, operation_deadline):
+            target = out / ('attempt-%02d' % attempt)
+            target.mkdir()
+            offset = (root / 'session.log').stat().st_size
+            trigger = time.monotonic_ns()
+            call('key', 's')
+            capture_deadline = min(operation_deadline, time.monotonic_ns() + 2_000_000_000)
+            receipt = None
+            transient = False
+            while time.monotonic_ns() < capture_deadline and receipt is None and not transient:
+                with (root / 'session.log').open('rb') as log:
+                    log.seek(offset)
+                    rows = log.read().split(b'\n')[:-1]
+                for row in rows:
+                    if row.startswith((b'screenshot sequence=', b'screenshot_retry ')):
+                        line = row.decode()
+                        value = dict(re.findall(r'(\w+)=([^ ]+)', line))
+                        value['path'] = line.split(' path=', 1)[1]
+                        if int(value['observed_monotonic_ns']) >= trigger:
+                            if row.startswith(b'screenshot_retry '):
+                                transient = True
+                                (target / 'retry.json').write_text(json.dumps(value, indent=2) + '\n')
+                            else:
+                                receipt = value
+                            break
+                if receipt is None and not transient:
+                    time.sleep(.02)
+            if transient:
+                continue  # All3 native copies raced; no cached pixels accepted.
+            if receipt is None or Path(receipt['path']).resolve() != (root / 'live.bmp').resolve():
+                raise RuntimeError('no bounded matching native screenshot')
+            if (root / 'live.bmp').stat().st_size > 64 * 1024 * 1024 + 54:
+                raise RuntimeError('frame file bounds')
+            shutil.copyfile(root / 'live.bmp', target / 'native.bmp')
+            receipt['saved_monotonic_ns'] = time.monotonic_ns()
+            (target / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+            fresh, fresh_bmp = gates.read_capture(root, dict(
+                capture_directory=str(target), receipt_sha256=sha(target / 'receipt.json'),
+                bmp_sha256=sha(target / 'native.bmp')))
+            checked_viewport = viewport()
+            checked = time.monotonic_ns()
+            status_row = next(x.decode() for x in reversed((root / 'session.log').read_bytes().split(b'\n')[:-1])
+                              if x.startswith(b'status '))
+            status = dict(re.findall(r'(\w+)=([^ ]+)', status_row))
+            proof = dict(identity, capture_directory=str(target), receipt_sha256=sha(target / 'receipt.json'),
+                         worker_pid=worker['pid'], worker_start_ticks=worker['start_ticks'],
+                         bmp_sha256=sha(target / 'native.bmp'), window=window, viewport=checked_viewport,
+                         owner_checked_monotonic_ns=checked, status=status,
+                         metadata_readback=dict(sequence=int(fresh['sequence']),
+                                                frame_monotonic_ns=int(fresh['frame_monotonic_ns']),
+                                                shared_generation=int(fresh['shared_generation'])),
+                         policy='coherent-copy-static-awake-v2',
+                         static_source=int(fresh['sequence']) == int(original['sequence']),
+                         verified_monotonic_ns=time.monotonic_ns())
+            gate['continuity'] = proof
+            (target / 'admission-attempt.json').write_text(json.dumps(gate, indent=2) + '\n')
+            if gates.valid_continuity_gate(gate, original, fresh, original_bmp, fresh_bmp,
                                            identity, scene, deadline, time.monotonic_ns()):
-            raise RuntimeError('current byte continuity/freshness/owner/deadline rejected; inspect retained image')
+                admitted = True
+                break
+            (target / 'rejection.json').write_text(json.dumps({
+                'full_BMP_identical': original_bmp == fresh_bmp,
+                'actual_inspected_monotonic_ns': inspected, 'guest_acceptance': False}) + '\n')
+        if not admitted:
+            raise RuntimeError('bounded current continuity attempts exhausted; retained all captures')
         verify_owner()
         if time.monotonic_ns() > operation_deadline:
             raise RuntimeError('fixed deadline elapsed before gate publication')
@@ -203,9 +220,9 @@ def main():
         os.close(fd)
         # Conversion belongs after admission/rejection, never before freshness
         # checks. A failed capture is evidence, not permission to relabel it.
-        if (out / 'native.bmp').exists():
-            subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', str(out / 'native.bmp'),
-                            '-frames:v', '1', str(out / 'native.png')], timeout=3, check=False)
+        for bitmap in sorted(out.glob('attempt-*/native.bmp')):
+            subprocess.run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', str(bitmap),
+                            '-frames:v', '1', str(bitmap.with_suffix('.png'))], timeout=3, check=False)
 
 
 if __name__ == '__main__':
