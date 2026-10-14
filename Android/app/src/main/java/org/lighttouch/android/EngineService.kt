@@ -21,6 +21,7 @@ class EngineService : Service() {
     @Volatile private var audio: AudioTrack? = null
     @Volatile private var focus: AudioFocusRequest? = null
     private val touchAdmissionGuard = Any()
+    private val lifecycleAdmission = WorkerLifecycleAdmission()
     private val touchTimestampOrder = TouchTimestampOrder()
     private val audioGuard = Any()
     private val audioObservations = AudioObservations()
@@ -114,20 +115,21 @@ class EngineService : Service() {
             Native.attachDisplay(lease, surface)
         } finally { surface.release() } // Includes rejected stale parcels.
         override fun releaseDisplay(lease: Long) { Native.releaseDisplay(lease) }
+        override fun detachDisplay(lease: Long) { Native.detachDisplay(lease) }
         override fun cancelDisplayInput(lease: Long) { Native.cancelDisplayInput(lease) }
-        override fun backgroundDisplay(lease: Long) {
-            if (stopping.get()) return
+        override fun backgroundDisplay(lease: Long) { lifecycleAdmission.run {
+            if (stopping.get()) return@run
             val result = Native.backgroundDisplay(lease)
-            if (result == "Display ownership retired") return
-            if (result.isNotEmpty()) { error = result; return }
+            if (result == "Display ownership retired") return@run
+            if (result.isNotEmpty()) { error = result; return@run }
             userPaused = true
             synchronized(audioGuard) { audioObservations.pauses++ }
             abandonAudioFocus(); pauseAudio()
-        }
-        override fun pause(paused: Boolean) {
+        } }
+        override fun pause(paused: Boolean) { lifecycleAdmission.run {
             // A background callback can race the stop button. Shutdown already
             // cancels input; an inactive pause must not replace its diagnostic.
-            if (stopping.get()) return
+            if (stopping.get()) return@run
             userPaused = paused
             if (!paused) focusPaused = false
             Native.cancelInput()
@@ -136,7 +138,7 @@ class EngineService : Service() {
             synchronized(audioGuard) { if (paused) audioObservations.pauses++ else audioObservations.resumes++ }
             if (paused) { abandonAudioFocus(); pauseAudio() }
             else requestAudioFocus()
-        }
+        } }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
             shutdownWatchdog.request()
@@ -331,10 +333,11 @@ class EngineService : Service() {
         })
     }
     private fun audioAttributes() = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
-    private fun requestAudioFocus() {
-        if (focus != null) { synchronized(audioGuard) { audio?.play() }; return }
+    private fun requestAudioFocus() { lifecycleAdmission.run {
+        if (userPaused || stopping.get()) return@run
+        if (focus != null) { synchronized(audioGuard) { audio?.play() }; return@run }
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(audioAttributes())
-            .setOnAudioFocusChangeListener({ change ->
+            .setOnAudioFocusChangeListener({ change -> lifecycleAdmission.run {
                 if (change < 0) {
                     focusPaused = true
                     synchronized(audioGuard) { audioObservations.focusLosses++ }
@@ -345,15 +348,15 @@ class EngineService : Service() {
                     synchronized(audioGuard) { audioObservations.focusGains++ }
                     Native.pause(false); synchronized(audioGuard) { audio?.play() }
                 }
-            }, Handler(mainLooper)).build()
+            } }, Handler(mainLooper)).build()
         if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focus = request
         else {
             synchronized(audioGuard) { audioObservations.focusDenied++ }
             focusPaused = true; Native.cancelInput(); Native.pause(true)
             audioError = "Audio focus unavailable. Pause and resume after other audio stops."
         }
-    }
-    private fun abandonAudioFocus() { focus?.let { audioManager.abandonAudioFocusRequest(it) }; focus = null }
+    } }
+    private fun abandonAudioFocus() { lifecycleAdmission.run { focus?.let { audioManager.abandonAudioFocusRequest(it) }; focus = null } }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("guest", "Running guest", NotificationManager.IMPORTANCE_LOW))

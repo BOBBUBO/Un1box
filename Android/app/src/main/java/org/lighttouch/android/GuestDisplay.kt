@@ -8,7 +8,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 
 /** Pointer IDs survive crossing and index changes. Pixel mapping belongs to native domain. */
-class GuestDisplay(context: Context, private val onError: (String) -> Unit = {}, private val isActiveOwner: () -> Boolean = { true }, private val engine: () -> IEngine?) : SurfaceView(context), SurfaceHolder.Callback {
+class GuestDisplay(context: Context, private val onError: (String) -> Unit = {}, private val isActiveOwner: () -> Boolean = { true }, private val ownerTicket: () -> Long = { 1L }, private val engine: () -> IEngine?) : SurfaceView(context), SurfaceHolder.Callback {
     // A newly created view cannot continue contacts owned by the previous Surface.
     private var rejectedGesture = true
     private val lease = WorkerDisplayLease()
@@ -50,16 +50,21 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
     }
     /** Only an explicit current foreground/focused owner can acquire a lease. */
     internal fun attachActiveSurface() {
-        if (!isActiveOwner() || !hasWindowFocus() || !holder.surface.isValid) return
+        if (!isActiveOwner() || !hasWindowFocus()) return
         val worker = engine() ?: return
         try {
-            var token = lease.forWorker(worker.asBinder())
+            val ticket = ownerTicket()
+            var token = lease.forOwner(worker.asBinder(), ticket)
             if (token == 0L) {
+                // Only a genuine UI authority epoch/new worker may reset this
+                // binding. A callback with the same epoch never remints a lease.
+                releaseOwnedSurface()
                 dropLocalGesture()
                 token = worker.claimDisplay()
                 if (token <= 0) { onError("Guest display ownership was not admitted"); return }
-                leasedWorker = worker; lease.bind(worker.asBinder(), token)
+                leasedWorker = worker; lease.bind(worker.asBinder(), token, ticket)
             }
+            if (!holder.surface.isValid) return // Authority survives Surface loss.
             val error = worker.attachDisplay(token, holder.surface)
             if (error.isNotEmpty()) { dropLocalGesture(); onError(error) }
         } catch (failure: RemoteException) {
@@ -87,7 +92,11 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
         // A callback never claims for a retired Activity/View.
         attachActiveSurface()
     }
-    override fun surfaceDestroyed(holder: SurfaceHolder) { releaseOwnedSurface() }
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        dropLocalGesture()
+        ownedWorker()?.let { (worker, token) -> try { worker.detachDisplay(token) } catch (_: RemoteException) { } }
+        // Keep the captured authority so a following onStop can still pause.
+    }
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
         if (!hasWindowFocus) cancelGesture() else attachActiveSurface()

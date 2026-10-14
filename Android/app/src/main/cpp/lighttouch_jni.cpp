@@ -477,6 +477,19 @@ JNI(attachDisplay) jstring JNICALL Java_org_lighttouch_android_Native_attachDisp
     // incoming's rejected conversion reference is released outside guard.
     return string(env,committed?"":converted?retired_display:"Guest Surface conversion failed");
 }
+JNI(detachDisplay) void JNICALL Java_org_lighttouch_android_Native_detachDisplay(JNIEnv *,jobject,jlong lease) {
+    ANativeWindow *retired=nullptr;
+    {
+        std::lock_guard<std::mutex> lock(guard);
+        if(!display_lease.owns(uint64_t(lease)))return;
+        const auto cancelled=cancel_display_contacts();
+        if(!cancelled.empty())diagnostic="Display release failed: "+cancelled;
+        display_lease.detach(uint64_t(lease));++surface_request;
+        retired=window;window=nullptr;window_attached.store(0);
+        ++surface_generation;++presentation_epoch;previous_present_ns=0;
+    }
+    if(retired)ANativeWindow_release(retired);
+}
 JNI(releaseDisplay) void JNICALL Java_org_lighttouch_android_Native_releaseDisplay(JNIEnv *,jobject,jlong lease) {
     ANativeWindow *retired=nullptr;
     {

@@ -32,6 +32,10 @@ public:
     bool owns(uint64_t token) const { return token && token==owner_; }
     Request begin(uint64_t token) { return owns(token)?Request{token,++order_}:Request{}; }
     bool current(Request request) const { return owns(request.owner) && request.order==order_; }
+    bool detach(uint64_t token) {
+        if(!owns(token))return false;
+        ++order_;contacts_.clear();return true; // Activity authority survives.
+    }
     bool release(uint64_t token) {
         if(!owns(token))return false;
         owner_=0;++order_;contacts_.clear();return true;

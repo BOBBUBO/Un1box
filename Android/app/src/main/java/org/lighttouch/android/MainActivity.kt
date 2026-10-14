@@ -96,7 +96,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val trustedTools = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) importTrustedTools(uri) }
     private var active = false
     private var displayOwnerTicket = 0L
+    private var displayResumed = false
     private fun ownsDisplay() = active && DisplayOwners.active.owns(this, displayOwnerTicket)
+    private fun mayClaimDisplay() = active && displayResumed && DisplayOwners.active.canClaim(this, displayOwnerTicket)
     private var bound = false
     private var displayView: GuestDisplay? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -252,7 +254,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         AndroidView(factory = { run {
                             lateinit var view: GuestDisplay
                             view = GuestDisplay(it, onError = { message -> error = message },
-                                isActiveOwner = { ownsDisplay() && displayView === view }) { engine }
+                                isActiveOwner = { mayClaimDisplay() && displayView === view }, ownerTicket = { displayOwnerTicket }) { engine }
                             displayView = view; view
                         } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -600,7 +602,27 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         engine?.motion(kind, event.timestamp, event.values.copyOf(3), display?.rotation?.times(90) ?: 0)
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-    override fun onStart() { super.onStart(); active = true; displayOwnerTicket = DisplayOwners.active.activate(this); displayView?.attachActiveSurface(); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
+    override fun onStart() { super.onStart(); active = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
+    override fun onResume() {
+        super.onResume(); displayResumed = true
+        displayOwnerTicket = DisplayOwners.active.resumed(this, hasWindowFocus())
+        displayView?.attachActiveSurface()
+    }
+    override fun onPostResume() {
+        super.onPostResume()
+        displayOwnerTicket = DisplayOwners.active.focusChanged(this, hasWindowFocus())
+        displayView?.attachActiveSurface()
+    }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Consult actual Activity focus too: an old callback alone is not authority.
+        displayOwnerTicket = DisplayOwners.active.focusChanged(this, hasFocus && hasWindowFocus())
+        displayView?.attachActiveSurface()
+    }
+    override fun onPause() {
+        displayResumed = false; DisplayOwners.active.paused(this)
+        displayView?.cancelOwnedGesture(); super.onPause()
+    }
     override fun onStop() {
         val wasOwner = ownsDisplay()
         active = false; displayView?.keepScreenOn = false; stopSensors()
@@ -609,8 +631,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (wasOwner && ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting")))
             displayView?.backgroundOwnedDisplay()
         else displayView?.retireDisplay()
-        DisplayOwners.active.retire(this, displayOwnerTicket)
+        DisplayOwners.active.stopped(this, displayOwnerTicket)
         handler.removeCallbacks(poll); super.onStop()
     }
-    override fun onDestroy() { displayView?.retireDisplay(); DisplayOwners.active.retire(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    override fun onDestroy() { displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }
