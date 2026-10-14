@@ -442,6 +442,34 @@ lt_status lt_runtime_frame_fd(lt_runtime *r, int *fd, uint64_t *bytes, lt_error 
         *bytes = r->mapping_bytes;
     });
 }
+lt_status lt_runtime_write_screenshot(lt_runtime *r, const char *path, lt_frame_info *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && path, "screenshot runtime/path missing");
+        lt::abi(out);
+        QemuIosPortableFrame f{sizeof(f), 1, 0, 0, 0, 0, 0, 0, 0};
+        int result = r->engine->frame(nullptr, 0, 0, &f);
+        if (result == QEMU_IOS_NO_FRAME)
+            throw lt::Failure(LT_AGAIN, "guest has not published a screenshot frame");
+        lt::require(result == QEMU_IOS_BUFFER_SMALL, "frame metadata unavailable", LT_AGAIN);
+        lt::require(f.required_bytes && f.required_bytes <= LT_FRAME_CAPACITY, "screenshot exceeds shared frame bound");
+        std::vector<uint8_t> pixels(size_t(f.required_bytes));
+        for (unsigned attempt = 0; attempt < 3; attempt++) {
+            result = r->engine->frame(pixels.data(), pixels.size(), 0, &f);
+            if (result == QEMU_IOS_BUFFER_SMALL) {
+                lt::require(f.required_bytes <= LT_FRAME_CAPACITY, "screenshot grew beyond bound");
+                pixels.resize(size_t(f.required_bytes));
+                continue;
+            }
+            lt::result(result);
+            *out = {sizeof(*out), 1, f.width, f.height, f.stride, f.format, f.serial, f.timestamp_ns, f.required_bytes};
+            lt_error nested{sizeof(nested), 1, 0, {}};
+            auto status = lt_frame_write_bmp(out, pixels.data(), pixels.size(), path, &nested);
+            lt::require(status == LT_OK, nested.message, status);
+            return;
+        }
+        throw lt::Failure(LT_AGAIN, "screenshot dimensions changed repeatedly; retry capture");
+    });
+}
 lt_status lt_runtime_touch(lt_runtime *r, const lt_touch_batch *b, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && r->started && !r->done && !r->stopping, "input runtime inactive", LT_AGAIN);

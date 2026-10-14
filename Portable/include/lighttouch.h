@@ -164,6 +164,13 @@ typedef struct {
     uint64_t capacity;
 } lt_shared_frame;
 lt_status lt_runtime_frame_fd(lt_runtime *, int *fd, uint64_t *mapping_bytes, lt_error *);
+/* Screenshot only (no emulator snapshot): atomically write actual copied BGRA
+ * pixels as a top-down BMP. Pure encoder works for either frontend; runtime
+ * convenience copies under engine frame mutex and fails if no frame exists. */
+lt_status lt_frame_write_bmp(const lt_frame_info *, const void *pixels, uint64_t capacity, const char *private_path,
+                             lt_error *);
+lt_status lt_runtime_write_screenshot(lt_runtime *, const char *private_path, lt_frame_info *, lt_error *);
+
 /* Stable IDs, whole batch admission, normalized screen coords y down. One
  * CLOCK_MONOTONIC timestamp per batch. Phases 0 down,1 move,2 up,3 cancel. */
 typedef struct {

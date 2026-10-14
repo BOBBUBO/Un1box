@@ -227,6 +227,14 @@ int main() {
     std::string packedbase = (root / "n81packbase").string();
     n81import.destination = packedbase.c_str();
     assert(lt_import_directory(&n81import, &e) == LT_OK);
+    const uint8_t colors[8] = {0, 0, 255, 255, 255, 0, 0, 255};
+    lt_frame_info picture{sizeof(picture), 1, 2, 1, 8, 1, 1, 100, 8};
+    std::string shot = (root / "contract.bmp").string();
+    assert(lt_frame_write_bmp(&picture, colors, sizeof(colors), shot.c_str(), &e) == LT_OK);
+    std::ifstream bitmap(shot, std::ios::binary);
+    std::string image((std::istreambuf_iterator<char>(bitmap)), {});
+    assert(image.size() == 62 && image.substr(0, 2) == "BM" && uint8_t(image[56]) == 255 && uint8_t(image[58]) == 255);
+    assert(lt_frame_write_bmp(&picture, colors, 7, shot.c_str(), &e) == LT_INVALID);
     // Native durable record selection keeps both boards and distinct state.
     std::string libroot = (root / "library").string();
     lt_library_config lc{sizeof(lc), 1, libroot.c_str()};
