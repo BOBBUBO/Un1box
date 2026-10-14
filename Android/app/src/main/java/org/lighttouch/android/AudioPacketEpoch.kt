@@ -7,6 +7,12 @@ internal class AudioPacketEpoch {
     @Synchronized fun capture(): Long = if (open) generation else 0L
     @Synchronized fun isCurrent(ticket: Long) = open && ticket > 0L && ticket == generation
     @Synchronized fun pause() { advance(); open = false }
+    /** Owner rejection changes nothing; successful admission cannot race a sink write. */
+    @Synchronized fun closeAfterAdmission(admit: () -> String, closed: () -> Unit): String {
+        val result = admit()
+        if (result.isEmpty()) { pause(); closed() }
+        return result
+    }
     @Synchronized fun resume() {
         if (!open) { advance(); open = generation > 0L }
     }
