@@ -169,7 +169,8 @@ class EngineService : Service() {
         } catch (_: Exception) { /* State markers and per-worker native logs remain authoritative. */ }
     }
     private fun persistStopError(message: String) {
-        try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Native dirty marker remains authoritative. */ }
+        try { File(filesDir, "worker-stop-error-${Process.myPid()}.txt").writeText(message) } catch (_: java.io.IOException) { /* State markers remain authoritative. */ }
+        try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Legacy private diagnostic only, not another worker's live status. */ }
     }
     private fun disposeAfterShutdown(receipt: ShutdownReceipt) {
         alive.set(false)
@@ -196,7 +197,9 @@ class EngineService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
     override fun onCreate() {
         super.onCreate()
-        error = try { File(filesDir, "worker-stop-error.txt").takeIf { it.exists() }?.readText() ?: "" } catch (_: java.io.IOException) { "" }
+        // A fresh worker must not inherit a prior PID's error as current status.
+        // The UI reads the exited PID's receipt/error; state markers and legacy
+        // diagnostics remain available for cold recovery review.
         Thread({
             val samples = ShortArray(8192)
             var format = ""

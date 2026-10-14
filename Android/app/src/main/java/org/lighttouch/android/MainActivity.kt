@@ -408,17 +408,18 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         else if (engineExpectedExit) error = "Guest worker disposed; writable state retained. Shutdown confirmation receipt is unavailable."
         Thread({
             WorkerExitEvidence.capture(applicationContext, exitedPid)
-            val retained = try { File(filesDir, "worker-stop-error.txt").takeIf { it.exists() }?.readText() } catch (_: java.io.IOException) { null }
-            retained?.takeIf { it.isNotEmpty() }?.let { handler.post { error = it } }
-            if (retained.isNullOrEmpty() && !unexpected) {
-                val terminal = try {
-                    val file = File(filesDir, "worker-shutdown-$exitedPid.json")
-                    file.takeIf { it.exists() }?.readText()?.let { JSONObject(it) }
-                } catch (_: Exception) { null }
-                if (terminal != null && terminal.optString("reason") == "native-terminal" && terminal.optString("nativeTerminalState") == "stopped" && terminal.optString("error").isEmpty()) {
-                    handler.post { error = "" } // Native terminal report only; not an inferred clean marker.
+            val terminal = try {
+                val file = File(filesDir, "worker-shutdown-$exitedPid.json")
+                file.takeIf { it.exists() }?.readText()?.let { JSONObject(it) }?.takeIf { it.optInt("workerPid") == exitedPid }
+            } catch (_: Exception) { null }
+            val retained = try { File(filesDir, "worker-stop-error-$exitedPid.txt").takeIf { it.exists() }?.readText() } catch (_: java.io.IOException) { null }
+            if (terminal != null) {
+                val reported = terminal.optString("error")
+                if (reported.isNotEmpty()) handler.post { error = reported }
+                else if (!unexpected && terminal.optString("reason") == "native-terminal" && terminal.optString("nativeTerminalState") == "stopped") {
+                    handler.post { error = "" } // Own native terminal report wins over any earlier error.
                 }
-            }
+            } else retained?.takeIf { it.isNotEmpty() }?.let { handler.post { error = it } }
         }, "worker-retained-error").start()
     }
     private fun startGuest() {
