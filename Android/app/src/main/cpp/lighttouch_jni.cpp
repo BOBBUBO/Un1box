@@ -11,9 +11,13 @@
 #include <vector>
 #include <time.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace {
 std::mutex guard;
+std::mutex library_guard;
+lt_library *library=nullptr;
+std::string library_root;
 lt_runtime *runtime = nullptr;
 lt_device *device = nullptr;
 ANativeWindow *window = nullptr;
@@ -23,6 +27,7 @@ lt_pcm_info pcm = LT_INIT(lt_pcm_info);
 lt_board_info board = LT_INIT(lt_board_info);
 uint64_t sequence = 0;
 bool presenter_started = false;
+uint64_t last_rejected_input = 0;
 std::string diagnostic;
 struct Utf {
     JNIEnv *env; jstring source; const char *value;
@@ -31,7 +36,7 @@ struct Utf {
 };
 jstring string(JNIEnv *e, const std::string &s) { return e->NewStringUTF(s.c_str()); }
 std::string result(lt_status status, const lt_error &error) {
-    return status == LT_OK || status == LT_AGAIN ? "" : (error.message[0] ? error.message : "Native operation failed");
+    return status == LT_OK ? "" : (error.message[0] ? error.message : "Native operation failed");
 }
 struct Viewport { double left, top, width, height; };
 Viewport viewport(int width, int height) {
@@ -39,10 +44,41 @@ Viewport viewport(int width, int height) {
     double w = frame.width * scale, h = frame.height * scale;
     return {(width-w)/2, (height-h)/2, w, h};
 }
+lt_status open_library(const char *root,lt_error *error) {
+    if(!root)return LT_INVALID;
+    if(library && library_root==root)return LT_OK;
+    if(library)lt_library_close(library);
+    library=nullptr;library_root=root;
+    lt_library_config config=LT_INIT(lt_library_config);config.root_path=root;
+    auto status=lt_library_open(&config,&library,error);
+    if(status!=LT_OK)return status;
+    uint32_t count=0;status=lt_library_count(library,&count,error);
+    if(status!=LT_OK)return status;
+    std::string parent=library_root.substr(0,library_root.find_last_of('/'));
+    std::string oldbase=parent+"/base",oldstate=parent+"/state",oldrom=parent+"/bootrom.bin",oldguest=parent+"/guest.itpack";
+    if(count==0 && access(oldbase.c_str(),F_OK)==0) {
+        lt_library_import_config migration=LT_INIT(lt_library_import_config);
+        migration.source_path=oldbase.c_str();migration.display_name="Existing device";
+        migration.bootrom_path=access(oldrom.c_str(),R_OK)==0?oldrom.c_str():nullptr;
+        migration.guest_package_path=access(oldguest.c_str(),R_OK)==0?oldguest.c_str():nullptr;
+        migration.max_bytes=64ull*1024*1024*1024;
+        lt_record_info record=LT_INIT(lt_record_info);
+        status=access(oldstate.c_str(),F_OK)==0?lt_library_adopt_legacy(library,&migration,oldstate.c_str(),&record,error):lt_library_import(library,&migration,&record,error);
+    }
+    return status;
+}
 void present() {
     for (;;) {
         {
             std::lock_guard<std::mutex> lock(guard);
+            if (runtime) {
+                lt_input_status delivered=LT_INIT(lt_input_status);lt_error error=LT_INIT(lt_error);
+                if(lt_runtime_input_status(runtime,&delivered,&error)==LT_OK && delivered.state==3 && delivered.request_id!=last_rejected_input) {
+                    last_rejected_input=delivered.request_id;
+                    diagnostic="Guest rejected contact batch "+std::to_string(delivered.request_id)+" (engine result "+std::to_string(delivered.engine_result)+"); contact release requested";
+                    if(lt_runtime_cancel_input(runtime,&error)!=LT_OK)diagnostic += "; input release failed: "+std::string(error.message);
+                }
+            }
             if (runtime && window) {
                 lt_error error = LT_INIT(lt_error);
                 lt_status status = lt_runtime_copy_frame(runtime, pixels.data(), pixels.size(), &sequence, &frame, &error);
@@ -71,45 +107,72 @@ void present() {
 }
 }
 #define JNI(name) extern "C" JNIEXPORT
-JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JNIEnv *env, jobject, jstring source, jstring destination) {
-    Utf src(env, source), dst(env, destination);
-    lt_import_config config = LT_INIT(lt_import_config);
-    config.source=src.value; config.destination=dst.value; config.max_bytes=64ull*1024*1024*1024;
-    lt_error error=LT_INIT(lt_error);
-    struct stat info;
-    if(stat(src.value,&info)!=0)return string(env,"Cannot inspect imported base");
+JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JNIEnv *env,jobject,jstring source,jstring root,jstring name,jstring rom,jstring guest) {
+    std::lock_guard<std::mutex> lock(library_guard);
+    Utf src(env,source),path(env,root),label(env,name),bootrom(env,rom),package(env,guest);
+    lt_error error=LT_INIT(lt_error);auto status=open_library(path.value,&error);
+    if(status!=LT_OK)return string(env,result(status,error));
+    lt_library_import_config config=LT_INIT(lt_library_import_config);
+    config.source_path=src.value;config.display_name=label.value;
+    config.bootrom_path=bootrom.value && access(bootrom.value,R_OK)==0?bootrom.value:nullptr;
+    config.guest_package_path=package.value && access(package.value,R_OK)==0?package.value:nullptr;
+    config.max_bytes=64ull*1024*1024*1024;
+    struct stat info;if(!src.value||stat(src.value,&info)!=0)return string(env,"Cannot inspect imported base");
+    char checksum[65];
     if(S_ISREG(info.st_mode)) {
-        char checksum[65];auto status=lt_sha256_file(src.value,checksum,&error);
-        if(status!=LT_OK)return string(env,result(status,error));
+        status=lt_sha256_file(src.value,checksum,&error);if(status!=LT_OK)return string(env,result(status,error));
         config.expected_sha256=checksum;
-        return string(env,result(lt_import_archive(&config,&error),error));
     }
-    return string(env,result(lt_import_directory(&config,&error),error));
+    lt_record_info record=LT_INIT(lt_record_info);
+    status=lt_library_import(library,&config,&record,&error);
+    return string(env,result(status,error));
 }
-JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env, jobject, jstring base) {
-    std::lock_guard<std::mutex> lock(guard);
-    if (runtime) return string(env,"Worker already consumed; stop and start a fresh worker");
-    Utf path(env,base);
-    if (!path.value) return string(env,"Missing base path");
-    std::string root=path.value; root=root.substr(0,root.find_last_of('/'));
-    std::string state=root+"/state", rom=root+"/bootrom.bin", guest=root+"/guest.itpack", serial=root+"/guest-serial.log";
-    lt_device_config config=LT_INIT(lt_device_config);
-    config.base_path=path.value;config.state_path=state.c_str(); config.allow_dirty=1;
-    lt_error error=LT_INIT(lt_error);
-    auto status=lt_device_open(&config,&device,&error);
-    if (status!=LT_OK) { diagnostic=result(status,error);return string(env,diagnostic); }
-    lt_device_info info=LT_INIT(lt_device_info);
-    lt_device_describe(device,&info,&error);
-    lt_engine_board("libqemu-arm.so",info.board,&board,&error);
+JNI(records) jobjectArray JNICALL Java_org_lighttouch_android_Native_records(JNIEnv *env,jobject,jstring root) {
+    std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root);lt_error error=LT_INIT(lt_error);
+    auto status=open_library(path.value,&error);uint32_t count=0;
+    if(status==LT_OK)status=lt_library_count(library,&count,&error);
+    jclass strings=env->FindClass("[Ljava/lang/String;");jclass str=env->FindClass("java/lang/String");
+    if(status!=LT_OK) {
+        auto rows=env->NewObjectArray(1,strings,nullptr);auto row=env->NewObjectArray(2,str,nullptr);
+        env->SetObjectArrayElement(row,0,string(env,""));env->SetObjectArrayElement(row,1,string(env,result(status,error)));
+        env->SetObjectArrayElement(rows,0,row);return rows;
+    }
+    auto rows=env->NewObjectArray(count,strings,nullptr);
+    for(uint32_t i=0;i<count;++i) {
+        lt_record_info record=LT_INIT(lt_record_info);status=lt_library_record_at(library,i,&record,&error);
+        auto row=env->NewObjectArray(9,str,nullptr);
+        lt_board_info facts=LT_INIT(lt_board_info);
+        if(status==LT_OK)status=lt_engine_board("libqemu-arm.so",record.board,&facts,&error);
+        std::vector<std::string> values=status==LT_OK?std::vector<std::string>{record.id,record.display_name,record.board,record.build,std::to_string(record.selected),std::to_string(record.dirty),std::to_string(facts.max_contacts),(facts.capabilities&2)?"1":"0",(facts.capabilities&1)?"1":"0"}:std::vector<std::string>{"",result(status,error)};
+        for(size_t index=0;index<values.size();++index)env->SetObjectArrayElement(row,index,string(env,values[index]));
+        env->SetObjectArrayElement(rows,i,row);env->DeleteLocalRef(row);
+    }
+    return rows;
+}
+JNI(select) jstring JNICALL Java_org_lighttouch_android_Native_select(JNIEnv *env,jobject,jstring root,jstring id) {
+    std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
+    auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_select(library,record.value,&error);
+    return string(env,result(status,error));
+}
+JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,jobject,jstring root,jstring id) {
+    std::lock_guard<std::mutex> lock(guard);std::lock_guard<std::mutex> storage_lock(library_guard);
+    if(runtime)return string(env,"Worker already consumed; stop and start a fresh worker");
+    Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
+    auto status=open_library(path.value,&error);
+    if(status==LT_OK)status=lt_library_select(library,record.value,&error);
+    lt_record_info selected=LT_INIT(lt_record_info);
+    if(status==LT_OK)status=lt_library_selected(library,&selected,&error);
+    if(status==LT_OK)status=lt_library_device_open(library,record.value,1,&device,&error);
+    if(status==LT_OK)status=lt_engine_board("libqemu-arm.so",selected.board,&board,&error);
+    if(status!=LT_OK){diagnostic=result(status,error);return string(env,diagnostic);}
+    std::string serial=std::string(selected.state_path)+"/guest-serial.log";
     lt_runtime_config engine=LT_INIT(lt_runtime_config);
-    engine.engine_library="libqemu-arm.so";engine.device=device;
-    engine.boot=lt_boot_config LT_INIT(lt_boot_config);
-    engine.boot.machine=nullptr;engine.boot.bootrom_path=rom.c_str();engine.boot.guest_package_path=guest.c_str();
-    engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
-    status=lt_runtime_create(&engine,&runtime,&error);
-    if (status==LT_OK) status=lt_runtime_start(runtime,&error);
-    if (status!=LT_OK) { diagnostic=result(status,error); return string(env,diagnostic); }
-    if (!presenter_started) { presenter_started=true;std::thread(present).detach(); }
+    engine.engine_library="libqemu-arm.so";engine.device=device;engine.boot=lt_boot_config LT_INIT(lt_boot_config);
+    engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;
+    engine.boot.guest_package_path=selected.guest_package_path;engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
+    status=lt_runtime_create(&engine,&runtime,&error);if(status==LT_OK)status=lt_runtime_start(runtime,&error);
+    if(status!=LT_OK){diagnostic=result(status,error);return string(env,diagnostic);}
+    if(!presenter_started){presenter_started=true;std::thread(present).detach();}
     return string(env,"");
 }
 JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEnv *env,jobject) {
@@ -117,11 +180,12 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     const char *states[]={"stopped","starting","running","paused","stopping","failed"};
     lt_runtime_status s=LT_INIT(lt_runtime_status);lt_error error=LT_INIT(lt_error);
     std::string detail=diagnostic;
-    if(runtime) { auto status=lt_runtime_poll(runtime,&s,&error);if(status!=LT_OK) detail=result(status,error);
-        else detail="Guest gyro "+std::string((board.capabilities & 2)?"supported":"unavailable")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed"); }
-    auto arr=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
+    if(runtime) { auto status=lt_runtime_poll(runtime,&s,&error);if(status!=LT_OK) { diagnostic=result(status,error);detail=diagnostic; }
+        else detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed"); }
+    auto arr=env->NewObjectArray(3,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u)]));
-    env->SetObjectArrayElement(arr,1,string(env,detail));return arr;
+    env->SetObjectArrayElement(arr,1,string(env,detail));
+    env->SetObjectArrayElement(arr,2,string(env,diagnostic));return arr;
 }
 JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env,jobject,jobject surface) {
     std::lock_guard<std::mutex> lock(guard);
@@ -147,7 +211,7 @@ JNI(cancelInput) void JNICALL Java_org_lighttouch_android_Native_cancelInput(JNI
 JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,jobject,jlong time,jintArray ids,jintArray phases,jfloatArray xy,jint width,jint height,jint rotation) {
     std::lock_guard<std::mutex> lock(guard);
     const jsize count=env->GetArrayLength(ids);
-    if(count<1 || count>LT_MAX_CONTACTS || env->GetArrayLength(phases)!=count || env->GetArrayLength(xy)!=count*2) return string(env,"Invalid contact batch");
+    if(count<1 || count>jsize(LT_MAX_CONTACTS) || env->GetArrayLength(phases)!=count || env->GetArrayLength(xy)!=count*2) return string(env,"Invalid contact batch");
     if(!runtime || !frame.width || !frame.height) return string(env,"");
     jint id[LT_MAX_CONTACTS], phase[LT_MAX_CONTACTS];jfloat coords[LT_MAX_CONTACTS*2];
     env->GetIntArrayRegion(ids,0,count,id);env->GetIntArrayRegion(phases,0,count,phase);env->GetFloatArrayRegion(xy,0,count*2,coords);
@@ -161,7 +225,15 @@ JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,
     // Guest portrait is kept upright within Android's rotated view. Mapping receives
     // view-local pixels; applying display rotation again would rotate contacts twice.
     (void)rotation;
-    return string(env,result(lt_runtime_touch(runtime,&batch,&error),error));
+    auto status=lt_runtime_touch(runtime,&batch,&error);
+    std::string failure=result(status,error);
+    if(status!=LT_OK) {
+        lt_error cancelled=LT_INIT(lt_error);
+        const auto cancellation=lt_runtime_cancel_input(runtime,&cancelled);
+        if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
+    }
+    if(!failure.empty())diagnostic=failure;
+    return string(env,failure);
 }
 JNI(motion) jstring JNICALL Java_org_lighttouch_android_Native_motion(JNIEnv *env,jobject,jint kind,jlong time,jfloatArray xyz,jint rotation) {
     std::lock_guard<std::mutex> lock(guard);if(!runtime)return string(env,"");
@@ -176,7 +248,9 @@ JNI(motion) jstring JNICALL Java_org_lighttouch_android_Native_motion(JNIEnv *en
     auto status=lt_map_motion(rotation,time,uint64_t(now.tv_sec)*1000000000+now.tv_nsec,&sample,&portrait,&error);
     if(status==LT_OK)status=lt_runtime_motion(runtime,&portrait,&error);
     // An unavailable guest gyro is a capability, never fabricated as acceleration.
-    return string(env,status==LT_UNSUPPORTED?"":result(status,error));
+    // Dropping a stale/rate-limited live motion sample is safe; held contacts and
+    // lifecycle admissions never use this policy.
+    return string(env,status==LT_UNSUPPORTED || status==LT_AGAIN?"":result(status,error));
 }
 JNI(capture) jobject JNICALL Java_org_lighttouch_android_Native_capture(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);if(!frame.width||!frame.height)return nullptr;
@@ -203,4 +277,22 @@ JNI(audio) jint JNICALL Java_org_lighttouch_android_Native_audio(JNIEnv *env,job
 JNI(audioInfo) jintArray JNICALL Java_org_lighttouch_android_Native_audioInfo(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);jint data[2]={jint(pcm.sample_rate),jint(pcm.channels)};
     jintArray arr=env->NewIntArray(2);env->SetIntArrayRegion(arr,0,2,data);return arr;
+}
+
+JNI(guestRequest) jobjectArray JNICALL Java_org_lighttouch_android_Native_guestRequest(JNIEnv *env,jobject,jint operation,jstring argument,jint timeout) {
+    std::lock_guard<std::mutex> lock(guard);Utf text(env,argument);lt_error error=LT_INIT(lt_error);uint64_t id=0;
+    lt_guest_request request=LT_INIT(lt_guest_request);request.operation=operation;request.timeout_ms=timeout;request.argument=text.value;
+    auto status=runtime?lt_runtime_guest_request(runtime,&request,&id,&error):LT_AGAIN;
+    auto output=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(output,0,string(env,std::to_string(id)));env->SetObjectArrayElement(output,1,string(env,result(status,error)));return output;
+}
+JNI(guestPoll) jobjectArray JNICALL Java_org_lighttouch_android_Native_guestPoll(JNIEnv *env,jobject,jlong id) {
+    std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);lt_guest_result completed=LT_INIT(lt_guest_result);
+    auto status=runtime?lt_runtime_guest_poll(runtime,id,&completed,&error):LT_AGAIN;
+    auto output=env->NewObjectArray(4,env->FindClass("java/lang/String"),nullptr);
+    std::string values[]={std::to_string(completed.state),std::to_string(completed.guest_status),status==LT_OK?std::string(completed.output,completed.bytes):"",result(status,error)};
+    for(int i=0;i<4;++i)env->SetObjectArrayElement(output,i,string(env,values[i]));return output;
+}
+JNI(guestCancel) void JNICALL Java_org_lighttouch_android_Native_guestCancel(JNIEnv *,jobject,jlong id) {
+    std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);if(runtime)lt_runtime_guest_cancel(runtime,id,&error);
 }

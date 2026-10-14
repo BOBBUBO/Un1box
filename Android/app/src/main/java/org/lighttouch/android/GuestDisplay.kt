@@ -7,6 +7,7 @@ import android.view.SurfaceView
 
 /** Pointer IDs survive crossing and index changes. Pixel mapping belongs to native domain. */
 class GuestDisplay(context: Context, private val engine: () -> IEngine?) : SurfaceView(context), SurfaceHolder.Callback {
+    private var rejectedGesture = false
     init {
         contentDescription = "Guest display"
         holder.addCallback(this)
@@ -20,7 +21,9 @@ class GuestDisplay(context: Context, private val engine: () -> IEngine?) : Surfa
         if (!hasWindowFocus) engine()?.cancelInput()
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_CANCEL) { engine()?.cancelInput(); return true }
+        if (event.actionMasked == MotionEvent.ACTION_CANCEL) { rejectedGesture = false; engine()?.cancelInput(); return true }
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) rejectedGesture = false
+        if (rejectedGesture) return true
         if (event.pointerCount > 8) { engine()?.cancelInput(); return true }
         if (event.actionMasked !in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_MOVE,
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP)) return true
@@ -36,7 +39,8 @@ class GuestDisplay(context: Context, private val engine: () -> IEngine?) : Surfa
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> phases[event.actionIndex] = 0
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> phases[event.actionIndex] = 2
         }
-        engine()?.touch(event.eventTime * 1_000_000, ids, phases, xy, width, height, display.rotation * 90)
+        val admission = engine()?.touch(event.eventTime * 1_000_000, ids, phases, xy, width, height, display.rotation * 90)
+        if (!admission.isNullOrEmpty()) rejectedGesture = true
         if (event.actionMasked == MotionEvent.ACTION_UP) performClick()
         return true
     }

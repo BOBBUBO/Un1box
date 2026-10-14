@@ -20,14 +20,26 @@ class EngineService : Service() {
     @Volatile private var focus: AudioFocusRequest? = null
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val binder = object : IEngine.Stub() {
-        override fun importBase(source: String, destination: String): String = Native.importBase(source, destination)
-        override fun start(deviceDirectory: String): Bundle {
+        override fun importBase(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath,
+            displayName, File(filesDir, "bootrom.bin").absolutePath, File(filesDir, "guest.itpack").absolutePath)
+        override fun importPrepared(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath, displayName, "", "")
+        override fun records(): Array<Bundle> = Native.records(File(filesDir, "library").absolutePath).mapNotNull { row ->
+            if (row[0].isEmpty()) { error = row.getOrElse(1) { "Device library unavailable" }; null }
+            else Bundle().apply {
+                putString("id", row[0]); putString("name", row[1]); putString("board", row[2]); putString("build", row[3])
+                putBoolean("selected", row[4] == "1"); putBoolean("dirty", row[5] == "1")
+                putString("contacts", row[6]); putBoolean("gyro", row[7] == "1"); putBoolean("acceleration", row[8] == "1")
+            }
+        }.toTypedArray()
+        override fun select(recordId: String): String = Native.select(File(filesDir, "library").absolutePath, recordId)
+        override fun start(recordId: String): Bundle {
             if (!started.compareAndSet(false, true)) return status()
             foreground()
-            error = Native.start(deviceDirectory)
-            if (error.isEmpty()) requestAudioFocus()
+            error = Native.start(File(filesDir, "library").absolutePath, recordId)
+            if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); requestAudioFocus() }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
+                persistStopError(error)
                 alive.set(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -37,6 +49,7 @@ class EngineService : Service() {
         }
         override fun status(): Bundle {
             val s = Native.status()
+            s.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { error = it }
             return Bundle().apply {
                 putString("state", s.getOrElse(0) { "stopped" })
                 putString("detail", s.getOrElse(1) { "" })
@@ -61,11 +74,19 @@ class EngineService : Service() {
             error = Native.stop()
             Thread({
                 val deadline = SystemClock.elapsedRealtime() + 15_000
+                var terminal = false
                 while (SystemClock.elapsedRealtime() < deadline) {
-                    val state = Native.status().firstOrNull()
-                    if (state == "stopped" || state == "failed") break
+                    val observed = Native.status()
+                    val state = observed.firstOrNull()
+                    if (state == "stopped" || state == "failed") {
+                        terminal = true
+                        if (state == "failed") error = "Guest worker failed; writable state retained: ${observed.getOrElse(1) { "" }}"
+                        break
+                    }
                     Thread.sleep(100)
                 }
+                if (!terminal) error = "Guest shutdown timed out after 15 seconds; worker terminated and dirty state preserved. " + error
+                if (error.isNotEmpty()) persistStopError(error)
                 // Native domain owns dirty/clean state. A timeout never marks clean.
                 alive.set(false)
                 abandonAudioFocus()
@@ -75,14 +96,25 @@ class EngineService : Service() {
             }, "guest-stop").start()
         }
         override fun button(button: Int, down: Boolean) { Native.button(button, down).also { if (it.isNotEmpty()) error = it } }
-        override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int) {
-            Native.touch(timestampNanos, ids, phases, coordinates, width, height, rotation).also { if (it.isNotEmpty()) error = it }
+        override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String {
+            val result = Native.touch(timestampNanos, ids, phases, coordinates, width, height, rotation)
+            if (result.isNotEmpty()) error = result
+            return result
         }
         override fun cancelInput() { Native.cancelInput() }
         override fun motion(kind: Int, timestampNanos: Long, xyz: FloatArray, rotation: Int) {
             val result = Native.motion(kind, timestampNanos, xyz, rotation)
             if (result.isNotEmpty()) error = result
         }
+        override fun guestRequest(operation: Int, argument: String, timeoutMs: Int): Bundle {
+            val result = Native.guestRequest(operation, argument, timeoutMs)
+            return Bundle().apply { putLong("requestId", result[0].toLong()); putString("error", result[1]) }
+        }
+        override fun guestPoll(requestId: Long): Bundle {
+            val result = Native.guestPoll(requestId)
+            return Bundle().apply { putInt("state", result[0].toInt()); putInt("guestStatus", result[1].toInt()); putString("output", result[2]); putString("error", result[3]) }
+        }
+        override fun guestCancel(requestId: Long) { Native.guestCancel(requestId) }
         override fun screenshot(path: String): String = try {
             val target = File(path).canonicalFile
             require(target.path.startsWith(File(filesDir, "screenshots").canonicalPath + "/"))
@@ -93,10 +125,14 @@ class EngineService : Service() {
             ""
         } catch (e: Exception) { e.message ?: "Screenshot failed" }
     }
+    private fun persistStopError(message: String) {
+        try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Native dirty marker remains authoritative. */ }
+    }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { foreground(); return START_NOT_STICKY }
     override fun onBind(intent: Intent): IBinder = binder
     override fun onCreate() {
         super.onCreate()
+        error = try { File(filesDir, "worker-stop-error.txt").takeIf { it.exists() }?.readText() ?: "" } catch (_: java.io.IOException) { "" }
         Thread({
             val samples = ShortArray(8192)
             var format = ""
