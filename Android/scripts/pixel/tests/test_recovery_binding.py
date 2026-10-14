@@ -75,6 +75,7 @@ class Recovery(unittest.TestCase):
             raw=json.dumps(context).encode();bound=self.bound();bound['originToken']=hashlib.sha256(raw).hexdigest()
             (attempt.output/'clock-context.json').write_bytes(raw)
             (attempt.output/'recovery-record-bound.json').write_text(json.dumps(bound))
+            attempt.avd=mock.Mock()  # Synthetic owned launcher exists; no process started.
             with mock.patch.object(pixel_supervisor,'bounded_capture',return_value={'captureStarted':True}) as capture:
                 attempt.pixel_readback();capture.assert_called_once()
                 self.assertEqual(capture.call_args.args[1]['attemptToken'],bound['attemptToken'])
