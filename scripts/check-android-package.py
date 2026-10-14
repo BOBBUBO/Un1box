@@ -59,7 +59,9 @@ def command(args):
     return result.stdout + result.stderr
 
 
-def inspect_apk(apk, sdk, build_tools, readelf):
+def inspect_apk(apk, sdk, build_tools, readelf, expected_abis=None):
+    expected_abis = set(MACHINES) if expected_abis is None else set(expected_abis)
+    require(expected_abis and expected_abis <= set(MACHINES), "unsupported expected ABI set")
     results = []
     with zipfile.ZipFile(apk) as archive, tempfile.TemporaryDirectory(prefix="lighttouch-elf-") as temporary:
         members = archive.infolist()
@@ -72,8 +74,10 @@ def inspect_apk(apk, sdk, build_tools, readelf):
             _, abi, name = member.filename.split("/")
             require(abi in MACHINES, f"unexpected ABI: {abi}")
             packaged[abi].add(name)
-        require(all(packaged.values()), "both arm64-v8a and x86_64 are required")
-        require(packaged["arm64-v8a"] == packaged["x86_64"], "ABI library sets differ")
+        present = {abi for abi, libraries in packaged.items() if libraries}
+        require(present == expected_abis, f"required ABI set {sorted(expected_abis)} differs from packaged {sorted(present)}")
+        library_sets = [packaged[abi] for abi in sorted(present)]
+        require(all(libraries == library_sets[0] for libraries in library_sets), "ABI library sets differ")
         with apk.open("rb") as source:
             for member in native:
                 _, abi, name = member.filename.split("/")
@@ -102,7 +106,9 @@ def inspect_apk(apk, sdk, build_tools, readelf):
     alignment = command([str(tools / "zipalign"), "-c", "-P", "16", "4", str(apk)])
     signature = command([str(tools / "apksigner"), "verify", "--verbose", str(apk)])
     return {"schema_version": 1, "apk_sha256": hashlib.sha256(apk.read_bytes()).hexdigest(),
-            "result": "PASS", "scope": "package-only", "runtime_guest_acceptance": "NOT_TESTED",
+            "result": "PASS", "scope": "package-only", "abis": sorted(expected_abis),
+            "initial_abi_coverage": "COMPLETE" if expected_abis == set(MACHINES) else "PARTIAL",
+            "runtime_guest_acceptance": "NOT_TESTED",
             "libraries": results, "zipalign": alignment.strip(), "signature": signature.strip()}
 
 
@@ -113,9 +119,10 @@ def main():
     parser.add_argument("--build-tools", default="35.0.0")
     parser.add_argument("--readelf", default="readelf")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--abis", default="arm64-v8a,x86_64", help="expected packaged ABIs; default requires both initial targets")
     args = parser.parse_args()
     try:
-        report = inspect_apk(args.apk, args.sdk, args.build_tools, args.readelf)
+        report = inspect_apk(args.apk, args.sdk, args.build_tools, args.readelf, args.abis.split(","))
     except (ValueError, OSError, subprocess.CalledProcessError, zipfile.BadZipFile) as error:
         report = {"schema_version": 1, "result": "FAIL", "scope": "package-only", "error": str(error)}
     rendered = json.dumps(report, indent=2) + "\n"
