@@ -34,6 +34,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val workerEvidenceDelivery = SessionDeliveryGate()
     private var workerPid by mutableIntStateOf(0)
     private var sessionOwned by mutableStateOf(false)
+    private data class GuestStartRequest(val recordId: String, val coldRecovery: Boolean)
+    private var pendingGuestRequest: GuestStartRequest? = null
     private var pendingGuestStart = false
     private var guestStartRequested = false
     private var engineExpectedExit = false
@@ -109,7 +111,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     try { val state = worker.status(); handler.post {
                         if (engine?.asBinder() != binder) return@post
                         sessionOwned = state.getBoolean("sessionStarted"); status = state.getString("state") ?: "stopped"
-                        pendingGuestStart = false; engineRestarting = false; startGuest()
+                        pendingGuestStart = false; engineRestarting = false
+                        pendingGuestRequest?.let { startGuest(retainedRequest = it) }
+                            ?: run { error = "Guest start request was lost; select Start or Recover retained state again."; status = "failed" }
                     } } catch (failure: RemoteException) { handler.post { pendingGuestStart = false; workerExited() } }
                 }, "guest-reconnect").start()
             }
@@ -224,13 +228,20 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         TextButton(onClick = { importTree.launch(null) }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping")) { Text("Import prepared folder instead") }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { startGuest() }, enabled = !busy && selected != null && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
+                            Button(onClick = { startGuest() }, enabled = !busy && selected != null && selected?.getBoolean("dirty") != true && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
                             Button(onClick = { stopGuest() }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
                             Button(onClick = {
                                 val pausing = status != "paused"
                                 if (pausing) displayView?.cancelOwnedGesture()
                                 engine?.pause(pausing)
                             }, enabled = status in listOf("running", "paused")) { Text(if (status == "paused") "Resume" else "Pause") }
+                        }
+                        if (selected != null && status !in listOf("running", "paused", "starting", "stopping")) {
+                            TextButton(onClick = { startGuest(coldRecovery = true) }, enabled = !busy,
+                                modifier = Modifier.testTag("recover_guest")) { Text("Recover retained state") }
+                            if (selected?.getBoolean("dirty") == true || status == "failed") Text(
+                                "The previous shutdown was unconfirmed. Recovery boots retained writable data and keeps private diagnostics.",
+                                style = MaterialTheme.typography.bodySmall)
                         }
                         if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.", modifier = Modifier.testTag("guest_screen_asleep"))
                         AndroidView(factory = { GuestDisplay(it, onError = { message -> error = message }) { engine }.also { displayView = it } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
@@ -426,20 +437,30 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             } else retained?.takeIf { it.isNotEmpty() }?.let { handler.post { workerEvidenceDelivery.deliver(evidenceGeneration) { error = it } } }
         }, "worker-retained-error").start()
     }
-    private fun startGuest() {
+    private fun startGuest(coldRecovery: Boolean = false, retainedRequest: GuestStartRequest? = null) {
         if (engineRestarting) return
+        val request = retainedRequest ?: GuestStartRequest(
+            selected?.getString("id") ?: run { error = "Select a device"; status = "stopped"; return }, coldRecovery)
+        // Preserve the exact record and explicit recovery choice across worker
+        // disposal/rebinding; later device-list refreshes cannot change the request.
+        pendingGuestRequest = request
         val worker = engine
-        if (worker == null) { pendingGuestStart = true; bindWorker(); return }
+        if (worker == null) { pendingGuestStart = true; status = "starting"; bindWorker(); return }
         if (sessionOwned) { restartGuestForStart(worker); return }
-        val id = selected?.getString("id") ?: run { error = "Select a device"; status = "stopped"; return }
         workerEvidenceDelivery.advance()
         engineExpectedExit = false; guestStartRequested = true; status = "starting"
         startForegroundService(Intent(this, EngineService::class.java))
         Thread({
-            try { val b = worker.start(id); handler.post {
-                if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: ""
+            try {
+                val b = if (request.coldRecovery) worker.recoverStart(request.recordId) else worker.start(request.recordId)
+                handler.post { if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: "" }
+            }
+            catch (failure: Exception) { handler.post {
+                if (engine?.asBinder() == worker.asBinder()) {
+                    error = "Guest start failed: ${failure.message ?: "worker exited"}. Writable state and private diagnostics retained."
+                    status = "failed"
+                }
             } }
-            catch (failure: Exception) { handler.post { error = "Guest start failed: ${failure.message ?: "worker exited"}. Writable state and private diagnostics retained."; status = "failed" } }
         }, "guest-start").start()
     }
     private fun stopGuest() {

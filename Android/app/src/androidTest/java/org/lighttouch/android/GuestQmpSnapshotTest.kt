@@ -41,6 +41,9 @@ class GuestQmpSnapshotTest {
                     assertEquals(Process.myUid(), initial.getInt("uid")); assertNotEquals(Process.myPid(), initial.getInt("pid"))
                     val snapshotOnly = arguments.getString("snapshotOnly") == "true"
                     val touchWireTrace = arguments.getString("touchWireTrace") == "true"
+                    val coldRecover = arguments.getString("coldRecover") == "true"
+                    require(!coldRecover || !snapshotOnly) { "Cold recovery requires a fresh worker; snapshotOnly cannot recover an existing session" }
+                    receipt.put("coldRecoveryRequested", coldRecover).put("shutdownConfirmationInferred", false)
                     receipt.put("touchWireTraceRequested", touchWireTrace).put("initialTouchTraceConfigured", initial.getBoolean("touchTraceConfigured"))
                     val record = if (snapshotOnly) arguments.getString("recordId") else arguments.getString("recordId")
                         ?: requireNotNull(worker.records().firstOrNull { it.getBoolean("selected") }?.getString("id"))
@@ -56,7 +59,7 @@ class GuestQmpSnapshotTest {
                         if (touchWireTrace) assertEquals("Fixed touch trace must be admitted before QMP/start", "", worker.debugEnableTouchTrace())
                         assertEquals("", worker.debugArmQmp())
                         scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
-                        worker.start(requireNotNull(record))
+                        if (coldRecover) worker.recoverStart(requireNotNull(record)) else worker.start(requireNotNull(record))
                     }
                     val requestedHoldSeconds = arguments.getString("qmpHoldSeconds", "0").toLong()
                     val holdSeconds = requestedHoldSeconds.coerceIn(0, 3600)

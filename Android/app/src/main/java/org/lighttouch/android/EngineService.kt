@@ -63,10 +63,18 @@ class EngineService : Service() {
             }
         }.toTypedArray()
         override fun select(recordId: String): String = Native.select(File(filesDir, "library").absolutePath, recordId)
-        override fun start(recordId: String): Bundle {
-            if (!started.compareAndSet(false, true)) return status()
+        override fun start(recordId: String): Bundle = startRecord(recordId, coldRecovery = false)
+        override fun recoverStart(recordId: String): Bundle = startRecord(recordId, coldRecovery = true)
+        private fun startRecord(recordId: String, coldRecovery: Boolean): Bundle {
+            if (stopping.get()) return Bundle().apply {
+                putString("state", "stopping"); putString("error", "This worker is disposing; recovery and Start require a fresh worker.")
+            }
+            if (!started.compareAndSet(false, true)) return status().apply {
+                putString("error", "Start and recovery require a fresh unused guest worker. Stop this worker first.")
+            }
             foreground()
-            error = Native.start(File(filesDir, "library").absolutePath, recordId)
+            val libraryRoot = File(filesDir, "library").absolutePath
+            error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId) else Native.start(libraryRoot, recordId)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) requestAudioFocus() }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
