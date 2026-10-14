@@ -515,3 +515,25 @@ larger crops in the R90 presentation. The inspected portrait return retained the
 same enlarged image. The fresh worker confirmed shutdown with exit0 and clean
 state. This is bounded Linux rotation/cancellation/reuse evidence, with raw and
 presentation images retained separately, not physical multitouch or Android proof.
+
+`run-crossing-continuation.py` observes the existing F7 replay without rebuilding
+the frontend. First inspect fit, perform a partial F6 followed by balanced C,
+and inspect that the photograph is enlarged with pan margin. The controller
+retains native checkpoints near crossing, lift and remaining-contact motion;
+`capture-native-checkpoint.py --defer-preview` copies BMP/receipt first and defers
+PNG conversion until input finishes. This reduces work during the short solo
+motion interval. Checkpoint names express intended timing, not contact phases:
+compare source timestamps with actual requests and ordered wire transfers before
+qualifying the image. The owner requests Escape and waits confirmed clean exit.
+
+A bounded run retained progressive crossing/enlargement and then horizontal image
+translation while the remaining contact still existed. The last two-held pose
+source preceded the lift; a subsequent source followed both ID202-only moves and
+preceded final END admission. The clock-face component kept the same dimensions
+and moved 26 pixels horizontally, corroborating the independently inspected pan.
+The intended lift checkpoint still held a pre-lift source and was disclosed;
+after-release capture reused the earlier held-motion source. These timestamps
+prevent later screenshots from being presented as a different contact phase.
+Clean shutdown was confirmed with exit0. Raw images, exact controller snapshots,
+request/source timing, wire traces and concurrent load remain private evidence;
+this is bounded Linux behavior evidence, not physical input or overall gate closure.
