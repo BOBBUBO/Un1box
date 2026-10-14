@@ -1,14 +1,15 @@
-# Pixel APK22 boot diagnosis overlay
+# Pixel boot diagnosis overlay
 
 `GuestPixelBootDiagnosisTest.kt` is a test-only overlay outside normal source
-sets. Export Android and the catalog from production
-`05d6a5ef06a2a05d3055fd3307c3327644ae2c22` into a new private directory and copy
-this file into its `Android/app/src/androidTest/java/org/lighttouch/android/`.
-Build only `:app:assembleDebugAndroidTest` with original APK22 native/dependency
-inputs and independent output. Record base/overlay revisions and hashes, command,
-log, test APK signature/hash and absence of native payloads. The changed overlay
-needs a new compiler allocation and actual target run. APK23 production freeze
-and the failed APK22 attempt's encrypted userdata remain untouched.
+sets. Export the selected frozen production Android source/catalog into a new
+private directory, copy this file into its Android instrumentation source set,
+and build only the matched test APK with the same native/dependency inputs and
+independent outputs. Record source/overlay revisions, hashes, command, log,
+main/test signature equality and absence of test native payloads. The integrator
+provides `expectedMainApkSha256` from the sealed main APK receipt (including APK24
+when selected); the test requires 64 lowercase hex digits and hashes the actual
+installed APK. There is no default or previous-APK fallback. This is an identity
+check, not a guest acceptance claim. Existing sealed artifacts remain untouched.
 
 ## Original clock and after-Start admission
 
@@ -34,6 +35,7 @@ instrumentation asynchronously on only the allocated emulator:
 adb -s emulator-5554 shell am instrument -w -r --no-restart \
   -e class org.lighttouch.android.GuestPixelBootDiagnosisTest \
   -e diagnoseVirtualPixel true -e recordId VERIFIED_NEW_RECORD_ID \
+  -e expectedMainApkSha256 SEALED_MAIN_APK_SHA256 \
   -e pixelAttemptToken UNIQUE_32_LOWERCASE_HEX \
   -e pixelOriginToken SHA256_OF_ORIGINAL_CLOCK_CONTEXT \
   -e pixelObserveSeconds 300 -e allowOneSleepWake true \
