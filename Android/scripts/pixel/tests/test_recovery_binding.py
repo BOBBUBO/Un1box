@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-import hashlib,json,re,shlex,subprocess,sys,tempfile,unittest
+import hashlib,json,re,shlex,subprocess,sys,tempfile,unittest,time
+from types import SimpleNamespace
 from pathlib import Path
 from unittest import mock
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
@@ -8,6 +9,53 @@ import pixel_supervisor
 
 
 class Recovery(unittest.TestCase):
+    def test_marker_timeout_partial_streams_and_late_positive_status_cannot_admit_clean(self):
+        for late in (False,True):
+            with self.subTest(late=late),tempfile.TemporaryDirectory() as d:
+                def run(argv,**kw):
+                    if not late:raise subprocess.TimeoutExpired(argv,1,output=b'partial',stderr=b'partial error')
+                    return subprocess.CompletedProcess(argv,0,b'LT_MARKER_ABSENT\n',b'')
+                capture=SimpleNamespace(adb='/synthetic/adb',run=run,now=mock.Mock(side_effect=[10**9,11*10**9]),deadline=10*10**9)
+                with self.assertRaises(ValueError):bind_recovery.normal_marker_absence(capture,'files/library/records/'+'a'*32,d)
+                receipt=json.loads((Path(d)/'normal-marker-presence.json').read_text())
+                self.assertFalse(receipt['confirmedAbsent'])
+                if not late:
+                    self.assertEqual(receipt['adbExit'],124);self.assertEqual(receipt['stdout'],'partial');self.assertEqual(receipt['stderr'],'partial error')
+
+    def test_real_shell_marker_status_requires_absence_and_rejects_inaccessible_or_symlink_state(self):
+        for kind in ('absent','present','dangling-marker','denied-state','missing-state','symlink-state'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as d:
+                out=Path(d);root='files/library/records/'+'a'*32;state=out/root/'state'
+                state.mkdir(parents=True)
+                if kind=='present':(state/'.dirty').write_text('retained dirty')
+                if kind=='dangling-marker':(state/'.dirty').symlink_to('missing')
+                if kind=='denied-state':state.chmod(0)
+                if kind=='missing-state':state.rmdir()
+                if kind=='symlink-state':state.rmdir();state.symlink_to(out)
+                def run(argv,**kw):
+                    remote=shlex.split(argv[-1]);self.assertEqual(remote[:4],['run-as','org.lighttouch.android','sh','-c'])
+                    return subprocess.run(['/bin/sh','-c',remote[4]],cwd=out,**kw)
+                capture=SimpleNamespace(adb='/synthetic/adb',run=run,now=time.monotonic_ns,deadline=time.monotonic_ns()+5_000_000_000)
+                try:
+                    if kind=='absent':
+                        result=bind_recovery.normal_marker_absence(capture,root,out)
+                        self.assertEqual(result['stdout'],'LT_MARKER_ABSENT\n');self.assertTrue(result['confirmedAbsent'])
+                    else:
+                        with self.assertRaises(ValueError):bind_recovery.normal_marker_absence(capture,root,out)
+                        self.assertFalse(json.loads((out/'normal-marker-presence.json').read_text())['confirmedAbsent'])
+                finally:
+                    if kind=='denied-state':state.chmod(0o700)
+
+    def test_merged_or_split_error_text_and_ambiguous_output_never_mean_marker_absence(self):
+        for stdout,stderr,code in ((b'head: marker: No such file or directory\n\n__LT_PIXEL_REMOTE_EXIT__=1\n',b'',0),
+                (b'\n__LT_PIXEL_REMOTE_EXIT__=1\n',b'No such file or directory',0),
+                (b'LT_MARKER_ABSENT\n',b'Permission denied',0),(b'Permission denied\nLT_MARKER_ABSENT\n',b'',0),
+                (b'LT_MARKER_UNKNOWN\n',b'',0),(b'LT_MARKER_ABSENT\n',b'',1)):
+            with self.subTest(stdout=stdout,stderr=stderr,code=code),tempfile.TemporaryDirectory() as d:
+                capture=SimpleNamespace(adb='/synthetic/adb',run=lambda argv,**kw:subprocess.CompletedProcess(argv,code,stdout,stderr),now=lambda:1,deadline=10**9)
+                with self.assertRaises(ValueError):bind_recovery.normal_marker_absence(capture,'files/library/records/'+'a'*32,d)
+                self.assertFalse(json.loads((Path(d)/'normal-marker-presence.json').read_text())['confirmedAbsent'])
+
     def setUp(self):
         self.host_init = mock.patch.object(pixel_supervisor.PixelAttempt, 'initialize_host_lifecycle')
         self.host_init.start()
@@ -28,6 +76,9 @@ class Recovery(unittest.TestCase):
         pins={suffix:sha(data[root+'/'+suffix]) for suffix in ('record.json','base/device.lock.json','assets/bootrom.bin','assets/guest.itpack')}
         def run(argv,**kw):
             if argv[-2:] == ['pidof','org.lighttouch.android:engine']:return subprocess.CompletedProcess(argv,0,b'42\n',b'')
+            if 'LT_MARKER_ABSENT' in argv[-1]:
+                status=b'LT_MARKER_ABSENT\n' if data.get(root+'/state/.dirty') is None else b'LT_MARKER_PRESENT\n'
+                return subprocess.CompletedProcess(argv,0,status,b'')
             script=argv[-1];m=re.search(r'head -c \d+ ([^;]+);',script)
             path=shlex.split(m[1])[0].strip("'")
             content=data.get(path)
