@@ -7,6 +7,7 @@
 #include "../src/Lifecycle.hpp"
 #include "../../Linux/TouchScript.hpp"
 #include "../../Linux/ControlDelivery.hpp"
+#include "../../Linux/ReplayQueue.hpp"
 #include <zlib.h>
 #include <cassert>
 #include <cmath>
@@ -52,6 +53,21 @@ static std::string sha_file(const fs::path &p) {
     return h;
 }
 int main() {
+    struct ReplayEntry {
+        int id;
+        bool replay;
+    };
+    // A cancellation while processing a replay must keep the next user
+    // screenshot/stop command. The current command is consumed before erase.
+    std::vector<ReplayEntry> scheduled{{1, true}, {2, true}, {3, false}, {4, true}, {5, false}};
+    size_t cursor = 1;
+    const auto current = scheduled[cursor++];
+    assert(current.id == 2);
+    assert(lt::discard_replay(scheduled, cursor) == 1);
+    assert(scheduled[cursor].id == 3 && scheduled[cursor + 1].id == 5);
+    assert(lt::discard_replay(scheduled, scheduled.size()) == 0);
+    assert(lt::discard_replay(scheduled, 0) == 2);
+    assert(scheduled.size() == 2 && scheduled[0].id == 3 && scheduled[1].id == 5);
     lt::ControlDelivery delivery;
     using ControlKind = lt::ControlDelivery::Kind;
     unsigned calls = 0;
