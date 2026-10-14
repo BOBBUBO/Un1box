@@ -50,11 +50,13 @@ class PrivateFixtureImportTest {
                 assertEquals(before.size + 1, after.size)
                 for ((id, old) in before) {
                     val retained = requireNotNull(after[id]) { "Baseline record was lost" }
-                    for (field in listOf("name", "board", "build", "dirty")) assertEquals("Preserved $id/$field", old.get(field), retained.get(field))
+                    for (field in listOf("name", "board", "build")) assertEquals("Preserved $id/$field", old.getString(field), retained.getString(field))
+                    assertEquals("Preserved $id/dirty", old.getBoolean("dirty"), retained.getBoolean("dirty"))
                 }
                 val added = after.filterKeys { it !in before }.values.single()
                 assertEquals("n72ap", added.getString("board")); assertEquals("7E18", added.getString("build"))
                 assertTrue(added.getString("contacts")!!.toInt() >= 2)
+                assertTrue(added.getBoolean("bootromAvailable")); assertTrue(added.getBoolean("guestPackageAvailable"))
                 assertEquals("", worker.select(added.getString("id")))
                 assertEquals(added.getString("id"), worker.records().single { it.getBoolean("selected") }.getString("id"))
                 assertTrue("Status blocked during integrity work: $maximumStatusMs ms", maximumStatusMs < 2000)

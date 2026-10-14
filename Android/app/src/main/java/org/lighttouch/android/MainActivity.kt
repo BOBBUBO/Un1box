@@ -468,6 +468,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
     override fun onStart() { super.onStart(); active = true; displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
-    override fun onStop() { active = false; displayView?.keepScreenOn = false; stopSensors(); engine?.cancelInput(); if (status == "running") engine?.pause(true); handler.removeCallbacks(poll); super.onStop() }
+    override fun onStop() { active = false; displayView?.keepScreenOn = false; stopSensors(); engine?.cancelInput(); if (status in listOf("running", "starting")) engine?.pause(true); handler.removeCallbacks(poll); super.onStop() }
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }
