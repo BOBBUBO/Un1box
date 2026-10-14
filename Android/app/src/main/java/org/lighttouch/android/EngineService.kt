@@ -6,6 +6,7 @@ import android.media.*
 import android.os.*
 import android.view.Surface
 import java.io.File
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Same app UID, separate native address space. Every session consumes this process. */
@@ -44,6 +45,7 @@ class EngineService : Service() {
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
                 persistStopError(error)
+                persistObservations("start-failed")
                 alive.set(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -96,6 +98,7 @@ class EngineService : Service() {
                 }
                 if (!terminal) error = "Guest shutdown timed out after 15 seconds; worker terminated and dirty state preserved. " + error
                 if (error.isNotEmpty()) persistStopError(error)
+                persistObservations(if (terminal) "stop-terminal" else "stop-timeout")
                 // Native domain owns dirty/clean state. A timeout never marks clean.
                 alive.set(false)
                 abandonAudioFocus()
@@ -133,6 +136,17 @@ class EngineService : Service() {
             bitmap.recycle()
             ""
         } catch (e: Exception) { e.message ?: "Screenshot failed" }
+    }
+    @Suppress("DEPRECATION")
+    private fun persistObservations(reason: String) {
+        fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
+            for (key in bundle.keySet()) when (val value = bundle.get(key)) { is Bundle -> put(key, encode(value)); else -> put(key, value) }
+        }
+        try {
+            val receipt = encode(binder.status()).put("reason", reason).put("hostElapsedMs", SystemClock.elapsedRealtime())
+                .put("audiblePlaybackVerified", false).put("visibleGuestVerified", false)
+            File(filesDir, "worker-observations-${Process.myPid()}.json").writeText(receipt.toString(2))
+        } catch (_: Exception) { /* State markers and per-worker native logs remain authoritative. */ }
     }
     private fun persistStopError(message: String) {
         try { File(filesDir, "worker-stop-error.txt").writeText(message) } catch (_: java.io.IOException) { /* Native dirty marker remains authoritative. */ }
@@ -229,7 +243,11 @@ class EngineService : Service() {
                 }
             }, Handler(mainLooper)).build()
         if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focus = request
-        else { synchronized(audioGuard) { audioObservations.focusDenied++ }; audioError = "Audio focus unavailable. Pause and resume after other audio stops." }
+        else {
+            synchronized(audioGuard) { audioObservations.focusDenied++ }
+            focusPaused = true; Native.cancelInput(); Native.pause(true)
+            audioError = "Audio focus unavailable. Pause and resume after other audio stops."
+        }
     }
     private fun abandonAudioFocus() { focus?.let { audioManager.abandonAudioFocusRequest(it) }; focus = null }
     private fun foreground() {
