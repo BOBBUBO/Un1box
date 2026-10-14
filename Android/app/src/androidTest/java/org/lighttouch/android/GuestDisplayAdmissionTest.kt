@@ -17,10 +17,20 @@ class GuestDisplayAdmissionTest {
         val calls = mutableListOf<String>()
         val heldButtons = mutableSetOf<Int>()
         var rejection = ""
+        var generation = 1L
+        var paused = false
         val identity = Binder()
         val worker = Proxy.newProxyInstance(IEngine::class.java.classLoader, arrayOf(IEngine::class.java)) { _, method, args ->
             when (method.name) {
-                "touchDisplay" -> { calls += "touch"; rejection }
+                "displayInputGeneration" -> if (args!![0] == 1L) generation else 0L
+                "touchDisplay" -> {
+                    calls += "touch"
+                    when {
+                        args!![1] != generation -> DisplayInputAdmission.GENERATION_RETIRED
+                        paused -> DisplayInputAdmission.PAUSED
+                        else -> rejection
+                    }
+                }
                 "cancelDisplayInput" -> { calls += "cancel"; heldButtons.clear(); null }
                 "button" -> {
                     val button = args!![0] as Int
@@ -138,5 +148,42 @@ class GuestDisplayAdmissionTest {
             send(display, MotionEvent.ACTION_DOWN); send(display, MotionEvent.ACTION_UP)
             assertEquals(listOf("touch", "touch"), endpoint.calls.drop(rejectedAt))
         }
+    }
+    @Test fun focusCancelAndGainBetweenPollsRequiresFreshDownWithoutStickyError() = onMain {
+        val endpoint = Endpoint(); val errors = mutableListOf<String>()
+        val display = fakeOwnedDisplay(endpoint) { errors += it }
+        display.layout(0, 0, 320, 480)
+        send(display, MotionEvent.ACTION_DOWN)
+        assertArrayEquals(intArrayOf(0), display.inputObservations().getIntArray("androidContactIds"))
+        // Model a successful native global cancel and complete focus return. The
+        // View receives no focus callback/status poll between the two events.
+        endpoint.paused = true; endpoint.generation++; endpoint.paused = false
+        send(display, MotionEvent.ACTION_MOVE)
+        assertTrue(errors.isEmpty())
+        assertTrue(display.inputObservations().getBoolean("awaitingNewDown"))
+        assertArrayEquals(intArrayOf(), display.inputObservations().getIntArray("androidContactIds"))
+        assertEquals(1L, display.inputObservations().getLong("expectedCancellationBatches"))
+        assertEquals(0L, display.inputObservations().getLong("rejectedBatches"))
+        val cancelled = endpoint.calls.size
+        send(display, MotionEvent.ACTION_MOVE); send(display, MotionEvent.ACTION_UP)
+        assertEquals(cancelled, endpoint.calls.size)
+        send(display, MotionEvent.ACTION_DOWN); send(display, MotionEvent.ACTION_UP)
+        assertEquals(listOf("touch", "touch"), endpoint.calls.drop(cancelled))
+        assertTrue(errors.isEmpty())
+    }
+    @Test fun pausedFreshDownIsNotAdmittedAndCannotContinueAfterResume() = onMain {
+        val endpoint = Endpoint(); val errors = mutableListOf<String>()
+        val display = fakeOwnedDisplay(endpoint) { errors += it }
+        display.layout(0, 0, 320, 480)
+        endpoint.paused = true
+        send(display, MotionEvent.ACTION_DOWN)
+        assertArrayEquals(intArrayOf(), display.inputObservations().getIntArray("androidContactIds"))
+        endpoint.paused = false
+        val blocked = endpoint.calls.size
+        send(display, MotionEvent.ACTION_MOVE); send(display, MotionEvent.ACTION_UP)
+        assertEquals(blocked, endpoint.calls.size)
+        send(display, MotionEvent.ACTION_DOWN); send(display, MotionEvent.ACTION_UP)
+        assertEquals(listOf("touch", "touch"), endpoint.calls.drop(blocked))
+        assertTrue(errors.isEmpty())
     }
 }

@@ -17,7 +17,7 @@ interface IEngine {
     void releaseDisplay(long lease);
     void cancelDisplayInput(long lease);
     void backgroundDisplay(long lease);
-    String touchDisplay(long lease, long timestampNanos, in int[] ids, in int[] phases, in float[] coordinates, int width, int height, int rotation);
+    String touchDisplay(long lease, long inputGeneration, long timestampNanos, in int[] ids, in int[] phases, in float[] coordinates, int width, int height, int rotation);
     void pause(boolean paused);
     void stop();
     void button(int button, boolean down);
@@ -30,4 +30,5 @@ interface IEngine {
     void guestCancel(long requestId);
     String debugEnableTouchTrace();
     Bundle recoverStart(String recordId);
+    long displayInputGeneration(long lease);
 }

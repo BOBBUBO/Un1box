@@ -19,6 +19,8 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
     private var rejectedBatches = 0L
     private var cancellationRequests = 0L
     private var suppressedContinuations = 0L
+    private var inputGeneration = 0L
+    private var expectedCancellationBatches = 0L
     private val contactIds = mutableSetOf<Int>()
     /** Main-thread observations of Android admission, never guest delivery proof. */
     internal fun inputObservations(): Bundle = Bundle().apply {
@@ -26,6 +28,8 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
         putLong("rejectedBatches", rejectedBatches)
         putLong("cancellationRequests", cancellationRequests)
         putLong("suppressedContinuations", suppressedContinuations)
+        putLong("inputGeneration", inputGeneration)
+        putLong("expectedCancellationBatches", expectedCancellationBatches)
         putIntArray("androidContactIds", contactIds.toIntArray().sortedArray())
         putBoolean("awaitingNewDown", rejectedGesture)
     }
@@ -41,7 +45,7 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
         if (token == 0L || current.asBinder() !== worker.asBinder()) return null
         return worker to token
     }
-    private fun dropLocalGesture() { rejectedGesture = true; contactIds.clear() }
+    private fun dropLocalGesture() { rejectedGesture = true; contactIds.clear(); inputGeneration = 0L }
     private fun cancelGesture(releaseWorkerInput: Boolean = true) {
         dropLocalGesture()
         if (releaseWorkerInput) ownedWorker()?.let { (worker, token) ->
@@ -104,7 +108,12 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!isActiveOwner() || ownedWorker() == null) { dropLocalGesture(); suppressedContinuations++; return true }
         if (event.actionMasked == MotionEvent.ACTION_CANCEL) { cancelGesture(); return true }
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) rejectedGesture = false
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val (worker, token) = ownedWorker() ?: return true
+            inputGeneration = try { worker.displayInputGeneration(token) } catch (_: RemoteException) { 0L }
+            if (inputGeneration <= 0L) { dropLocalGesture(); suppressedContinuations++; return true }
+            rejectedGesture = false
+        }
         if (rejectedGesture) { suppressedContinuations++; return true }
         if (event.pointerCount > 8) { cancelGesture(); return true }
         if (event.actionMasked !in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_MOVE,
@@ -124,10 +133,11 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
         ownedWorker()?.let { (worker, token) ->
             // Preserve the source time; the dedicated worker orders millisecond ties
             // across Views without hiding a genuinely backwards input timestamp.
-            val admission = try { worker.touchDisplay(token, event.eventTime * 1_000_000, ids, phases, xy, width, height, display?.rotation?.times(90) ?: 0) }
+            val admission = try { worker.touchDisplay(token, inputGeneration, event.eventTime * 1_000_000, ids, phases, xy, width, height, display?.rotation?.times(90) ?: 0) }
                 catch (_: RemoteException) { "Guest worker unavailable; input was cancelled" }
             forwardedBatches++
-            if (admission.isNotEmpty()) { rejectedBatches++; rejectedGesture = true; contactIds.clear(); onError(admission) }
+            if (DisplayInputAdmission.isCancellation(admission)) { expectedCancellationBatches++; dropLocalGesture() }
+            else if (admission.isNotEmpty()) { rejectedBatches++; dropLocalGesture(); onError(admission) }
             else {
                 for (index in ids.indices) {
                     if (phases[index] == 2) contactIds.remove(ids[index]) else contactIds.add(ids[index])

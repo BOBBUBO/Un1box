@@ -42,6 +42,13 @@ internal class ActiveDisplayOwner {
 
 internal object DisplayOwners { val active = ActiveDisplayOwner() }
 
+/** Expected lifecycle cancellations are not sticky guest/backend failures. */
+internal object DisplayInputAdmission {
+    const val GENERATION_RETIRED = "Display input generation retired"
+    const val PAUSED = "Display input is paused"
+    fun isCancellation(value: String) = value == GENERATION_RETIRED || value == PAUSED
+}
+
 /** The numeric token is never reused via a newly bound worker closure. */
 internal class WorkerDisplayLease {
     private var worker: Any? = null
