@@ -25,7 +25,7 @@ def sha(path):
 
 def record_options(ids, percent, output, event="task-clock:u", threads=False):
     # Keep existing cpu-percent exactly; use tiny rings and bounded stack/data.
-    return ["record", "--app", PACKAGE, "-t" if threads else "-p", ",".join(map(str, sorted(ids))),
+    return ["record", "--app", PACKAGE, "-t" if threads else "-p", ",".join(map(str, sorted(ids)))] + (["--no-inherit"] if threads else []) + [
             "-f", "99", "-e", event, "--duration", "10",
             "--clockid", "monotonic", "--call-graph", "dwarf,8192", "-m", "1",
             "--user-buffer-size", "16M", "--size-limit", "32M",

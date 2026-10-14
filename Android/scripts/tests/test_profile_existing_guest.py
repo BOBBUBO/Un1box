@@ -27,6 +27,7 @@ class ProfileReportTest(unittest.TestCase):
         self.assertEqual(options[options.index("-t") + 1], "7,31")
         self.assertNotIn("-p", options)
         self.assertNotIn("-a", options)
+        self.assertIn("--no-inherit", options)
 
     def test_thread_owner_and_tid_reuse_are_not_equivalent(self):
         status = "Name:\tCPU 0/TCG\nTgid:\t12862\nPid:\t12890\nUid:\t10179\t10179\t10179\t10179\n"

@@ -29,7 +29,7 @@ engine and firmware process identities. These process modes select `-p` and
 collect threads of the selected processes. The separate `--scope engine-threads`
 mode enumerates `/proc/ENGINE_PID/task` under the app UID, verifies each task's
 Uid/Tgid/Pid, start ticks and actual comm, and passes **only `-t VERIFIED_TIDS`**.
-It does not add `-p` or collect system-wide. The same selected TIDs must retain
+It adds `--no-inherit`, does not add `-p`, and does not collect system-wide. The same selected TIDs must retain
 their owner/start ticks/comm afterward; an exiting or reused TID invalidates the
 recording. Threads created later are outside that explicit selection. Recording is fixed
 at10s/99Hz, with an8KiB DWARF stack,16MiB user buffer and32MiB file limit. The
