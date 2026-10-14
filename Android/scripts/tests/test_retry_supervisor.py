@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -64,6 +65,36 @@ class Supervision(unittest.TestCase):
                 attempt.adb = mock.Mock(return_value=(0,b""))
                 attempt.cleanup()
                 self.assertTrue((attempt.output/"terminal.json").exists())
+
+    def test_remote_path_presence_requires_sentinel_not_adb_exit_zero(self):
+        cases = [(0,b"LT_PATH_PRESENT\n",True),(0,b"LT_PATH_ABSENT\n",False),
+                 (0,b"stat: No such file or directory\n",None),(0,b"LT_PATH_UNKNOWN\n",None),
+                 (1,b"LT_PATH_ABSENT\n",None),(0,b"",None)]
+        for code,output,expected in cases:
+            with self.subTest(output=output), tempfile.TemporaryDirectory() as directory:
+                attempt = retry.Attempt(self.arguments(directory))
+                attempt.adb = mock.Mock(return_value=(code,output))
+                self.assertIs(attempt.path_presence("files/library/records/test/state/.dirty"),expected)
+                self.assertEqual(attempt.adb.call_args.args[0],"shell")
+                self.assertIn("LT_PATH_PRESENT",attempt.adb.call_args.args[1])
+
+    def test_presence_shell_handles_existing_absent_inaccessible_parent_and_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            attempt = retry.Attempt(self.arguments(directory))
+            root = Path(directory)
+            (root/"present").write_text("retained")
+            (root/"link").symlink_to(root/"absent")
+            def shell(*argv):
+                self.assertEqual(argv[0],"shell")
+                words = shlex.split(argv[1])
+                self.assertEqual(words[:3],["run-as",retry.PACKAGE,"sh"])
+                run = subprocess.run(words[2:],capture_output=True)
+                return run.returncode,run.stdout
+            attempt.adb = shell
+            self.assertIs(attempt.path_presence(str(root/"present")),True)
+            self.assertIs(attempt.path_presence(str(root/"absent")),False)
+            self.assertIs(attempt.path_presence(str(root/"missing-parent/absent")),None)
+            self.assertIs(attempt.path_presence(str(root/"link")),True)
 
     def test_independent_deadline_disposes_hung_owned_child(self):
         # Actual OS subprocesses, no Android tools, compiler, window or guest.

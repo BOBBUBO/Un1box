@@ -19,18 +19,22 @@ ID from its import receipt, the SHA256 of the verified prepared base's
 record.json hash exists, also supply `--record-sha256`. No private record IDs,
 firmware paths, asset bytes or hashes are embedded in this source.
 
-After the allocation, launch the supervisor with its stdout redirected to a
-private log so it continues independently of interactive command output. For
-example, with task-specific variables containing reviewed paths and receipts:
+After the allocation, launch the supervisor as a foreground command in a
+persistent execution session. Retain the running session ID and inspect both
+supervisor and independent watchdog PIDs. Do not background it with nohup and
+end the launching command: a retained attempt showed the command runner removed
+both those processes while the emulator's separate session survived. The model
+may continue other bounded commands after the execution tool returns a running
+session. For example, with task-specific variables containing reviewed paths
+and receipts:
 
 ```sh
-nohup python3 Android/scripts/supervise_16k_retry.py \
+python3 -u Android/scripts/supervise_16k_retry.py \
   --allocation-granted --user "$task_user" \
   --adb "$task_adb" --emulator "$task_emulator" \
   --avd LightTouch_API35_16K --record-id "$task_record" \
   --lock-sha256 "$task_lock_hash" --rom-sha256 "$task_rom_hash" \
-  --guest-sha256 "$task_guest_hash" --output "$task_output" \
-  > "${task_output}.supervisor.log" 2>&1 &
+  --guest-sha256 "$task_guest_hash" --output "$task_output"
 ```
 
 The output directory must not exist. Before 240 seconds from supervisor start,
@@ -41,6 +45,10 @@ source pins must match; the dirty marker must be absent. The tool checks actual
 ROM/package bytes and lock hash without another asset copy. Dirty state fails
 this normal-start recipe; explicit recovery is a different authorized action.
 Native startup still performs its full integrity, lease and admission checks.
+Path checks require an explicit remote presence/absence sentinel and readable
+parent. A zero host exit from `adb exec-out` is not a remote command-success
+guarantee: retained target evidence returned zero alongside a missing-marker
+stat error. Missing, unknown and present are separate outcomes.
 
 `ready.json` records this service/identity gate and explicitly requires visual
 UI inspection. Capture and view the actual Android screen before starting the
