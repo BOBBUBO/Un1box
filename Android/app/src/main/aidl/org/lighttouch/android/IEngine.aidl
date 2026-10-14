@@ -4,6 +4,7 @@ import android.view.Surface;
 interface IEngine {
     Bundle start(String recordId);
     String debugArmQmp();
+    String debugSelectGraphicsProvider(int choice);
     Bundle debugQmpSnapshot();
     Bundle[] records();
     String select(String recordId);
