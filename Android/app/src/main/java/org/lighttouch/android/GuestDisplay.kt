@@ -39,9 +39,9 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
             onError("Guest worker unavailable; input was cancelled. Start a fresh worker.")
         }
     }
-    private fun cancelGesture() {
+    private fun cancelGesture(releaseWorkerInput: Boolean = true) {
         rejectedGesture = true; contactIds.clear()
-        control { cancellationRequests++; it.cancelInput() }
+        if (releaseWorkerInput) control { cancellationRequests++; it.cancelInput() }
     }
     /** A user Pause ends the Android gesture as well as the native contact lease. */
     internal fun cancelOwnedGesture() = cancelGesture()
@@ -49,7 +49,11 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         // A retained contact cannot cross into a different pixel-to-guest viewport.
         // First attach and duplicate callbacks preserve the current ownership state.
-        if (surfaceWidth > 0 && surfaceHeight > 0 && (surfaceWidth != width || surfaceHeight != height)) cancelOwnedGesture()
+        if (surfaceWidth > 0 && surfaceHeight > 0 && (surfaceWidth != width || surfaceHeight != height)) {
+            // Native cancellation also releases hardware buttons. A resize with no
+            // View-owned contacts must not interrupt an unrelated Home/Power pulse.
+            cancelGesture(releaseWorkerInput = contactIds.isNotEmpty())
+        }
         surfaceWidth = width; surfaceHeight = height
         control { it.surface(holder.surface) }
     }
