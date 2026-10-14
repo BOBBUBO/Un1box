@@ -119,6 +119,10 @@ def semantic_stop_bounds(xml):
 class Attempt:
     def __init__(self, args):
         self.args = args
+        self.expected_page_bytes = getattr(args,"expected_page_bytes",16384)
+        if self.expected_page_bytes not in (4096,16384):
+            raise ValueError("Expected page size must be exactly 4096 or 16384")
+        self.actual_page_bytes = None
         self.output = Path(args.output)
         self.output.mkdir(parents=True, exist_ok=False)
         self.start = time.monotonic()
@@ -178,6 +182,7 @@ class Attempt:
         self.watcher.start()
         self.write("launch.json", {"argv": command, "wrapperPid": self.avd.pid,
             "requestedRamMB": memory_mb, "requestedGuestCores": cores,
+            "expectedPageBytes": self.expected_page_bytes,
             "priorActualRamMB": 2560, "hardLimitSeconds": HARD_LIMIT,
             "bootLimitSeconds": BOOT_LIMIT, "stopAtSeconds": STOP_AT})
 
@@ -196,8 +201,9 @@ class Attempt:
             if code != 0:
                 time.sleep(1)
                 continue
-            if pages.strip() != b"16384":
-                raise RuntimeError("Actual Android page size is not 16384")
+            if pages.strip() != str(self.expected_page_bytes).encode():
+                raise RuntimeError(f"Actual Android page size differs from expected {self.expected_page_bytes}")
+            self.actual_page_bytes = self.expected_page_bytes
             checks = [self.adb("shell", "getprop", "sys.boot_completed", timeout=4),
                       self.adb("shell", "service", "check", "activity", timeout=4),
                       self.adb("shell", "service", "check", "package", timeout=4),
@@ -220,7 +226,7 @@ class Attempt:
                         raise RuntimeError("Fresh service readiness exceeded boot gate")
                     ready = {"serviceGatePassed":True,"recordGatePassed":False,"uiGatePassed":False,
                         "freshLibrary":True,"visualUIInspectionRequired":True,"uiGateDeadlineSeconds":BOOT_LIMIT,
-                        "pageBytes":16384,"systemServerPid":self.service_server_pid,"appUid":None,"recordId":None,
+                        "pageBytes":self.actual_page_bytes,"expectedPageBytes":self.expected_page_bytes,"systemServerPid":self.service_server_pid,"appUid":None,"recordId":None,
                         "elapsedSeconds":time.monotonic()-self.start,"guestStartedBySupervisor":False,
                         "guestAcceptancePassed":False,"stopAtSeconds":STOP_AT,"hardDeadlineSeconds":HARD_LIMIT}
                     self.write("ready.json",ready)
@@ -272,7 +278,7 @@ class Attempt:
             raise RuntimeError("Import verification exceeded guest-start budget")
         ready = {"serviceGatePassed": True, "recordGatePassed": True, "uiGatePassed":False,
                  "visualUIInspectionRequired": True, "uiGateDeadlineSeconds":BOOT_LIMIT, "appUid": int(uid),
-                 "pageBytes": 16384, "systemServerPid": system_pid, "recordId":record,
+                 "pageBytes":self.actual_page_bytes,"expectedPageBytes":self.expected_page_bytes, "systemServerPid": system_pid, "recordId":record,
                  "elapsedSeconds":time.monotonic()-self.start, "guestStartedBySupervisor":False,
                  "guestAcceptancePassed":False, "stopAtSeconds":STOP_AT, "hardDeadlineSeconds":HARD_LIMIT}
         self.write("record-bound.json" if imported_record is not None else "ready.json", ready)
@@ -414,6 +420,7 @@ def main():
     parser.add_argument("--adb", required=True)
     parser.add_argument("--emulator", required=True)
     parser.add_argument("--avd", default="LightTouch_API35_16K")
+    parser.add_argument("--expected-page-bytes",type=int,choices=(4096,16384),default=16384)
     parser.add_argument("--memory-mb",type=int,choices=(2048,4096),default=2048)
     parser.add_argument("--cores",type=int,choices=(2,4),default=2)
     parser.add_argument("--user", required=True)
