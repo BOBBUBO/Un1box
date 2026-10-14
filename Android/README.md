@@ -43,7 +43,8 @@ not only JNI.
 
 Build the real QEMU Android engine first using its pinned backend recipe. Stage
 all Bionic shared libraries under `ENGINE_ROOT/arm64-v8a/` and
-`ENGINE_ROOT/x86_64/`, including `libqemu-arm.so`. These private build outputs must
+`ENGINE_ROOT/x86_64/`, including `libqemu-arm.so`. JNI and QEMU use the same NDK28.2 shared C++ runtime;
+AGP packages it once from the NDK (`ANDROID_STL=c++_shared`). These private build outputs must
 stay outside Git. No stub/fallback engine is accepted. The build fails explicitly
 if a requested ABI is missing.
 
@@ -61,9 +62,10 @@ cd Android
 ```
 
 To build only the physical phone ABI while x86_64 is being compiled, add
-`-PtargetAbis=arm64-v8a`. This does not qualify the AVD gate. Generate dependency
-verification metadata from the pinned inputs with Gradle's
-`--write-verification-metadata sha256` and retain/review it with the source.
+`-PtargetAbis=arm64-v8a`. This does not qualify the AVD gate. Dependency verification metadata is checked in and Gradle checks SHA256 for the
+pinned dependency closure. Regenerate intentionally with
+`--write-verification-metadata sha256` when updating dependencies, then review
+the changed versions/checksums.
 
 ## Private imports and state
 
