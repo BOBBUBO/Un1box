@@ -44,11 +44,14 @@ def build(seed, prepared, attempt, source, launcher, cold_recovery=False, token=
         '--rom-sha256',p['recordPins']['assets/bootrom.bin'],'--guest-sha256',p['recordPins']['assets/guest.itpack'],'--output',p['attempt']]
     p['supervisorArgv'] += ['--fresh-library'] if cold_recovery else ['--record-id',p['recordId'],'--record-sha256',p['recordPins']['record.json']]
     prefix=['python3',p['controller'],'--attempt',p['attempt']]
-    p['preflightCommands']=[prefix+[stage] for stage in ('prepare-ui','bind-recovery','diagnose')]
+    p['preflightCommands']=[prefix+[stage] for stage in ('prepare-ui','bind-existing','diagnose')]
     p['approvalCommand']=prefix+['approve-ui','--image','ACTUAL_CAPTURE_BASENAME_OR_SAME_ATTEMPT_ABSOLUTE_PATH','--sha256','ACTUAL_MODEL_INSPECTED_SHA256']
     p['clockCaptureCommand']=['python3',str(source/'capture_origin.py'),'--attempt',p['attempt'],'--supervisor-pid','ACTUAL_SUPERVISOR_PID','--exec-session','ACTUAL_EXEC_SESSION','--avd',p['avd']]
     p['afterStartAdmissionCommand']=['python3',str(source/'admit_observation.py'),'--adb',option(old,'--adb'),'--attempt',p['attempt'],'--token',p['attemptToken']]
     p['instrumentationArgs']=instrumentation(p)
+    manifest=str(prepared/'launch-command.json')
+    p['launchCheckedCommand']=['python3',str(source/'plan_manifest.py'),'--manifest',manifest,'--launch']
+    p['readyWatcherCommand']=['python3','-u',str(source/'admit_ready.py'),'--manifest',manifest]
     p['boundsSeconds']={'ui':240,'readback':810,'stop':840,'hard':900};p['observationSeconds']=300
     p['sourceHashes']={f.name:hashlib.sha256(f.read_bytes()).hexdigest() for f in source.glob('*.py')}
     p['supervisorSha256']=p['sourceHashes']['pixel_supervisor.py']
@@ -74,7 +77,10 @@ def validate(p, files=False):
         if argv.count('--fresh-library')!=1 or '--record-id' in argv:raise ValueError('Explicit dirty service-only mode required')
     elif '--fresh-library' in argv or option(argv,'--record-id')!=p['recordId'] or option(argv,'--record-sha256')!=p['recordPins']['record.json']:
         raise ValueError('Normal clean Start must use actual pinned record gate')
-    expected_preflight=[['python3',p['controller'],'--attempt',p['attempt'],stage] for stage in ('prepare-ui','bind-recovery','diagnose')]
+    manifest=str(Path(p['controller']).parent/'launch-command.json')
+    if p['launchCheckedCommand']!=['python3',str(Path(p['sourceRoot'])/'plan_manifest.py'),'--manifest',manifest,'--launch']:raise ValueError('Unchecked VM entrypoint')
+    if p['readyWatcherCommand']!=['python3','-u',str(Path(p['sourceRoot'])/'admit_ready.py'),'--manifest',manifest]:raise ValueError('Readiness watcher manifest differs')
+    expected_preflight=[['python3',p['controller'],'--attempt',p['attempt'],stage] for stage in ('prepare-ui','bind-existing','diagnose')]
     if p['preflightCommands'] != expected_preflight:raise ValueError('Unexpected stage script/action/arguments')
     expected_admit=['python3',str(Path(p['sourceRoot'])/'admit_observation.py'),'--adb',option(argv,'--adb'),'--attempt',p['attempt'],'--token',p['attemptToken']]
     if p['afterStartAdmissionCommand'] != expected_admit:raise ValueError('Admission stage identity/token differs')
@@ -90,6 +96,8 @@ def validate(p, files=False):
     for key,expected in (('pixelAttemptToken',p['attemptToken']),('recordId',p['recordId']),('pixelColdRecovery',str(p['coldRecovery']).lower()),
                          ('pixelObserveSeconds','300'),('expectedMainApkSha256',main['sha256']),('pixelOriginToken','ACTUAL_ORIGINAL_CLOCK_SHA256')):
         if extra(p['instrumentationArgs'],key)!=expected:raise ValueError('Instrumentation identity differs: '+key)
+    required={'pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py'}
+    if not required.issubset(p['sourceHashes']):raise ValueError('Required stage/helper source hashes unavailable')
     hashes=list(p['recordPins'].values())+list(p['sourceHashes'].values())+[a['sha256'] for a in p['assets']]+[p['controllerSha256'],p['newLauncherSha256']]
     if any(not re.fullmatch('[0-9a-f]{64}',h) for h in hashes):raise ValueError('Invalid frozen hash')
     if not p['coldRecovery']:

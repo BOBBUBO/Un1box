@@ -8,7 +8,7 @@ import plan_manifest as plans
 class Manifest(unittest.TestCase):
     def fixture(self, root):
         source=root/'source';source.mkdir();prepared=root/'prepared';prepared.mkdir()
-        for name in ('pixel_supervisor.py','capture_origin.py','admit_observation.py'):(source/name).write_text('raise RuntimeError("synthetic VM must not execute")\n')
+        for name in ('pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py'):(source/name).write_text('raise RuntimeError("synthetic VM must not execute")\n')
         controller=prepared/'controller.py';controller.write_text('# synthetic controller\n');launcher=prepared/'launcher';launcher.write_text('# synthetic launcher\n')
         sha=lambda b:hashlib.sha256(b).hexdigest();assets=[]
         for name in ('app-debug.apk','app-debug-androidTest.apk'):
