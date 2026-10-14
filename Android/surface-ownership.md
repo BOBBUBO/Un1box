@@ -89,3 +89,11 @@ Then inspect actual repeated recreation/overlap on target with window/phase
 metrics, current copied-versus-producer statuses and retained raw/Surface images.
 Source/helper tests do not establish guest rendering or prove an earlier failure
 was caused by a late callback. Existing failed receipts remain unchanged.
+
+Release completion is tracked by contact ID. An admitted UP/CANCEL removes its
+local held ID but retains uncertain release debt until the exact latest batch
+reports success. Success clears only the ending IDs in that batch; overwritten
+older requests remain uncertain and require cancellation before handoff or
+detach. The debt set is bounded to 64 IDs; overflow remains conservative until
+a full cancellation succeeds. This models admission/status bookkeeping, not
+proof of backend or guest delivery of a cancellation.
