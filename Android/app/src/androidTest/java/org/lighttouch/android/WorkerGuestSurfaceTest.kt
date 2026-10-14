@@ -25,8 +25,13 @@ class WorkerGuestSurfaceTest {
     private class Endpoint {
         val identity = Binder()
         val calls = mutableListOf<String>()
-        val worker = Proxy.newProxyInstance(IEngine::class.java.classLoader, arrayOf(IEngine::class.java)) { _, method, _ ->
+        val worker = Proxy.newProxyInstance(IEngine::class.java.classLoader, arrayOf(IEngine::class.java)) { proxy, method, arguments ->
             when (method.name) {
+                // Compose's structural state policy invokes Object.equals when
+                // selecting another worker. Object methods are not Binder calls.
+                "equals" -> proxy === arguments?.get(0)
+                "hashCode" -> System.identityHashCode(proxy)
+                "toString" -> "Fake Surface worker@${System.identityHashCode(proxy).toString(16)}"
                 "asBinder" -> identity
                 "claimDisplay" -> { calls += "claim"; 1L }
                 "attachDisplay" -> { calls += "attach"; "" }
@@ -34,7 +39,6 @@ class WorkerGuestSurfaceTest {
                 "detachDisplay" -> { calls += "detach"; null }
                 "cancelDisplayInput" -> { calls += "cancel"; null }
                 "backgroundDisplay" -> { calls += "background"; null }
-                "toString" -> "Fake Surface worker"
                 else -> error("Unexpected Surface control: ${method.name}")
             }
         } as IEngine
@@ -56,6 +60,14 @@ class WorkerGuestSurfaceTest {
                 assertEquals("stopped", initial.getString("state"))
                 assertEquals("", initial.getString("error"))
                 val a = Endpoint(); val b = Endpoint()
+                // Exercise the proxy's actual Object methods before Compose:
+                // selecting B must compare unequal without touching Binder.
+                assertTrue(a.worker.equals(a.worker))
+                assertFalse(a.worker.equals(b.worker))
+                assertFalse(a.worker.equals(null))
+                assertEquals(System.identityHashCode(a.worker), a.worker.hashCode())
+                assertTrue(a.worker.toString().startsWith("Fake Surface worker@"))
+                assertTrue(a.calls.isEmpty() && b.calls.isEmpty())
                 val selected = mutableStateOf<IEngine?>(a.worker)
                 val screenOn = mutableStateOf(false)
                 var latest: GuestDisplay? = null
