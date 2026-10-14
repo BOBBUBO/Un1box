@@ -48,36 +48,16 @@ NDK≥r28 provide compatible packaging/linking defaults. This app additionally
 links JNI with max-page-size 16384. Verify the entire engine dependency closure,
 not only JNI.
 
-## Build
+## Build and run
 
-Build the real QEMU Android engine first using its pinned backend recipe. Stage
-all Bionic shared libraries under `ENGINE_ROOT/arm64-v8a/` and
-`ENGINE_ROOT/x86_64/`, including `libqemu-arm.so`. JNI and QEMU use the same NDK28.2 shared C++ runtime;
-AGP packages it once from the NDK (`ANDROID_STL=c++_shared`). These private build outputs must
-stay outside Git. No stub/fallback engine is accepted. The build fails explicitly
-if a requested ABI is missing.
-
-```sh
-export ANDROID_HOME=/path/to/Android/Sdk
-export JAVA_HOME=/path/to/jdk-17
-cd Android
-./gradlew --no-daemon --max-workers=2 \
-  -PportableDir=/path/to/LightTouch/Portable \
-  -PqemuSource=/path/to/qemu-ios \
-  -PengineRoot=/path/to/android-engine-libraries \
-  -PfirmwareDir=/path/to/LightTouch/Portable/firmware \
-  -PxpwnSource=/path/to/pinned-xpwn \
-  -PnativeDepsRoot=/path/to/android-dependency-prefixes \
-  -PbuildRoot=/path/to/private/android-build \
-  :app:assembleDebug
-./scripts/check-apk.py /path/to/private/android-build/app/outputs/apk/debug/app-debug.apk
-```
-
-To build only the physical phone ABI while x86_64 is being compiled, add
-`-PtargetAbis=arm64-v8a`. This does not qualify the AVD gate. Dependency verification metadata is checked in and Gradle checks SHA256 for the
-pinned dependency closure. Regenerate intentionally with
-`--write-verification-metadata sha256` when updating dependencies, then review
-the changed versions/checksums.
+Follow the concise [verified build/install/run guide](BUILD-AND-RUN.md) for
+candidate17b's exact source revisions, required engine/firmware/ANGLE/frontend
+notice inputs, complete Gradle properties and APK checks. It separates tested
+build/host admission commands from manual guest readiness and open acceptance.
+Keep build outputs and guest material outside the checkout. Build both real
+Bionic ABI closures; missing engine libraries fail explicitly, and an arm64-only
+build cannot qualify the AVD gates. Review pinned dependency verification changes
+when intentionally updating versions/checksums.
 
 ## Private imports and state
 
@@ -119,13 +99,15 @@ No Google services, root privileges or isolated-UID storage exceptions are neede
 The foreground notification permission can be denied without affecting user input.
 
 Stop requests guest shutdown under the shared 35-second disposal budget.
-The domain alone decides clean versus dirty storage. A rejected shutdown request or timeout is preserved in private
-`files/worker-stop-error.txt` and shown after reconnect, while native dirty metadata
-remains authoritative. The process exits after Stop;
-restart binds a newly created worker and never invokes QEMU twice in one process.
-Native/OS crashes also preserve the dirty marker and original/base. Cold recovery
-uses the native existing overlay, with dirty state visible in status. No snapshot
-capability is claimed.
+The domain alone decides clean versus dirty storage. The independent watchdog is
+armed before native admission; Stop runs off the UI/Binder path. Own-PID terminal
+receipts/errors are best effort, and a missing receipt never confirms clean halt.
+Native state metadata remains authoritative. Restart binds a newly created worker
+and never invokes QEMU twice in one process. Ordinary Start refuses a dirty state;
+**Recover retained state** explicitly reuses the existing overlay in a fresh
+worker without clearing markers. Confirmed guest halt plus engine cleanup decides
+clean state. See [recovery controls](recovery-controls.md). No snapshot capability
+is claimed.
 
 Audio drains only actual bounded signed-16-bit PCM into an AudioTrack configured
 from native sample rate/channel metadata. Unsupported audio remains unsupported;
