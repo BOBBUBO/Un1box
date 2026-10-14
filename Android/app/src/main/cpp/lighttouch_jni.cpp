@@ -379,3 +379,7 @@ JNI(observations) jlongArray JNICALL Java_org_lighttouch_android_Native_observat
     auto array=env->NewLongArray(sizeof(values)/sizeof(values[0]));
     env->SetLongArrayRegion(array,0,sizeof(values)/sizeof(values[0]),values);return array;
 }
+
+JNI(shutdownGraceMillis) jint JNICALL Java_org_lighttouch_android_Native_shutdownGraceMillis(JNIEnv *,jobject) {
+    return jint(LT_SHUTDOWN_GRACE_MS);
+}

@@ -218,7 +218,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             Button(onClick = { engineExpectedExit = true; engine?.stop(); stopSensors(); status = "stopping" }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
                             Button(onClick = { engine?.pause(status != "paused") }, enabled = status in listOf("running", "paused")) { Text(if (status == "paused") "Resume" else "Pause") }
                         }
-                        AndroidView(factory = { GuestDisplay(it) { engine }.also { displayView = it } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
+                        AndroidView(factory = { GuestDisplay(it, onError = { message -> error = message }) { engine }.also { displayView = it } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { pulse(0) }, enabled = status == "running", modifier = Modifier.testTag("home_button")) { Text("Home") }
                             Button(onClick = { pulse(1) }, enabled = status == "running", modifier = Modifier.testTag("power_button")) { Text("Power") }
@@ -422,7 +422,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 if (binder.isBinderAlive) {
                     try { binder.linkToDeath(recipient, 0) } catch (_: DeadObjectException) { died.countDown() }
                     try { old.stop() } catch (_: DeadObjectException) { died.countDown() }
-                    check(!binder.isBinderAlive || died.await(20, TimeUnit.SECONDS)) { "Previous guest worker has not exited. Retry after it stops." }
+                    check(!binder.isBinderAlive || died.await(45, TimeUnit.SECONDS)) { "Previous guest worker has not exited. Retry after it stops." }
                 }
                 handler.post { engine = null; sessionOwned = false; engineRestarting = false; bindWorker() }
             } catch (failure: Exception) { handler.post { engineRestarting = false; pendingGuestStart = false; error = failure.message ?: "Guest worker restart failed"; status = "failed" } }

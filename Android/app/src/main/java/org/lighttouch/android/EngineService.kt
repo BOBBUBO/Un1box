@@ -89,7 +89,8 @@ class EngineService : Service() {
             Native.cancelInput()
             error = Native.stop()
             Thread({
-                val deadline = SystemClock.elapsedRealtime() + 15_000
+                val graceMs = Native.shutdownGraceMillis().toLong()
+                val deadline = SystemClock.elapsedRealtime() + graceMs
                 var terminal = false
                 while (SystemClock.elapsedRealtime() < deadline) {
                     val observed = Native.status()
@@ -101,7 +102,7 @@ class EngineService : Service() {
                     }
                     Thread.sleep(100)
                 }
-                if (!terminal) error = "Guest shutdown timed out after 15 seconds; worker terminated and dirty state preserved. " + error
+                if (!terminal) error = "Guest shutdown timed out after ${graceMs / 1000} seconds; worker terminated and dirty state preserved. " + error
                 if (error.isNotEmpty()) persistStopError(error)
                 persistObservations(if (terminal) "stop-terminal" else "stop-timeout")
                 // Native domain owns dirty/clean state. A timeout never marks clean.
