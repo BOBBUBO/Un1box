@@ -23,6 +23,7 @@ class EngineService : Service() {
     private val touchAdmissionGuard = Any()
     private val lifecycleAdmission = WorkerLifecycleAdmission()
     private val touchTimestampOrder = TouchTimestampOrder()
+    private val displayCancellations = DisplayCancellationHistory()
     private val audioGuard = AudioPacketEpoch()
     private val audioObservations = AudioObservations()
     @Volatile private var audioError = ""
@@ -167,14 +168,14 @@ class EngineService : Service() {
             else if (button in 0..1) (if (down) buttonDownAdmissions else buttonUpAdmissions).incrementAndGet(button)
         }
         override fun touch(timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String =
-            admitTouch(null, 0L, timestampNanos, ids, phases, coordinates, width, height, rotation)
+            admitTouch(null, 0L, timestampNanos, ids, phases, coordinates, width, height, rotation).also { displayCancellations.record(it) }
         override fun touchDisplay(lease: Long, inputGeneration: Long, timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String =
             lifecycleAdmission.run {
                 // Focus loss and gain may finish between UI status polls. Do not
                 // admit a new gesture while host pause/focus cleanup is active.
                 if (userPaused || focusPaused || stopping.get()) DisplayInputAdmission.PAUSED
                 else admitTouch(lease, inputGeneration, timestampNanos, ids, phases, coordinates, width, height, rotation)
-            }
+            }.also { displayCancellations.record(it) }
         private fun admitTouch(lease: Long?, inputGeneration: Long, timestampNanos: Long, ids: IntArray, phases: IntArray, coordinates: FloatArray, width: Int, height: Int, rotation: Int): String = synchronized(touchAdmissionGuard) {
             // Native admission rechecks the owner under the control guard. This
             // early check only avoids advancing the clock for already stale Views.
@@ -407,6 +408,15 @@ class EngineService : Service() {
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
         putLong("buttonRejections", buttonRejections.get())
+        // This worker-owned history survives View replacement. It reports
+        // rejected/cancelled host batches, never guest application or a pass.
+        val cancellations = displayCancellations.snapshot
+        putBundle("displayInputCancellations", Bundle().apply {
+            putLong("count", cancellations.count)
+            putStringArray("reasons", cancellations.reasons.toTypedArray())
+            putInt("historyLimit", DisplayCancellationHistory.LIMIT)
+            putBoolean("guestConsumptionInferred", false)
+        })
         // Volatile immutable snapshot: observers never wait on touch/native admission.
         val touchClock = touchTimestampOrder.snapshot
         putBundle("touchTimestampSelection", Bundle().apply {

@@ -22,6 +22,7 @@
 #include "presentation_lifetime.h"
 #include "display_lease.h"
 #include "frame_cache.h"
+#include "touch_mapping_result.h"
 
 namespace {
 std::mutex guard;
@@ -625,9 +626,7 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
         auto status=lt_map_contact(coords[i*2],coords[i*2+1],view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
         if(status!=LT_OK) {
             const auto cancellation=release_input();
-            std::string failure="Touch left guest viewport; gesture cancelled";
-            if(!cancellation.empty())failure += "; input release failed: "+cancellation;
-            return string(env,failure);
+            return string(env,touch_mapping_rejection(status,cancellation));
         }
     }
     // Guest portrait is kept upright within Android's rotated view. Mapping receives
