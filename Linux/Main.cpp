@@ -178,7 +178,8 @@ static Options options(int argc, char **argv) {
                    "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
                    "[--no-audio] [--trace-io]\n\nMouse left/right: contacts 1/2. H: Home, P: Power, Space: pause, "
                    "Escape: orderly "
-                   "stop.\nC: release all contacts. F6: labeled two-contact pinch. F7: crossing/independent lift. "
+                   "stop.\nC: release all contacts. F5: pinch in. F6: labeled two-contact pinch. F7: "
+                   "crossing/independent lift. "
                    "Arrows: acceleration replay (not hardware "
                    "gyro).\nScript: seconds touch ID phase x y; button ID down; pause 0/1; cancel; stop.\n";
             std::exit(0);
@@ -958,14 +959,14 @@ static int frontend(const Options &o, int argc, char **argv) {
                     p.button = key == SDLK_h ? 0 : key == SDLK_p ? 1 : key == SDLK_EQUALS ? 2 : 3;
                     p.value = down;
                     submit(p);
-                } else if (key == SDLK_F6 && down) {
+                } else if ((key == SDLK_F5 || key == SDLK_F6) && down) {
                     std::cerr << "deterministic touch replay (guest acceptance requires observation)\n";
                     for (int step = 0; step <= 12; step++) {
                         Packet p;
                         p.kind = Touch;
                         p.touch = {sizeof(p.touch), 1, 0, 2, 0, {}};
                         uint32_t phase = step == 0 ? 0 : step == 12 ? 2 : 1;
-                        double delta = .1 + step * .015;
+                        double delta = key == SDLK_F5 ? .28 - step * .015 : .1 + step * .015;
                         p.touch.contacts[0] = {sizeof(lt_contact), 1, 101, phase, .5 - delta, .5};
                         p.touch.contacts[1] = {sizeof(lt_contact), 1, 102, phase, .5 + delta, .5};
                         script.push_back({elapsed + step * .08, p, true});
