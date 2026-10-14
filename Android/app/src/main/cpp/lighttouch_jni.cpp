@@ -12,6 +12,8 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <cstdio>
 
 namespace {
 std::mutex guard;
@@ -26,10 +28,15 @@ lt_frame_info frame = LT_INIT(lt_frame_info);
 lt_pcm_info pcm = LT_INIT(lt_pcm_info);
 lt_board_info board = LT_INIT(lt_board_info);
 uint64_t sequence = 0;
+uint64_t presented_frames=0,first_present_ns=0,last_present_ns=0,previous_present_ns=0,max_present_gap_ns=0;
+uint64_t max_present_work_ns=0,window_failures=0,frame_copy_failures=0,surface_generation=0,pcm_failures=0;
+uint64_t present_intervals[6]={};
+uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
 bool presenter_started = false;
 bool starting = false, startup_stop_requested = false, startup_pause_requested = false;
 uint64_t last_rejected_input = 0;
 std::string diagnostic;
+std::string engine_log_path;
 struct Utf {
     JNIEnv *env; jstring source; const char *value;
     Utf(JNIEnv *e, jstring s): env(e), source(s), value(s ? e->GetStringUTFChars(s, nullptr) : nullptr) {}
@@ -84,6 +91,7 @@ void present() {
                 lt_error error = LT_INIT(lt_error);
                 lt_status status = lt_runtime_copy_frame(runtime, pixels.data(), pixels.size(), &sequence, &frame, &error);
                 if (status == LT_OK && frame.width && frame.height && frame.stride >= frame.width * 4 && frame.bytes <= pixels.size()) {
+                    const auto begin=monotonic_ns();
                     ANativeWindow_Buffer target;
                     if (ANativeWindow_lock(window, &target, nullptr) == 0) {
                         const auto view = viewport(target.width, target.height);
@@ -98,9 +106,18 @@ void present() {
                                 row[x] = uint32_t(p[2]) | (uint32_t(p[1])<<8) | (uint32_t(p[0])<<16) | 0xff000000u;
                             }
                         }
-                        ANativeWindow_unlockAndPost(window);
-                    }
-                }
+                        if(ANativeWindow_unlockAndPost(window)==0) {
+                            const auto now=monotonic_ns();++presented_frames;
+                            if(!first_present_ns)first_present_ns=now;
+                            if(previous_present_ns) {
+                                const auto gap=now-previous_present_ns;max_present_gap_ns=std::max(max_present_gap_ns,gap);
+                                const uint64_t limits[]={16666667,33333334,50000000,100000000,250000000};
+                                size_t bucket=0;while(bucket<5 && gap>limits[bucket])++bucket;++present_intervals[bucket];
+                            }
+                            last_present_ns=previous_present_ns=now;max_present_work_ns=std::max(max_present_work_ns,now-begin);
+                        } else {++window_failures;sequence=0;}
+                    } else {++window_failures;sequence=0;}
+                } else if(status!=LT_AGAIN) ++frame_copy_failures;
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -172,6 +189,17 @@ JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,
     lt_record_info selected=LT_INIT(lt_record_info);
     if(status==LT_OK)status=lt_library_selected(library,&selected,&error);
     if(status==LT_OK)status=lt_library_device_open(library,record.value,1,&prepared_device,&error);
+    if(status==LT_OK) {
+        const std::string path=std::string(selected.state_path)+"/engine-"+std::to_string(getpid())+".log";
+        const int log_fd=open(path.c_str(),O_CREAT|O_WRONLY|O_APPEND|O_CLOEXEC,0600);
+        if(log_fd<0 || fchmod(log_fd,0600)!=0 || dup2(log_fd,STDOUT_FILENO)<0 || dup2(log_fd,STDERR_FILENO)<0) {
+            status=LT_IO;error.code=LT_IO;std::snprintf(error.message,sizeof(error.message),"Cannot retain private guest diagnostics; check available storage");
+        } else {
+            std::setvbuf(stdout,nullptr,_IOLBF,0);std::setvbuf(stderr,nullptr,_IONBF,0);
+            std::lock_guard<std::mutex> lock(guard);engine_log_path=path;
+        }
+        if(log_fd>=0)close(log_fd);
+    }
     if(status==LT_OK)status=lt_engine_board("libqemu-arm.so",selected.board,&prepared_board,&error);
     std::string serial=std::string(selected.state_path)+"/guest-serial.log";
     lt_runtime_config engine=LT_INIT(lt_runtime_config);
@@ -210,19 +238,21 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     std::string detail=diagnostic;
     if(runtime) { auto status=lt_runtime_poll(runtime,&s,&error);if(status!=LT_OK) { diagnostic=result(status,error);detail=diagnostic; }
         else detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed"); }
-    auto arr=env->NewObjectArray(3,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(4,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
-    env->SetObjectArrayElement(arr,2,string(env,diagnostic));return arr;
+    env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));return arr;
 }
 JNI(surface) void JNICALL Java_org_lighttouch_android_Native_surface(JNIEnv *env,jobject,jobject surface) {
     std::lock_guard<std::mutex> lock(guard);
     if(window) ANativeWindow_release(window);
     window=surface?ANativeWindow_fromSurface(env,surface):nullptr;
+    ++surface_generation;previous_present_ns=0;
     if(window) { ANativeWindow_setBuffersGeometry(window,0,0,WINDOW_FORMAT_RGBA_8888);sequence=0; }
 }
 JNI(pause) jstring JNICALL Java_org_lighttouch_android_Native_pause(JNIEnv *env,jobject,jboolean paused) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);
+    previous_present_ns=0;
     if(starting){startup_pause_requested=paused;return string(env,"");}
     return string(env,runtime?result(lt_runtime_pause(runtime,paused,&error),error):"No active session");
 }
@@ -301,7 +331,9 @@ JNI(audio) jint JNICALL Java_org_lighttouch_android_Native_audio(JNIEnv *env,job
     std::lock_guard<std::mutex> lock(guard);if(!runtime)return 0;
     std::vector<int16_t> data(env->GetArrayLength(buffer));lt_error error=LT_INIT(lt_error);
     const auto status=lt_runtime_pcm(runtime,data.data(),uint32_t(data.size()/2),&pcm,&error);
-    if(status!=LT_OK||pcm.channels>2||pcm.channels<1||pcm.frames*pcm.channels>data.size())return 0;
+    if(status==LT_AGAIN)return 0;
+    if(status!=LT_OK){++pcm_failures;return -jint(status);}
+    if(pcm.channels>2||pcm.channels<1||pcm.frames*pcm.channels>data.size()){++pcm_failures;return -jint(LT_INVALID);}
     const jint count=pcm.frames*pcm.channels;env->SetShortArrayRegion(buffer,0,count,data.data());return count;
 }
 JNI(audioInfo) jintArray JNICALL Java_org_lighttouch_android_Native_audioInfo(JNIEnv *env,jobject) {
@@ -325,4 +357,18 @@ JNI(guestPoll) jobjectArray JNICALL Java_org_lighttouch_android_Native_guestPoll
 }
 JNI(guestCancel) void JNICALL Java_org_lighttouch_android_Native_guestCancel(JNIEnv *,jobject,jlong id) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);if(runtime)lt_runtime_guest_cancel(runtime,id,&error);
+}
+
+JNI(observations) jlongArray JNICALL Java_org_lighttouch_android_Native_observations(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_runtime_io_stats shared=LT_INIT(lt_runtime_io_stats);lt_error error=LT_INIT(lt_error);
+    if(runtime)lt_runtime_io_statistics(runtime,&shared,&error);
+    jlong values[]={jlong(monotonic_ns()),jlong(presented_frames),jlong(first_present_ns),jlong(last_present_ns),
+        jlong(max_present_gap_ns),jlong(max_present_work_ns),jlong(window_failures),jlong(frame_copy_failures),
+        jlong(surface_generation),jlong(frame.sequence),jlong(frame.timestamp_ns),jlong(pcm_failures),jlong(pcm.dropped_frames),
+        jlong(present_intervals[0]),jlong(present_intervals[1]),jlong(present_intervals[2]),jlong(present_intervals[3]),jlong(present_intervals[4]),jlong(present_intervals[5]),jlong(shared.frame_count),jlong(shared.frame_sequence),jlong(shared.frame_timestamp_ns),
+        jlong(shared.frame_published_monotonic_ns),jlong(shared.pcm_captured_frames),jlong(shared.pcm_pulled_frames),jlong(shared.pcm_dropped_frames),
+        jlong(shared.input_requests),jlong(shared.pcm_queued_packets)};
+    auto array=env->NewLongArray(sizeof(values)/sizeof(values[0]));
+    env->SetLongArrayRegion(array,0,sizeof(values)/sizeof(values[0]),values);return array;
 }

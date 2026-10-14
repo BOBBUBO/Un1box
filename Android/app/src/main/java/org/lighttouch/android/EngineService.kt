@@ -18,6 +18,9 @@ class EngineService : Service() {
     private val alive = AtomicBoolean(true)
     @Volatile private var audio: AudioTrack? = null
     @Volatile private var focus: AudioFocusRequest? = null
+    private val audioGuard = Any()
+    private val audioObservations = AudioObservations()
+    @Volatile private var audioError = ""
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val binder = object : IEngine.Stub() {
         override fun importBase(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath,
@@ -54,10 +57,12 @@ class EngineService : Service() {
             return Bundle().apply {
                 putString("state", s.getOrElse(0) { "stopped" })
                 putString("detail", s.getOrElse(1) { "" })
-                putString("error", error)
+                putString("engineLog", s.getOrElse(3) { "" })
+                putString("error", error.ifEmpty { audioError })
                 putInt("pid", Process.myPid())
                 putInt("uid", Process.myUid())
                 putBoolean("sessionStarted", started.get())
+                putBundle("observations", observations())
             }
         }
         override fun surface(surface: Surface) { Native.surface(surface) }
@@ -68,7 +73,8 @@ class EngineService : Service() {
             Native.cancelInput()
             val result = Native.pause(paused)
             if (result.isNotEmpty()) error = result
-            if (paused) { abandonAudioFocus(); audio?.pause(); audio?.flush() }
+            synchronized(audioGuard) { if (paused) audioObservations.pauses++ else audioObservations.resumes++ }
+            if (paused) { abandonAudioFocus(); pauseAudio() }
             else requestAudioFocus()
         }
         override fun stop() {
@@ -141,39 +147,89 @@ class EngineService : Service() {
             var format = ""
             while (alive.get()) {
                 val count = Native.audio(samples)
+                if (count < 0) {
+                    synchronized(audioGuard) { audioObservations.nativePullFailures++ }
+                    audioError = "Guest audio could not be read (status ${-count}). Stop and restart the guest."
+                    Thread.sleep(100)
+                    continue
+                }
+                if (count > 0) synchronized(audioGuard) { audioObservations.samples(samples, 0, count, false) }
                 if (count > 0 && focus != null && !focusPaused && !userPaused && !stopping.get()) {
-                    val spec = Native.audioInfo()
-                    val next = spec.joinToString()
-                    if (next != format) {
-                        audio?.release()
-                        val mask = if (spec[1] == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
-                        audio = AudioTrack.Builder().setAudioAttributes(audioAttributes()).setAudioFormat(
-                            AudioFormat.Builder().setSampleRate(spec[0]).setChannelMask(mask).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()
-                        ).setBufferSizeInBytes(maxOf(AudioTrack.getMinBufferSize(spec[0], mask, AudioFormat.ENCODING_PCM_16BIT), count * 4)).build()
-                        audio?.play()
-                        format = next
+                    try {
+                        val spec = Native.audioInfo()
+                        require(spec[0] > 0 && spec[1] in 1..2) { "Invalid guest audio format" }
+                        val next = spec.joinToString()
+                        synchronized(audioGuard) {
+                            if (next != format) {
+                                audio?.let { audioObservations.observeTrack(it.playbackHeadPosition, it.underrunCount); it.release() }
+                                val mask = if (spec[1] == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
+                                val minimum = AudioTrack.getMinBufferSize(spec[0], mask, AudioFormat.ENCODING_PCM_16BIT)
+                                require(minimum > 0) { "Guest audio format unavailable" }
+                                audio = AudioTrack.Builder().setAudioAttributes(audioAttributes()).setAudioFormat(
+                                    AudioFormat.Builder().setSampleRate(spec[0]).setChannelMask(mask).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()
+                                ).setBufferSizeInBytes(maxOf(minimum, count * 4)).build()
+                                check(audio!!.state == AudioTrack.STATE_INITIALIZED) { "Audio output did not initialize" }
+                                audioObservations.trackCreated(spec[0], spec[1]); audio!!.play(); format = next
+                            }
+                            var offset = 0
+                            // A positive short write retains the unwritten tail. Stop,
+                            // pause and focus loss are checked before each retry.
+                            while (offset < count && alive.get() && focus != null && !focusPaused && !userPaused && !stopping.get()) {
+                                val requested = count - offset
+                                val written = audio!!.write(samples, offset, requested, AudioTrack.WRITE_BLOCKING)
+                                audioObservations.writeCalls++; audioObservations.lastWriteCode = written
+                                if (written <= 0) {
+                                    audioObservations.writeFailures++
+                                    audioError = "Guest audio output stopped (code $written). Stop and restart if it does not recover."
+                                    audio?.release(); audio = null; format = ""
+                                    break
+                                }
+                                if (written < requested) audioObservations.shortWrites++
+                                audioObservations.samples(samples, offset, written, true); offset += written; audioError = ""
+                            }
+                            audio?.let { audioObservations.observeTrack(it.playbackHeadPosition, it.underrunCount) }
+                        }
+                    } catch (failure: Exception) {
+                        synchronized(audioGuard) { audioObservations.writeFailures++; audio?.release(); audio = null; format = "" }
+                        audioError = "Guest audio output failed: ${failure.message ?: "unknown error"}. Stop and restart the guest."
+                        Thread.sleep(100)
                     }
-                    audio?.write(samples, 0, count, AudioTrack.WRITE_BLOCKING)
                 } else Thread.sleep(10)
             }
-            audio?.release()
+            synchronized(audioGuard) { audio?.release(); audio = null }
         }, "guest-audio").start()
+    }
+    private fun pauseAudio() = synchronized(audioGuard) {
+        audio?.let { audioObservations.observeTrack(it.playbackHeadPosition, it.underrunCount); it.pause(); it.flush(); audioObservations.flushed() }
+    }
+    private fun observations() = Bundle().apply {
+        val values = Native.observations()
+        val keys = listOf("hostMonotonicNs", "presentedFrames", "firstPresentHostNs", "lastPresentHostNs", "maxPresentGapNs", "maxPresentWorkNs",
+            "windowFailures", "frameCopyFailures", "surfaceGeneration", "guestFrameSequence", "guestFrameTimestampNs", "nativePcmFailures", "pcmDroppedFrames",
+            "presentIntervalsTo16ms", "presentIntervalsTo33ms", "presentIntervalsTo50ms", "presentIntervalsTo100ms", "presentIntervalsTo250ms", "presentIntervalsOver250ms", "producedFrames", "producerFrameSequence", "producerFrameTimestampNs",
+            "framePublishedHostNs", "pcmCapturedFrames", "pcmPulledFrames", "sharedPcmDroppedFrames", "inputRequests", "pcmQueuedPackets")
+        for ((index, key) in keys.withIndex()) putLong(key, values[index])
+        putBundle("audio", synchronized(audioGuard) { audioObservations.snapshot() })
+        putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioFocusHeld", focus != null)
     }
     private fun audioAttributes() = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
     private fun requestAudioFocus() {
-        if (focus != null) { audio?.play(); return }
+        if (focus != null) { synchronized(audioGuard) { audio?.play() }; return }
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(audioAttributes())
             .setOnAudioFocusChangeListener({ change ->
                 if (change < 0) {
                     focusPaused = true
-                    Native.cancelInput(); Native.pause(true); audio?.pause(); audio?.flush()
+                    synchronized(audioGuard) { audioObservations.focusLosses++ }
+                    Native.cancelInput(); Native.pause(true); pauseAudio()
                     if (change == AudioManager.AUDIOFOCUS_LOSS) abandonAudioFocus()
                 } else if (change == AudioManager.AUDIOFOCUS_GAIN && focusPaused && !userPaused && !stopping.get()) {
                     focusPaused = false
-                    Native.pause(false); audio?.play()
+                    synchronized(audioGuard) { audioObservations.focusGains++ }
+                    Native.pause(false); synchronized(audioGuard) { audio?.play() }
                 }
             }, Handler(mainLooper)).build()
         if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) focus = request
+        else { synchronized(audioGuard) { audioObservations.focusDenied++ }; audioError = "Audio focus unavailable. Pause and resume after other audio stops." }
     }
     private fun abandonAudioFocus() { focus?.let { audioManager.abandonAudioFocusRequest(it) }; focus = null }
     private fun foreground() {

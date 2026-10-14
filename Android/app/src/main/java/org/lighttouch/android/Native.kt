@@ -18,6 +18,7 @@ internal object Native {
     external fun cancelInput()
     external fun motion(kind: Int, time: Long, xyz: FloatArray, rotation: Int): String
     external fun capture(): android.graphics.Bitmap?
+    external fun observations(): LongArray
     external fun audioInfo(): IntArray
     external fun guestRequest(operation: Int, argument: String, timeoutMs: Int): Array<String>
     external fun guestPoll(requestId: Long): Array<String>
