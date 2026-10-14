@@ -333,6 +333,13 @@ force-stop ([AOSP Android16 policy](https://android.googlesource.com/platform/fr
 the target main process must already run. ActivityScenario closure still invokes
 background pause, so reopen and Resume for continued foreground use. Exit reason
 and trace availability remain actual platform evidence, not a service-failure claim.
+For a fresh worker, `GuestQmpSnapshotTest -e touchWireTrace true` admits the fixed
+typed trace before `debugArmQmp` and guest start, retaining configuration in the
+receipt and each snapshot. This combines copied-buffer metrics/QMP with guest
+MT wire logging from boot. `snapshotOnly=true` with this flag requires the
+existing worker's `touchTraceConfigured` status; it never configures a running
+guest. No event name, general command or caller path is accepted. Trace admission
+does not prove that any touch frame was collected or visible.
 
 `GuestOrientationLifecycleTest` is opt-in (`-e exerciseOrientationLifecycle true`)
 against an already booted legitimate guest. It uses the production activity and
