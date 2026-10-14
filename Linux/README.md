@@ -463,5 +463,23 @@ wake/slider checkpoints, then inspect each Back/grid/reopen checkpoint. Admit
 --log /private/run/session.log --output-dir /private/run/cancel --execute` only
 from the inspected current viewer below maximum zoom. Review actual guest release
 and fresh begin FRAME_READ collection, paired pixels and fresh scale response;
-finish with Escape and the confirmed1/dirty0 receipt. This fixed trace/reopen plan
-is source-only until a new bounded GUI allocation is authorized.
+finish with Escape and the confirmed1/dirty0 receipt. The separate Back/albums/grid navigation stages still require pixel review before
+each step. They remain proposals until exercised on the current guest.
+
+A bounded Linux run on 2026-10-14 exercised the cancel stage with the fixed
+transition FIFO engine. The inspected starting photograph showed every Home
+icon row and dock at fit; the interrupted photograph grew slightly, and the
+fresh pinch produced progressively larger crops in both during/after captures.
+The production replay discarded ten future batches on cancel, then admitted
+a fresh two-contact gesture. The worker subsequently confirmed guest shutdown
+with exit 0 and a clean state receipt. This is partial cancellation/reuse evidence;
+focus, pause and rotation recovery were not exercised in that run.
+
+Interpret the fixed wire trace using the exact engine source: generated frame
+reports alone are insufficient. In this run, FIFO order and subsequent complete
+103/75-byte command transfers imply delivery of both END reports and FULL_END
+before the fresh START reports. FRAME_READ does not include a consumed frame ID
+or establish that the guest accepted its checksum. Retain the transaction lines,
+paired image/diagnostic receipts and the independent visible scale response;
+label reconstructed delivery as an inference. Never equate admission/APPLIED
+with guest acceptance.
