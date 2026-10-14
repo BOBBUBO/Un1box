@@ -1,15 +1,16 @@
 #pragma once
-#include "lighttouch.h"
 #include "Json.hpp"
 #include "Sha256.hpp"
-#include <filesystem>
+#include "lighttouch.h"
 #include <atomic>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <cstdio>
-#include <cerrno>
-#include <cstring>
 namespace lt {
 namespace fs = std::filesystem;
 struct Failure : std::runtime_error {
@@ -43,6 +44,12 @@ template <class F> lt_status guard(lt_error *e, F f) {
 }
 std::string read_file(const fs::path &, size_t limit = 64u << 20);
 std::string digest_file(const fs::path &);
+struct AdmissionAssetCheck {
+    fs::path path;
+    std::string sha256, message;
+};
+std::unique_ptr<lt_device> open_device_checked(const lt_device_config *, lt_progress_fn, void *,
+                                               const std::vector<AdmissionAssetCheck> &);
 void atomic_write(const fs::path &, const std::string &);
 void sync_dir(const fs::path &);
 std::string prepared_guest_package(lt_device *);
