@@ -17,14 +17,17 @@ def main():
     parser.add_argument('--window', type=int, required=True)
     parser.add_argument('--log', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
-    parser.add_argument('--stage', choices=['prepare', 'reopen-albums', 'reopen-grid', 'reopen-viewer', 'cross', 'cancel', 'focus', 'pause', 'rotation'], required=True)
+    parser.add_argument('--stage', choices=['prepare', 'reopen-albums', 'reopen-grid', 'reopen-viewer', 'cross', 'cancel', 'focus', 'pause', 'rotation', 'rotate-held', 'pinch', 'portrait'], required=True)
     parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--rotation', type=int, choices=[0, 90, 180, 270], default=0,
+                        help='Currently inspected SDL presentation rotation; raw guest frames stay portrait')
     parser.add_argument('--video-size', default='800x1000')
     parser.add_argument('--viewport', type=int, nargs=2, metavar=('WIDTH', 'HEIGHT'))
     args = parser.parse_args()
     expected_scene = {'reopen-albums': 'Photos image viewer', 'reopen-grid': 'Photo Albums',
-                      'reopen-viewer': 'Saved Photos grid'}.get(args.stage, 'Photos image viewer below maximum zoom')
-    plan = {'stage': args.stage, 'window': args.window,
+                      'reopen-viewer': 'Saved Photos grid',
+                      'portrait': 'Photos image viewer at the currently inspected rotation'}.get(args.stage, 'Photos image viewer below maximum zoom')
+    plan = {'stage': args.stage, 'window': args.window, 'presentation_rotation': args.rotation,
             'precondition': 'Current pixels inspected: ' + expected_scene,
             'prepare': 'Every reopen screen must be inspected before the next stage; F5 shrink remains unqualified',
             'acceptance_assertions': False, 'shutdown': 'Launch owner requests Escape after all stages and waits clean receipt'}
@@ -68,10 +71,12 @@ def main():
         height = abs(height)
         if width <= 0 or height < width:
             raise RuntimeError('Reopen route requires a valid portrait guest frame')
-        scale = min(args.viewport[0] / width, args.viewport[1] / height)
-        left, top = (args.viewport[0] - width * scale) / 2, (args.viewport[1] - height * scale) / 2
+        display_width, display_height = (height, width) if args.rotation % 180 else (width, height)
+        scale = min(args.viewport[0] / display_width, args.viewport[1] / display_height)
+        left, top = (args.viewport[0] - display_width * scale) / 2, (args.viewport[1] - display_height * scale) / 2
+        x, y = {0: (x, y), 90: (1-y, x), 180: (1-x, 1-y), 270: (y, 1-x)}[args.rotation]
         call(['xdotool', 'mousemove', '--window', str(args.window),
-              str(round(left + x * width * scale)), str(round(top + y * height * scale))])
+              str(round(left + x * display_width * scale)), str(round(top + y * display_height * scale))])
         call(['xdotool', 'mousedown', '1'])
         try:
             time.sleep(.15)
@@ -98,6 +103,19 @@ def main():
             tap_guest(.1, .2)
             time.sleep(1)
             capture('viewer-after')
+            return
+        if args.stage == 'portrait':
+            for _ in range((360 - args.rotation) % 360 // 90):
+                key('r')
+                time.sleep(.1)
+            capture('portrait-after')
+            return
+        if args.stage == 'pinch':
+            key('F6')
+            time.sleep(.65)
+            capture('fresh-pinch-during')
+            time.sleep(.5)
+            capture('fresh-pinch-after')
             return
         if args.stage == 'prepare':
             key('F5')
@@ -140,9 +158,11 @@ def main():
             paused = False
             time.sleep(.3)
         else:
-            key('r' if args.stage == 'rotation' else 'c')
+            key('r' if args.stage in ('rotation', 'rotate-held') else 'c')
             time.sleep(.25)
         capture('interrupted')
+        if args.stage == 'rotate-held':
+            return
         if args.stage == 'rotation':
             for _ in range(3):
                 key('r')

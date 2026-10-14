@@ -495,3 +495,23 @@ ordering under the same trace limits above. The fresh worker ended with confirme
 shutdown, exit0 and clean state. Concurrent AVD host load was retained; this is
 bounded Linux behavior evidence, not sustained performance or Android acceptance.
 Rotation with held contacts remains unqualified for this fixed candidate.
+
+The staged controller also supports retaining R90 during recovery. From inspected
+portrait fit, `--stage rotate-held` starts a two-contact replay and rotates after
+220ms, cancelling its remaining contacts/batches. Inspect `interrupted` native
+and actual GUI captures. Use separate `reopen-albums`, `reopen-grid`, and
+`reopen-viewer` stages with `--rotation 90 --viewport WIDTH HEIGHT`, reviewing each
+screen before continuing. Tap coordinates are transformed from portrait guest
+positions into the inspected rotated letterbox; raw BMP bytes stay portrait.
+Then `--stage pinch --rotation 90` retains during/after native and GUI captures,
+and `--stage portrait --rotation 90` returns presentation to portrait. F6 replay
+coordinates are already in guest portrait axes; the mapped mouse navigation
+separately exercises the frontend transform. Keep this distinction in evidence.
+
+An actual bounded run exercised that sequence on the fixed FIFO engine. Rotation
+cancelled ten future replay batches, the mapped Back/album/thumbnail taps visibly
+reopened the same photograph at fit, and a fresh replay produced progressively
+larger crops in the R90 presentation. The inspected portrait return retained the
+same enlarged image. The fresh worker confirmed shutdown with exit0 and clean
+state. This is bounded Linux rotation/cancellation/reuse evidence, with raw and
+presentation images retained separately, not physical multitouch or Android proof.
