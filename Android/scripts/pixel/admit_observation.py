@@ -13,6 +13,33 @@ import time
 from diagnostic_control import PACKAGE, SERIAL, integer, make_admission, validate_binding
 
 
+def public_device_clock(adb, binding, output, deadline, now=time.monotonic_ns, run=subprocess.run):
+    """Read global BOOTTIME as shell, bracketed by the original Android boot ID."""
+    argv=[adb,'-s',SERIAL,'exec-out','cat','/proc/sys/kernel/random/boot_id',
+          '/proc/uptime','/proc/sys/kernel/random/boot_id']
+    before=now()
+    if before>=deadline:raise TimeoutError('Original device-clock budget expired')
+    try:r=run(argv,capture_output=True,timeout=min(1.5,(deadline-before)/1e9))
+    except subprocess.TimeoutExpired as error:r=subprocess.CompletedProcess(argv,124,error.stdout or b'',error.stderr or b'')
+    after=now()
+    receipt={'argv':argv,'hostBeforeNs':before,'hostAfterNs':after,'exit':r.returncode,
+        'stdout':r.stdout.decode(errors='replace'),'stderr':r.stderr.decode(errors='replace'),
+        'stdoutHex':r.stdout.hex(),'stderrHex':r.stderr.hex(),'boundBootId':binding['bootId'],
+        'workerPid':binding['workerPid'],'clockReadContext':'adb shell; global BOOTTIME',
+        'guestAcceptancePassed':False}
+    with Path(output).open('x') as stream:stream.write(json.dumps(receipt,indent=2)+'\n')
+    lines=r.stdout.decode(errors='replace').splitlines()
+    if r.returncode or r.stderr or after>deadline or len(lines)!=3 or lines[0]!=binding['bootId'] or lines[2]!=binding['bootId']:
+        raise ValueError('Public device clock/boot identity unavailable or changed')
+    fields=lines[1].split()
+    if len(fields)!=2 or any(not re.fullmatch(r'\d+\.\d{1,3}',v) for v in fields):
+        raise ValueError('Unknown public /proc/uptime precision')
+    text=fields[0];digits=len(text.split('.')[1])
+    return {'hostBeforeNs':before,'hostAfterNs':after,
+        'deviceElapsedMs':int(decimal.Decimal(text)*1000),'quantizationMs':10**(3-digits),
+        'bootId':binding['bootId']}
+
+
 def admit(adb, attempt, token, now=time.monotonic_ns, run=subprocess.run):
     if not re.fullmatch(r"[0-9a-f]{32}", token):
         raise ValueError("Invalid attempt token")
@@ -84,18 +111,8 @@ def admit(adb, attempt, token, now=time.monotonic_ns, run=subprocess.run):
     r = run(prefix + ["cat", f"/proc/{binding['workerPid']}/cmdline"], capture_output=True, timeout=1.5)
     if r.returncode != 0 or r.stdout.rstrip(b"\0") != (PACKAGE + ":engine").encode():
         raise ValueError("Worker role differs after Start")
-    before = now()
-    r = run(prefix + ["cat", "/proc/uptime"], capture_output=True, timeout=1.5)
-    after = now()
-    if r.returncode != 0:
-        raise ValueError("Device BOOTTIME read failed")
-    text = r.stdout.decode().split()[0]
-    if not re.fullmatch(r"\d+\.\d{1,3}", text):
-        raise ValueError("Unknown /proc/uptime precision")
-    digits = len(text.split(".")[1])
-    bracket = {"hostBeforeNs": before, "hostAfterNs": after,
-               "deviceElapsedMs": int(decimal.Decimal(text) * 1000),
-               "quantizationMs": 10 ** (3 - digits), "bootId": binding["bootId"]}
+    bracket = public_device_clock(adb,binding,out/'after-start-device-clock.json',
+        origin+810_000_000_000,now=now,run=run)
     gate = make_admission(binding, bracket)
     encoded = json.dumps(gate, separators=(",", ":"))
     remote = (f"printf '%s' {shlex.quote(encoded)} > {folder}/.admission.pending && "
