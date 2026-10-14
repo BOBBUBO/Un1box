@@ -24,6 +24,24 @@ class Manifest(unittest.TestCase):
             self.assertEqual(plans.option(p['afterStartAdmissionCommand'],'--token'),p['attemptToken'])
             self.assertEqual(plans.extra(p['instrumentationArgs'],'pixelColdRecovery'),'false')
             self.assertIn('--record-id',p['supervisorArgv']);self.assertNotIn('--fresh-library',p['supervisorArgv'])
+            self.assertEqual(p['pixelGraphicsProvider'],'platform')
+            self.assertEqual(plans.extra(p['instrumentationArgs'],'pixelGraphicsProvider'),'platform')
+
+    def test_provider_is_closed_pinned_and_angle_is_only_explicit(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);p=self.fixture(root)
+            angle=plans.build(p,root/'prepared',p['attempt'],root/'source',root/'prepared'/'launcher',token=p['attemptToken'],pixel_graphics_provider='angle-gl')
+            self.assertEqual(plans.extra(angle['instrumentationArgs'],'pixelGraphicsProvider'),'angle-gl')
+            self.assertTrue(plans.validate(angle,files=True))
+            fresh=plans.build(angle,root/'prepared',p['attempt'],root/'source',root/'prepared'/'launcher',token=p['attemptToken'])
+            self.assertEqual(fresh['pixelGraphicsProvider'],'platform')
+            for value in (None,'auto','host','ANGLE','',0,['platform']):
+                q=copy.deepcopy(p);q['pixelGraphicsProvider']=value
+                with self.subTest(value=value),self.assertRaises(ValueError):plans.validate(q)
+            for args in ([*p['instrumentationArgs'],'-e','pixelGraphicsProvider','angle-gl'],
+                    [x if i!=p['instrumentationArgs'].index('pixelGraphicsProvider')+1 else 'angle-gl' for i,x in enumerate(p['instrumentationArgs'])]):
+                q=copy.deepcopy(p);q['instrumentationArgs']=args
+                with self.assertRaises(ValueError):plans.validate(q)
 
     def test_attach_identity_is_declared_pinned_live_checked_and_never_a_new_launch_flag(self):
         with tempfile.TemporaryDirectory() as d:

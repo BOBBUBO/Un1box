@@ -23,20 +23,29 @@ def extra(argv, key):
     return pairs[0]
 
 
+def graphics_provider(value):
+    if value not in ('platform', 'angle-gl'):
+        raise ValueError('pixelGraphicsProvider must be platform or angle-gl')
+    return value
+
+
 def instrumentation(p):
     main=next(a for a in p['assets'] if Path(a['path']).name=='app-debug.apk')
     return ['shell','am','instrument','-w','-r','--no-restart','-e','class','org.lighttouch.android.GuestPixelBootDiagnosisTest',
         '-e','diagnoseVirtualPixel','true','-e','expectedMainApkSha256',main['sha256'],'-e','recordId',p['recordId'],
         '-e','pixelAttemptToken',p['attemptToken'],'-e','pixelOriginToken','ACTUAL_ORIGINAL_CLOCK_SHA256',
+        '-e','pixelGraphicsProvider',graphics_provider(p['pixelGraphicsProvider']),
         '-e','pixelColdRecovery',str(p['coldRecovery']).lower(),'-e','pixelObserveSeconds','300','-e','allowOneSleepWake','true',
         'org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner']
 
 
-def build(seed, prepared, attempt, source, launcher, cold_recovery=False, token=None):
+def build(seed, prepared, attempt, source, launcher, cold_recovery=False, token=None, pixel_graphics_provider='platform'):
     p=copy.deepcopy(seed);prepared=Path(prepared).resolve();source=Path(source).resolve()
     p.update(schema=2,attempt=str(Path(attempt).resolve()),attemptToken=token or secrets.token_hex(16),
         controller=str(prepared/'controller.py'),coldRecovery=cold_recovery,priorDirtyExpected=cold_recovery,
         sourceRoot=str(source),status='SOURCE_PREPARED_ROOT_REVIEW_GRANT_REQUIRED',launchReady=False)
+    # Each new plan makes a fresh explicit choice; never inherit a historical ANGLE default.
+    p['pixelGraphicsProvider']=graphics_provider(pixel_graphics_provider)
     old=seed['supervisorArgv'];main=next(a for a in p['assets'] if Path(a['path']).name=='app-debug.apk')
     p['supervisorArgv']=['python3','-u',str(source/'pixel_supervisor.py'),'--allocation-granted','--user',option(old,'--user'),
         '--adb',option(old,'--adb'),'--emulator',str(Path(launcher).resolve()),'--avd',p['avd'],'--expected-page-bytes','16384',
@@ -66,6 +75,7 @@ def build(seed, prepared, attempt, source, launcher, cold_recovery=False, token=
 
 
 def validate(p, files=False):
+    graphics_provider(p.get('pixelGraphicsProvider'))
     for key,n in (('attemptToken',32),('recordId',32)):
         if not isinstance(p.get(key),str) or not re.fullmatch('[0-9a-f]{'+str(n)+'}',p[key]): raise ValueError('Invalid '+key)
     if type(p.get('coldRecovery')) is not bool or p.get('priorDirtyExpected') is not p['coldRecovery']:raise ValueError('Start mode/actual prior-dirty expectation inconsistent')
@@ -107,7 +117,7 @@ def validate(p, files=False):
     if option(p['afterStartAdmissionCommand'],'--token')!=p['attemptToken']:raise ValueError('Stale admission token')
     main=next(a for a in p['assets'] if Path(a['path']).name=='app-debug.apk')
     for key,expected in (('pixelAttemptToken',p['attemptToken']),('recordId',p['recordId']),('pixelColdRecovery',str(p['coldRecovery']).lower()),
-                         ('pixelObserveSeconds','300'),('expectedMainApkSha256',main['sha256']),('pixelOriginToken','ACTUAL_ORIGINAL_CLOCK_SHA256')):
+                         ('pixelObserveSeconds','300'),('pixelGraphicsProvider',p['pixelGraphicsProvider']),('expectedMainApkSha256',main['sha256']),('pixelOriginToken','ACTUAL_ORIGINAL_CLOCK_SHA256')):
         if extra(p['instrumentationArgs'],key)!=expected:raise ValueError('Instrumentation identity differs: '+key)
     required={'pixel_supervisor.py','capture_origin.py','admit_observation.py','admit_ready.py','plan_manifest.py','bind_recovery.py','memory_monitor.py','ui_approval.py','diagnostic_control.py','host_lifecycle.py','persistent_avd.py'}
     if not required.issubset(p['sourceHashes']):raise ValueError('Required stage/helper source hashes unavailable')

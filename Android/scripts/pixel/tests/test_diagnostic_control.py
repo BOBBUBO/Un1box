@@ -252,12 +252,16 @@ class Admission(unittest.TestCase):
             with self.assertRaises(ValueError):admit_observation.public_device_clock('/synthetic/adb',b,out,10,now=mock.Mock(side_effect=[1,11]),run=run)
             self.assertTrue(out.exists())
 
-    def execute(self, directory, offset=400, change=None, publication=0):
+    def execute(self, directory, offset=400, change=None, publication=0, ready_change=None):
         b = binding(); out = Path(directory)
         origin = {"originNs": b["originNs"], "supervisorStartTicks": 100000, "clockTicksPerSecond": 100}
         raw = json.dumps(origin).encode(); (out / "clock-context.json").write_bytes(raw)
         b["originToken"] = hashlib.sha256(raw).hexdigest()
+        b.update(graphicsProviderRequested='platform',graphicsProviderObserved='platform',graphicsProviderFixed=True)
+        (out/'normal-record-bound.json').write_text(json.dumps({**b,'schema':1,'priorDirty':False,'coldRecoveryUsed':False,'pinsVerified':True}))
         ready = dict(b)
+        ready.update(priorDirty=False,coldRecoveryUsed=False)
+        if ready_change:ready.update(ready_change)
         responses = {"ready": json.dumps(ready).encode(), "id": b"10215\n",
                      "/proc/sys/kernel/random/boot_id": b["bootId"].encode(),
                      "files/library/selected": b["recordId"].encode(), "/proc/42/stat": stat(1234),
@@ -290,6 +294,9 @@ class Admission(unittest.TestCase):
             self.assertFalse(result["guestAcceptancePassed"])
             self.assertTrue((Path(d) / "pixel-bound.json").exists())
             self.assertEqual(sum(c[3] == "shell" for c in calls), 1)
+            self.assertEqual(result['gate']['graphicsProviderRequested'],'platform')
+            self.assertEqual(result['gate']['graphicsProviderObserved'],'platform')
+            self.assertIs(result['gate']['graphicsProviderFixed'],True)
 
     def test_cli_late_after_start_refuses_gate_but_keeps_capture_binding(self):
         with tempfile.TemporaryDirectory() as d:
@@ -297,6 +304,14 @@ class Admission(unittest.TestCase):
                 self.execute(d, offset=500)
             self.assertTrue((Path(d) / "pixel-bound.json").exists())
             self.assertFalse((Path(d) / "pixel-admission.json").exists())
+
+    def test_provider_mismatch_or_unfixed_selection_never_publishes_admission(self):
+        for change in ({'graphicsProviderRequested':'angle-gl'}, {'graphicsProviderObserved':'angle-gl'},
+                {'graphicsProviderObserved':None}, {'graphicsProviderFixed':False}):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as d:
+                with self.assertRaisesRegex(ValueError,'graphics provider'):self.execute(d,ready_change=change)
+                self.assertFalse((Path(d)/'pixel-admission.json').exists())
+                self.assertFalse((Path(d)/'pixel-bound.json').exists())
 
     def test_cli_boot_or_worker_replacement_refuses_publication(self):
         for change in ({"/proc/sys/kernel/random/boot_id": b"other"},
