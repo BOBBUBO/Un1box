@@ -42,3 +42,33 @@ val prepareCatalog = tasks.register<Copy>("prepareFirmwareCatalog") {
 }
 android.sourceSets["main"].assets.srcDir(catalogAssets)
 tasks.named("preBuild").configure { dependsOn(prepareCatalog) }
+
+// The publisher can override these for its complete corresponding-source bundle.
+// The local checkout reference is development provenance, not distribution clearance.
+val sourceRevision = providers.gradleProperty("sourceRevision").orElse(
+    providers.exec { commandLine("git", "-C", rootProject.projectDir.parentFile.absolutePath, "rev-parse", "HEAD") }
+        .standardOutput.asText.map { it.trim() }
+)
+val sourceReference = providers.gradleProperty("sourceReference").orElse(
+    sourceRevision.map { "https://github.com/blake-lucas/LightTouch/tree/$it" }
+)
+val firmwareSource = providers.gradleProperty("firmwareDir").orElse(file("../../Portable/firmware").absolutePath)
+val noticeAssets = layout.buildDirectory.dir("generated/noticeAssets")
+val prepareNotices = tasks.register<Exec>("prepareFirmwareNotices") {
+    inputs.file(firmwareSource.map { file("$it/tools/package-notices.py") })
+    inputs.file(firmwareSource.map { file("$it/NOTICE.firmware.txt") })
+    inputs.dir(firmwareSource.map { file("$it/vendor") })
+    inputs.file(androidComponents.sdkComponents.ndkDirectory.map { it.file("NOTICE.toolchain") })
+    inputs.property("sourceRevision", sourceRevision)
+    inputs.property("sourceReference", sourceReference)
+    outputs.dir(noticeAssets)
+    doFirst {
+        val destination = noticeAssets.get().dir("licenses/firmware").asFile
+        delete(destination)
+        commandLine("python3", file("${firmwareSource.get()}/tools/package-notices.py"), destination,
+            "--ndk-notice", androidComponents.sdkComponents.ndkDirectory.get().file("NOTICE.toolchain").asFile,
+            "--source-reference", sourceReference.get(), "--source-revision", sourceRevision.get())
+    }
+}
+android.sourceSets["main"].assets.srcDir(noticeAssets)
+tasks.named("preBuild").configure { dependsOn(prepareNotices) }

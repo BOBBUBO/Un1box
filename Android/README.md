@@ -277,3 +277,12 @@ incrementally so failures preserve the preceding trajectory.
 Shutdown disposal uses the native shared LT_SHUTDOWN_GRACE_MS (35seconds),
 allowing the 30second confirmation window and cleanup; actual confirmed cleanup
 may finish earlier. Expiry still preserves dirty state and reports failure.
+
+Gradle consumes the shared firmware `package-notices.py` generator and pinned
+NDK notice into offline assets. `sourceRevision`/`sourceReference` override the
+publisher's corresponding-source identity; local default checkout references
+record development provenance only. Firmware notices do not yet cover every
+emulator/frontend dependency or establish complete distribution clearance.
+The semantic Licenses dialog verifies each selected notice hash and offers the
+manifest's source link. Root must verify source availability/completeness and
+add selected engine/frontend notices before final distribution.
