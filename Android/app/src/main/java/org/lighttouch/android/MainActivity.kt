@@ -239,8 +239,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         if (selected != null && status !in listOf("running", "paused", "starting", "stopping")) {
                             TextButton(onClick = { startGuest(coldRecovery = true) }, enabled = !busy,
                                 modifier = Modifier.testTag("recover_guest")) { Text("Recover retained state") }
-                            if (selected?.getBoolean("dirty") == true || status == "failed") Text(
+                            if (selected?.getBoolean("dirty") == true) Text(
                                 "The previous shutdown was unconfirmed. Recovery boots retained writable data and keeps private diagnostics.",
+                                style = MaterialTheme.typography.bodySmall)
+                            else if (status == "failed") Text(
+                                "Recovery boots retained writable data and keeps private diagnostics; it does not confirm a previous shutdown.",
                                 style = MaterialTheme.typography.bodySmall)
                         }
                         if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.", modifier = Modifier.testTag("guest_screen_asleep"))
