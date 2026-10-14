@@ -1,4 +1,4 @@
-# Bounded 16 KiB Android guest retry
+# Bounded 4 KiB and 16 KiB Android guest attempts
 
 This Linux supervisor requires an explicit exclusive AVD allocation. Preparing
 the tool or passing its synthetic tests is not an allocation or target result.
@@ -34,6 +34,15 @@ prove the running emulator used KVM. Repeated boots of retained userdata may
 change startup work independently. Android documents the
 [multi-core setting](https://developer.android.com/studio/run/managing-avds).
 
+The closed `--expected-page-bytes` selector accepts 4096 or 16384 only, with
+16384 as the unchanged default. It verifies the actual `getconf PAGE_SIZE`
+response exactly; a mismatch fails before service/record/UI readiness. The
+selector changes no emulator arguments or deadlines. A 4 KiB route must name
+its separately allocated 4 KiB AVD and explicitly pass
+`--expected-page-bytes 4096`; merely choosing a different AVD never relaxes the
+16 KiB default. Launch receipts record the expected size, and readiness
+receipts record only the actually matched size. Neither value is guest proof.
+
 Use the retained successfully imported record. This tool neither imports,
 selects, installs APKs nor starts a guest. Freeze the intended main/test APK and
 verify their actual installed identity separately. Supply the selected record
@@ -61,7 +70,8 @@ python3 -u Android/scripts/supervise_16k_retry.py \
 ```
 
 The output directory must not exist. Before 240 seconds from supervisor start,
-the device must return page size 16384, report boot complete, and retain one
+the device must return the selected exact page size (16384 by default), report
+boot complete, and retain one
 system_server PID with functioning package/activity services for 30 seconds.
 The record/state/base/assets must exist; selected identity, record schema and
 source pins must match; the dirty marker must be absent. The tool checks actual
@@ -78,7 +88,7 @@ stat error. Missing, unknown and present are separate outcomes.
 For a new isolated AVD, replace `--record-id` with `--fresh-library` and provide
 its explicit `--avd` name. These modes are mutually exclusive. Keep the verified
 source lock/ROM/package hashes. The fresh mode's 240-second gate verifies only
-16384 pages, boot complete and one stable system_server with package/activity
+the selected exact page size, boot complete and one stable system_server with package/activity
 services for 30 seconds. It makes no run-as, installed-app or record assumption.
 `ready.json` records `freshLibrary=true`, `recordGatePassed=false`, `appUid=null`
 and `recordId=null`; UI and guest flags also remain false.
