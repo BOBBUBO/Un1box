@@ -51,11 +51,13 @@ enum Kind : uint32_t {
     InputStatus = 10,
     GuestRequest = 11,
     GuestResult = 12,
-    GuestCancel = 13
+    GuestCancel = 13,
+    Screenshot = 14
 };
 struct Packet {
     uint32_t size = sizeof(Packet), version = 1, kind = 0, reserved = 0;
     lt_runtime_status status{};
+    lt_runtime_diagnostics diagnostics{};
     lt_input_status input_status{};
     lt_touch_batch touch{};
     lt_motion motion{};
@@ -343,6 +345,8 @@ static int worker(const Options &o) {
             Packet update;
             update.kind = Status;
             update.status = status;
+            update.diagnostics = {sizeof(lt_runtime_diagnostics), 1, 0, 0, 0, 0, 0, 0, 0, 0};
+            lt_runtime_diagnose(r, &update.diagnostics, &error);
             if (result != LT_OK)
                 update.error = error;
             send_packet(o.control, update);
@@ -406,6 +410,13 @@ static std::vector<Script> script_file(const std::string &path) {
         } else if (cmd == "pause") {
             p.kind = Pause;
             require(bool(input >> p.value), "invalid pause");
+        } else if (cmd == "screenshot") {
+            p.kind = Screenshot;
+            std::string path;
+            std::getline(input >> std::ws, path);
+            require(fs::path(path).is_absolute() && path.size() < sizeof(p.guest_argument),
+                    "screenshot needs bounded private absolute path");
+            memcpy(p.guest_argument, path.c_str(), path.size() + 1);
         } else if (cmd == "guest") {
             p.kind = GuestRequest;
             std::string operation, argument;
@@ -617,13 +628,16 @@ static int frontend(const Options &o, int argc, char **argv) {
             std::cerr << "control backpressure: command rejected; cancel input\n";
     };
     bool screenshot_written = false;
+    lt_runtime_diagnostics diagnostics{sizeof(lt_runtime_diagnostics), 1, 0, 0, -1, 0, 0, 0, 0, 0};
     auto capture = [&](const std::string &path) {
         require(frame.sequence && pixels.size(), "no actual guest frame for screenshot");
         lt_error error{sizeof(error), 1, 0, {}};
         check(lt_frame_write_bmp(&frame, pixels.data(), pixels.size(), path.c_str(), &error), error);
         if (path == o.screenshot)
             screenshot_written = true;
-        std::cout << "screenshot sequence=" << frame.sequence << " path=" << path << "\n";
+        std::cout << "screenshot sequence=" << frame.sequence << " sleeping=" << diagnostics.display_sleeping
+                  << " backlight=" << diagnostics.backlight_level << " agent=" << diagnostics.agent_status
+                  << " path=" << path << "\n";
     };
     struct CaptureOnExit {
         std::function<void()> function;
@@ -668,7 +682,13 @@ static int frontend(const Options &o, int argc, char **argv) {
         while (next_script < script.size() && elapsed >= script[next_script].at) {
             if (script[next_script].packet.kind == Stop)
                 stop();
-            else
+            else if (script[next_script].packet.kind == Screenshot) {
+                try {
+                    capture(script[next_script].packet.guest_argument);
+                } catch (const std::exception &e) {
+                    std::cerr << "checkpoint screenshot failed: " << e.what() << "\n";
+                }
+            } else
                 submit(script[next_script].packet);
             next_script++;
         }
@@ -678,8 +698,15 @@ static int frontend(const Options &o, int argc, char **argv) {
         while (receive(sockets[0], update)) {
             if (update.kind == Status) {
                 const auto &s = update.status;
+                diagnostics = update.diagnostics;
                 std::cout << "status state=" << s.state << " confirmed=" << s.guest_shutdown_confirmed
-                          << " dirty=" << s.dirty << " frames=" << s.frames << "\n";
+                          << " dirty=" << s.dirty << " frames=" << s.frames
+                          << " sleeping=" << diagnostics.display_sleeping
+                          << " backlight=" << diagnostics.backlight_level << " agent=" << diagnostics.agent_status
+                          << " shutdown_phase=" << diagnostics.shutdown_phase
+                          << " shutdown_route=" << diagnostics.shutdown_route
+                          << " shutdown_reply=" << diagnostics.shutdown_reply_received << ":"
+                          << diagnostics.shutdown_reply_status << "\n";
                 if (window) {
                     std::string title = "LightTouch — " + std::string(s.state == LT_RUNNING    ? "running"
                                                                       : s.state == LT_PAUSED   ? "paused"

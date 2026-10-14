@@ -140,6 +140,20 @@ typedef struct {
 lt_status lt_runtime_create(const lt_runtime_config *, lt_runtime **, lt_error *);
 lt_status lt_runtime_start(lt_runtime *, lt_error *);
 lt_status lt_runtime_poll(lt_runtime *, lt_runtime_status *, lt_error *);
+/* Display power is separate from black pixels. Shutdown phase: 0 idle,
+ * 1 host queued,2 cancelling inputs,3 engine request,4 admitted,5 PMU confirmed.
+ * route: 0 none,1 agent halt,2 engine board power-off gesture. A guest reply or
+ * dark screen never alone means clean shutdown. Values are observer snapshots. */
+typedef struct {
+    uint32_t size, version;
+    uint32_t engine_ready, display_sleeping;
+    int32_t backlight_level;
+    uint32_t agent_status, shutdown_phase, shutdown_route;
+    int32_t shutdown_reply_status;
+    uint32_t shutdown_reply_received;
+} lt_runtime_diagnostics;
+lt_status lt_runtime_diagnose(lt_runtime *, lt_runtime_diagnostics *, lt_error *);
+
 lt_status lt_runtime_pause(lt_runtime *, uint32_t paused, lt_error *);
 /* Stop requests semantic guest shutdown; poll confirmation. Timeout/kill leaves
  * dirty marker. destroy only after terminal state; returns LT_BUSY otherwise. */

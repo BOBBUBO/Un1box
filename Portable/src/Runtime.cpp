@@ -38,6 +38,8 @@ struct Engine {
     decltype(&qemu_ios_ui_paused) paused = nullptr;
     decltype(&qemu_ios_ui_storage_failed) storage_failed = nullptr;
     decltype(&qemu_ios_ui_guest_shutdown_confirmed) shutdown_confirmed = nullptr;
+    decltype(&qemu_ios_ui_display_sleeping) display_sleeping = nullptr;
+    decltype(&qemu_ios_ui_backlight_level) backlight_level = nullptr;
     decltype(&qemu_ios_ui_pause) pause = nullptr;
     decltype(&qemu_ios_ui_resume) resume = nullptr;
     decltype(&qemu_ios_ui_shutdown) shutdown = nullptr;
@@ -87,6 +89,8 @@ struct Engine {
             LOAD(paused, qemu_ios_ui_paused);
             LOAD(storage_failed, qemu_ios_ui_storage_failed);
             LOAD(shutdown_confirmed, qemu_ios_ui_guest_shutdown_confirmed);
+            LOAD(display_sleeping, qemu_ios_ui_display_sleeping);
+            LOAD(backlight_level, qemu_ios_ui_backlight_level);
             LOAD(pause, qemu_ios_ui_pause);
             LOAD(resume, qemu_ios_ui_resume);
             LOAD(shutdown, qemu_ios_ui_shutdown);
@@ -147,6 +151,9 @@ struct lt_runtime {
     std::atomic<bool> done{false}, started{false}, stopping{false}, confirmed{false}, storage_failed{false},
         publisher_running{false};
     std::atomic<int> exit_code{0};
+    std::atomic<bool> shutdown_requested{false}, shutdown_reply_received{false}, worker_failed{false};
+    std::atomic<uint32_t> shutdown_phase{0}, shutdown_route{0}, agent_state{0};
+    std::atomic<int32_t> shutdown_reply_status{0};
     std::atomic<uint64_t> frame_count{0};
     std::mutex mutex;
     int frame_fd = -1;
@@ -179,10 +186,51 @@ struct lt_runtime {
         while (!done) {
             try {
                 if (engine->ready()) {
+                    agent_state = uint32_t(engine->agent_status());
+                    if (shutdown_requested.exchange(false)) {
+                        shutdown_phase = 2;
+                        engine->cancel();
+                        std::string cancelled;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex);
+                            if (guest_result.state == 1) {
+                                cancelled = guest_wire_id;
+                                guest_result.state = 4;
+                            }
+                        }
+                        if (!cancelled.empty())
+                            engine->agent_cancel(cancelled.c_str());
+                        if (engine->paused())
+                            engine->resume();
+                        shutdown_phase = 3;
+                        int route = engine->shutdown();
+                        lt::require(route > 0, "engine did not admit guest shutdown", LT_ENGINE);
+                        shutdown_route = uint32_t(route);
+                        shutdown_phase = 4;
+                    }
+                    if (stopping && shutdown_route == 1 && !shutdown_reply_received) {
+                        char *raw = engine->agent_result();
+                        if (raw) {
+                            std::unique_ptr<char, decltype(engine->agent_free)> reply(raw, engine->agent_free);
+                            std::string text(raw, strnlen(raw, 8192));
+                            const std::string prefix = "qemu-ios-shutdown ";
+                            if (text.rfind(prefix, 0) == 0) {
+                                size_t end = text.find('\n');
+                                lt::require(end != std::string::npos, "invalid guest shutdown reply");
+                                size_t parsed = 0;
+                                long status = std::stol(text.substr(prefix.size(), end - prefix.size()), &parsed);
+                                lt::require(parsed == end - prefix.size() && status >= INT32_MIN && status <= INT32_MAX,
+                                            "invalid shutdown reply status");
+                                shutdown_reply_status = int32_t(status);
+                                shutdown_reply_received = true;
+                            }
+                        }
+                    }
                     if (engine->storage_failed())
                         storage_failed = true;
                     if (engine->shutdown_confirmed()) {
                         confirmed = true;
+                        shutdown_phase = 5;
                         if (!quit_sent) {
                             engine->cancel();
                             engine->quit();
@@ -235,9 +283,11 @@ struct lt_runtime {
                     }
                 }
             } catch (const std::exception &e) {
-                std::lock_guard<std::mutex> lock(mutex);
-                fault = e.what();
-                storage_failed = true;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    fault = e.what();
+                }
+                worker_failed = true;
                 if (engine->ready() && !quit_sent) {
                     engine->cancel();
                     engine->quit();
@@ -247,7 +297,7 @@ struct lt_runtime {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         try {
-            lt::clean_device(device, confirmed && !storage_failed && exit_code == 0);
+            lt::clean_device(device, confirmed && !storage_failed && !worker_failed && exit_code == 0);
         } catch (const std::exception &e) {
             std::lock_guard<std::mutex> lock(mutex);
             fault = e.what();
@@ -359,7 +409,7 @@ lt_status lt_runtime_poll(lt_runtime *r, lt_runtime_status *out, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r, "null runtime");
         lt::abi(out);
-        bool failed = r->storage_failed || r->exit_code != 0;
+        bool failed = r->storage_failed || r->worker_failed || r->exit_code != 0;
         out->state = !r->started           ? LT_STOPPED
                      : failed              ? LT_FAILED
                      : r->done             ? (r->publisher_running ? LT_STOPPING : LT_STOPPED)
@@ -394,18 +444,24 @@ lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {
 lt_status lt_runtime_request_shutdown(lt_runtime *r, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && r->started && !r->done, "runtime not active", LT_AGAIN);
-        r->engine->cancel();
-        {
-            std::lock_guard<std::mutex> lock(r->mutex);
-            if (r->guest_result.state == 1) {
-                r->engine->agent_cancel(r->guest_wire_id.c_str());
-                r->guest_result.state = 4;
-            }
+        if (!r->stopping.exchange(true)) {
+            r->shutdown_phase = 1;
+            r->shutdown_requested = true;
         }
-        if (r->engine->paused())
-            r->engine->resume();
-        lt::require(r->engine->shutdown() > 0, "guest shutdown request was not admitted", LT_AGAIN);
-        r->stopping = true;
+    });
+}
+lt_status lt_runtime_diagnose(lt_runtime *r, lt_runtime_diagnostics *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        lt::abi(out);
+        out->engine_ready = r->engine->ready();
+        out->display_sleeping = r->engine->display_sleeping();
+        out->backlight_level = r->engine->backlight_level();
+        out->agent_status = r->agent_state;
+        out->shutdown_phase = r->shutdown_phase;
+        out->shutdown_route = r->shutdown_route;
+        out->shutdown_reply_status = r->shutdown_reply_status;
+        out->shutdown_reply_received = r->shutdown_reply_received;
     });
 }
 lt_status lt_runtime_destroy(lt_runtime *r, lt_error *e) {
