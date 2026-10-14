@@ -50,9 +50,17 @@ parent. A zero host exit from `adb exec-out` is not a remote command-success
 guarantee: retained target evidence returned zero alongside a missing-marker
 stat error. Missing, unknown and present are separate outcomes.
 
-`ready.json` records this service/identity gate and explicitly requires visual
-UI inspection. Capture and view the actual Android screen before starting the
-root-frozen guest test. It is not guest, provider or rendering acceptance. Reuse
+`ready.json` records only this service/record gate, with `uiGatePassed=false`,
+`visualUIInspectionRequired=true` and `uiGateDeadlineSeconds=240`. It does not
+launch a previously installed application. After that handoff the controller
+verifies and installs the frozen matching main/test APKs, runs scoped
+`am start -W` with a bounded 30-second timeout, then captures and views the
+actual new application's Android UI by the original 240-second deadline.
+Installation, foreground launch and image review do not reset either clock.
+If this UI gate fails or misses that deadline, create `request-stop` and retain
+the failure; do not start a guest. An older APK's foreground timeout is not a
+new guest failure. The supervisor receipt is not UI, guest, provider or
+rendering acceptance. Reuse
 the existing record in a fresh unused worker, select the fixed debug ANGLE enum
 before the first context, and foreground MainActivity before every
 `am instrument --no-restart`. Do not repeat standalone GL probes. Retain actual
