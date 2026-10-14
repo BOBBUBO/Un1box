@@ -32,6 +32,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var error by mutableStateOf("")
     private var workerPid by mutableIntStateOf(0)
     private var sessionOwned by mutableStateOf(false)
+    private var pendingGuestStart = false
+    private var guestStartRequested = false
+    private var engineExpectedExit = false
+    private var engineRestarting = false
     private var busy by mutableStateOf(false)
     private var captureNotice by mutableStateOf("")
     private var devices by mutableStateOf<List<Bundle>>(emptyList())
@@ -94,10 +98,20 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             engine = IEngine.Stub.asInterface(binder)
             refreshDevices()
-            binder.linkToDeath({ handler.post { engine = null; status = "Worker exited"; workerPid = 0; stopSensors() } }, 0)
+            binder.linkToDeath({ handler.post { if (engine?.asBinder() == binder) workerExited() } }, 0)
+            if (pendingGuestStart) {
+                val worker = requireNotNull(engine)
+                Thread({
+                    try { val state = worker.status(); handler.post {
+                        if (engine?.asBinder() != binder) return@post
+                        sessionOwned = state.getBoolean("sessionStarted"); status = state.getString("state") ?: "stopped"
+                        pendingGuestStart = false; engineRestarting = false; startGuest()
+                    } } catch (failure: RemoteException) { handler.post { pendingGuestStart = false; workerExited() } }
+                }, "guest-reconnect").start()
+            }
             displayView?.holder?.surface?.takeIf { it.isValid }?.let { engine?.surface(it) }
         }
-        override fun onServiceDisconnected(name: ComponentName) { engine = null; workerPid = 0; status = "Worker exited"; stopSensors() }
+        override fun onServiceDisconnected(name: ComponentName) { workerExited() }
     }
     private var pollInFlight = false
     private val poll = object : Runnable {
@@ -127,7 +141,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
                         }
-                        engineFailure?.let { engine = null; error = "Worker unavailable: $it"; stopSensors() }
+                        engineFailure?.let { workerExited(); if (!engineExpectedExit) error = "Guest worker unavailable: $it. Writable state retained; Start creates a fresh worker." }
                     }
                     if (firmware?.asBinder() == observedFirmware?.asBinder() && !firmwareRestarting) {
                         firmwareState?.let { pollPreparation(it) }
@@ -198,7 +212,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { startGuest() }, enabled = !busy && selected != null && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
-                            Button(onClick = { engine?.stop(); stopSensors(); status = "stopping" }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
+                            Button(onClick = { engineExpectedExit = true; engine?.stop(); stopSensors(); status = "stopping" }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
                             Button(onClick = { engine?.pause(status != "paused") }, enabled = status in listOf("running", "paused")) { Text(if (status == "paused") "Resume" else "Pause") }
                         }
                         AndroidView(factory = { GuestDisplay(it) { engine }.also { displayView = it } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
@@ -368,14 +382,49 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (bound) { unbindService(connection); bound = false }
         bound = bindService(Intent(this, EngineService::class.java), connection, BIND_AUTO_CREATE)
     }
+    private fun workerExited() {
+        val unexpected = !engineExpectedExit && (guestStartRequested || sessionOwned || status in listOf("running", "starting", "paused"))
+        val exitedPid = workerPid
+        engine = null; workerPid = 0; sessionOwned = false; stopSensors(); displayView?.keepScreenOn = false
+        status = if (unexpected) "failed" else "stopped"
+        if (unexpected) error = "Guest worker exited unexpectedly; writable state retained. Start creates a fresh worker. Private diagnostics are retained."
+        Thread({
+            WorkerExitEvidence.capture(applicationContext, exitedPid)
+            val retained = try { File(filesDir, "worker-stop-error.txt").takeIf { it.exists() }?.readText() } catch (_: java.io.IOException) { null }
+            retained?.takeIf { it.isNotEmpty() }?.let { handler.post { error = it } }
+        }, "worker-retained-error").start()
+    }
     private fun startGuest() {
-        if (engine == null) { bindWorker(); handler.postDelayed({ if (engine != null) startGuest() else error = "Worker could not connect" }, 500); return }
+        if (engineRestarting) return
+        val worker = engine
+        if (worker == null) { pendingGuestStart = true; bindWorker(); return }
+        if (sessionOwned) { restartGuestForStart(worker); return }
+        val id = selected?.getString("id") ?: run { error = "Select a device"; status = "stopped"; return }
+        engineExpectedExit = false; guestStartRequested = true; status = "starting"
         startForegroundService(Intent(this, EngineService::class.java))
         Thread({
-            try { val id = selected?.getString("id") ?: error("Select a device")
-                val b = engine!!.start(id); handler.post { error = b.getString("error") ?: "" } }
-            catch (e: Exception) { handler.post { error = e.message ?: "Start failed" } }
+            try { val b = worker.start(id); handler.post {
+                if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: ""
+            } }
+            catch (failure: Exception) { handler.post { error = "Guest start failed: ${failure.message ?: "worker exited"}. Writable state and private diagnostics retained."; status = "failed" } }
         }, "guest-start").start()
+    }
+    private fun restartGuestForStart(old: IEngine) {
+        engineRestarting = true; engineExpectedExit = true; pendingGuestStart = true; status = "stopping"
+        if (bound) { unbindService(connection); bound = false }
+        val binder = old.asBinder()
+        Thread({
+            val died = CountDownLatch(1); val recipient = IBinder.DeathRecipient { died.countDown() }
+            try {
+                if (binder.isBinderAlive) {
+                    try { binder.linkToDeath(recipient, 0) } catch (_: DeadObjectException) { died.countDown() }
+                    try { old.stop() } catch (_: DeadObjectException) { died.countDown() }
+                    check(!binder.isBinderAlive || died.await(20, TimeUnit.SECONDS)) { "Previous guest worker has not exited. Retry after it stops." }
+                }
+                handler.post { engine = null; sessionOwned = false; engineRestarting = false; bindWorker() }
+            } catch (failure: Exception) { handler.post { engineRestarting = false; pendingGuestStart = false; error = failure.message ?: "Guest worker restart failed"; status = "failed" } }
+            finally { try { binder.unlinkToDeath(recipient, 0) } catch (_: java.util.NoSuchElementException) { } }
+        }, "guest-worker-restart").start()
     }
     private fun pulse(button: Int) { engine?.button(button, true); handler.postDelayed({ engine?.button(button, false) }, 100) }
     private fun capture() {
