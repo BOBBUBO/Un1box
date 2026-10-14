@@ -17,25 +17,33 @@ class GuestDisplayAdmissionTest {
         val calls = mutableListOf<String>()
         val heldButtons = mutableSetOf<Int>()
         var rejection = ""
+        val identity = Binder()
         val worker = Proxy.newProxyInstance(IEngine::class.java.classLoader, arrayOf(IEngine::class.java)) { _, method, args ->
             when (method.name) {
-                "touch" -> { calls += "touch"; rejection }
-                "cancelInput" -> { calls += "cancel"; heldButtons.clear(); null }
+                "touchDisplay" -> { calls += "touch"; rejection }
+                "cancelDisplayInput" -> { calls += "cancel"; heldButtons.clear(); null }
                 "button" -> {
                     val button = args!![0] as Int
                     if (args[1] as Boolean) heldButtons.add(button) else heldButtons.remove(button)
                     null
                 }
-                "surface" -> { calls += "surface"; null }
-                "asBinder" -> Binder()
+                "attachDisplay" -> { calls += "surface"; "" }
+                "asBinder" -> identity
                 "toString" -> "Fake View admission endpoint"
                 else -> error("Unexpected View control: ${method.name}")
             }
         } as IEngine
     }
+    private fun fakeOwnedDisplay(endpoint: Endpoint, onError: (String) -> Unit = {}): GuestDisplay {
+        val view = GuestDisplay(InstrumentationRegistry.getInstrumentation().targetContext, onError, { true }) { endpoint.worker }
+        val field = GuestDisplay::class.java.getDeclaredField("lease").apply { isAccessible = true }
+        (field.get(view) as WorkerDisplayLease).bind(endpoint.identity, 1)
+        GuestDisplay::class.java.getDeclaredField("leasedWorker").apply { isAccessible = true }.set(view, endpoint.worker)
+        return view
+    }
     @Test fun unownedResizePreservesUnrelatedButtonAndRequiresFreshDown() = onMain {
         val endpoint = Endpoint()
-        val display = GuestDisplay(InstrumentationRegistry.getInstrumentation().targetContext) { endpoint.worker }
+        val display = fakeOwnedDisplay(endpoint)
         display.layout(0, 0, 320, 480)
         display.surfaceChanged(display.holder, 1, 320, 480)
         endpoint.worker.button(0, true)
@@ -43,7 +51,7 @@ class GuestDisplayAdmissionTest {
             val before = endpoint.calls.size
             display.layout(0, 0, 320, 414)
             display.surfaceChanged(display.holder, 1, 320, 414)
-            assertEquals("An unowned resize released unrelated worker input", listOf("surface"), endpoint.calls.drop(before))
+            assertEquals("An unowned resize released unrelated worker input", emptyList<String>(), endpoint.calls.drop(before))
             assertEquals(setOf(0), endpoint.heldButtons)
             assertEquals(0L, display.inputObservations().getLong("cancellationRequests"))
             assertTrue(display.inputObservations().getBoolean("awaitingNewDown"))
@@ -55,7 +63,7 @@ class GuestDisplayAdmissionTest {
             val released = endpoint.calls.size
             display.layout(0, 0, 320, 480)
             display.surfaceChanged(display.holder, 1, 320, 480)
-            assertEquals("Completed contacts confer no remaining ownership", listOf("surface"), endpoint.calls.drop(released))
+            assertEquals("Completed contacts confer no remaining ownership", emptyList<String>(), endpoint.calls.drop(released))
             assertEquals(setOf(0), endpoint.heldButtons)
         } finally { endpoint.worker.button(0, false) }
         assertTrue(endpoint.heldButtons.isEmpty())
@@ -75,21 +83,21 @@ class GuestDisplayAdmissionTest {
     }
     @Test fun changedViewportCancelsBeforeSurfaceAndSuppressesOldContinuations() = onMain {
         val endpoint = Endpoint()
-        val display = GuestDisplay(InstrumentationRegistry.getInstrumentation().targetContext) { endpoint.worker }
+        val display = fakeOwnedDisplay(endpoint)
         display.layout(0, 0, 320, 480)
         display.surfaceChanged(display.holder, 1, 320, 480)
-        assertEquals(listOf("surface"), endpoint.calls)
+        assertTrue(endpoint.calls.isEmpty())
         send(display, MotionEvent.ACTION_DOWN)
         val owned = requireNotNull(display.inputObservations().getIntArray("androidContactIds"))
         assertArrayEquals(intArrayOf(0), owned)
         val before = endpoint.calls.size
         display.surfaceChanged(display.holder, 1, 320, 480)
-        assertEquals(listOf("surface"), endpoint.calls.drop(before))
+        assertEquals(emptyList<String>(), endpoint.calls.drop(before))
         assertArrayEquals(owned, display.inputObservations().getIntArray("androidContactIds"))
         val resize = endpoint.calls.size
         display.layout(0, 0, 480, 320)
         display.surfaceChanged(display.holder, 1, 480, 320)
-        assertEquals("Contact release must precede new mapping", listOf("cancel", "surface"), endpoint.calls.drop(resize))
+        assertEquals("Contact release must precede any new mapping", listOf("cancel"), endpoint.calls.drop(resize))
         assertArrayEquals(intArrayOf(), display.inputObservations().getIntArray("androidContactIds"))
         assertTrue(display.inputObservations().getBoolean("awaitingNewDown"))
         val afterResize = endpoint.calls.size
@@ -103,7 +111,7 @@ class GuestDisplayAdmissionTest {
         for (message in listOf("Touch left guest viewport; gesture cancelled", "No active guest frame; gesture cancelled", "No active guest session; touch was not admitted")) {
             val endpoint = Endpoint()
             val errors = mutableListOf<String>()
-            val display = GuestDisplay(InstrumentationRegistry.getInstrumentation().targetContext, { errors += it }) { endpoint.worker }
+            val display = fakeOwnedDisplay(endpoint) { errors += it }
             display.layout(0, 0, 320, 480)
             send(display, MotionEvent.ACTION_DOWN)
             endpoint.rejection = message

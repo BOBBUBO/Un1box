@@ -95,6 +95,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val stockIpsw = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importStockIpsw(uri) }
     private val trustedTools = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) importTrustedTools(uri) }
     private var active = false
+    private var displayOwnerTicket = 0L
+    private fun ownsDisplay() = active && DisplayOwners.active.owns(this, displayOwnerTicket)
     private var bound = false
     private var displayView: GuestDisplay? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -117,7 +119,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     } } catch (failure: RemoteException) { handler.post { pendingGuestStart = false; workerExited() } }
                 }, "guest-reconnect").start()
             }
-            displayView?.holder?.surface?.takeIf { it.isValid }?.let { engine?.surface(it) }
+            displayView?.attachActiveSurface()
         }
         override fun onServiceDisconnected(name: ComponentName) { workerExited() }
     }
@@ -247,7 +249,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                                 style = MaterialTheme.typography.bodySmall)
                         }
                         if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.", modifier = Modifier.testTag("guest_screen_asleep"))
-                        AndroidView(factory = { GuestDisplay(it, onError = { message -> error = message }) { engine }.also { displayView = it } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
+                        AndroidView(factory = { run {
+                            lateinit var view: GuestDisplay
+                            view = GuestDisplay(it, onError = { message -> error = message },
+                                isActiveOwner = { ownsDisplay() && displayView === view }) { engine }
+                            displayView = view; view
+                        } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { pulse(0) }, enabled = status == "running", modifier = Modifier.testTag("home_button")) { Text("Home") }
                             Button(onClick = { pulse(1) }, enabled = status == "running", modifier = Modifier.testTag("power_button")) { Text("Power") }
@@ -593,16 +600,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         engine?.motion(kind, event.timestamp, event.values.copyOf(3), display?.rotation?.times(90) ?: 0)
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-    override fun onStart() { super.onStart(); active = true; displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
+    override fun onStart() { super.onStart(); active = true; displayOwnerTicket = DisplayOwners.active.activate(this); displayView?.attachActiveSurface(); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
     override fun onStop() {
+        val wasOwner = ownsDisplay()
         active = false; displayView?.keepScreenOn = false; stopSensors()
-        try {
-            engine?.cancelInput()
-            // The UI status poll can still say paused immediately after Resume.
-            // Session ownership preserves the background-pause policy in that gap.
-            if ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting")) engine?.pause(true)
-        } catch (_: RemoteException) { error = "Guest worker exited while the activity stopped; writable state retained." }
+        // Owner validation also occurs inside the native guard; a handoff after
+        // this UI check still cannot make old A pause/cancel/detach new B.
+        if (wasOwner && ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting")))
+            displayView?.backgroundOwnedDisplay()
+        else displayView?.retireDisplay()
+        DisplayOwners.active.retire(this, displayOwnerTicket)
         handler.removeCallbacks(poll); super.onStop()
     }
-    override fun onDestroy() { workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    override fun onDestroy() { displayView?.retireDisplay(); DisplayOwners.active.retire(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }

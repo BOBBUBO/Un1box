@@ -11,7 +11,13 @@ internal object Native {
     external fun start(libraryRoot: String, id: String): String
     external fun recoverStart(libraryRoot: String, id: String): String
     external fun status(): Array<String>
-    external fun surface(surface: Surface?)
+    external fun claimDisplay(): Long
+    external fun ownsDisplay(lease: Long): Boolean
+    external fun attachDisplay(lease: Long, surface: Surface): String
+    external fun releaseDisplay(lease: Long)
+    external fun cancelDisplayInput(lease: Long)
+    external fun backgroundDisplay(lease: Long): String
+    external fun touchDisplay(lease: Long, time: Long, ids: IntArray, phases: IntArray, xy: FloatArray, width: Int, height: Int, rotation: Int): String
     external fun pause(paused: Boolean): String
     external fun stop(): String
     external fun shutdownGraceMillis(): Int
