@@ -108,7 +108,9 @@ class Control(unittest.TestCase):
     def test_adapter_capture_exception_cannot_suppress_stop_or_cleanup(self):
         with tempfile.TemporaryDirectory() as d:
             args = type("Args", (), {"output": str(Path(d) / "attempt"), "adb": "/synthetic/adb"})()
-            attempt = pixel_supervisor.PixelAttempt(args)
+            with mock.patch.object(pixel_supervisor.capture_origin, 'capture'), mock.patch.object(pixel_supervisor.host_lifecycle, 'install'):
+                args.avd = 'synthetic-pixel'
+                attempt = pixel_supervisor.PixelAttempt(args)
             calls = []
             attempt.pixel_readback = mock.Mock(side_effect=OSError("unavailable"))
             with mock.patch.object(pixel_supervisor.base.Attempt, "stop", lambda s: calls.append("stop")):

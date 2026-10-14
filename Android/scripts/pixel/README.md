@@ -186,3 +186,20 @@ and imports, for all gates/watchdog. Worker memory sampling and early-failure
 readback can use the actual pre-Start binding when admission never publishes a
 post-Start binding. Captures remain explicitly unconfirmed and never imply a
 full interval, visible boot, physical Pixel or audible-output pass.
+
+The immutable `clock-context.json` is written by the actual supervisor before
+launching any AVD/helper. Read its `supervisorPid` directly; forked observer
+command lines are not a way to identify the parent. The generated
+`clockCaptureCommand` now uses `--attach-exec-session` to write a separate
+`exec-session.json` after the tool returns its handle. This attachment rechecks
+the live original PID/start/argv and preserves the clock bytes and binding hash.
+An unknown tool handle is recorded as null in the original clock, never invented.
+
+Parent SIGTERM/SIGHUP handlers perform no file IO: they retain signal/time fields
+in memory and unwind into the existing cleanup. Cleanup records
+`host-signals.json`, attempts the existing scoped Stop, then disposes owned
+processes even if receipt/Stop fails. Forked helpers restore default handlers;
+they cannot run the parent's cleanup. Repeated TERM/HUP cannot interrupt cleanup,
+and the independent original hard-deadline SIGKILL remains enabled. Signal sender
+is unknown. SIGKILL or external group disposal can still prevent graceful cleanup;
+retain actual terminal/identity evidence rather than infer guest shutdown.

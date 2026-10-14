@@ -8,6 +8,11 @@ import pixel_supervisor
 
 
 class Recovery(unittest.TestCase):
+    def setUp(self):
+        self.host_init = mock.patch.object(pixel_supervisor.PixelAttempt, 'initialize_host_lifecycle')
+        self.host_init.start()
+        self.addCleanup(self.host_init.stop)
+
     def fixture(self, out, change=None):
         uid=b'Uid:\t10215\t10215\t10215\t10215\n'; record='a'*32; token='b'*32
         stat=('42 (engine) '+' '.join(['S']+['0']*18+['1234'])).encode()

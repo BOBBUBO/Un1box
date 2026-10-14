@@ -1,5 +1,18 @@
 # Findings from virtual Pixel APK22 attempt01
 
+Latest host-harness finding (APK24/8GiB normal04): Android reached the actual
+service and clean-record gates at78.796s, but the retained tool session returned
+exit143 before model-side original-clock capture or guest Start. No Python
+failure/finally receipt was produced; the actual signal sender is unknown.
+The emulator and observer remained owned and were explicitly retired using
+their retained PID/start identities. All seven original parent file rows were
+unchanged, with no open parent descriptors at terminal. Evidence:
+`builds/pixel/attempt-apk24-api36-16k-8g-normal-04/terminal-summary.json` and
+`host-supervisor-loss.json`. This is not an Android/native/iOS crash diagnosis.
+The next harness persists its own immutable actual process clock before AVD
+launch and unwinds observed parent TERM/HUP through bounded cleanup. Host OS
+subprocess/fork tests cover that route; target execution remains required.
+
 This is a failed virtual attempt, not physical Pixel qualification. API36/16KiB,
 four KVM vCPUs,4GiB Android RAM, SwiftShader and the frozen APK22/test-only overlay
 were used. Android startup, actual page size, signed APK installation and an
