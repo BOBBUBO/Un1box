@@ -256,8 +256,22 @@ class EngineService : Service() {
             "windowFailures", "frameCopyFailures", "surfaceGeneration", "guestFrameSequence", "guestFrameTimestampNs", "nativePcmFailures", "pcmDroppedFrames",
             "presentIntervalsTo16ms", "presentIntervalsTo33ms", "presentIntervalsTo50ms", "presentIntervalsTo100ms", "presentIntervalsTo250ms", "presentIntervalsOver250ms", "producedFrames", "producerFrameSequence", "producerFrameTimestampNs",
             "framePublishedHostNs", "pcmCapturedFrames", "pcmPulledFrames", "sharedPcmDroppedFrames", "inputRequests", "pcmQueuedPackets", "firstWindowLockError", "lastWindowLockError", "firstWindowPostError", "lastWindowPostError", "lastWindowGeometryError",
-            "windowGeometryFailures", "windowBufferFormat", "windowBufferWidth", "windowBufferHeight", "windowBufferStride", "invalidWindowBuffers", "firstWindowErrorHostNs")
+            "windowGeometryFailures", "windowBufferFormat", "windowBufferWidth", "windowBufferHeight", "windowBufferStride", "invalidWindowBuffers", "firstWindowErrorHostNs", "runtimeDiagnosticsStatus", "engineReady", "displaySleeping", "backlightLevel",
+            "guestAgentSampleStatus", "guestAgentState", "shutdownPhase", "shutdownRoute", "shutdownReplyStatus", "shutdownReplyReceived", "guestFrameWidth", "guestFrameHeight", "guestFrameSamplePixels", "guestFrameNonzeroRgbSamples", "guestFrameRgbSampleSum")
         for ((index, key) in keys.withIndex()) putLong(key, values[index])
+        val diagnosticAvailable = getLong("runtimeDiagnosticsStatus") == 0L
+        val agentAvailable = getLong("guestAgentSampleStatus") == 0L
+        putBoolean("runtimeDiagnosticsAvailable", diagnosticAvailable)
+        putBoolean("guestAgentStateAvailable", agentAvailable)
+        putBoolean("guestAgentEndpointAvailable", false)
+        putBoolean("guestAgentFreshnessAgeAvailable", false)
+        putString("guestAgentStateLabel", when {
+            !agentAvailable -> "unavailable"
+            !diagnosticAvailable || getLong("engineReady") == 0L -> "not ready"
+            getLong("guestAgentState") == 1L -> "alive"
+            getLong("guestAgentState") == 2L -> "stale"
+            else -> "absent"
+        })
         putBundle("audio", synchronized(audioGuard) { audioObservations.snapshot() })
         putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioFocusHeld", focus != null)
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })

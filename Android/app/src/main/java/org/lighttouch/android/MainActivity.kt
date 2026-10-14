@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var engine by mutableStateOf<IEngine?>(null)
     private var status by mutableStateOf("Stopped")
     private var detail by mutableStateOf("")
+    private var displayAsleep by mutableStateOf(false)
     private var error by mutableStateOf("")
     private var workerPid by mutableIntStateOf(0)
     private var sessionOwned by mutableStateOf(false)
@@ -135,6 +136,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         engineState?.let { b ->
                             status = b.getString("state") ?: "Unknown"
                             detail = b.getString("detail") ?: ""
+                            displayAsleep = b.getBundle("observations")?.let {
+                                it.getBoolean("runtimeDiagnosticsAvailable") && it.getLong("engineReady") != 0L && it.getLong("displaySleeping") != 0L
+                            } ?: false
                             val reportedError = b.getString("error") ?: ""
                             if (reportedError.isNotEmpty() || status == "running") error = reportedError
                             workerPid = b.getInt("pid")
@@ -222,6 +226,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             Button(onClick = { engineExpectedExit = true; engine?.stop(); stopSensors(); status = "stopping" }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
                             Button(onClick = { engine?.pause(status != "paused") }, enabled = status in listOf("running", "paused")) { Text(if (status == "paused") "Resume" else "Pause") }
                         }
+                        if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.", modifier = Modifier.testTag("guest_screen_asleep"))
                         AndroidView(factory = { GuestDisplay(it, onError = { message -> error = message }) { engine }.also { displayView = it } }, update = { it.keepScreenOn = active && status in listOf("starting", "running", "stopping") }, modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { pulse(0) }, enabled = status == "running", modifier = Modifier.testTag("home_button")) { Text("Home") }
@@ -393,7 +398,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private fun workerExited() {
         val unexpected = !engineExpectedExit && (guestStartRequested || sessionOwned || status in listOf("running", "starting", "paused"))
         val exitedPid = workerPid
-        engine = null; workerPid = 0; sessionOwned = false; stopSensors(); displayView?.keepScreenOn = false
+        engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
         status = if (unexpected) "failed" else "stopped"
         if (unexpected) error = "Guest worker exited unexpectedly; writable state retained. Start creates a fresh worker. Private diagnostics are retained."
         Thread({

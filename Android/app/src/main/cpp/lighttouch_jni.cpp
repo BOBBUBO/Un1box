@@ -31,6 +31,7 @@ uint64_t sequence = 0;
 uint64_t presented_frames=0,first_present_ns=0,last_present_ns=0,previous_present_ns=0,max_present_gap_ns=0;
 uint64_t max_present_work_ns=0,window_failures=0,frame_copy_failures=0,surface_generation=0,pcm_failures=0;
 uint64_t present_intervals[6]={};
+uint64_t frame_sample_pixels=0,frame_nonzero_rgb_samples=0,frame_rgb_sample_sum=0;
 int first_lock_error=0,last_lock_error=0,first_post_error=0,last_post_error=0,last_geometry_error=0;
 int last_buffer_format=0,last_buffer_width=0,last_buffer_height=0,last_buffer_stride=0;
 uint64_t geometry_failures=0,invalid_buffers=0,first_window_error_ns=0;
@@ -109,6 +110,16 @@ void present() {
                 lt_status status = lt_runtime_copy_frame(runtime, pixels.data(), pixels.size(), &sequence, &frame, &error);
                 if (status == LT_OK && frame.width && frame.height && frame.stride >= frame.width * 4 && frame.bytes <= pixels.size()) {
                     const auto begin=monotonic_ns();
+                    frame_sample_pixels=frame_nonzero_rgb_samples=frame_rgb_sample_sum=0;
+                    // A fixed 16x16 grid diagnoses the copied guest frame without
+                    // another full image pass or claiming every pixel is black.
+                    for(uint32_t gy=0;gy<16;++gy)for(uint32_t gx=0;gx<16;++gx) {
+                        const uint32_t x=std::min((gx*2+1)*frame.width/32,frame.width-1);
+                        const uint32_t y=std::min((gy*2+1)*frame.height/32,frame.height-1);
+                        const uint8_t *sample=pixels.data()+y*frame.stride+x*4;
+                        const uint32_t rgb=uint32_t(sample[0])+sample[1]+sample[2];
+                        ++frame_sample_pixels;frame_nonzero_rgb_samples+=rgb!=0;frame_rgb_sample_sum+=rgb;
+                    }
                     ANativeWindow_Buffer target;
                     const int lock_code=ANativeWindow_lock(window, &target, nullptr);
                     if (lock_code == 0) {
@@ -410,13 +421,24 @@ JNI(observations) jlongArray JNICALL Java_org_lighttouch_android_Native_observat
     std::lock_guard<std::mutex> lock(guard);
     lt_runtime_io_stats shared=LT_INIT(lt_runtime_io_stats);lt_error error=LT_INIT(lt_error);
     if(runtime)lt_runtime_io_statistics(runtime,&shared,&error);
+    lt_runtime_diagnostics observer=LT_INIT(lt_runtime_diagnostics);
+    lt_error observer_error=LT_INIT(lt_error),agent_error=LT_INIT(lt_error);
+    const auto observer_status=runtime?lt_runtime_diagnose(runtime,&observer,&observer_error):LT_AGAIN;
+    uint32_t live_agent=0;
+    const auto agent_status=runtime?lt_runtime_guest_status(runtime,&live_agent,&agent_error):LT_AGAIN;
+    // These samples use separate error buffers and never replace poll/control
+    // failures. No heartbeat age or socket endpoint exists in this ABI.
     jlong values[]={jlong(monotonic_ns()),jlong(presented_frames),jlong(first_present_ns),jlong(last_present_ns),
         jlong(max_present_gap_ns),jlong(max_present_work_ns),jlong(window_failures),jlong(frame_copy_failures),
         jlong(surface_generation),jlong(frame.sequence),jlong(frame.timestamp_ns),jlong(pcm_failures),jlong(pcm.dropped_frames),
         jlong(present_intervals[0]),jlong(present_intervals[1]),jlong(present_intervals[2]),jlong(present_intervals[3]),jlong(present_intervals[4]),jlong(present_intervals[5]),jlong(shared.frame_count),jlong(shared.frame_sequence),jlong(shared.frame_timestamp_ns),
         jlong(shared.frame_published_monotonic_ns),jlong(shared.pcm_captured_frames),jlong(shared.pcm_pulled_frames),jlong(shared.pcm_dropped_frames),
         jlong(shared.input_requests),jlong(shared.pcm_queued_packets),first_lock_error,last_lock_error,first_post_error,last_post_error,last_geometry_error,
-        jlong(geometry_failures),last_buffer_format,last_buffer_width,last_buffer_height,last_buffer_stride,jlong(invalid_buffers),jlong(first_window_error_ns)};
+        jlong(geometry_failures),last_buffer_format,last_buffer_width,last_buffer_height,last_buffer_stride,jlong(invalid_buffers),jlong(first_window_error_ns),jlong(observer_status),jlong(observer.engine_ready),
+        jlong(observer.display_sleeping),jlong(observer.backlight_level),jlong(agent_status),jlong(live_agent),
+        jlong(observer.shutdown_phase),jlong(observer.shutdown_route),jlong(observer.shutdown_reply_status),
+        jlong(observer.shutdown_reply_received),jlong(frame.width),jlong(frame.height),
+        jlong(frame_sample_pixels),jlong(frame_nonzero_rgb_samples),jlong(frame_rgb_sample_sum)};
     auto array=env->NewLongArray(sizeof(values)/sizeof(values[0]));
     env->SetLongArrayRegion(array,0,sizeof(values)/sizeof(values[0]),values);return array;
 }
