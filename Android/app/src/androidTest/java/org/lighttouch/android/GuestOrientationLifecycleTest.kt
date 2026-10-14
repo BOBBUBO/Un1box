@@ -114,14 +114,18 @@ class GuestOrientationLifecycleTest {
                     var gestureDown = SystemClock.uptimeMillis()
                     fun send(action: Int, id: Int = 7, x: Float = .5f, y: Float = .5f) {
                         if (action == MotionEvent.ACTION_DOWN) gestureDown = SystemClock.uptimeMillis()
+                        val status = worker.status()
                         scenario.onActivity { activity ->
                             val display = requireNotNull(findDisplay(activity.window.decorView))
+                            val viewport = GuestTestViewport(status, display.width, display.height)
+                            val point = viewport.point(x, y)
                             val property = MotionEvent.PointerProperties().apply { this.id = id; toolType = MotionEvent.TOOL_TYPE_FINGER }
-                            val coordinate = MotionEvent.PointerCoords().apply { this.x = x * display.width; this.y = y * display.height; pressure = 1f; size = .05f }
+                            val coordinate = MotionEvent.PointerCoords().apply { this.x = point.first; this.y = point.second; pressure = 1f; size = .05f }
                             val eventTime = SystemClock.uptimeMillis()
                             val event = MotionEvent.obtain(gestureDown, eventTime, action, 1, arrayOf(property), arrayOf(coordinate), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
                             try { assertTrue(display.dispatchTouchEvent(event)) } finally { event.recycle() }
-                            events.put(JSONObject().put("action", action).put("id", id).put("viewX", x).put("viewY", y)
+                            events.put(JSONObject().put("action", action).put("id", id).put("guestX", x).put("guestY", y)
+                                .put("viewXPx", point.first).put("viewYPx", point.second).put("viewport", viewport.receipt())
                                 .put("uptimeMs", eventTime).put("displayRotation", display.display.rotation).put("input", encode(display.inputObservations())))
                         }
                         persist(); Thread.sleep(30)
