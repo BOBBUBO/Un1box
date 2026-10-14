@@ -429,7 +429,14 @@ JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,
     std::lock_guard<std::mutex> lock(guard);
     const jsize count=env->GetArrayLength(ids);
     if(count<1 || count>jsize(LT_MAX_CONTACTS) || env->GetArrayLength(phases)!=count || env->GetArrayLength(xy)!=count*2) return string(env,"Invalid contact batch");
-    if(!runtime || !frame.width || !frame.height) return string(env,"");
+    if(!runtime) return string(env,"No active guest session; touch was not admitted");
+    if(!frame.width || !frame.height) {
+        lt_error cancelled=LT_INIT(lt_error);
+        const auto cancellation=lt_runtime_cancel_input(runtime,&cancelled);
+        std::string failure="No active guest frame; gesture cancelled";
+        if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,cancelled);
+        return string(env,failure);
+    }
     jint id[LT_MAX_CONTACTS], phase[LT_MAX_CONTACTS];jfloat coords[LT_MAX_CONTACTS*2];
     env->GetIntArrayRegion(ids,0,count,id);env->GetIntArrayRegion(phases,0,count,phase);env->GetFloatArrayRegion(xy,0,count*2,coords);
     lt_touch_batch batch=LT_INIT(lt_touch_batch);batch.timestamp_ns=time;batch.count=count;
@@ -437,7 +444,12 @@ JNI(touch) jstring JNICALL Java_org_lighttouch_android_Native_touch(JNIEnv *env,
     for(jsize i=0;i<count;++i) {
         batch.contacts[i]=lt_contact LT_INIT(lt_contact);batch.contacts[i].id=id[i];batch.contacts[i].phase=phase[i];
         auto status=lt_map_contact(coords[i*2],coords[i*2+1],view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
-        if(status!=LT_OK) { lt_runtime_cancel_input(runtime,&error);return string(env,""); }
+        if(status!=LT_OK) {
+            const auto cancellation=lt_runtime_cancel_input(runtime,&error);
+            std::string failure="Touch left guest viewport; gesture cancelled";
+            if(cancellation!=LT_OK)failure += "; input release failed: "+result(cancellation,error);
+            return string(env,failure);
+        }
     }
     // Guest portrait is kept upright within Android's rotated view. Mapping receives
     // view-local pixels; applying display rotation again would rotate contacts twice.
