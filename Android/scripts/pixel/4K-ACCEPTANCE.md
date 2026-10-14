@@ -1,8 +1,11 @@
 # Required 4KiB AVD guest acceptance plan
 
-This is a source/metadata checkpoint, not an AVD allocation or guest pass. Keep
-the user's existing API36/16KiB Android instance running and untouched. Actual
-Poco4KiB execution does not satisfy the separate4KiB AVD requirement.
+This is a source/metadata checkpoint, not an AVD allocation or guest pass.
+The host reboot at22:53:53UTC ended the earlier API36/16KiB session; its old
+process and clock bindings cannot admit a new test. Preserve its existing COW
+state and historical evidence. Any restored5554 instance remains outside this
+4KiB lane. Actual Poco or physical Pixel4KiB execution does not satisfy the
+separate4KiB AVD requirement.
 
 The private review package is
 `builds/pixel/plan-g5-api35-4k25d-01/` in the coordination workspace. Its `plan.json`
@@ -128,3 +131,23 @@ unconfirmed dirty state. Software graphics and muted-host limitations must remai
 explicit. Gyro stays deferred/unqualified. Static packaging, historical smokes,
 an incrementing frame counter, Lock Screen alone and physical Poco results do
 not close this4KiB AVD gate.
+
+
+## Private source snapshot sealed after review
+
+The reviewed substitutions and narrow initial-import admission now exist in the
+private snapshot `builds/pixel/prepared-g5-api35-4k25d-source-01/`, separate from
+the original closed16KiB helpers. Its source-seal SHA-256 is
+`b79a6aaf253e3a8078e068bfc884b4e0094c0d83bdbb3b316d46541527761e04`.
+All65 host tests passed, including original-root PID reuse, unrelated5554
+nonsignalling, exact5556 routes, initial import versus prior-clean admission and
+real host subprocess signal cleanup. These are host checks, with Android calls
+mocked; they do not qualify the target. The older review-only patch above stays
+historical.
+
+`prepare_boot.py --check-source` verifies the sealed tiny sources and the exact
+main25/test25d pair without SDK/device commands. `OPERATOR.md` and the emitted
+`provision-command.json` retain the future executable route. Actual allocation
+still requires a fresh resource check and Root grant. No4KiB image child,
+firmware read/copy/import or VM launch occurred. Physical Pixel debugging takes
+priority over executing this separately required AVD qualification.
