@@ -84,6 +84,15 @@ class Memory(unittest.TestCase):
         self.assertEqual(result['zram']['/sys/block/zram0']['comp_algorithm']['text'], 'synthetic zram')
         self.assertFalse(result['guestAcceptancePassed'])
 
+    def test_supervisor_uses_actual_original_process_clock_even_after_cli_validation(self):
+        import os,tempfile
+        with tempfile.TemporaryDirectory() as d:
+            args=type('Args',(),{'output':d+'/attempt','adb':'/synthetic/adb'})()
+            with mock.patch.object(memory,'process_ticks',return_value=123456):
+                attempt=pixel_supervisor.PixelAttempt(args)
+            expected=(123456*1_000_000_000//os.sysconf('SC_CLK_TCK'))/1e9
+            self.assertEqual(attempt.start,expected);self.assertEqual(attempt.deadline,expected+900)
+
     def test_pixel_8g_option_only_and_ambiguous_flag_rejected(self):
         self.assertEqual(pixel_supervisor.pixel_options(['--pixel-memory-mb', '8192', '--avd', 'fresh']), (8192, ['--avd', 'fresh']))
         with self.assertRaises(ValueError): pixel_supervisor.pixel_options(['--pixel-memory-mb', '8192', '--memory-mb', '4096'])
