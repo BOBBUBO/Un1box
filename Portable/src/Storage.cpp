@@ -253,6 +253,17 @@ static void copy_file(const fs::path &src, const fs::path &dst) {
     }
     io(fsync(out.n) == 0, "sync copied file");
 }
+std::string prepared_guest_package(lt_device *d) {
+    const auto *outputs = d->lock.find("outputs");
+    const auto *package = outputs ? outputs->find("guest_package") : nullptr;
+    if (!package)
+        return "";
+    std::string name = package->at("path").string();
+    safe_name(name);
+    auto path = d->base / name;
+    require(digest_file(path) == package->at("sha256").string(), "prepared guest package checksum mismatch");
+    return path.string();
+}
 void clean_device(lt_device *d, bool confirmed) {
     d->dirty = !confirmed;
     if (confirmed) {
@@ -415,6 +426,7 @@ lt_status lt_device_open(const lt_device_config *c, lt_device **out, lt_error *e
         d->base = lt::fs::canonical(c->base_path);
         lt::fs::create_directories(c->state_path);
         d->state = lt::fs::canonical(c->state_path);
+        lt::io(chmod(d->state.c_str(), 0700) == 0, "private device state permissions");
         lt::require(!lt::contained(d->base, d->state) && !lt::contained(d->state, d->base),
                     "base/state overlap refused");
         d->lease = open((d->state / ".lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -543,8 +555,10 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         }
         option("nand", (d->base / "nand").string());
         option("nor-rw", (d->state / "nor.bin").string());
-        if (c->guest_package_path && *c->guest_package_path)
-            option("guest-package", lt::guest_offer(d, c->guest_package_path));
+        std::string package =
+            c->guest_package_path && *c->guest_package_path ? c->guest_package_path : lt::prepared_guest_package(d);
+        if (!package.empty())
+            option("guest-package", lt::guest_offer(d, package.c_str()));
         if (const auto *m = d->lock.find("machine")) {
             lt::require(m->kind == lt::Json::Object, "invalid machine metadata");
             for (const auto &v : m->object) {

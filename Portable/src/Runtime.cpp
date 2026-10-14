@@ -1,4 +1,6 @@
 #include "Internal.hpp"
+#include "MotionClock.hpp"
+#include "Base64.hpp"
 #include "qemu-ios-ui.h"
 #include "qemu-macos-extras.h"
 #include <atomic>
@@ -41,6 +43,11 @@ struct Engine {
     decltype(&qemu_ios_ui_shutdown) shutdown = nullptr;
     decltype(&qemu_ios_ui_quit) quit = nullptr;
     decltype(&qemu_ios_ui_button) button = nullptr;
+    decltype(&qemu_ios_agent_request) agent_request = nullptr;
+    decltype(&qemu_ios_agent_result) agent_result = nullptr;
+    decltype(&qemu_ios_agent_free_result) agent_free = nullptr;
+    decltype(&qemu_ios_agent_cancel) agent_cancel = nullptr;
+    decltype(&qemu_ios_agent_status) agent_status = nullptr;
     decltype(&qemu_ios_audio_capture_start) audio_start = nullptr;
     decltype(&qemu_ios_audio_capture_read) audio_read = nullptr;
     decltype(&qemu_ios_audio_capture_stop) audio_stop = nullptr;
@@ -85,6 +92,11 @@ struct Engine {
             LOAD(shutdown, qemu_ios_ui_shutdown);
             LOAD(quit, qemu_ios_ui_quit);
             LOAD(button, qemu_ios_ui_button);
+            LOAD(agent_request, qemu_ios_agent_request);
+            LOAD(agent_result, qemu_ios_agent_result);
+            LOAD(agent_free, qemu_ios_agent_free_result);
+            LOAD(agent_cancel, qemu_ios_agent_cancel);
+            LOAD(agent_status, qemu_ios_agent_status);
             LOAD(audio_start, qemu_ios_audio_capture_start);
             LOAD(audio_read, qemu_ios_audio_capture_read);
             LOAD(audio_stop, qemu_ios_audio_capture_stop);
@@ -142,7 +154,12 @@ struct lt_runtime {
     size_t mapping_bytes = 0;
     std::vector<char *> argv;
     std::vector<uint8_t> scratch;
-    uint64_t serial = 0, audio_generation = 0, input_id = 0, last_motion = 0, pcm_dropped = 0;
+    uint64_t serial = 0, audio_generation = 0, input_id = 0, pcm_dropped = 0;
+    lt::MotionClock motion_clock;
+    uint64_t guest_sequence = 0, guest_deadline = 0;
+    std::string guest_wire_id;
+    lt_guest_result guest_result{sizeof(lt_guest_result), 1, 0, 0, 0, 0, 0, {}};
+    uint64_t guest_capabilities = 0;
     std::deque<lt::PcmPacket> pcm;
     bool audio_enabled = false;
     std::string fault;
@@ -262,6 +279,7 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         auto runtime = std::make_unique<lt_runtime>(c->device);
         runtime->engine = std::make_unique<lt::Engine>(c->engine_library);
         auto facts = runtime->engine->find_board(c->device->lock.at("board").string());
+        runtime->guest_capabilities = facts.capabilities;
         lt_boot_config boot = c->boot;
         if (boot.machine)
             lt::require(std::string(boot.machine) == facts.machine, "machine does not match prepared base");
@@ -363,6 +381,10 @@ lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && r->started && !r->done && !r->stopping, "runtime not active", LT_AGAIN);
         r->engine->cancel();
+        {
+            std::lock_guard<std::mutex> lock(r->mutex);
+            r->motion_clock.reset();
+        }
         if (paused)
             r->engine->pause();
         else
@@ -373,6 +395,13 @@ lt_status lt_runtime_request_shutdown(lt_runtime *r, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && r->started && !r->done, "runtime not active", LT_AGAIN);
         r->engine->cancel();
+        {
+            std::lock_guard<std::mutex> lock(r->mutex);
+            if (r->guest_result.state == 1) {
+                r->engine->agent_cancel(r->guest_wire_id.c_str());
+                r->guest_result.state = 4;
+            }
+        }
         if (r->engine->paused())
             r->engine->resume();
         lt::require(r->engine->shutdown() > 0, "guest shutdown request was not admitted", LT_AGAIN);
@@ -446,7 +475,7 @@ lt_status lt_runtime_cancel_input(lt_runtime *r, lt_error *e) {
         lt::require(r, "null runtime");
         lt::result(r->engine->cancel());
         std::lock_guard<std::mutex> lock(r->mutex);
-        r->last_motion = 0;
+        r->motion_clock.reset();
     });
 }
 lt_status lt_runtime_button(lt_runtime *r, uint32_t button, uint32_t down, lt_error *e) {
@@ -461,15 +490,13 @@ lt_status lt_runtime_motion(lt_runtime *r, const lt_motion *m, lt_error *e) {
         lt::require(r && r->started && !r->done && !r->stopping && !r->engine->paused(), "motion inactive", LT_AGAIN);
         lt::abi(m);
         uint64_t now = lt::now_ns();
-        lt::require(m->timestamp_ns <= now && now - m->timestamp_ns <= 250000000, "stale/future motion", LT_AGAIN);
         std::lock_guard<std::mutex> lock(r->mutex);
-        lt::require(!r->last_motion || m->timestamp_ns > r->last_motion + 5000000, "motion must increase and <=200Hz",
-                    LT_AGAIN);
+        r->motion_clock.validate(m->kinds, m->timestamp_ns, now);
         QemuIosPortableMotion sample{};
         static_assert(sizeof(sample) == sizeof(*m));
         memcpy(&sample, m, sizeof sample);
         lt::result(r->engine->motion(&sample));
-        r->last_motion = m->timestamp_ns;
+        r->motion_clock.commit(m->kinds, m->timestamp_ns);
     });
 }
 lt_status lt_map_motion(uint32_t rotation, uint64_t timestamp, uint64_t source_now, const lt_motion *raw,
@@ -553,6 +580,120 @@ lt_status lt_runtime_pcm(lt_runtime *r, int16_t *out, uint32_t capacity, lt_pcm_
         memcpy(out, p.samples.data(), p.bytes);
         *info = {sizeof(*info), 1, 44100, 2, p.bytes / 4, 0, p.timestamp, r->pcm_dropped};
         r->pcm.pop_front();
+    });
+}
+lt_status lt_runtime_guest_status(lt_runtime *r, uint32_t *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && out, "guest status output missing");
+        *out = uint32_t(r->engine->agent_status());
+    });
+}
+lt_status lt_runtime_guest_request(lt_runtime *r, const lt_guest_request *c, uint64_t *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && out && r->started && !r->done && !r->stopping, "guest runtime inactive", LT_AGAIN);
+        lt::abi(c);
+        lt::require(r->engine->agent_status() == 1, "guest agent is absent or stale", LT_AGAIN);
+        std::string argument = c->argument ? c->argument : "", op, body;
+        lt::require(argument.size() < 4096, "guest argument exceeds limit");
+        switch (c->operation) {
+        case LT_GUEST_PING:
+            op = "ping";
+            lt::require(argument.empty(), "ping takes no argument");
+            break;
+        case LT_GUEST_FRONTMOST:
+            op = "frontmost";
+            lt::require(argument.empty(), "frontmost takes no argument");
+            break;
+        case LT_GUEST_SYNC:
+            op = "sync";
+            lt::require(argument.empty(), "sync takes no argument");
+            break;
+        case LT_GUEST_TYPE_TEXT:
+            op = "type";
+            body = argument;
+            argument.clear();
+            break;
+        case LT_GUEST_LAUNCH_BUILTIN:
+            lt::require(argument.rfind("com.apple.", 0) == 0, "only builtin app IDs allowed");
+            op = "launch";
+            break;
+        case LT_GUEST_LAUNCH_GYRO_PROBE:
+            lt::require(r->guest_capabilities & QEMU_IOS_CAP_GYRO,
+                        "guest gyro unavailable; authorized gyro workload remains blocked", LT_UNSUPPORTED);
+            op = "launch";
+            break;
+        default:
+            throw lt::Failure(LT_UNSUPPORTED, "unsupported typed guest operation");
+        }
+        if (op == "launch")
+            lt::require(
+                !argument.empty() && argument.size() < 256 &&
+                    argument.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") ==
+                        std::string::npos,
+                "invalid installed bundle ID");
+        std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(r->guest_result.state != 1, "guest operation already pending", LT_BUSY);
+        uint64_t id = ++r->guest_sequence;
+        std::string wire_id = "lighttouch-" + std::to_string(id);
+        std::string request =
+            wire_id + " " + op + (argument.empty() ? "" : " " + argument) + "\n" + lt::base64_encode(body);
+        lt::require(r->engine->agent_request(request.c_str()), "guest request not admitted", LT_AGAIN);
+        r->guest_wire_id = wire_id;
+        r->guest_result = {sizeof(lt_guest_result), 1, id, 1, 0, 0, 0, {}};
+        r->guest_deadline = lt::now_ns() + uint64_t(c->timeout_ms ? std::min(c->timeout_ms, 65000u) : 65000u) * 1000000;
+        *out = id;
+    });
+}
+lt_status lt_runtime_guest_poll(lt_runtime *r, uint64_t id, lt_guest_result *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        lt::abi(out);
+        std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(id && r->guest_result.request_id == id, "guest request no longer current", LT_INVALID);
+        if (r->guest_result.state == 1) {
+            for (unsigned i = 0; i < 8; i++) {
+                char *raw = r->engine->agent_result();
+                if (!raw)
+                    break;
+                std::unique_ptr<char, decltype(r->engine->agent_free)> owned(raw, r->engine->agent_free);
+                size_t length = strnlen(raw, 8192);
+                lt::require(length < 8192, "guest reply exceeds bound");
+                std::string reply(raw, length);
+                size_t space = reply.find(' '), newline = reply.find('\n');
+                lt::require(space != std::string::npos && newline != std::string::npos && space < newline,
+                            "invalid guest reply header");
+                if (reply.substr(0, space) != r->guest_wire_id)
+                    continue;
+                std::string number = reply.substr(space + 1, newline - space - 1);
+                size_t parsed = 0;
+                long status = std::stol(number, &parsed);
+                lt::require(parsed == number.size() && status >= INT32_MIN && status <= INT32_MAX,
+                            "invalid guest reply status");
+                auto body = lt::base64_decode(reply.substr(newline + 1));
+                lt::require(body.size() < sizeof(r->guest_result.output), "guest output exceeds ABI limit");
+                r->guest_result.state = status == 0 ? 2 : 3;
+                r->guest_result.guest_status = int32_t(status);
+                r->guest_result.bytes = uint32_t(body.size());
+                memcpy(r->guest_result.output, body.c_str(), body.size() + 1);
+                break;
+            }
+            if (r->guest_result.state == 1 && lt::now_ns() >= r->guest_deadline) {
+                r->engine->agent_cancel(r->guest_wire_id.c_str());
+                r->guest_result.state = 5;
+            }
+        }
+        *out = r->guest_result;
+    });
+}
+lt_status lt_runtime_guest_cancel(lt_runtime *r, uint64_t id, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "null runtime");
+        std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(id && r->guest_result.request_id == id, "guest request no longer current");
+        if (r->guest_result.state == 1) {
+            r->engine->agent_cancel(r->guest_wire_id.c_str());
+            r->guest_result.state = 4;
+        }
     });
 }
 }

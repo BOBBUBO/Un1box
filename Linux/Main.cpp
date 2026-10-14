@@ -46,14 +46,23 @@ enum Kind : uint32_t {
     Stop = 6,
     Cancel = 7,
     Motion = 8,
-    Reply = 9
+    Reply = 9,
+    InputStatus = 10,
+    GuestRequest = 11,
+    GuestResult = 12,
+    GuestCancel = 13
 };
 struct Packet {
     uint32_t size = sizeof(Packet), version = 1, kind = 0, reserved = 0;
     lt_runtime_status status{};
+    lt_input_status input_status{};
     lt_touch_batch touch{};
     lt_motion motion{};
     lt_error error{};
+    lt_guest_result guest_result{};
+    uint32_t guest_operation = 0;
+    char guest_argument[1024]{};
+    uint64_t guest_id = 0;
     uint32_t button = 0, value = 0;
     uint64_t mapping_bytes = 0;
 };
@@ -114,23 +123,26 @@ static void peer(int socket) {
             "worker peer UID mismatch");
 }
 struct Options {
-    std::string base, state, rom, engine, package, import, sha, screenshot, script;
-    bool recover = false, headless = false, audio = true, worker = false;
+    std::string base, state, rom, engine, package, import, sha, screenshot, script, library, record, name;
+    bool recover = false, headless = false, audio = true, worker = false, list = false, library_operation = false;
     int control = -1, pcm = -1;
     double seconds = 0;
 };
 static Options options(int argc, char **argv) {
     Options o;
     std::map<std::string, std::string *> fields = {
-        {"--base", &o.base},     {"--state", &o.state},           {"--rom", &o.rom},
-        {"--engine", &o.engine}, {"--package", &o.package},       {"--import", &o.import},
-        {"--sha256", &o.sha},    {"--screenshot", &o.screenshot}, {"--script", &o.script}};
+        {"--base", &o.base},       {"--state", &o.state},           {"--rom", &o.rom},
+        {"--engine", &o.engine},   {"--package", &o.package},       {"--import", &o.import},
+        {"--library", &o.library}, {"--record", &o.record},         {"--name", &o.name},
+        {"--sha256", &o.sha},      {"--screenshot", &o.screenshot}, {"--script", &o.script}};
     for (int i = 1; i < argc; i++) {
         std::string key = argv[i];
         if (fields.count(key)) {
             require(i + 1 < argc, "missing " + key);
             *fields[key] = argv[++i];
-        } else if (key == "--recover")
+        } else if (key == "--list")
+            o.list = true;
+        else if (key == "--recover")
             o.recover = true;
         else if (key == "--headless")
             o.headless = true;
@@ -156,13 +168,67 @@ static Options options(int argc, char **argv) {
         } else
             throw std::runtime_error("unknown option: " + key);
     }
-    require(!o.base.empty(), "--base required");
-    if (o.state.empty())
+    require(!o.base.empty() || !o.library.empty(), "--base or --library required");
+    if (o.state.empty() && !o.base.empty())
         o.state = fs::absolute(o.base).parent_path().string() + "/state";
-    for (auto *p : {&o.base, &o.state, &o.rom, &o.engine, &o.package, &o.import, &o.screenshot, &o.script})
+    for (auto *p : {&o.base, &o.state, &o.rom, &o.engine, &o.package, &o.import, &o.screenshot, &o.script, &o.library})
         if (!p->empty())
             *p = fs::absolute(*p).string();
     return o;
+}
+static void prepare_library(Options &o) {
+    if (o.library.empty())
+        return;
+    lt_error e{sizeof(e), 1, 0, {}};
+    lt_library *l = nullptr;
+    lt_library_config c{sizeof(c), 1, o.library.c_str()};
+    check(lt_library_open(&c, &l, &e), e);
+    struct Handle {
+        lt_library *l;
+        ~Handle() { lt_library_close(l); }
+    } handle{l};
+    lt_record_info info{};
+    info.size = sizeof(info);
+    info.version = 1;
+    if (!o.worker && !o.import.empty()) {
+        lt_library_import_config cfg{sizeof(cfg),
+                                     1,
+                                     o.import.c_str(),
+                                     o.sha.empty() ? nullptr : o.sha.c_str(),
+                                     o.name.empty() ? nullptr : o.name.c_str(),
+                                     o.rom.empty() ? nullptr : o.rom.c_str(),
+                                     o.package.empty() ? nullptr : o.package.c_str(),
+                                     0,
+                                     nullptr,
+                                     nullptr};
+        check(lt_library_import(l, &cfg, &info, &e), e);
+        o.record = info.id;
+        o.import.clear();
+        o.library_operation = true;
+        std::cout << "imported record " << info.id << " " << info.board << " " << info.build << "\n";
+    }
+    if (!o.worker && (o.list || (o.engine.empty() && o.record.empty()))) {
+        uint32_t count = 0;
+        check(lt_library_count(l, &count, &e), e);
+        for (uint32_t i = 0; i < count; i++) {
+            check(lt_library_record_at(l, i, &info, &e), e);
+            std::cout << info.id << "\t" << info.display_name << "\t" << info.board << "-" << info.build << "\t"
+                      << (info.selected ? "selected" : "") << "\t" << (info.dirty ? "dirty" : "clean") << "\n";
+        }
+        o.library_operation = true;
+        if (o.record.empty())
+            return;
+    }
+    if (!o.record.empty())
+        check(lt_library_select(l, o.record.c_str(), &e), e);
+    check(lt_library_selected(l, &info, &e), e);
+    o.record = info.id;
+    o.base = info.base_path;
+    o.state = info.state_path;
+    if (o.rom.empty())
+        o.rom = info.bootrom_path;
+    if (o.package.empty())
+        o.package = info.guest_package_path;
 }
 static int worker(const Options &o) {
     peer(o.control);
@@ -170,7 +236,16 @@ static int worker(const Options &o) {
     lt_error error{sizeof(error), 1, 0, {}};
     lt_device *d = nullptr;
     lt_device_config dc{sizeof(dc), 1, o.base.c_str(), o.state.c_str(), uint32_t(o.recover)};
-    check(lt_device_open(&dc, &d, &error), error);
+    if (o.library.empty())
+        check(lt_device_open(&dc, &d, &error), error);
+    else {
+        lt_library *l = nullptr;
+        lt_library_config cfg{sizeof(cfg), 1, o.library.c_str()};
+        check(lt_library_open(&cfg, &l, &error), error);
+        lt_status status = lt_library_device_open(l, o.record.c_str(), uint32_t(o.recover), &d, &error);
+        lt_library_close(l);
+        check(status, error);
+    }
     lt_runtime *r = nullptr;
     std::string serial = o.state + "/serial.log";
     lt_runtime_config config{sizeof(config),
@@ -187,7 +262,7 @@ static int worker(const Options &o) {
     require(send_packet(o.control, hello, fd), "send worker frame FD");
     close(fd);
     check(lt_runtime_start(r, &error), error);
-    uint64_t last_status = 0, stopping_since = 0;
+    uint64_t last_status = 0, stopping_since = 0, reported_input = 0, pending_guest = 0;
     for (;;) {
         Packet p;
         for (int budget = 0; budget < 32 && receive(o.control, p); budget++) {
@@ -213,6 +288,14 @@ static int worker(const Options &o) {
             case Motion:
                 result = lt_runtime_motion(r, &p.motion, &error);
                 break;
+            case GuestRequest: {
+                lt_guest_request request{sizeof(request), 1, p.guest_operation, 65000, p.guest_argument};
+                result = lt_runtime_guest_request(r, &request, &pending_guest, &error);
+                break;
+            }
+            case GuestCancel:
+                result = lt_runtime_guest_cancel(r, p.guest_id, &error);
+                break;
             default:
                 break;
             }
@@ -221,6 +304,35 @@ static int worker(const Options &o) {
                 reply.kind = Reply;
                 reply.error = error;
                 send_packet(o.control, reply);
+            }
+        }
+        lt_input_status input{sizeof(input), 1, 0, 0, 0};
+        if (lt_runtime_input_status(r, &input, &error) == LT_OK && input.request_id && input.state != 1 &&
+            input.request_id != reported_input) {
+            reported_input = input.request_id;
+            Packet report;
+            report.kind = InputStatus;
+            report.input_status = input;
+            if (input.state == 3) {
+                lt_runtime_cancel_input(r, &error);
+                report.error = {sizeof(lt_error), 1, LT_INVALID, {}};
+                snprintf(report.error.message, sizeof(report.error.message),
+                         "touch batch %llu rejected by engine (%d); all contacts released",
+                         static_cast<unsigned long long>(input.request_id), input.engine_result);
+            }
+            send_packet(o.control, report);
+        }
+        if (pending_guest) {
+            lt_guest_result guest{sizeof(guest), 1, 0, 0, 0, 0, 0, {}};
+            lt_status result = lt_runtime_guest_poll(r, pending_guest, &guest, &error);
+            if (result != LT_OK || guest.state != 1) {
+                Packet reply;
+                reply.kind = GuestResult;
+                reply.guest_result = guest;
+                if (result != LT_OK)
+                    reply.error = error;
+                send_packet(o.control, reply);
+                pending_guest = 0;
             }
         }
         lt_runtime_status status{sizeof(status), 1, 0, 0, 0, 0, 0, 0};
@@ -293,6 +405,27 @@ static std::vector<Script> script_file(const std::string &path) {
         } else if (cmd == "pause") {
             p.kind = Pause;
             require(bool(input >> p.value), "invalid pause");
+        } else if (cmd == "guest") {
+            p.kind = GuestRequest;
+            std::string operation, argument;
+            require(bool(input >> operation), "missing guest operation");
+            if (operation == "ping")
+                p.guest_operation = LT_GUEST_PING;
+            else if (operation == "frontmost")
+                p.guest_operation = LT_GUEST_FRONTMOST;
+            else if (operation == "launch")
+                p.guest_operation = LT_GUEST_LAUNCH_BUILTIN;
+            else if (operation == "type")
+                p.guest_operation = LT_GUEST_TYPE_TEXT;
+            else if (operation == "sync")
+                p.guest_operation = LT_GUEST_SYNC;
+            else if (operation == "gyro-probe")
+                p.guest_operation = LT_GUEST_LAUNCH_GYRO_PROBE;
+            else
+                throw std::runtime_error("unknown typed guest operation");
+            std::getline(input >> std::ws, argument);
+            require(argument.size() < sizeof(p.guest_argument), "guest script argument too long");
+            memcpy(p.guest_argument, argument.c_str(), argument.size() + 1);
         } else if (cmd == "motion") {
             p.kind = Motion;
             p.motion = {sizeof(lt_motion), 1, 0, 0, 0, {}, {}};
@@ -373,6 +506,10 @@ static int frontend(const Options &o, int argc, char **argv) {
         std::vector<char *> args;
         for (int i = 0; i < argc; i++)
             args.push_back(argv[i]);
+        if (!o.record.empty()) {
+            args.push_back(const_cast<char *>("--record"));
+            args.push_back(const_cast<char *>(o.record.c_str()));
+        }
         args.push_back(const_cast<char *>("--worker"));
         args.push_back(control.data());
         args.push_back(pcm.data());
@@ -527,8 +664,29 @@ static int frontend(const Options &o, int argc, char **argv) {
                     terminal = true;
                     break;
                 }
-            } else if (update.kind == Reply)
+            } else if (update.kind == Reply) {
                 std::cerr << "command failed: " << update.error.message << "\n";
+                contacts.clear();
+                fingers.clear();
+                Packet cancel;
+                cancel.kind = Cancel;
+                submit(cancel);
+            } else if (update.kind == GuestResult) {
+                const auto &result = update.guest_result;
+                std::cout << "guest request=" << result.request_id << " state=" << result.state
+                          << " status=" << result.guest_status << " bytes=" << result.bytes << " output="
+                          << std::string(result.output, std::min<size_t>(result.bytes, sizeof(result.output))) << "\n";
+                if (update.error.code)
+                    std::cerr << "guest operation error: " << update.error.message << "\n";
+            } else if (update.kind == InputStatus) {
+                std::cout << "input batch=" << update.input_status.request_id << " state=" << update.input_status.state
+                          << " engine_result=" << update.input_status.engine_result << "\n";
+                if (update.input_status.state == 3) {
+                    contacts.clear();
+                    fingers.clear();
+                    std::cerr << update.error.message << "\n";
+                }
+            }
         }
         AudioPacket pcm;
         for (int budget = 0; budget < 16; budget++) {
@@ -730,6 +888,9 @@ static int frontend(const Options &o, int argc, char **argv) {
 int main(int argc, char **argv) {
     try {
         auto o = options(argc, argv);
+        prepare_library(o);
+        if (!o.worker && !o.library.empty() && o.engine.empty())
+            return 0;
         return o.worker ? worker(o) : frontend(o, argc, argv);
     } catch (const std::exception &e) {
         std::cerr << "LightTouch: " << e.what() << "\n";
