@@ -5,6 +5,9 @@
 #include "Presentation.hpp"
 #include "ReplayQueue.hpp"
 #include "Admission.hpp"
+#include "ContactOwnership.hpp"
+#include "AudioQueue.hpp"
+#include "PauseFence.hpp"
 #include <SDL.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
@@ -103,13 +106,16 @@ struct Packet {
     uint32_t guest_operation = 0;
     char guest_argument[1024]{};
     uint64_t guest_id = 0;
-    uint64_t pcm_socket_dropped = 0, diagnostics_monotonic_ns = 0;
+    uint64_t pcm_socket_dropped = 0, pcm_worker_discarded = 0, diagnostics_monotonic_ns = 0;
+    uint64_t audio_epoch = 1, audio_command = 0;
+    uint32_t audio_running = 0, pause_target = 0;
     uint32_t button = 0, value = 0;
     uint64_t mapping_bytes = 0;
     lt::AdmissionProgress admission{};
 };
 struct AudioPacket {
     uint32_t size = sizeof(AudioPacket), version = 1;
+    uint64_t epoch = 1;
     lt_pcm_info info{sizeof(lt_pcm_info), 1, 0, 0, 0, 0, 0, 0};
     std::array<int16_t, 8192> samples{};
 };
@@ -425,6 +431,10 @@ static int worker(const Options &o) {
     check(lt_runtime_start(r, &error), error);
     prestart.started = true;
     uint64_t last_status = 0, stopping_since = 0, reported_input = 0, pending_guest = 0, pcm_socket_dropped = 0;
+    uint64_t audio_epoch = 1, audio_command = 0;
+    uint64_t pcm_worker_discarded = 0;
+    bool audio_suspended = false;
+    lt::PauseFence pause_fence;
     for (;;) {
         if (interrupt_requested && !stopping_since) {
             check(lt_runtime_request_shutdown(r, &error), error);
@@ -455,7 +465,19 @@ static int worker(const Options &o) {
                 result = lt_runtime_button(r, p.button, p.value, &error);
                 break;
             case Pause:
+                if (!p.value && pause_fence.defer_resume(p.audio_command)) {
+                    result = LT_OK;
+                    break;
+                }
                 result = lt_runtime_pause(r, p.value, &error);
+                if (result == LT_OK) {
+                    ++audio_epoch;
+                    audio_command = p.audio_command;
+                    audio_suspended = p.value != 0;
+                    if (p.value)
+                        pause_fence.pause_admitted();
+                    last_status = 0;
+                }
                 break;
             case AdmissionCancel:
             case Stop:
@@ -526,12 +548,36 @@ static int worker(const Options &o) {
         lt_runtime_status status{sizeof(status), 1, 0, 0, 0, 0, 0, 0};
         lt_status result = lt_runtime_poll(r, &status, &error);
         const lt_error poll_error = error;
+        uint64_t resume_command = 0;
+        if (pause_fence.resume_ready(status.state == LT_PAUSED,
+                                     stopping_since || status.state == LT_STOPPING || status.state == LT_STOPPED ||
+                                         status.state == LT_FAILED,
+                                     resume_command)) {
+            const auto resumed = lt_runtime_pause(r, 0, &error);
+            if (resumed == LT_OK) {
+                ++audio_epoch;
+                audio_command = resume_command;
+                audio_suspended = false;
+                last_status = 0;
+            } else {
+                Packet reply;
+                reply.kind = Reply;
+                reply.reserved = Pause;
+                reply.error = error;
+                send_packet(o.control, reply);
+            }
+        }
         uint64_t now = now_ns();
         if (now - last_status >= 250000000 || status.state == LT_STOPPED || status.state == LT_FAILED) {
             Packet update;
             update.kind = Status;
             update.status = status;
             update.pcm_socket_dropped = pcm_socket_dropped;
+            update.pcm_worker_discarded = pcm_worker_discarded;
+            update.audio_epoch = audio_epoch;
+            update.audio_command = audio_command;
+            update.pause_target = audio_suspended;
+            update.audio_running = o.audio && !audio_suspended && status.state == LT_RUNNING;
             update.diagnostics = {sizeof(lt_runtime_diagnostics), 1, 0, 0, 0, 0, 0, 0, 0, 0};
             lt_runtime_diagnose(r, &update.diagnostics, &error);
             update.diagnostics_monotonic_ns = now_ns();
@@ -557,10 +603,13 @@ static int worker(const Options &o) {
         if (o.audio) {
             for (int budget = 0; budget < 8; budget++) {
                 AudioPacket pcm;
+                pcm.epoch = audio_epoch;
                 lt_status res = lt_runtime_pcm(r, pcm.samples.data(), 4096, &pcm.info, &error);
                 if (res != LT_OK)
                     break;
-                if (send(o.pcm, &pcm, sizeof pcm, MSG_DONTWAIT | MSG_NOSIGNAL) != sizeof pcm)
+                if (audio_suspended || status.state != LT_RUNNING)
+                    pcm_worker_discarded += pcm.info.frames;
+                else if (send(o.pcm, &pcm, sizeof pcm, MSG_DONTWAIT | MSG_NOSIGNAL) != sizeof pcm)
                     pcm_socket_dropped += pcm.info.frames;
             }
         }
@@ -948,19 +997,36 @@ static int frontend(const Options &o, int argc, char **argv) {
         size_t n;
         ~Mapping() { munmap(const_cast<void *>(p), n); }
     } mapping{shared, size_t(hello.mapping_bytes)};
+    std::string audio_failure;
+    SDL_AudioSpec audio_spec{};
     if (o.audio) {
         sdl.initialized = true;
-        require(SDL_InitSubSystem(SDL_INIT_AUDIO) == 0, SDL_GetError());
-        SDL_AudioSpec want{}, got{};
+        const bool initialized = SDL_InitSubSystem(SDL_INIT_AUDIO) == 0;
+        SDL_AudioSpec want{};
         want.freq = 44100;
         want.format = AUDIO_S16LSB;
         want.channels = 2;
         want.samples = 1024;
-        sound = SDL_OpenAudioDevice(nullptr, 0, &want, &got, 0);
-        if (sound)
-            SDL_PauseAudioDevice(sound, 0);
-        else
-            std::cerr << "audio device unavailable: " << SDL_GetError() << "\n";
+        if (initialized)
+            sound = SDL_OpenAudioDevice(nullptr, 0, &want, &audio_spec, 0);
+        if (!sound)
+            audio_failure = std::string("SDL audio initialization/open failed: ") + SDL_GetError();
+        else if (audio_spec.freq != int(lt::AudioQueue::rate) || audio_spec.channels != 2 ||
+                 audio_spec.format != AUDIO_S16LSB)
+            audio_failure = "SDL opened an incompatible PCM specification";
+        // Starts paused until a worker RUNNING acknowledgement. No packet is
+        // played merely because opening the device succeeded.
+        std::cout << "audio_sink enabled=1 opened=" << bool(sound)
+                  << " device_id=" << sound << " device_name=unavailable(default-selection)"
+                  << " device_selection=default driver="
+                  << (SDL_GetCurrentAudioDriver() ? SDL_GetCurrentAudioDriver() : "unavailable")
+                  << " rate=" << audio_spec.freq << " channels=" << unsigned(audio_spec.channels)
+                  << " format=" << audio_spec.format << " period_frames=" << audio_spec.samples
+                  << " device_names=" << SDL_GetNumAudioDevices(0)
+                  << " queue_cap_frames=" << lt::AudioQueue::cap_frames
+                  << " physical_audibility=unobserved underruns=unavailable" << std::endl;
+        if (!audio_failure.empty())
+            std::cerr << "audio device failed: " << audio_failure << "; requesting ordinary Stop\n";
     }
     std::vector<uint8_t> pixels;
     lt_frame_info frame{sizeof(frame), 1, 0, 0, 0, 0, 0, 0, 0};
@@ -968,10 +1034,22 @@ static int frontend(const Options &o, int argc, char **argv) {
     bool stopping = false, paused = false, terminal = false;
     uint64_t stop_since = 0;
     uint64_t pcm_received = 0, pcm_nonzero_samples = 0, pcm_loud_samples = 0, pcm_socket_dropped = 0,
-             pcm_sdl_queued = 0, pcm_sdl_discarded = 0, pcm_sdl_errors = 0;
+             pcm_adapter_discarded = 0;
+    lt::AudioQueue sink;
+    uint64_t audio_command = 0;
+    auto sink_bytes = [&] { return sound ? SDL_GetQueuedAudioSize(sound) : 0u; };
+    auto sink_pause = [&](bool pause) {
+        if (sound)
+            SDL_PauseAudioDevice(sound, pause ? 1 : 0);
+    };
+    auto sink_clear = [&] {
+        if (sound)
+            SDL_ClearQueuedAudio(sound);
+    };
     uint32_t pcm_peak_abs = 0;
-    std::map<uint32_t, std::pair<double, double>> contacts;
-    std::map<SDL_FingerID, uint32_t> fingers;
+    lt::ContactOwnership ownership;
+    auto &contacts = ownership.contacts;
+    auto &fingers = ownership.fingers;
     uint32_t next_finger = 10000, display_rotation = 0;
     auto script = script_file(o.script);
     size_t next_script = 0;
@@ -986,14 +1064,20 @@ static int frontend(const Options &o, int argc, char **argv) {
             p.touch.timestamp_ns = now_ns();
         if (p.kind == Motion)
             p.motion.timestamp_ns = now_ns();
+        if (p.kind == Pause) {
+            p.audio_command = ++audio_command;
+            sink.request(audio_command, sink_bytes, sink_pause, sink_clear);
+            paused = p.value != 0;
+        }
         auto kind = p.kind == Touch || p.kind == Button || p.kind == Motion ? lt::ControlDelivery::Kind::input
                     : p.kind == Cancel                                      ? lt::ControlDelivery::Kind::cancel
                     : p.kind == Pause                                       ? lt::ControlDelivery::Kind::pause
                                                                             : lt::ControlDelivery::Kind::lifecycle;
         bool sent = delivery.send(kind, [&] { return send_packet(sockets[0], p); });
+        if (sent && p.kind == Touch)
+            ownership.admitted(p.touch);
         if (delivery.needs_cancel() || p.kind == Cancel || p.kind == Pause || p.kind == Stop) {
-            contacts.clear();
-            fingers.clear();
+            ownership.clear();
             const auto dropped = lt::discard_replay(script, next_script);
             if (o.trace_io)
                 std::cout << "trace_replay_cancel observed_monotonic_ns=" << now_ns() << " pending_dropped=" << dropped
@@ -1032,6 +1116,8 @@ static int frontend(const Options &o, int argc, char **argv) {
     }};
     auto stop = [&] {
         if (!stopping) {
+            sink.stopped = true;
+            sink.mute(sink_bytes, sink_pause, sink_clear);
             if (!o.screenshot.empty() && frame.sequence) {
                 try {
                     capture(o.screenshot);
@@ -1048,6 +1134,8 @@ static int frontend(const Options &o, int argc, char **argv) {
     };
     if (admission_cancelled || interrupt_requested)
         stop();
+    if (!audio_failure.empty())
+        sink.fault(stop);
     auto touch = [&](uint32_t id, uint32_t phase, double x, double y) {
         Packet p;
         p.kind = Touch;
@@ -1093,8 +1181,16 @@ static int frontend(const Options &o, int argc, char **argv) {
                 const auto &s = update.status;
                 final_receipt.latest = s;
                 final_receipt.status_available = true;
-                if (s.state == LT_PAUSED || s.state == LT_RUNNING)
-                    paused = s.state == LT_PAUSED;
+                if (update.audio_command == audio_command && (s.state == LT_PAUSED || s.state == LT_RUNNING))
+                    paused = update.pause_target || s.state == LT_PAUSED;
+                sink.acknowledge(update.audio_command, update.audio_epoch,
+                                 o.audio && sound && update.audio_running != 0, sink_pause);
+                if (s.state != LT_RUNNING) {
+                    sink.mute(sink_bytes, sink_pause, sink_clear);
+                    if (s.state == LT_STOPPING || s.state == LT_STOPPED || s.state == LT_FAILED)
+                        sink.stopped = true;
+                }
+                sink.observe(sink_bytes());
                 diagnostics = update.diagnostics;
                 diagnostics_monotonic_ns = update.diagnostics_monotonic_ns;
                 pcm_socket_dropped = update.pcm_socket_dropped;
@@ -1113,8 +1209,15 @@ static int frontend(const Options &o, int argc, char **argv) {
                           << " pcm_native_packets=" << update.io.pcm_queued_packets << " pcm_received=" << pcm_received
                           << " pcm_nonzero_samples=" << pcm_nonzero_samples << " pcm_loud_samples=" << pcm_loud_samples
                           << " pcm_peak_abs=" << pcm_peak_abs << " pcm_socket_dropped=" << pcm_socket_dropped
-                          << " pcm_sdl_queued=" << pcm_sdl_queued << " pcm_sdl_discarded=" << pcm_sdl_discarded
-                          << " pcm_sdl_errors=" << pcm_sdl_errors << std::endl;
+                          << " pcm_worker_discarded=" << update.pcm_worker_discarded
+                          << " pcm_sdl_queued=" << sink.queued << " pcm_sdl_discarded=" << sink.discarded
+                          << " pcm_adapter_discarded=" << pcm_adapter_discarded << " pcm_sdl_errors=" << sink.errors
+                          << " pcm_sdl_depth=" << sink.depth << " pcm_sdl_peak_depth_bound=" << sink.peak_depth
+                          << " pcm_sdl_consumed_estimate=" << sink.consumed_estimate
+                          << " pcm_sink_muted=" << sink.muted << " pcm_sink_failed=" << sink.failed
+                          << " pcm_sink_enabled=" << o.audio
+                          << " pcm_epoch=" << update.audio_epoch << " pcm_command=" << update.audio_command
+                          << " pcm_underruns=unavailable pcm_physical_audibility=unobserved" << std::endl;
                 if (window) {
                     std::string title = "LightTouch - " + std::string(s.state == LT_RUNNING    ? "running"
                                                                       : s.state == LT_PAUSED   ? "paused"
@@ -1129,8 +1232,11 @@ static int frontend(const Options &o, int argc, char **argv) {
                 }
             } else if (update.kind == Reply) {
                 std::cerr << "command failed: " << update.error.message << "\n";
-                contacts.clear();
-                fingers.clear();
+                ownership.clear();
+                if (update.reserved == Pause) {
+                    audio_failure = update.error.message;
+                    sink.fault(stop);
+                }
                 lt::discard_replay(script, next_script);
                 Packet cancel;
                 cancel.kind = Cancel;
@@ -1149,8 +1255,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                 std::cout << "input batch=" << update.input_status.request_id << " state=" << update.input_status.state
                           << " engine_result=" << update.input_status.engine_result << "\n";
                 if (update.input_status.state == 3) {
-                    contacts.clear();
-                    fingers.clear();
+                    ownership.clear();
                     lt::discard_replay(script, next_script);
                     std::cerr << update.error.message << "\n";
                 }
@@ -1163,7 +1268,9 @@ static int frontend(const Options &o, int argc, char **argv) {
                 break;
             if (n == 0)
                 break;
-            require(n == sizeof pcm && pcm.version == 1 && pcm.info.frames <= 4096 && pcm.info.channels == 2,
+            require(n == sizeof pcm && pcm.size == sizeof pcm && pcm.version == 1 &&
+                        pcm.info.size == sizeof(lt_pcm_info) && pcm.info.version == 1 && pcm.info.frames <= 4096 &&
+                        pcm.info.channels == 2 && pcm.info.sample_rate == lt::AudioQueue::rate,
                     "invalid PCM packet");
             pcm_received += pcm.info.frames;
             uint32_t packet_nonzero = 0, packet_first = 0, packet_last = 0;
@@ -1181,19 +1288,25 @@ static int frontend(const Options &o, int argc, char **argv) {
             }
             if (o.trace_io && packet_nonzero)
                 std::cout << "trace_pcm observed_monotonic_ns=" << now_ns() << " frames=" << pcm.info.frames
+                          << " transport_epoch=" << pcm.epoch << " sink_epoch=" << sink.epoch
+                          << " sink_muted=" << sink.muted
                           << " capture_relative_ns=" << pcm.info.timestamp_ns << " nonzero_samples=" << packet_nonzero
                           << " first_nonzero_sample=" << packet_first << " last_nonzero_sample=" << packet_last
                           << " sample_rate=" << pcm.info.sample_rate << " channels=" << pcm.info.channels << std::endl;
             if (sound) {
-                if (SDL_GetQueuedAudioSize(sound) > 17640) {
-                    pcm_sdl_discarded += SDL_GetQueuedAudioSize(sound) / 4;
-                    SDL_ClearQueuedAudio(sound);
+                bool failed = false;
+                uint32_t accepted = sink.append(pcm.epoch, pcm.info.frames, sink_bytes(), [&](uint32_t frames) {
+                    failed = SDL_QueueAudio(sound, pcm.samples.data(), frames * 4) != 0;
+                    return !failed;
+                });
+                pcm_adapter_discarded += pcm.info.frames - accepted;
+                if (failed) {
+                    audio_failure = SDL_GetError();
+                    std::cerr << "SDL audio queue failed: " << audio_failure << "; requesting ordinary Stop\n";
+                    sink.fault(stop);
                 }
-                if (SDL_QueueAudio(sound, pcm.samples.data(), pcm.info.frames * 4) == 0)
-                    pcm_sdl_queued += pcm.info.frames;
-                else
-                    pcm_sdl_errors++;
-            }
+            } else
+                pcm_adapter_discarded += pcm.info.frames;
         }
         if (frame_copy(shared, pixels, frame, sequence) && renderer) {
             if (o.trace_io)
@@ -1233,14 +1346,25 @@ static int frontend(const Options &o, int argc, char **argv) {
         }
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if (window) {
+                int w = 0, h = 0;
+                SDL_GetWindowSize(window, &w, &h);
+                ownership.resized(w, h, int(frame.width), int(frame.height), int(display_rotation), [&] {
+                    Packet p;
+                    p.kind = Cancel;
+                    submit(p);
+                    if (o.trace_io)
+                        std::cout << "trace_viewport_cancel observed_monotonic_ns=" << now_ns()
+                                  << " width=" << w << " height=" << h << " reason=changed" << std::endl;
+                });
+            }
             if (event.type == SDL_QUIT)
                 stop();
             else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                 Packet p;
                 p.kind = Cancel;
                 submit(p);
-                contacts.clear();
-                fingers.clear();
+                ownership.clear();
             } else if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
                 bool down = event.type == SDL_KEYDOWN;
                 if (event.key.repeat)
@@ -1267,8 +1391,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                     Packet p;
                     p.kind = Cancel;
                     submit(p);
-                    contacts.clear();
-                    fingers.clear();
+                    ownership.clear();
                     if (key == SDLK_r)
                         display_rotation = (display_rotation + 90) % 360;
                 } else if (key == SDLK_h || key == SDLK_p || key == SDLK_EQUALS || key == SDLK_MINUS) {
@@ -1336,6 +1459,14 @@ static int frontend(const Options &o, int argc, char **argv) {
                 lt_status mapped =
                     lt_map_contact(event.tfinger.x * width, event.tfinger.y * height, left, top, display_width * scale,
                                    display_height * scale, display_rotation, &x, &y);
+                if (mapped != LT_OK && fingers.count(event.tfinger.fingerId)) {
+                    ownership.outside(false, [&] {
+                        Packet p;
+                        p.kind = Cancel;
+                        submit(p);
+                    });
+                    continue;
+                }
                 if (event.type == SDL_FINGERDOWN && mapped == LT_OK) {
                     uint32_t id = next_finger++;
                     fingers[event.tfinger.fingerId] = id;
@@ -1369,11 +1500,19 @@ static int frontend(const Options &o, int argc, char **argv) {
                     py = event.type == SDL_MOUSEMOTION ? event.motion.y : event.button.y;
                 lt_status mapped = lt_map_contact(px, py, left, top, display_width * scale, display_height * scale,
                                                   display_rotation, &x, &y);
+                if ((contacts.count(1) || contacts.count(2)) && ownership.outside(mapped == LT_OK, [&] {
+                        Packet p;
+                        p.kind = Cancel;
+                        submit(p);
+                    }))
+                    continue;
                 if (event.type == SDL_MOUSEMOTION) {
                     // A failed send clears local ownership. Iterate a snapshot
                     // so cancellation cannot invalidate this traversal.
                     const auto held = contacts;
                     for (const auto &c : held) {
+                        if (c.first != 1 && c.first != 2)
+                            continue; // Physical mouse cannot move a finger's ID.
                         if (mapped == LT_OK) {
                             contacts[c.first] = {x, y};
                             if (!touch(c.first, 1, x, y))
@@ -1381,6 +1520,8 @@ static int frontend(const Options &o, int argc, char **argv) {
                         }
                     }
                 } else {
+                    if (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_RIGHT)
+                        continue;
                     uint32_t id = event.button.button == SDL_BUTTON_LEFT ? 1 : 2;
                     if (event.type == SDL_MOUSEBUTTONDOWN && mapped == LT_OK) {
                         contacts[id] = {x, y};
@@ -1410,7 +1551,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                           : std::min(exit_budget, lt::parent_shutdown_timeout_ns - elapsed_stop);
     }
     require(child.wait_bounded(exit_budget), "worker process exit deadline after terminal receipt; state retained");
-    final_receipt.frontend_return = WIFEXITED(child.status) ? WEXITSTATUS(child.status) : 2;
+    final_receipt.frontend_return = sink.failed ? 2 : WIFEXITED(child.status) ? WEXITSTATUS(child.status) : 2;
     return final_receipt.frontend_return;
 }
 int main(int argc, char **argv) {
