@@ -88,8 +88,10 @@ Typed guest operations use the existing agent RPC with bounded UTF-8 arguments a
 owned results: ping, frontmost, launch a builtin, type text, sync, and launch an
 explicitly authorized installed gyro workload. Requests are asynchronous and at
 most one is pending; cancellation/timeout never retries a possibly applied mutation.
-Gyro workload launch requires actual engine guest gyro capability. Absent historical
-SDKs/probe assets stay blocked, not fabricated. Prepared outputs.guest_package may
+Gyro/motion qualification is DEFERRED by explicit user scope update, not verified
+and not an initial completion dependency. Existing APIs/code are preserved; no
+historical SDK/probe acquisition/build or further gyro integration is initial work.
+Engine sensor bits describe modeled hardware and never advertise qualified gyro. Prepared outputs.guest_package may
 name a checksum-proven raw guest.itpack; library import and boot assembly select it
 natively when no explicit package is supplied, so firmware UI does not choose an
 architecture or recipe.
