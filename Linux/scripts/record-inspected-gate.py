@@ -32,11 +32,16 @@ def main():
     transitions.add_argument('--transition-from', type=Path, help='actual pre-action native capture')
     transitions.add_argument('--transition-record', type=Path, help='paired unlock content-continuity.json')
     parser.add_argument('--model-inspected', action='store_true')
+    parser.add_argument('--blank-focused-editor', action='store_true',
+                        help='Actual blank focused n72 editor observation; only two vetted caret templates may differ')
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
+    if args.blank_focused_editor and args.scene != 'editor':
+        raise RuntimeError('blank focused editor assertion is restricted to the editor scene')
     if not args.execute:
         print(json.dumps({'plan_only': True, 'actual_model_inspection_required': True,
-                          'full_BMP_continuity_required': args.scene != 'home',
+                          'full_BMP_continuity_required': args.scene != 'home' and not args.blank_focused_editor,
+                          'two_vetted_editor_caret_templates_only': args.blank_focused_editor,
                           'Home_clock_only_exception': args.scene == 'home', 'max_reuse_seconds': 60,
                           'deadlines_unchanged_seconds': [129, 179],
                           'selected_scene': args.scene, 'scene_deadline_seconds': gates.SCENES[args.scene][2],
@@ -86,6 +91,7 @@ def main():
         if not expected or args.observed_marker != expected:
             raise RuntimeError('actual full observed marker must match this owned run exactly')
     gate = dict(identity, model_inspected=True, scene=scene, inspected_monotonic_ns=inspected,
+                blank_focused_editor_model_assertion=args.blank_focused_editor,
                 worker_pid=worker['pid'], worker_start_ticks=worker['start_ticks'],
                 capture_directory=str(original_path), bmp_sha256=sha(original_path / 'native.bmp'),
                 receipt_sha256=sha(original_path / 'receipt.json'))
@@ -202,7 +208,9 @@ def main():
                          policy='coherent-copy-static-awake-v2',
                          static_source=int(fresh['sequence']) == int(original['sequence']),
                          verified_monotonic_ns=time.monotonic_ns())
-            proof['image_comparison'] = gates.image_continuity(original_bmp, fresh_bmp, scene)
+            proof['blank_focused_editor_model_assertion'] = args.blank_focused_editor
+            proof['image_comparison'] = gates.image_continuity(original_bmp, fresh_bmp, scene,
+                                                              args.blank_focused_editor)
             gate['continuity'] = proof
             (target / 'admission-attempt.json').write_text(json.dumps(gate, indent=2) + '\n')
             if gates.valid_continuity_gate(gate, original, fresh, original_bmp, fresh_bmp,
