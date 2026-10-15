@@ -18,6 +18,14 @@ Use a fresh strict collector `before.json` for the intended existing worker.
 Pin actual installed main/test hashes, record, UID/PID/startticks and Android boot
 ID. Old bindings must not survive a worker replacement or reboot.
 
+Before starting the timed test, exercise every available non-mutating platform
+reader against the current phone: identity, APK hashes, record metadata, focused
+display/window, image dimensions, keyboard anchors and clock brackets. A retained
+media sample can validate its format, but cannot establish current freshness.
+Foreground MainActivity before `--no-restart`; a cached target can otherwise leave
+the runner pending. Keep the host controller's source/hash separate from the
+installed app/test producer pins.
+
 Launch the existing media test with `--no-restart` after foregrounding the app:
 
 ```sh
@@ -62,6 +70,18 @@ There are deliberately no executable example coordinates or inferred scene
 classifier. The binding must be prepared promptly: execution rejects a
 measurement-start older than15seconds. If setup cannot fit the30-second dry run,
 retain that failure and review timing instead of relaxing the phase guard.
+The test publishes `measurement-start` before its raw capture/events record is
+complete. Wait for that matching complete record within the original setup
+deadline; do not reset the clock or backfill a late approval.
+
+Inspect anchors during the actual letter popup as well as the resting keyboard.
+Avoid transient popup areas and notification-prone app titles. Retain recognizable
+own-app chrome outside the input area and a keyboard-mode glyph that distinguishes
+alphabetic from numeric input. Replay proposed anchors against saved real popup,
+notification and wrong-scene images before another timed trial. A production
+screenshot notice may change the viewport; restore and remeasure the actual layout
+before reusing any coordinates. Do not suppress notifications or change settings
+to make an image guard pass.
 
 The host image dependency is a prebuilt Pillow wheel. For example, in a private
 host venv outside Git, install `Pillow==11.3.0` with `--only-binary=:all:`. No target
