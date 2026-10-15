@@ -122,6 +122,48 @@ def capture_flags(receipt, bitmap, candidate):
             'capture_after_trigger': captured >= candidate['trigger_monotonic_ns']}
 
 
+def ready_preview(capture_root, handler_result, identity, now):
+    """Select qualified pixels only after the sole capture writer has exited.
+
+    The handler waits for that writer and finishes preview conversion before
+    publishing this handoff. None of these checks identifies a guest scene.
+    """
+    if (handler_result.get('capture_writer_exited') is not True or
+            handler_result.get('watcher_returncode') != 0 or
+            handler_result.get('identity') != identity):
+        return None
+    candidates = []
+    for path in sorted(capture_root.glob('capture-*')):
+        try:
+            if (path / 'receipt.json').stat().st_size > 16_384:
+                continue
+            record = json.loads((path / 'receipt.json').read_text())
+            if (path / 'native.bmp').stat().st_size > MAX_BITMAP:
+                continue
+            bitmap = (path / 'native.bmp').read_bytes()
+            receipt = record['receipt']
+            if (hashlib.sha256(bitmap).hexdigest() != record['sha256'] or
+                    not all(capture_flags(receipt, bitmap, record['candidate']).values()) or
+                    not 0 <= now - int(receipt['frame_monotonic_ns']) <= 2 * SECOND or
+                    not int(receipt['observed_monotonic_ns']) <= int(record['copied_monotonic_ns']) <= now or
+                    not 0 <= now - int(record['copied_monotonic_ns']) <= 2 * SECOND or
+                    int(receipt['coherent_readback']) != 1 or
+                    int(receipt['shared_generation']) <= 0 or int(receipt['shared_generation']) % 2):
+                continue
+            png = path / 'native.png'
+            if png.stat().st_size > MAX_BITMAP:
+                continue
+            data = png.read_bytes()
+            if (len(data) > MAX_BITMAP or not data.startswith(b'\x89PNG\r\n\x1a\n') or
+                    not data.endswith(b'\0\0\0\0IEND\xaeB`\x82') or
+                    handler_result.get('preview_sha256', {}).get(str(png)) != hashlib.sha256(data).hexdigest()):
+                continue  # A partially written preview is never published.
+            candidates.append((int(receipt['observed_monotonic_ns']), png))
+        except (OSError, ValueError, TypeError, KeyError, struct.error):
+            continue
+    return max(candidates, default=(None, None), key=lambda item: item[0])[1]
+
+
 def process_identity(pid):
     root = Path(f'/proc/{pid}')
     text = (root / 'stat').read_text()
@@ -149,6 +191,9 @@ def main():
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--timeout', type=float, default=1200)
     p.add_argument('--max-captures', type=int, default=12)
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument('--stop-after-ready', action='store_true', help='explicit existing first-ready default')
+    mode.add_argument('--capture-until-timeout', action='store_true', help='retain multiple frames for bounded menu bursts')
     p.add_argument('--execute', action='store_true')
     args = p.parse_args()
     if args.pid <= 0 or args.window <= 0 or not 0 < args.timeout <= 1200 or not 1 <= args.max_captures <= 24:
@@ -158,6 +203,7 @@ def main():
             'poll_seconds': .05, 'maximum_rate_Hz': 2, 'timeout_seconds': args.timeout,
             'input': 'Only S via focused XTest, no --window/stack; no unlock/button/touch/Stop',
             'capture_only': True, 'scene_or_guest_acceptance': False,
+            'stop_after_ready': not args.capture_until_timeout,
             'focus': 'Focus once when first candidate arrives; stop injecting if focus later changes'}
     if not args.execute:
         print(json.dumps(plan, indent=2))
@@ -260,7 +306,7 @@ def main():
                 record['sha256'] = hashlib.sha256(bitmap).hexdigest()
                 try:
                     record['flags'] = capture_flags(receipt, bitmap, candidate)
-                    success = all(record['flags'].values())
+                    success = success or all(record['flags'].values())
                     gate.last_attempt = max(gate.last_attempt, int(receipt['sequence']))
                 except (KeyError, ValueError) as error:
                     record['failure'] = 'Rejected copied capture: ' + str(error)
@@ -268,7 +314,7 @@ def main():
                 record['failure'] = 'No matching complete native capture receipt within2s'
             (target / 'receipt.json').write_text(json.dumps(record, indent=2) + '\n')
             print(json.dumps({'capture': str(target), 'flags': record.get('flags'), 'capture_only': True}), flush=True)
-            if success:
+            if success and not args.capture_until_timeout:
                 break
     os.close(pidfd)
     result = {'fresh_nonblack_capture_retained': success, 'attempts': attempts,

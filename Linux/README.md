@@ -670,3 +670,17 @@ its full native admission and actual boot/GLES2/input still need an allocation.
 The old fdde frontend/unoptimized archive and separate optimized hash receipts
 remain distinct. New source needs an allocated build and small-fixture checks;
 no old binary receives these deadlines/progress features.
+
+Readiness capture defaults to stopping after its first qualified actual copy;
+`--stop-after-ready` makes that behavior explicit. A wake handler must wait for
+this screenshot writer to exit, finish bounded preview conversion, and publish
+its identity and hashes before `ready_preview` selects an image. The selector
+checks each copied capture, rather than assuming the first preview was ready.
+Black or rejected earlier frames remain retained. These flags and counters do
+not identify Lock or Home; the operator must inspect the selected image.
+
+For menu timing only, `--capture-until-timeout --max-captures 20 --timeout 10`
+keeps capturing newer eligible frames at no more than2Hz within the fixed budget.
+Convert retained BMPs to PNGs only after that writer has exited, under a separate
+bounded conversion budget. Input latency uses actual mouse edges and original
+source/capture receipts, never PNG conversion or operator response time.
