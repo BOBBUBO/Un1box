@@ -74,7 +74,11 @@ def collect(args):
                               (Path('/usr/share/tcltk/tcl8.6'), 'usr/share/tcltk/tcl8.6'),
                               (Path('/usr/share/tcltk/tk8.6'), 'usr/share/tcltk/tk8.6')]:
         for source in sorted(root.rglob('*')):
-            if source.is_file() and '__pycache__' not in source.parts and source.suffix != '.pyc' and 'test' not in source.relative_to(root).parts:
+            relative = source.relative_to(root)
+            # Python's config directory contains development-only objects and
+            # a static interpreter archive, not loadable runtime dependencies.
+            development = any(part.startswith('config-') for part in relative.parts)
+            if source.is_file() and not development and '__pycache__' not in source.parts and source.suffix not in ('.pyc', '.o', '.a') and 'test' not in relative.parts:
                 system(source, destination + '/' + str(source.relative_to(root)))
     add(args.frontend, 'usr/bin/lighttouch-linux', 'LightTouch GPL-2.0-or-later; bundled source')
     add(args.engine, 'usr/lib/lighttouch/libqemu-arm.so', 'QEMU GPL-2.0-or-later and bundled linked-dependency notices/source')
