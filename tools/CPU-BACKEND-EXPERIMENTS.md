@@ -126,10 +126,16 @@ and translation abort. It failed an execute-never assumption: the current
 QEMU `get_S1prot` explicitly clears XN before ARMv7, so ARM1176 executed the
 load and encountered its unmapped data address. This is retained as a failed
 test assumption and an existing implementation boundary, not advertised as
-architecturally correct execute-never behavior. The next prepared source
-isolates that behavior with a readable data address, checks abort LR values
-and adds a genuine unmapped instruction-fetch prefetch abort. It remains
-unqualified until its separate bounded execution receipt exists.
+architecturally correct execute-never behavior. The second actual run at
+`70a4bbe5` passed six narrow cases: it isolated that behavior with a readable
+data address, checked data-abort LR values and observed genuine unmapped-fetch
+prefetch abort at PC=0x0c, LR=0x401204, mode=ABT. Both harness and QEMU exited
+normally, with no owned process left. This does not validate XN protection.
+
+The later harness adds MOV/ADD cases and an optional requirement for exact
+in-engine Dynarmic execution witnesses. Those newer cases and the separate
+default-off engine prototype require their own build/execution receipts;
+the six-case reference result does not qualify them.
 
 This reference establishes expected QEMU state for a future differential
 adapter. It does not execute Dynarmic inside QEMU, prove the CP15/GLES bridge,
