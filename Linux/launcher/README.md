@@ -8,17 +8,29 @@ or guest acceptance.
 
 Prepared directories remain in place and must already be read-only. Writable
 sources and prepared-base archives can be imported through the existing native
-import command into a new immutable destination; archives require a known SHA-256.
+import command into a new immutable destination. The GUI calculates the archive
+SHA-256 in a cancellable background thread; users never enter a checksum.
+This detects changes between selection and extraction, not publisher authenticity.
 The launcher never chmods or rewrites the source. This avoids redundant copies of
 large, already verified extracted fixtures.
 
-Choose **Import .itbase archive…** for a `.itbase` file; provide its verified SHA-256
-and a writable parent folder for the imported copy. **Prepared base folder →
-Choose folder…** selects an already-extracted base, so its folder-only browser
-does not list archive files. **Copy base folder…** imports an extracted folder
-when a separate immutable copy is needed. Read-only `.itbase`, `.itpack` and boot
-asset source files are supported; select guest tools and boot assets with their
-separate **Choose file…** buttons.
+Extract the private guest ZIP first. On **iOS files**, select in order:
+
+1. **iOS system:** `n72ap-7E18.itbase` for iOS 3.1.3.
+2. **Guest tools:** `armv6.itpack` for that system.
+3. **Boot file:** `bootrom.bin` for the current iPod touch 2 route.
+4. **Set up device**, then **Start iOS** after setup completes.
+
+Selecting the system automatically fills matching companion files beside it.
+Read-only files are supported. Checksums run automatically, and setup displays
+progress, elapsed time and cancellation. Systems are installed once under XDG
+data storage; the completed profile is saved automatically and reused at startup.
+**Advanced** contains storage locations, interrupted-shutdown recovery and
+settings import/export. If a previous import already completed, choose
+**Installed system folder** there: select the directory containing
+`device.lock.json` to use it directly without another copy. For iPod touch 4,
+use its matching n81 system and `armv7.itpack`, leaving Boot file empty because
+its prepared system already contains `kboot.bin`.
 
 Each device profile references an absolute prepared-base path, a separate writable
 state folder and its matching guest package. New state is created by the native
