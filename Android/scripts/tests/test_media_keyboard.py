@@ -42,6 +42,37 @@ def clock(at):
 
 
 class KeyboardFenceTest(unittest.TestCase):
+    def test_initial_identity_and_record_metadata_keep_distinct_receipts(self):
+        # Exercise the real metadata reader with exclusive-write receipts,
+        # including the selected-record read shared by both collection paths.
+        helper = k.load_monitor().load_collector()
+        lock = b'actual-small-base-lock'
+        record_id = 'a' * 32
+        pin = k.sha(lock)
+        expected = {'recordId': record_id, 'baseSha256': pin,
+                    'bootromSha256': 'b' * 64, 'guestPackageSha256': 'c' * 64}
+        record = {'id': record_id, 'base_sha256': pin,
+                  'bootrom_sha256': 'b' * 64, 'guest_package_sha256': 'c' * 64}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            class Collector:
+                def file(self, label, path):
+                    values = {'files/library/selected': record_id.encode(),
+                              'files/library/records/' + record_id + '/record.json': json.dumps(record).encode(),
+                              'files/library/records/' + record_id + '/base/device.lock.json': lock,
+                              'files/library/records/' + record_id + '/state/.base-identity': pin.encode()}
+                    value = values[path]
+                    with (root / (label + '.json')).open('x') as receipt:
+                        json.dump({'path': path, 'sha256': k.sha(value)}, receipt)
+                    return value
+            c = Collector()
+            def identity(prefix):
+                self.assertEqual(c.file(prefix + '-selected', 'files/library/selected'), record_id.encode())
+            k.collect_initial_evidence(identity, helper, c, expected)
+            selected = list(root.glob('*-selected.json'))
+            self.assertEqual(len(selected), 2)
+            self.assertEqual({json.loads(p.read_text())['path'] for p in selected}, {'files/library/selected'})
+
     def test_actual_remote_shell_guards_precede_input(self):
         # Execute the production shell string with only its two Android
         # endpoints replaced by local fixtures; no ADB/phone is reachable.

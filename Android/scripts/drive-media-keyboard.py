@@ -127,6 +127,13 @@ def image_regions(data, b):
         return [sha(image.crop(tuple(roi)).convert("RGB").tobytes()) for roi in b["stableKeyboardRegions"]]
 
 
+def collect_initial_evidence(identity, helper, collector, spec):
+    # Both collectors read the selected record. Their exclusive-write receipt
+    # namespaces must differ; otherwise execution aborts before the first tap.
+    identity("initial-identity")
+    helper.record_metadata(collector, spec, "initial-record")
+
+
 def tap_script(pid, start, cutoff, x, y, folder):
     # Values come only from validated integer identities/rectangles and the
     # closed media-folder pattern. Android input stays at shell UID; metadata
@@ -205,7 +212,7 @@ def run(args):
     try:
         require(c.read("shell-uid", "id -u", app=False)[0].strip() not in (b"0", b""), "nonroot shell required")
         check_apk(PACKAGE, b["mainApkSha256"], "main"); check_apk(PACKAGE + ".test", b["testApkSha256"], "test")
-        identity("initial"); helper.record_metadata(c, prior["spec"], "initial")
+        collect_initial_evidence(identity, helper, c, prior["spec"])
         initial_clock = c.clock("approval-clock")
         require(0 <= initial_clock["upperMs"] - b["measurementStartDeviceBootTimeMs"] <= 15000, "approval/measurement start is not fresh")
         while True:
