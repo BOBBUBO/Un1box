@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import pwd
 from pathlib import Path
 import subprocess
 import time
@@ -30,7 +31,7 @@ def main():
     source_list.write_text(''.join('deb-src [check-valid-until=no signed-by=%s] https://archive.debian.org/%s %s main\n' % (keyring, repository, suite) for repository, suite in (('debian', 'bullseye'), ('debian-security', 'bullseye-security'))))
     apt = ['apt-get', '-o', 'Dir::Etc::sourcelist=' + str(source_list), '-o', 'Dir::Etc::sourceparts=-',
            '-o', 'Dir::State::lists=' + str(work / 'lists'), '-o', 'Dir::Cache::archives=' + str(work / 'archives'),
-           '-o', 'APT::Get::List-Cleanup=0', '-o', 'APT::Sandbox::User=' + str(os.getuid())]
+           '-o', 'APT::Get::List-Cleanup=0', '-o', 'APT::Sandbox::User=' + pwd.getpwuid(os.getuid()).pw_name]
     started = time.monotonic()
     subprocess.run(apt + ['update'], check=True, timeout=180)
     for name, version in sources:
