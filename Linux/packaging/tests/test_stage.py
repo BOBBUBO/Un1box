@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("stage", Path(__file__).resolve().parents[1] / "stage-appimage.py")
 stage = importlib.util.module_from_spec(spec)
@@ -11,6 +12,23 @@ spec.loader.exec_module(stage)
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_loader_abi_tags_cannot_bypass_glibc_floor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic-elf"
+            header = bytearray(20)
+            header[:6] = b"\x7fELF\x02\x01"
+            header[18:20] = b"\x3e\x00"
+            path.write_bytes(header)
+            for required in ("GLIBC_2.38", "GLIBC_ABI_DT_RELR", "GLIBC_PRIVATE"):
+                with self.subTest(required=required), mock.patch.object(stage.subprocess, "run") as run:
+                    run.return_value.stdout = required
+                    with self.assertRaises(ValueError):
+                        stage.elf_requirements(path)
+                    self.assertEqual(run.call_count, 1)
+            with mock.patch.object(stage.subprocess, "run") as run:
+                run.side_effect = [mock.Mock(stdout="GLIBC_2.2.5 GLIBC_2.31"), mock.Mock(stdout="")]
+                self.assertEqual(stage.elf_requirements(path), [])
+
     def test_private_assets_and_escape_paths_rejected(self):
         for value in ("../guest.itpack", "/usr/lib/file", "usr/../secret", "usr/nand/chunk", "usr/lib/nor.bin", "usr/assets/firmware.ipsw", "usr/lib/guest.itpack", "usr/lib/libc.so.6", "usr/lib/libEGL.so.1"):
             with self.subTest(value=value), self.assertRaises(ValueError):

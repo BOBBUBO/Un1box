@@ -81,8 +81,13 @@ def elf_requirements(path):
     if len(head) != 20 or head[4:6] != b"\x02\x01" or struct.unpack("<H", head[18:20])[0] != 62:
         raise ValueError("AppImage payload must contain only x86_64 Linux ELF files: " + str(path))
     versions = subprocess.run(["readelf", "--version-info", str(path)], capture_output=True, text=True, check=True).stdout
-    for major, minor in re.findall(r"\bGLIBC_(\d+)\.(\d+)\b", versions):
-        if (int(major), int(minor)) > (2, 31):
+    for name in set(re.findall(r"\bGLIBC_[A-Za-z0-9_.]+\b", versions)):
+        version = re.fullmatch(r"GLIBC_(\d+)\.(\d+)(?:\.(\d+))?", name)
+        # ABI tags such as GLIBC_ABI_DT_RELR also require newer loaders;
+        # they must not bypass the numeric symbol-version floor.
+        if version is None:
+            raise ValueError("Payload uses unsupported glibc ABI tag %s: %s" % (name, path))
+        if tuple(int(part or 0) for part in version.groups()) > (2, 31, 0):
             raise ValueError("Payload needs newer than glibc2.31: " + str(path))
     dynamic = subprocess.run(["readelf", "-d", str(path)], capture_output=True, text=True, check=True).stdout
     for search in re.findall(r"\((?:RPATH|RUNPATH)\).*\[([^\]]*)\]", dynamic):
