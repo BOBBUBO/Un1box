@@ -12,7 +12,7 @@ import unittest
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--original', type=Path, required=True)
 parser.add_argument('--current', type=Path, required=True)
-parser.add_argument('--series', type=Path, help='Actual A03 continuity directory;23caret-only positives plus clock24negative')
+parser.add_argument('--series', type=Path, help='Retained24-capture caret/status-clock series, tested prospectively')
 args, rest = parser.parse_known_args()
 spec = importlib.util.spec_from_file_location('gates', Path(__file__).with_name('watch-visual-gates.py'))
 gates = importlib.util.module_from_spec(spec)
@@ -42,7 +42,8 @@ class EditorCaretTests(unittest.TestCase):
             result = self.check_pair(old, new, blank_focused_editor=True)
             self.assertTrue(result['matched'])
             self.assertFalse(result['full_BMP_identical'])
-            self.assertEqual(result['policy'], 'n72-explicit-blank-editor-caret-RGB-v2')
+            self.assertEqual(result['policy'], 'n72-explicit-blank-editor-caret-clock-RGB-v3')
+            self.assertEqual(result['excluded_clock_box'],[129,1,190,19])
             self.assertEqual(result['protected_original_sha256'], result['protected_current_sha256'])
             self.assertEqual(result['tolerated_RGB_pixels'],66)
             self.assertTrue(result['no_caret_shape_or_color_recognition'])
@@ -72,9 +73,22 @@ class EditorCaretTests(unittest.TestCase):
             with self.subTest(x=x, y=y):
                 self.assertFalse(self.check_pair(ORIGINAL, mutate(CURRENT, x, y), blank_focused_editor=True)['matched'])
 
-    def test_editor_clock_and_keyboard_stay_exact(self):
-        for x, y in [(145, 5), (100, 40), (50, 300), (160, 450)]:
+    def test_editor_header_date_body_and_keyboard_stay_exact(self):
+        for x, y in [(100, 40), (250,80), (80,180), (50, 300), (160, 450)]:
             self.assertFalse(self.check_pair(ORIGINAL, mutate(CURRENT, x, y), blank_focused_editor=True)['matched'])
+
+    def test_status_clock_RGB_allowed_only_inside_exact_existing_box(self):
+        for x,y in [(129,1),(129,5),(145,5),(189,18)]:
+            for channel in range(3):
+                self.assertTrue(self.check_pair(ORIGINAL,mutate(CURRENT,x,y,channel),blank_focused_editor=True)['matched'])
+        for x,y in [(128,5),(190,5),(129,0),(129,19)]:
+            for channel in range(4):
+                self.assertFalse(self.check_pair(ORIGINAL,mutate(CURRENT,x,y,channel),blank_focused_editor=True)['matched'])
+
+    def test_every_status_clock_alpha_byte_protected(self):
+        for y in range(1,19):
+            for x in range(129,190):
+                self.assertFalse(self.check_pair(ORIGINAL,mutate(CURRENT,x,y,3),blank_focused_editor=True)['matched'])
 
     def test_alpha_inside_and_outside_caret_protected(self):
         for x, y in [(33, 110), (150, 200)]:
@@ -105,13 +119,13 @@ class EditorCaretTests(unittest.TestCase):
         for data in [CURRENT[:-4], bytes(len(CURRENT)), CURRENT[:54] + bytes(len(CURRENT) - 54)]:
             self.assertFalse(self.check_pair(ORIGINAL, data, blank_focused_editor=True)['matched'])
 
-    def test_actual_A03_continuum_and_clock_rejection(self):
-        if args.series is None:self.skipTest('actual A03 series not supplied')
+    def test_retained_continuum_and_status_clock_prospective_comparison(self):
+        if args.series is None:self.skipTest('actual retained series not supplied')
         paths=sorted(args.series.glob('attempt-*/native.bmp'))
         self.assertEqual(len(paths),24)
         for i,path in enumerate(paths,1):
             result=self.check_pair(ORIGINAL,path.read_bytes(),blank_focused_editor=True)
-            self.assertEqual(result['matched'],i<24,path.parent.name)
+            self.assertTrue(result['matched'],path.parent.name)
 
     def test_equal_invalid_blank_BMP_still_requires_shape_validation(self):
         for data in (b'bad',ORIGINAL[:-1]):

@@ -33,7 +33,7 @@ def main():
     transitions.add_argument('--transition-record', type=Path, help='paired unlock content-continuity.json')
     parser.add_argument('--model-inspected', action='store_true')
     parser.add_argument('--blank-focused-editor', action='store_true',
-                        help='Actual blank focused n72 editor observation; only exact3x22 caret RGB may vary')
+                        help='Actual blank focused n72 editor; only exact3x22 caret and declared status-clock RGB may vary')
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
     if args.blank_focused_editor and args.scene != 'editor':
@@ -42,6 +42,7 @@ def main():
         print(json.dumps({'plan_only': True, 'actual_model_inspection_required': True,
                           'full_BMP_continuity_required': args.scene != 'home' and not args.blank_focused_editor,
                           'explicit_66pixel_caret_RGB_tolerance': args.blank_focused_editor,
+                          'blank_editor_status_clock_box': list(gates.HOME_CLOCK_BOX) if args.blank_focused_editor else None,
                           'Home_clock_only_exception': args.scene == 'home', 'max_reuse_seconds': 60,
                           'deadlines_unchanged_seconds': [129, 179],
                           'selected_scene': args.scene, 'scene_deadline_seconds': gates.SCENES[args.scene][2],

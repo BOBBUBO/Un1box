@@ -105,9 +105,10 @@ only RGB within the exact native rectangle `[32,104,35,126]` (66 pixels,
 198 RGB bytes) to vary during the insertion-caret fade. This explicit tolerance
 requires the operator's actual blank-focused-editor observation; it does not
 recognize caret shapes or colors. BMP shape, headers, every alpha byte and every
-outside pixel remain exact. The status clock, editor date, keyboard and body
-receive no exception. Written/saved-marker scenes retain full-BMP comparison.
-Every raw phase stays retained, and prior failed A01/A03 gates remain failed.
+outside pixel remain exact except the existing status-clock RGB box
+`[129,1,190,19]`. The editor's date/header, keyboard, body and every alpha byte
+remain protected. Written/saved-marker scenes retain full-BMP comparison.
+Every raw phase stays retained, and prior failed A01–A05 gates remain failed.
 
 Written and saved marker scenes retain full-image equality. After typing, read
 the entire unique body, inspect and tap Done, then capture and inspect the full
@@ -175,8 +176,9 @@ model inspection nor target acceptance by itself. The prior A02 gate failure
 stays failed and unchanged.
 
 Notes is deliberately not templated: list contents change after legitimate
-writes, and the retained editor's header date/clock/keyboard state is not a
-newly authorized dynamic mask. Once the Home template witness finishes, the
+writes. Only the status clock and explicit blank-editor insertion caret have
+the narrow RGB exceptions above; editor header/date, keyboard and body remain exact.
+Once the Home template witness finishes, the
 operator still personally inspects the actual Notes list and blank editor,
 uses `--blank-focused-editor` only for that actual scene before179, reads the
 full UUID after TYPE190, verifies/taps Done, then records an exact full-body
