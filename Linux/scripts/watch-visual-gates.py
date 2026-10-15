@@ -22,13 +22,67 @@ SCENES = {
 # pixels and the complete dock remain protected. This never identifies Home;
 # the caller must already have inspected the original full image as Home.
 HOME_CLOCK_BOX = (130, 1, 190, 19)
+# Explicitly inspected blank n72 Notes editor only. These are the two vetted
+# 3x22 caret appearances from the retained failed run, not arbitrary ROI data.
+EDITOR_CARET_BOX = (32, 104, 35, 126)
+EDITOR_CARET_TEMPLATES = frozenset((
+    'b5a8cfb8ee40b51b14cd72452d93a92b43ebe010e2cb3bacdf76c3c139997119',
+    'b43f55f3f80cce2f7e0fd98aa1e760652138ff003f7d1059014ee68d4eb31e5f',
+))
 
 
-def image_continuity(original, current, scene):
-    """Exact bytes, or Home-only clock changes with every other byte equal."""
+def editor_caret_continuity(original, current, result):
+    """Protect headers/alpha/all other pixels; accept only two known carets."""
+    result.update(policy='n72-blank-editor-caret-templates-v1', caret_box=list(EDITOR_CARET_BOX))
+    try:
+        heights = []
+        for data in (original, current):
+            if len(data) != 54 + 320 * 480 * 4 or data[:2] != b'BM':
+                return result
+            size, = struct.unpack_from('<I', data, 2)
+            offset, = struct.unpack_from('<I', data, 10)
+            dib, width, height, planes, bits, compression = struct.unpack_from('<IiiHHI', data, 14)
+            if (size != len(data) or offset != 54 or dib != 40 or width != 320 or
+                    abs(height) != 480 or planes != 1 or bits != 32 or compression != 0):
+                return result
+            heights.append(height)
+        if original[:54] != current[:54] or original[57::4] != current[57::4]:
+            return result
+        x1, y1, x2, y2 = EDITOR_CARET_BOX
+
+        def parts(data, height):
+            protected, caret = [], []
+            for y in range(480):
+                offset = 54 + (y if height < 0 else 479 - y) * 320 * 4
+                row = data[offset:offset + 320 * 4]
+                if y1 <= y < y2:
+                    caret.append(row[x1 * 4:x2 * 4])
+                    protected.append(row[:x1 * 4] + row[x2 * 4:])
+                else:
+                    protected.append(row)
+            return b''.join(protected), hashlib.sha256(b''.join(caret)).hexdigest()
+
+        old, old_caret = parts(original, heights[0])
+        new, new_caret = parts(current, heights[1])
+        result.update(caret_original_sha256=old_caret, caret_current_sha256=new_caret,
+                      protected_original_sha256=hashlib.sha256(old).hexdigest(),
+                      protected_current_sha256=hashlib.sha256(new).hexdigest(),
+                      matched=(old_caret in EDITOR_CARET_TEMPLATES and
+                               new_caret in EDITOR_CARET_TEMPLATES and old == new))
+    except (ValueError, struct.error):
+        pass
+    return result
+
+
+def image_continuity(original, current, scene, blank_focused_editor=False):
+    """Exact bytes, or explicitly scoped Home clock/blank-editor caret policy."""
     result = {'policy': 'full-BMP-v1', 'matched': bool(original) and original == current,
               'full_BMP_identical': original == current, 'no_new_scene_asserted': True}
-    if result['matched'] or scene != 'Home Screen':
+    if result['matched']:
+        return result
+    if scene == 'Notes focused new editor' and blank_focused_editor is True:
+        return editor_caret_continuity(original, current, result)
+    if scene != 'Home Screen':
         return result
     result.update(policy='n72-Home-clock-only-v1', excluded_clock_box=list(HOME_CLOCK_BOX))
     try:
@@ -100,9 +154,13 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
         status = proof['status']
         viewport = proof['viewport']
         readback = proof['metadata_readback']
-        comparison = image_continuity(original_bmp, current_bmp, scene)
+        blank_editor = gate.get('blank_focused_editor_model_assertion', False)
+        comparison = image_continuity(original_bmp, current_bmp, scene, blank_editor)
         return (proof['policy'] == 'coherent-copy-static-awake-v2' and
                 gate['model_inspected'] is True and gate['scene'] == scene and
+                type(blank_editor) is bool and
+                proof.get('blank_focused_editor_model_assertion', False) == blank_editor and
+                (not blank_editor or scene == 'Notes focused new editor') and
                 all(gate[k] == proof[k] == identity[k] for k in identity) and
                 gate['worker_pid'] == proof['worker_pid'] and
                 gate['worker_start_ticks'] == proof['worker_start_ticks'] and

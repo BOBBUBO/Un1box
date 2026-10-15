@@ -98,3 +98,26 @@ capture callbacks. Its results qualify host policy behavior only. Actual guest
 input, rendering, persistence and audio still need independently inspected target
 evidence. The private controller must enforce bounded capture subprocesses and
 balanced input; the policy does not operate X11, run an engine or own a worker.
+
+For a personally inspected **blank focused n72 portrait Notes editor**, the
+recorder now accepts an explicit `--blank-focused-editor` assertion. This permits
+only the two retained, model-vetted caret templates at native rectangle
+`[32,104,35,126]`. Header bytes, every alpha byte and every other pixel remain
+exact. Unknown caret pixels, a moved caret, clock/body/keyboard changes or another
+scene reject. This is not an empty-editor classifier; the caller must actually
+inspect that scene. The assertion is retained in both the inspection and current
+copy proof. Existing failed attempts are never re-admitted retroactively.
+
+Written and saved marker scenes retain full-image equality. After typing, read
+the entire unique body, inspect and tap Done, then capture and inspect the full
+body without the caret/keyboard for its written-marker gate. Only afterward use
+the inspected Notes Back control and verify the list before the fixed sync. Do
+not mask text to accommodate a blinking cursor. Original scene and Stop deadlines
+remain unchanged.
+
+The retained-pair host regression takes explicit private BMP inputs; it does not
+start a guest or copy assets into the repository:
+
+```sh
+python3 Linux/scripts/test-editor-caret.py --original /private/model-inspected-editor.bmp --current /private/model-vetted-current-editor.bmp
+```

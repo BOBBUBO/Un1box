@@ -227,6 +227,18 @@ class ContinuityGates(unittest.TestCase):
         self.current_bytes += b'one clock pixel changed'
         self.assertFalse(self.check())
 
+    def test_blank_editor_assertion_cannot_be_invented_on_other_scene(self):
+        self.gate['blank_focused_editor_model_assertion'] = True
+        self.proof['blank_focused_editor_model_assertion'] = True
+        self.assertFalse(self.check())
+
+    def test_blank_editor_assertion_must_match_its_continuity_proof(self):
+        self.gate['blank_focused_editor_model_assertion'] = True
+        self.assertFalse(self.check())
+        self.gate['blank_focused_editor_model_assertion'] = 1
+        self.proof['blank_focused_editor_model_assertion'] = 1
+        self.assertFalse(self.check())
+
     def test_home_clock_exception_requires_explicit_recomputed_proof(self):
         self.original_bytes = n72_bitmap()
         self.current_bytes = changed_pixel(self.original_bytes, 145, 4)
