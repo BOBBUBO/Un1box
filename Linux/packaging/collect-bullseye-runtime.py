@@ -81,7 +81,7 @@ def collect(args):
             if source.is_file() and not development and '__pycache__' not in source.parts and source.suffix not in ('.pyc', '.o', '.a') and 'test' not in relative.parts:
                 system(source, destination + '/' + str(source.relative_to(root)))
     add(args.frontend, 'usr/bin/lighttouch-linux', 'LightTouch GPL-2.0-or-later; bundled source')
-    add(args.engine, 'usr/lib/lighttouch/libqemu-arm.so', 'QEMU GPL-2.0-or-later and bundled linked-dependency notices/source')
+    add(args.engine, 'usr/lib/lighttouch/libqemu-arm.so', 'QEMU GPL-2.0; individual file and linked-dependency licenses in bundled sources/notices')
     # SDL loads audio backends by name, so ELF NEEDED alone is insufficient.
     for soname in ('libasound.so.2', 'libpulse.so.0', 'libpulse-simple.so.0'):
         library = Path('/usr/lib/x86_64-linux-gnu') / soname
@@ -136,6 +136,9 @@ def collect(args):
     # Retain exact clean source revisions, not the entire private workspace.
     app = HERE.parents[1]
     qemu = args.engine.parent.parent / 'qemu-source'
+    add(app / 'LICENSE', 'usr/share/licenses/LightTouch/LICENSE', 'LightTouch license text')
+    add(qemu / 'LICENSE', 'usr/share/licenses/LightTouch/qemu-ios/LICENSE', 'QEMU licensing explanation')
+    add(qemu / 'COPYING', 'usr/share/licenses/LightTouch/qemu-ios/COPYING', 'QEMU GPL-2.0 license text')
     source_index = {}
     for name, source in (('LightTouch', app), ('qemu-ios', qemu)):
         revision = run(['git', '-C', source, 'rev-parse', 'HEAD']).strip()
