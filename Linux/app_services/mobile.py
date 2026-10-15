@@ -103,7 +103,7 @@ class Mobile:
         # Current baseline coverage only: do not infer an architecture for other boards.
         arch = {"iPod2,1": "armv6", "iPod4,1": "armv7"}.get(product)
         if arch is None:
-            raise InstallError("IPA installation is currently qualified for n72/n81 guest contracts only.")
+            raise InstallError("IPA installation currently supports n72/n81 guest contracts only.")
         return Target(product, ios, arch)
 
     def service(self, name, prefix):

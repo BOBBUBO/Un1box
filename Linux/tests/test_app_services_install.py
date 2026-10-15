@@ -17,7 +17,7 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app_services.catalog import Target
-from app_services.ipa import InstallError, inspect, prepare
+from app_services.ipa import InstallError, binary_slices, inspect, prepare
 from app_services.mobile import Mobile, P
 from app_services.bridge import Bridge, ServiceJob
 from app_services import helper
@@ -41,6 +41,64 @@ def archive(path, *, subtype=6, encrypted=False, minimum="3.0", executable_mode=
         out.writestr(member, executable(subtype, encrypted))
         if extra:
             out.writestr(*extra)
+
+
+def universal(slices):
+    offset = 8 + len(slices) * 20
+    headers, contents = [], []
+    for cpu, subtype, blob in slices:
+        headers.append(struct.pack(">IIIII", cpu, subtype, offset, len(blob), 0))
+        contents.append(blob)
+        offset += len(blob)
+    return struct.pack(">II", 0xcafebabe, len(slices)) + b"".join(headers + contents)
+
+
+def minimum_executable(subtype, version):
+    major, minor, patch = version
+    command = struct.pack("<4I", 0x25, 16, (major << 16) | (minor << 8) | patch, 0)
+    return struct.pack("<7I", 0xfeedface, 12, subtype, 2, 1, len(command), 0) + command
+
+
+class MachOTests(unittest.TestCase):
+    def test_fat_header_self_reference_overlap_and_nested_headers_rejected(self):
+        self_reference = struct.pack(">II", 0xcafebabe, 1) + struct.pack(">IIIII", 12, 6, 0, 28, 0)
+        overlap = bytearray(universal([(12, 6, executable()), (12, 9, executable(9))]))
+        struct.pack_into(">I", overlap, 36, 48)  # Second slice overlaps the first.
+        nested = universal([(12, 6, universal([(12, 6, executable())]))])
+        for blob in (self_reference, overlap, nested):
+            with self.subTest(blob=blob[:48]), self.assertRaises(InstallError):
+                binary_slices(blob)
+
+    def test_arm32_with_other_architectures_is_accepted_and_encryption_checked(self):
+        arm64 = struct.pack("<8I", 0xfeedfacf, 0x100000c, 0, 2, 0, 0, 0, 0)
+        blob = universal([(0x100000c, 0, arm64), (12, 9, executable(9))])
+        self.assertEqual(binary_slices(blob), [9])
+        with self.assertRaisesRegex(InstallError, "encrypted"):
+            binary_slices(universal([(0x100000c, 0, arm64), (12, 9, executable(9, True))]))
+        with self.assertRaisesRegex(InstallError, "metadata disagrees"):
+            binary_slices(universal([(12, 6, executable(9))]))
+
+    def test_actual_selected_slice_minimum_overrides_misleading_plist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.ipa"
+            # armv6 can run on3.1.3 but the preferred armv7 requires5.0.
+            blob = universal([(12, 6, minimum_executable(6, (3, 0, 0))),
+                              (12, 9, minimum_executable(9, (5, 0, 0)))])
+            with zipfile.ZipFile(path, "w") as out:
+                out.writestr("Payload/Test.app/Info.plist", plistlib.dumps({
+                    "CFBundleIdentifier": "org.example.synthetic", "CFBundleExecutable": "Test",
+                    "MinimumOSVersion": "3.0"}))
+                out.writestr("Payload/Test.app/Test", blob)
+            self.assertEqual(inspect(path, N72)["bundle_id"], "org.example.synthetic")
+            with self.assertRaisesRegex(InstallError, "executable requires iOS 5.0.0"):
+                inspect(path, N81)
+
+    def test_truncated_minimum_and_inconsistent_command_sizes_rejected(self):
+        bad_minimum = struct.pack("<7I", 0xfeedface, 12, 6, 2, 1, 8, 0) + struct.pack("<2I", 0x25, 8)
+        bad_size = struct.pack("<7I", 0xfeedface, 12, 6, 2, 0, 4, 0) + b"\0" * 4
+        for blob in (bad_minimum, bad_size):
+            with self.subTest(blob=blob), self.assertRaises(InstallError):
+                binary_slices(blob)
 
 
 class ArchiveTests(unittest.TestCase):

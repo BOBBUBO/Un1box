@@ -19,26 +19,49 @@ MAX_UNPACKED = 8 * 1024**3
 
 
 def binary_slices(data):
-    """Inspect 32-bit ARM Mach-O load commands, including encrypted slices."""
+    """Return supported ARM32 subtypes after bounded Mach-O validation."""
+    return [subtype for subtype, minimum in _arm_slices(data)]
+
+
+def _arm_slices(data):
+    """A fat executable contains flat slices, never recursively nested headers."""
     if len(data) < 28:
         raise InstallError("The app executable is truncated.")
     if data[:4] == b"\xca\xfe\xba\xbe":
         count = struct.unpack_from(">I", data, 4)[0]
         if not 0 < count <= 32 or len(data) < 8 + count * 20:
             raise InstallError("Invalid universal executable.")
-        result = []
+        result, regions = [], []
+        header_end = 8 + count * 20
         for i in range(count):
-            _, _, offset, size, _ = struct.unpack_from(">IIIII", data, 8 + i * 20)
-            if offset + size > len(data):
-                raise InstallError("The app executable is truncated.")
-            result.extend(binary_slices(data[offset:offset + size]))
+            cpu, subtype, offset, size, alignment = struct.unpack_from(">IIIII", data, 8 + i * 20)
+            if (offset < header_end or size < 28 or offset + size > len(data) or
+                    alignment > 31 or offset % (1 << alignment) or
+                    any(offset < end and offset + size > start for start, end in regions)):
+                raise InstallError("Invalid or overlapping universal executable slices.")
+            regions.append((offset, offset + size))
+            # Other architectures do not prevent installing the compatible ARM32
+            # slice. Still validate every table range before ignoring its bytes.
+            if cpu == 12:
+                parsed = _arm_slice(data[offset:offset + size])
+                if parsed[0] != subtype & 0xffffff:
+                    raise InstallError("Universal executable architecture metadata disagrees.")
+                result.append(parsed)
+        if not result:
+            raise InstallError("This IPA does not contain a supported ARM executable.")
         return result
+    return [_arm_slice(data)]
+
+
+def _arm_slice(data):
+    if len(data) < 28:
+        raise InstallError("The app executable is truncated.")
     if data[:4] != b"\xce\xfa\xed\xfe":
         raise InstallError("This IPA needs an unsupported executable format.")
-    _, cpu, subtype, _, commands, size, _ = struct.unpack_from("<7I", data)
-    if cpu != 12 or commands > 65536 or 28 + size > len(data):
+    _, cpu, subtype, filetype, commands, size, _ = struct.unpack_from("<7I", data)
+    if cpu != 12 or filetype != 2 or commands > 65536 or 28 + size > len(data):
         raise InstallError("This IPA does not contain a supported ARM executable.")
-    cursor = 28
+    cursor, minimum = 28, None
     for _ in range(commands):
         if cursor + 8 > 28 + size:
             raise InstallError("Invalid executable load commands.")
@@ -48,8 +71,22 @@ def binary_slices(data):
         if command == 0x21:
             if length < 20 or struct.unpack_from("<I", data, cursor + 16)[0] != 0:
                 raise InstallError("This app is encrypted; select a decrypted IPA.")
+        if command == 0x25:  # LC_VERSION_MIN_IPHONEOS
+            if length < 16:
+                raise InstallError("Invalid executable minimum iOS version.")
+            packed = struct.unpack_from("<I", data, cursor + 8)[0]
+            version = (packed >> 16, (packed >> 8) & 255, packed & 255)
+            minimum = max(minimum or version, version)
+        if command == 0x32:  # LC_BUILD_VERSION, platform IOS = 2
+            if length < 24 or struct.unpack_from("<I", data, cursor + 8)[0] != 2:
+                raise InstallError("The app executable targets an unsupported platform.")
+            packed = struct.unpack_from("<I", data, cursor + 12)[0]
+            version = (packed >> 16, (packed >> 8) & 255, packed & 255)
+            minimum = max(minimum or version, version)
         cursor += length
-    return [subtype & 0xffffff]
+    if cursor != 28 + size:
+        raise InstallError("Invalid executable load-command size.")
+    return subtype & 0xffffff, minimum
 
 
 def inspect(path, target=None):
@@ -98,12 +135,18 @@ def inspect(path, target=None):
             entry = archive.getinfo(member)
             if entry.file_size > 256 * 1024**2 or stat.S_ISLNK(entry.external_attr >> 16):
                 raise InstallError("The app executable is unsupported or too large.")
-            slices = binary_slices(archive.read(entry))
+            slices = _arm_slices(archive.read(entry))
             if target:
-                if target.arch == "armv6" and not any(s in (0, 6) for s in slices):
+                supported = (0, 6) if target.arch == "armv6" else (0, 6, 9)
+                matching = [(subtype, minimum) for subtype, minimum in slices if subtype in supported]
+                if not matching:
                     raise InstallError("This app needs a newer processor than the guest.")
-                if target.arch == "armv7" and not any(s in (0, 6, 9) for s in slices):
-                    raise InstallError("This app needs a newer processor than the guest.")
+                # iOS selects the most specific available CPU slice. A lower
+                # minimum on an unused armv6 slice cannot qualify newer armv7.
+                best = max(subtype for subtype, minimum in matching)
+                minima = [minimum for subtype, minimum in matching if subtype == best and minimum]
+                if minima and max(minima) > _version(target.ios):
+                    raise InstallError("The app executable requires iOS {}.".format(".".join(map(str, max(minima)))))
                 minimum = info.get("MinimumOSVersion")
                 if minimum and _version(minimum) > _version(target.ios):
                     raise InstallError("This app requires iOS {}; the guest runs {}.".format(minimum, target.ios))
