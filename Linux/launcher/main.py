@@ -14,6 +14,11 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from model import FORMAT, VERSION, Profiles, SetupError, import_command, load_profile, save_json, start_command, validate
 from session import Session, clean_exit
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app_services.bridge import Bridge
+from app_services.ipa import InstallError
+from app_services.window import AppsWindow
+
 PALETTE = {"paper": "#F3F6FA", "ink": "#1C304A", "muted": "#596C83", "blue": "#285BB5", "line": "#D9E2EF", "white": "#FFFFFF"}
 
 
@@ -22,6 +27,8 @@ class Launcher:
         self.window, self.args = window, args
         self.store = Profiles(args.data_dir)
         self.session = Session()
+        self.bridge = None
+        self.apps = None
         self.current = None
         self.closing = False
         self.job = ""
@@ -74,8 +81,17 @@ class Launcher:
         self.widgets.append(self.devices)
         self.button(sidebar, "Add prepared device", self.new).pack(fill="x", pady=(12, 6))
         self.button(sidebar, "Import configuration…", self.import_profile).pack(fill="x")
-        content = ttk.Frame(panes, padding=(20, 0, 0, 0))
-        panes.add(content, weight=3)
+        content_host = ttk.Frame(panes, padding=(20, 0, 0, 0))
+        panes.add(content_host, weight=3)
+        canvas = tk.Canvas(content_host, highlightthickness=0, bg=PALETTE["paper"])
+        scroll = ttk.Scrollbar(content_host, orient="vertical", command=canvas.yview)
+        scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas.configure(yscrollcommand=scroll.set)
+        content = ttk.Frame(canvas)
+        content_window = canvas.create_window(0, 0, window=content, anchor="nw")
+        content.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(content_window, width=event.width))
         self.heading = ttk.Label(content, text="Prepared device", style="Heading.TLabel")
         self.heading.pack(anchor="w")
         ttk.Label(content, text="Use your verified firmware and matching guest tools.", style="Muted.TLabel").pack(anchor="w", pady=(6, 14))
@@ -107,6 +123,8 @@ class Launcher:
         self.start_button.pack(side="left", padx=8)
         self.stop_button = ttk.Button(actions, text="Stop guest", command=self.stop, state="disabled")
         self.stop_button.pack(side="left")
+        # App services remain reachable while the guest is running.
+        ttk.Button(actions, text="Apps…", command=self.open_apps).pack(side="left", padx=8)
         ttk.Separator(content).pack(fill="x", pady=(2, 14))
         ttk.Label(content, textvariable=self.message, font=("DejaVu Sans", 11, "bold"), wraplength=600).pack(anchor="w")
         ttk.Label(content, textvariable=self.detail, style="Muted.TLabel", wraplength=600).pack(anchor="w", pady=(5, 10))
@@ -233,9 +251,9 @@ class Launcher:
         except (SetupError, OSError, RuntimeError) as error:
             self.error(error)
 
-    def launch(self, command, job):
+    def launch(self, command, job, env=None):
         log = self.store.directory / "logs" / (time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:8] + ".log")
-        self.session.start(command, log)
+        self.session.start(command, log, env=env)
         self.job = job
         self.was_active = True
         for widget in self.widgets:
@@ -246,19 +264,48 @@ class Launcher:
 
     def start(self):
         try:
+            if self.apps and self.apps.window.winfo_exists():
+                if self.apps.busy:
+                    raise InstallError("Wait for the Apps operation before starting a fresh guest.")
+                self.apps.window.destroy()
+                self.apps = None
             profile = self.profile()
             command = start_command(self.args.frontend, self.args.engine, profile, self.recover.get())
             self.store.save(profile)
-            self.launch(command, "guest")
-        except (SetupError, OSError, RuntimeError) as error:
+            env = None
+            paths = (self.args.usbmuxd, self.args.imobile_library, self.args.plist_library)
+            if all(Path(path).is_file() for path in paths):
+                self.bridge = Bridge(*paths, self.store.directory / "devices" / self.current / "pairing",
+                                     self.store.directory / "service-logs")
+                env = self.bridge.start()
+            self.launch(command, "guest", env=env)
+            if self.bridge is None:
+                self.detail.set("Guest app services are unavailable in this build. Log: " + str(self.session.log_path))
+        except (SetupError, InstallError, OSError, RuntimeError) as error:
+            if self.bridge:
+                self.bridge.close()
+                self.bridge = None
             self.error(error)
+
+    def open_apps(self):
+        if self.apps and self.apps.window.winfo_exists():
+            self.apps.window.lift()
+            return
+        if not self.session.active or self.job != "guest" or self.session.stopping or not self.bridge:
+            self.error(InstallError("Start iOS with the bundled guest app services to use Apps."))
+            return
+        self.apps = AppsWindow(self.window, lambda: self.bridge, self.store.directory / "app-downloads",
+                               lambda: self.session.active and self.job == "guest" and not self.session.stopping)
 
     def stop(self):
         try:
+            if self.apps and self.apps.window.winfo_exists():
+                self.apps.before_stop()
             self.session.stop()
             self.stop_button.configure(state="disabled")
             self.message.set("Stopping guest… state is retained until shutdown is confirmed.")
-        except (OSError, RuntimeError) as error:
+        except (InstallError, OSError, RuntimeError) as error:
+            self.closing = False
             self.error(error)
 
     def close(self):
@@ -270,6 +317,9 @@ class Launcher:
                 self.closing = True
                 self.stop()
         else:
+            if self.apps and self.apps.busy:
+                self.error(InstallError("Wait for the Apps operation to finish before closing."))
+                return
             self.window.destroy()
 
     def tick(self):
@@ -298,6 +348,11 @@ class Launcher:
             self.stats.set(text + "\nGuest OS CPU/RAM: unavailable")
         if self.was_active and not self.session.active:
             self.was_active = False
+            if self.apps and self.apps.service:
+                self.apps.service.cancel(guest_ended=True)
+            if self.bridge:
+                self.bridge.close()
+                self.bridge = None
             for widget in self.widgets:
                 widget.configure(state="normal")
             self.stop_button.configure(state="disabled")
@@ -310,9 +365,12 @@ class Launcher:
             else:
                 clean = clean_exit(self.session.returncode, self.session.final)
                 self.message.set("Guest stopped cleanly. Ready for a fresh session." if clean else "Shutdown unconfirmed. State was retained; inspect the log before recovery.")
-                if self.closing:
+                if self.closing and not (self.apps and self.apps.busy):
                     self.window.destroy()
                     return
+        if self.closing and not self.session.active and not (self.apps and self.apps.busy):
+            self.window.destroy()
+            return
         self.window.after(1000, self.tick)
 
 
@@ -321,6 +379,9 @@ def main():
     bundle = Path(__file__).resolve().parents[2]
     parser.add_argument("--frontend", default=str(bundle / "bin" / "lighttouch-linux"))
     parser.add_argument("--engine", default=str(bundle / "lib" / "lighttouch" / "libqemu-arm.so"))
+    parser.add_argument("--usbmuxd", default=str(bundle / "bin" / "usbmuxd-qemu"))
+    parser.add_argument("--imobile-library", default=str(bundle / "lib" / "lighttouch" / "libimobiledevice-1.0.so.6"))
+    parser.add_argument("--plist-library", default=str(bundle / "lib" / "lighttouch" / "libplist-2.0.so.4"))
     parser.add_argument("--data-dir", default=str(Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "lighttouch"))
     args = parser.parse_args()
     args.data_dir = str(Path(args.data_dir).expanduser().absolute())
