@@ -160,8 +160,11 @@ and the gesture. Each capture stage is capped at12s and2Hz, clipped by the
 original Home129 deadline. Unknown scenes reject; failed attempts remain raw.
 
 Home requires a newer source sequence and actual changed pixels after the
-slider, with a source timestamp at/after its release, plus the vetted full Home
-BMP comparison. Only the existing tiny status-clock box is excluded; headers,
+slider, with a source timestamp at/after the completed DOWN bracket, plus the vetted full Home
+BMP comparison. The coherent capture/read checks occur after balanced UP; Home
+may render during the drag and remain static after release. Actual XTest DOWN
+and UP start/end brackets are retained, without claiming guest delivery ACK.
+Only the existing tiny status-clock box is excluded; headers,
 all alpha bytes, Wi-Fi, battery, every icon, background and dock are protected.
 This template proof can satisfy the **navigation watchdog prerequisite** under
 its distinct schema, `proof_kind=root-vetted-n72-lock-home-v1`,

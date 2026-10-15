@@ -41,7 +41,11 @@ class ActualReferences(unittest.TestCase):
                          host_boot_id='boot', worker_pid=13, worker_start_ticks='35', window=99,
                          viewport=[480, 800], lock_viewport=[480, 800],
                          lock_verified_monotonic_ns=2_000_000_020,
-                         slider_released_monotonic_ns=2_500_000_000,
+                         slider_down_begin_monotonic_ns=2_100_000_000,
+                         slider_down_end_monotonic_ns=2_100_000_010,
+                         slider_up_begin_monotonic_ns=2_499_999_980,
+                         slider_up_end_monotonic_ns=2_499_999_990,
+                         slider_released_monotonic_ns=2_500_000_000, slider_balanced_contact=True,
                          verified_monotonic_ns=3_000_000_020,
                          lock_status=dict(state=2, sleeping=0, backlight=245, agent=1,
                                           observed_monotonic_ns=2_000_000_010),
@@ -99,17 +103,35 @@ class ActualReferences(unittest.TestCase):
     def test_old_frame_wrong_order_or_late_verification_reject(self):
         self.home['sequence'] = self.lock['sequence'];self.assertFalse(self.check())
         self.home['sequence'] = 3
-        self.home['frame_monotonic_ns'] = self.gate['slider_released_monotonic_ns'] - 1
+        self.home['frame_monotonic_ns'] = self.gate['slider_down_end_monotonic_ns'] - 1
         self.assertFalse(self.check())
         self.home['frame_monotonic_ns'] = 2_999_999_980
         self.gate['verified_monotonic_ns'] = 131_000_000_000
         self.assertFalse(self.check())
 
     def test_static_current_home_valid_but_old_lock_rejected(self):
-        self.home['frame_monotonic_ns'] = 2_500_000_001
+        self.home['frame_monotonic_ns'] = 2_200_000_000
         self.assertTrue(self.check())
         self.lock['frame_monotonic_ns'] = 1
         self.gate['lock_verified_monotonic_ns'] = 2_100_000_001
+        self.assertFalse(self.check())
+
+    def test_render_during_drag_accepted_only_with_capture_after_balanced_up(self):
+        self.home['frame_monotonic_ns'] = 2_200_000_000
+        self.assertLess(self.home['frame_monotonic_ns'], self.gate['slider_up_begin_monotonic_ns'])
+        self.assertTrue(self.check())
+        for key, value in (('copy_started_monotonic_ns', 2_499_999_999),
+                           ('observed_monotonic_ns', 2_499_999_999)):
+            saved=self.home[key];self.home[key]=value
+            self.assertFalse(self.check(),key);self.home[key]=saved
+        self.gate['slider_balanced_contact']=False
+        self.assertFalse(self.check())
+
+    def test_pre_down_source_or_lock_checked_after_down_reject(self):
+        self.home['frame_monotonic_ns']=self.gate['slider_down_begin_monotonic_ns']-1
+        self.assertFalse(self.check())
+        self.home['frame_monotonic_ns']=2_200_000_000
+        self.gate['lock_verified_monotonic_ns']=self.gate['slider_down_begin_monotonic_ns']+1
         self.assertFalse(self.check())
 
     def test_header_shape_and_truncation_reject(self):
@@ -206,6 +228,7 @@ class ActualReferences(unittest.TestCase):
             def viewport(self): return [480, 800]
             def x(self, *args, **kwargs):
                 self.calls.append((args, kwargs))
+                self.last_event=dict(start_monotonic_ns=1, end_monotonic_ns=2)
                 if args[0] == self.fail:
                     raise ValueError('partial host operation failure')
         for fail in ('mousedown', 'mousemove'):
