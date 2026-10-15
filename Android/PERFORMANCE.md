@@ -1,8 +1,8 @@
 # Host performance panel
 
-The source update adds cumulative CPU time and clarifies the CPU label for a
-future main producer. Sealed candidate 25 keeps its original **Emulator CPU**
-label and six rows. The new **QEMU worker CPU** label describes the same host
+The panel includes cumulative CPU time and a CPU label that identifies its
+measurement scope. Historical sealed candidate 25 keeps its original **Emulator CPU**
+label and six rows. The current **QEMU worker CPU** label describes the same host
 process measurement; it is not a newly measured iOS or vCPU-only statistic.
 
 The collapsed **Performance** button requests no samples. While the panel is open
@@ -48,8 +48,9 @@ expose successful map reading and can leave a zero-initialized result unchanged.
 This differs from a valid measured zero CPU delta. Seven fixed-height,
 single-line rows prevent sample updates from changing the viewport; opening or
 closing the panel can resize it and retains existing gesture cancellation rules.
-Candidate 25 has six rows; the additional cumulative-time row changes geometry
-only in the future main build, not sealed 25 or its test-only runners.
+Candidate 25 has six rows; later producer APKs include the seventh cumulative-time
+row. Opening the panel in those APKs therefore has different geometry from sealed
+25. Installing a test-only runner does not change the main application's layout.
 
 The single trailing `IEngine.performance(long observationEpoch)` method only
 requests collection and returns scalar cached data. Its observer key is the
@@ -68,9 +69,14 @@ Those eleven passed in candidate 25's actual 41-test JVM run. Three additional
 source cases cover first-read cumulative time before a valid rate, missing or
 wrong-PID counters, and cumulative time across observer/rate resets. All fourteen
 passed a separate cached Kotlin 2.1.20/JUnit 4.13.2 host run using the exact
-production counter helper and test sources. The updated Compose UI remains
-**uncompiled**; host counter tests do not qualify the rendered UI or target CPU
-measurements.
+production counter helper and test sources. Later producer APKs have rendered the
+seven-row panel on the Poco. Actual screenshots and counter intervals were
+reviewed for the current worker, panel close/reopen, Pause/Resume and a brief
+Android background/return sequence. One static Home closed/open/closed observation
+also met its predeclared bounded CPU/PSS overhead thresholds. This is evidence for
+that device, APK and workload; it does not establish universal overhead neutrality,
+concurrent media performance or completion of multi-touch/lifecycle acceptance.
+Host counter tests alone do not qualify rendered UI or target measurements.
 No new sampler, Binder/Native API or guest-tools operation is introduced. The
 current protocol exposes no genuine iOS CPU/RAM measurement; host QEMU worker
 CPU time already provides the available VM-process view without a guest-tools
