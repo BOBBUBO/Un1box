@@ -167,7 +167,7 @@ def collect(args):
                 add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, package['name'] + ' corresponding source; notices inside archive')
                 tree_name = package.get('directory') or re.sub(r'\.tar\.(?:xz|gz|bz2)$', '', package['archive'])
                 tree = source_root / tree_name
-                for filename in ('COPYING', 'COPYING.LIB', 'COPYING.LESSER', 'LICENSE', 'LICENSE.txt', 'COPYINGv2', 'COPYINGv3'):
+                for filename in ('COPYING', 'COPYING.LIB', 'COPYING.LESSER', 'LICENSE', 'LICENSE.txt', 'LICENCE', 'COPYRIGHT', 'COPYINGv2', 'COPYINGv3', 'COPYING.LGPLv2.1', 'COPYING.LGPLv3', 'COPYING.GPLv2', 'COPYING.GPLv3'):
                     notice = tree / filename
                     if notice.is_file():
                         add(notice, 'usr/share/licenses/LightTouch/' + package['name'] + '/' + filename, package['name'] + ' license text')
