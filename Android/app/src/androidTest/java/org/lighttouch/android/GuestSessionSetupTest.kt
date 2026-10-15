@@ -95,11 +95,14 @@ class GuestSessionSetupTest {
         require(expectedApk.matches(Regex("[0-9a-f]{64}"))) { "Invalid expected APK hash" }
         val expectedPid = arguments.getString("expectedWorkerPid")?.toIntOrNull()
         require(expectedPid != null && expectedPid > 0) { "Existing worker PID required" }
+        val graphicsProvider = arguments.getString("armGraphicsProvider")
+        require(graphicsProvider == null || graphicsProvider == "angle-gl") { "armGraphicsProvider must be angle-gl when supplied" }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val evidence = File(context.filesDir, "session-setup-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
         val receipt = JSONObject().put("pass", false).put("guestAcceptance", false)
             .put("guestStartedByTest", false).put("workerRestartedByTest", false)
             .put("traceDeliveryVerified", false).put("qmpEndpointVerified", false)
+            .put("graphicsProviderRequested", graphicsProvider ?: JSONObject.NULL)
         @Suppress("DEPRECATION")
         fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
             for (key in bundle.keySet()) when (val value = bundle.get(key)) {
@@ -125,6 +128,17 @@ class GuestSessionSetupTest {
                 assertFalse("No native session may exist", initial.getBoolean("nativePollSnapshotValid"))
                 assertEquals("Retain actual faults; do not acknowledge them here", "", initial.getString("error"))
                 assertEquals(0L, initial.getBundle("observations")!!.getLong("producedFrames"))
+                if (graphicsProvider != null) {
+                    val selectionError = worker.debugSelectGraphicsProvider(1)
+                    val selected = worker.status()
+                    receipt.put("graphicsProviderSelectionError", selectionError).put("graphicsProviderAfterSelection", encode(selected))
+                    assertEquals("Fixed pre-start graphics provider admission", "", selectionError)
+                    assertEquals(initial.getInt("pid"), selected.getInt("pid")); assertEquals(initial.getInt("uid"), selected.getInt("uid"))
+                    assertEquals("stopped", selected.getString("state")); assertFalse(selected.getBoolean("sessionStarted"))
+                    assertFalse(selected.getBoolean("nativePollSnapshotValid")); assertEquals("", selected.getString("error"))
+                    assertEquals(0L, selected.getBundle("observations")!!.getLong("producedFrames"))
+                    assertEquals(graphicsProvider, selected.getString("graphicsProviderChoice")); assertTrue(selected.getBoolean("graphicsProviderFixed"))
+                }
                 val traceError = worker.debugEnableTouchTrace()
                 receipt.put("touchTraceArmError", traceError).put("touchTraceArmAdmissionAccepted", traceError.isEmpty())
                 assertEquals("Fixed pre-start touch trace admission", "", traceError)
@@ -138,6 +152,11 @@ class GuestSessionSetupTest {
                 val after = worker.status()
                 receipt.put("after", encode(after)).put("afterHostElapsedNs", SystemClock.elapsedRealtimeNanos())
                     .put("touchTraceConfiguredAfterArm", after.getBoolean("touchTraceConfigured"))
+                    .put("graphicsProviderObserved", after.getString("graphicsProviderChoice"))
+                    .put("graphicsProviderFixed", after.getBoolean("graphicsProviderFixed"))
+                if (graphicsProvider != null) {
+                    assertEquals(graphicsProvider, after.getString("graphicsProviderChoice")); assertTrue(after.getBoolean("graphicsProviderFixed"))
+                }
                 assertEquals(initial.getInt("pid"), after.getInt("pid")); assertEquals(initial.getInt("uid"), after.getInt("uid"))
                 assertEquals("stopped", after.getString("state")); assertFalse(after.getBoolean("sessionStarted"))
                 assertFalse(after.getBoolean("nativePollSnapshotValid")); assertEquals("", after.getString("error"))
