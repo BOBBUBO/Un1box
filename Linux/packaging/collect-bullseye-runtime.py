@@ -52,7 +52,7 @@ def collect(args):
             dynamic = run(['readelf', '-d', copied])
             if re.search(r'\((?:RPATH|RUNPATH)\)', dynamic):
                 subprocess.run(['patchelf', '--set-rpath', '$ORIGIN', str(copied)], check=True)
-            pending.append(copied)
+            pending.append((copied, source))
         files[destination] = dict(source=str(copied), destination=destination,
                                   sha256=stage.sha(copied), original_sha256=stage.sha(source), license=license_text)
         if package:
@@ -79,11 +79,11 @@ def collect(args):
             system(library, 'usr/lib/' + soname)
     observed = set()
     while pending:
-        elf = pending.pop()
+        elf, original = pending.pop()
         if elf in observed:
             continue
         observed.add(elf)
-        result = run(['ldd', elf])
+        result = run(['ldd', original])
         if 'not found' in result:
             raise RuntimeError('Unresolved build-time dependency: ' + result)
         for line in result.splitlines():
