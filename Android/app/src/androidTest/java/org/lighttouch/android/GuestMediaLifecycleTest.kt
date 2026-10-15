@@ -166,6 +166,7 @@ class GuestMediaLifecycleTest {
                     try {
                     assertTrue("Root must boot the selected real guest first", initial.getString("state") in listOf("running", "paused"))
                     if (extended) assertEquals("Resolve the existing worker failure before measuring; no acknowledgement shortcut", "", initial.getString("error"))
+                    if (keyboard != null) assertEquals("Inspected keyboard must already be running; this workload never resumes an unvalidated worker", "running", initial.getString("state"))
                     if (initial.getString("state") == "paused") worker.pause(false)
                     awaitState("running")
                     val keyboardInitial = if (keyboard != null) worker.status() else null
