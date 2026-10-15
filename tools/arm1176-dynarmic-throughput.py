@@ -46,6 +46,68 @@ def summaries(path):
     return records
 
 
+def validate_aggregates(records, iterations):
+    """Closed-form instruction accounting, independent of measured duration."""
+    completed=0
+    previous_last=0
+    if not records:
+        raise RuntimeError('Required exact aggregate execution witness missing or different')
+    for w in records:
+        completed+=w['blocks']
+        last=completed==iterations
+        if not (0<w['blocks'] and completed<=iterations and
+                w['instructions']==4*w['blocks'] and
+                w['cold']==1 and w['warm']==w['blocks']-1 and
+                w['pc']==(0x1c10 if last else 0x1c00) and
+                w['r0']==completed and w['r1']==iterations-completed and
+                w['cpsr']==(0x60000010 if last else 0x20000010) and
+                previous_last<=w['first_us']<=w['cold_end_us']<=w['last_us']):
+            raise RuntimeError('Required exact aggregate execution witness missing or different')
+        previous_last=w['last_us']
+    if completed!=iterations:
+        raise RuntimeError('Required exact aggregate execution witness missing or different')
+    return {'segments':len(records),'blocks':completed,
+            'instructions':sum(w['instructions'] for w in records),
+            'cold':sum(w['cold'] for w in records),
+            'warm':sum(w['warm'] for w in records)}
+
+
+def cpu_benefit_decision(off, on):
+    """Finite conservative go/no-go; three actual warm samples per route.
+
+    Two tick uncertainty covers separately quantized user+system tick deltas.
+    A fast control reporting zero is never divided into a speed ratio.
+    No decision from cold samples or wall completion-polling measurements.
+    """
+    if len(off)!=3 or len(on)!=3:
+        raise ValueError('Exactly three fresh warm samples per route required')
+    limits={}
+    for kind in ['process','vcpu']:
+        hz={sample['ticks_per_second'] for sample in off+on}
+        if len(hz)!=1 or next(iter(hz))<=0:
+            raise ValueError('CPU tick resolution differs')
+        if any(sample['iterations']!=65536 or
+               sample['status']!='FINITE_THROUGHPUT_STATE_OBSERVED' or
+               sample['exit_code']!=0 for sample in off+on):
+            raise ValueError('Only actual successful warm samples qualify')
+        ot=[sample[kind+'_cpu_ticks'] for sample in off]
+        nt=[sample[kind+'_cpu_ticks'] for sample in on]
+        if min(ot+nt)<0:
+            raise ValueError('Negative CPU ticks')
+        limits[kind]={'off_lower':max(0,min(ot)-2),'off_upper':max(ot)+2,
+                      'on_lower':max(0,min(nt)-2),'on_upper':max(nt)+2}
+    gain=all(v['off_lower']>0 and v['on_upper']<.8*v['off_lower']
+             for v in limits.values())
+    loss=any(v['on_lower']>v['off_upper'] for v in limits.values())
+    return {'decision':'INVESTIGATE_COVERAGE' if gain else
+                       'STOP_CURRENT_CANDIDATE' if loss else
+                       'NO_BENEFIT_ESTABLISHED',
+            'tick_bounds':limits,
+            'scope':'Synthetic total-CPU feasibility only; never iOS speed',
+            'next':'Measure actual iOS execution coverage before expansion' if gain else
+                   'Do not expand or promote candidate from these samples'}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('qemu', type=pathlib.Path)
@@ -228,30 +290,11 @@ def main():
                 result['witness_error']='Unexpected per-instruction/block diagnostic logging'
             ws=result['aggregate_witnesses']
             if args.require_throughput:
-                n=args.iterations
-                completed=0
-                valid=bool(ws)
-                previous_last=0
-                for w in ws:
-                    completed+=w['blocks']
-                    last=completed==n
-                    valid &= (0<w['blocks'] and completed<=n and
-                              w['instructions']==4*w['blocks'] and
-                              w['cold']==1 and w['warm']==w['blocks']-1 and
-                              w['pc']==(0x1c10 if last else 0x1c00) and
-                              w['r0']==completed and w['r1']==n-completed and
-                              w['cpsr']==(0x60000010 if last else 0x20000010) and
-                              previous_last<=w['first_us']<=w['cold_end_us']<=w['last_us'])
-                    previous_last=w['last_us']
-                valid &= completed==n
-                result['aggregate_totals']={
-                    'segments':len(ws),'blocks':completed,
-                    'instructions':sum(w['instructions'] for w in ws),
-                    'cold':sum(w['cold'] for w in ws),
-                    'warm':sum(w['warm'] for w in ws)}
-                if not valid:
+                try:
+                    result['aggregate_totals']=validate_aggregates(ws,args.iterations)
+                except RuntimeError as error:
                     result['status']='FAILED'
-                    result['witness_error']='Required exact aggregate execution witness missing or different'
+                    result['witness_error']=str(error)
             elif ws:
                 result['status']='FAILED'
                 result['witness_error']='OFF unexpectedly executed alternate throughput path'

@@ -354,3 +354,14 @@ PL0 CP15/GLES handoffs. Run equivalent differential contracts on ARM64 Linux,
 then Android app-UID JIT/cache/lifecycle and4/16KiB hosts, before an isolated
 real-guest A/B. No useful coverage or end-to-end gain means no production option.
 This source does not add a modern phone CPU engine or claim a speedup.
+
+The finite CPU decision rule uses three fresh65536-iteration samples per route.
+CPU tick deltas receive a conservative two-tick uncertainty interval for
+separately quantized user/system accounting. Only a robust20% reduction in both
+whole-process and vCPU cost advances this direction to actual iOS coverage
+research. A clear CPU loss stops this candidate; overlapping/zero-resolution
+measurements establish no benefit and do not justify instruction expansion.
+Cold1 samples never enter a speed ratio. Host evidence tests reject missing/
+duplicated instruction segments, corrupt terminal state/timing, malformed
+witnesses, incorrect process identity parsing and fabricated zero-tick gains.
+These host tests qualify receipt validation only, never an engine or guest.
