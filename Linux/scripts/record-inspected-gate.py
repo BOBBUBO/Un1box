@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record an actual caller-inspected scene with exact fresh continuity.
+"""Record an actual caller-inspected scene with bounded fresh continuity.
 
 Call immediately after view_image. --model-inspected is the caller's explicit
 observation, never a scene classifier. No engine, worker or clock is started.
@@ -36,7 +36,8 @@ def main():
     args = parser.parse_args()
     if not args.execute:
         print(json.dumps({'plan_only': True, 'actual_model_inspection_required': True,
-                          'full_BMP_continuity_required': True, 'max_reuse_seconds': 60,
+                          'full_BMP_continuity_required': args.scene != 'home',
+                          'Home_clock_only_exception': args.scene == 'home', 'max_reuse_seconds': 60,
                           'deadlines_unchanged_seconds': [129, 179],
                           'selected_scene': args.scene, 'scene_deadline_seconds': gates.SCENES[args.scene][2],
                           'requires_full_observed_marker': args.scene in ('written-marker', 'saved-marker'),
@@ -201,6 +202,7 @@ def main():
                          policy='coherent-copy-static-awake-v2',
                          static_source=int(fresh['sequence']) == int(original['sequence']),
                          verified_monotonic_ns=time.monotonic_ns())
+            proof['image_comparison'] = gates.image_continuity(original_bmp, fresh_bmp, scene)
             gate['continuity'] = proof
             (target / 'admission-attempt.json').write_text(json.dumps(gate, indent=2) + '\n')
             if gates.valid_continuity_gate(gate, original, fresh, original_bmp, fresh_bmp,
@@ -209,6 +211,7 @@ def main():
                 break
             (target / 'rejection.json').write_text(json.dumps({
                 'full_BMP_identical': original_bmp == fresh_bmp,
+                'image_comparison': proof['image_comparison'],
                 'actual_inspected_monotonic_ns': inspected, 'guest_acceptance': False}) + '\n')
         if not admitted:
             raise RuntimeError('bounded current continuity attempts exhausted; retained all captures')
@@ -222,7 +225,8 @@ def main():
         os.replace(temporary, root / name)
         print(json.dumps({'gate': str(root / name), 'actual_inspected_monotonic_ns': inspected,
                           'verified_monotonic_ns': proof['verified_monotonic_ns'],
-                          'full_BMP_identical': True, 'deadline_monotonic_ns': deadline,
+                          'full_BMP_identical': proof['image_comparison']['full_BMP_identical'],
+                          'image_comparison': proof['image_comparison'], 'deadline_monotonic_ns': deadline,
                           'guest_acceptance': False}), flush=True)
     except BaseException as error:
         save('rejection.json', {'error': str(error), 'guest_acceptance': False,

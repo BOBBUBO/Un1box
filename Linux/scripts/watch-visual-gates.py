@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import select
 import signal
+import struct
 import time
 
 
@@ -16,6 +17,48 @@ SCENES = {
     'written-marker': ('written-marker-gate.json', 'Notes written marker', 260),
     'saved-marker': ('saved-marker-gate.json', 'Notes saved marker', 179),
 }
+
+# Native portrait n72 status-bar time only. Wi-Fi, battery, all application
+# pixels and the complete dock remain protected. This never identifies Home;
+# the caller must already have inspected the original full image as Home.
+HOME_CLOCK_BOX = (130, 1, 190, 19)
+
+
+def image_continuity(original, current, scene):
+    """Exact bytes, or Home-only clock changes with every other byte equal."""
+    result = {'policy': 'full-BMP-v1', 'matched': bool(original) and original == current,
+              'full_BMP_identical': original == current, 'no_new_scene_asserted': True}
+    if result['matched'] or scene != 'Home Screen':
+        return result
+    result.update(policy='n72-Home-clock-only-v1', excluded_clock_box=list(HOME_CLOCK_BOX))
+    try:
+        heights = []
+        for data in (original, current):
+            if len(data) != 54 + 320 * 480 * 4 or data[:2] != b'BM':
+                return result
+            size, = struct.unpack_from('<I', data, 2)
+            offset, = struct.unpack_from('<I', data, 10)
+            dib, width, height, planes, bits, compression = struct.unpack_from('<IiiHHI', data, 14)
+            if (size != len(data) or offset != 54 or dib != 40 or width != 320 or
+                    abs(height) != 480 or planes != 1 or bits != 32 or compression != 0):
+                return result
+            heights.append(height)
+        if original[:54] != current[:54]:
+            return result
+        x1, y1, x2, y2 = HOME_CLOCK_BOX
+        def protected(data, height):
+            rows = []
+            for y in range(480):
+                offset = 54 + (y if height < 0 else 479 - y) * 320 * 4
+                row = data[offset:offset + 320 * 4]
+                rows.append(row[:x1 * 4] + row[x2 * 4:] if y1 <= y < y2 else row)
+            return b''.join(rows)
+        old, new = protected(original, heights[0]), protected(current, heights[1])
+        result.update(matched=old == new, protected_original_sha256=hashlib.sha256(old).hexdigest(),
+                      protected_current_sha256=hashlib.sha256(new).hexdigest())
+    except (ValueError, struct.error):
+        pass
+    return result
 
 def valid_gate(gate, receipt, identity, scene, deadline_ns, now_ns):
     """Human/model scene inspection is supplied; counters never create a gate."""
@@ -57,6 +100,7 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
         status = proof['status']
         viewport = proof['viewport']
         readback = proof['metadata_readback']
+        comparison = image_continuity(original_bmp, current_bmp, scene)
         return (proof['policy'] == 'coherent-copy-static-awake-v2' and
                 gate['model_inspected'] is True and gate['scene'] == scene and
                 all(gate[k] == proof[k] == identity[k] for k in identity) and
@@ -67,7 +111,8 @@ def valid_continuity_gate(gate, original, current, original_bmp, current_bmp,
                 identity['hello_monotonic_ns'] <= int(original['observed_monotonic_ns']) <=
                 inspected <= captured <= checked <= verified <= deadline_ns and verified <= now_ns and
                 0 <= verified - inspected <= 60_000_000_000 and
-                bool(original_bmp) and original_bmp == current_bmp and
+                comparison['matched'] and (original_bmp == current_bmp or
+                    proof.get('image_comparison') == comparison) and
                 all(int(r['sequence']) > 1 and int(r['sleeping']) == 0 and
                     int(r['agent']) == 1 and int(r['backlight']) > 0 for r in (original, current)) and
                 0 < int(original['frame_monotonic_ns']) <= int(original['observed_monotonic_ns']) and
