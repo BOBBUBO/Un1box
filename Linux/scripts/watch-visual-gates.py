@@ -29,8 +29,9 @@ EDITOR_CARET_BOX = (32, 104, 35, 126)
 
 
 def editor_caret_continuity(original, current, result):
-    """Explicit 66-pixel RGB tolerance, not caret shape/color recognition."""
-    result.update(policy='n72-explicit-blank-editor-caret-RGB-v2', matched=False, caret_box=list(EDITOR_CARET_BOX),
+    """Explicit caret and status-clock RGB tolerance; never scene recognition."""
+    result.update(policy='n72-explicit-blank-editor-caret-clock-RGB-v3', matched=False,
+                  caret_box=list(EDITOR_CARET_BOX), excluded_clock_box=list(HOME_CLOCK_BOX),
                   tolerated_RGB_pixels=66, tolerated_RGB_bytes=198,
                   all_alpha_protected=True, no_caret_shape_or_color_recognition=True)
     try:
@@ -48,13 +49,16 @@ def editor_caret_continuity(original, current, result):
         if original[:54] != current[:54] or original[57::4] != current[57::4]:
             return result
         x1, y1, x2, y2 = EDITOR_CARET_BOX
+        clock_x1, clock_y1, clock_x2, clock_y2 = HOME_CLOCK_BOX
 
         def parts(data, height):
             protected, caret = [], []
             for y in range(480):
                 offset = 54 + (y if height < 0 else 479 - y) * 320 * 4
                 row = data[offset:offset + 320 * 4]
-                if y1 <= y < y2:
+                if clock_y1 <= y < clock_y2:
+                    protected.append(row[:clock_x1 * 4] + row[clock_x2 * 4:])
+                elif y1 <= y < y2:
                     caret.append(row[x1 * 4:x2 * 4])
                     protected.append(row[:x1 * 4] + row[x2 * 4:])
                 else:
