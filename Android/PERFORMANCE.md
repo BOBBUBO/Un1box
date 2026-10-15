@@ -1,5 +1,8 @@
 # Host performance panel
 
+Measured CPU engine comparisons and their limits are recorded separately in
+[CPU-PERFORMANCE.md](CPU-PERFORMANCE.md).
+
 Current Android builds include cumulative CPU time and the **QEMU worker CPU**
 label. This describes the host engine process; it is not an iOS or vCPU-only
 statistic. Historical candidate 25 retains its original **Emulator CPU** label
