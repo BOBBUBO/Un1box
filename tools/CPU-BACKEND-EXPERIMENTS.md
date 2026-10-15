@@ -4,6 +4,91 @@ Research checkpoint: 2026-10-15. No alternative CPU engine is qualified for an
 iOS guest. The production engine remains QEMU native TCG. This document is an
 engineering experiment plan, not a supported-backend list.
 
+## Current decision: stop research04 hybrid expansion
+
+The default-off Dynarmic throughput candidate **lost its actual finite CPU
+comparison**. Decision: `STOP_CURRENT_CANDIDATE`. Preserve its source, tests,
+immutable binaries and failed evidence; do not expand its instruction coverage,
+port this candidate to Android, or expose a product CPU option on this result.
+Real iOS sessions continue to use TCG. This rejects the tested snapshot/handoff
+integration, not every possible use of Dynarmic or optimizing translation.
+
+Tested QEMU source: `979fb0edaed94c5efb756df550d3ca128728d3ec`.
+Corrected harness/measurement source: App
+`0b751e692df984e8c44c1d016839db10f508847d`.
+Immutable Linux/x86-64 research binary SHA256:
+`014be9bc297f65b60f9cecfae6d2cd0f431587c13a509c4cffda78ee92a39aaf`.
+Library: the previously pinned Ubuntu Dynarmic 6.5 package. No ARM64, Android,
+real-board or iOS speed qualification follows.
+
+Three fresh processes per route ran the 65,536-iteration four-instruction
+ADD/SUB/CMP/BNE loop: 262,144 user instructions, followed by SVC and privileged
+WFI. OFF and ON used the **same binary**. Six additional fresh one-iteration
+samples observed setup; orders alternated across three replicates. Every sample
+passed its full sixteen-register/CPSR terminal oracle and ordinary native exit.
+All owned processes retired. ON proved one cold block and 65,535 warm blocks
+in each long sample; OFF had no alternate execution witnesses.
+
+| Complete workload CPU delta, three long samples | Same-built TCG OFF | Candidate ON |
+| --- | --- | --- |
+| Whole process, 100 ticks/second | 0, 0, 0 ticks | 10, 10, 10 ticks |
+| vCPU thread, 100 ticks/second | 0, 0, 0 ticks | 10, 10, 10 ticks |
+| Conservative two-tick decision interval | 0–20 ms | 80–120 ms |
+
+Zero reported TCG ticks means the measurement did not resolve its cost; it does
+**not** mean TCG took zero CPU time. Do not divide by zero or publish a slowdown
+ratio. The intervals are the predeclared quantization allowance, not statistical
+confidence bounds or an allowance for every source of host noise. Nevertheless,
+all three alternate measurements clearly lose under that rule for both scopes.
+Cold one-iteration measurements never enter the speed decision.
+
+The long samples' first preparation/allocation/translation/Run interval was
+18.771–22.740 ms. Their following aggregate span was 80.127–85.083 ms. These
+are monotonic host intervals including adapter/loop work, not pure JIT CPU
+measurements. They show that removing the first cold interval does not remove
+the remaining cost. The experiment does not separately attribute the loss to
+MMU checks, state copies, dispatch or generated instructions; do not infer a
+specific winning replacement from these totals. The 1 ms completion polling
+and minimum wait also prevent using outer wall time as precise guest latency.
+
+Correctness evidence spans two attempts. Original research04 attempt01 remains
+**FAILED**: its first fifteen stages passed, then async live polling repeatedly
+parsed an earlier log prefix until the unchanged 16,384-block cap was reached.
+The engine exited normally and all owned processes retired; no performance
+sample was accepted from that failure. App `0b751e69` bounds live reads to the
+current phase while retaining whole stopped-log and full-state validation.
+A separate ten-process attempt02 passed blocks OFF/ON/stock, corrected async,
+and throughput one/65,536 OFF/ON/stock. Together, the preserved first attempt's
+passed stages and corrected attempt establish 44 complete historical case
+states equal across OFF/ON/stock, 3,592 corrected async witnesses, exact
+throughput coverage and stock negatives failing solely missing witnesses.
+Do not describe this as one successful 22-process attempt or erase attempt01.
+
+Each runtime stage retained its 60-second/256-MiB owned-RSS/8-GiB host-available
+bounds, one serial engine and 600-second outer limit. The twelve-sample
+measurement actually finished in 2.341 seconds, peaked at 83,607,552 owned RSS
+bytes and retained at least 17,663,590,400 available host bytes. These are the
+recorded guardian observations, not an exhaustive peak-memory proof.
+
+Private receipts remain outside Git beneath the workspace's
+`builds/cpu_alternatives/research-04/`:
+
+- `contracts-actual-01/RESULT.json`, SHA256
+  `a29bb9c26f460c43676c52ab192234b61ae1d327696dbe13ba3763c4507c2f5c`.
+- `contracts-actual-02/RESULT.json`, SHA256
+  `7ee2b0f367c88747b870fc791eb4d3a99943ce291978643fec3149974fd22a48`.
+- `measurements-actual-01/RESULT.json`, SHA256
+  `cee97c738a53768ea791e19699fafd58d4d0771cab299a59feedacfaffa95c11`.
+
+Root reviews and a separate worker offline receipt/log revalidation accompany
+these results. No new engine run is implied by offline review. The next useful
+work is [representative actual-guest TCG profiling](TCG-GUEST-PROFILING.md),
+using existing bounded collectors before another backend integration.
+
+The dated sections below preserve the experiment's progression. Statements
+marked source-only or unrun describe their historical checkpoint; the current
+result and stop decision above govern research04.
+
 ## First concrete experiment: Dynarmic contracts
 
 Dynarmic supports ARMv6K guests, AArch64 and x86-64 hosts, and Android. Its
