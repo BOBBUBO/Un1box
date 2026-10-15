@@ -1,6 +1,7 @@
 package org.lighttouch.android
 
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.media.*
 import android.os.*
 import android.view.InputDevice
@@ -18,6 +19,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.security.MessageDigest
 
 /** Observe real production playback/presentation around lifecycle transitions. */
 @RunWith(AndroidJUnit4::class)
@@ -28,14 +30,50 @@ class GuestMediaLifecycleTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val heldFocus = arguments.getString("exerciseHeldAudioFocus") == "true"
         val requireConcurrentWindows = arguments.getString("requireConcurrentMediaWindows") == "true"
-        val extended = heldFocus || requireConcurrentWindows
+        // A single prereviewed JSON binding; absent means the old passive test.
+        val keyboard = arguments.getString("keyboardWorkloadBinding")?.let { JSONObject(it) }
+        keyboard?.let { plan ->
+            require(plan.getInt("schema") == 1 && plan.getBoolean("scratchNoteApproved") && plan.getBoolean("preservesExistingTestNote"))
+            require(plan.getString("scratchNoteIdentity").length in 1..120)
+            require(plan.getString("reviewedGuestCaptureSha256").matches(Regex("[0-9a-f]{64}")))
+            require(plan.getInt("workerPid") > 0 && plan.getInt("workerUid") > 0 && plan.getLong("workerStartTicks") > 0)
+            require(arguments.getString("mediaSeconds", "30") in listOf("30", "1200"))
+            for (name in listOf("view", "frame")) {
+                val size = plan.getJSONArray(name)
+                require(size.length() == 2 && (0..1).all { size.getInt(it) in 1..4096 })
+            }
+            require(plan.getInt("rotation") in 0..3)
+            for (name in listOf("letter", "backspace")) {
+                val point = plan.getJSONArray(name)
+                require(point.length() == 2 && (0..1).all { point.getDouble(it).isFinite() && point.getDouble(it) > 0 && point.getDouble(it) < 1 })
+            }
+            require(plan.getJSONArray("letter").toString() != plan.getJSONArray("backspace").toString())
+            val anchors = plan.getJSONArray("anchors")
+            require(anchors.length() in 2..8)
+            var pixels = 0L
+            for (i in 0 until anchors.length()) {
+                val anchor = anchors.getJSONObject(i); val box = anchor.getJSONArray("bounds")
+                require(box.length() == 4 && box.getInt(0) >= 0 && box.getInt(1) >= 0 &&
+                    box.getInt(2) > box.getInt(0) && box.getInt(3) > box.getInt(1) &&
+                    box.getInt(2) <= plan.getJSONArray("frame").getInt(0) && box.getInt(3) <= plan.getJSONArray("frame").getInt(1))
+                pixels += (box.getInt(2) - box.getInt(0)).toLong() * (box.getInt(3) - box.getInt(1))
+                require(anchor.getString("rgbaSha256").matches(Regex("[0-9a-f]{64}")))
+            }
+            require(pixels <= 65_536)
+        }
+        val extended = heldFocus || requireConcurrentWindows || keyboard != null
         if (heldFocus) assertEquals("Held focus opt-in also requires real focus exercise", "true", arguments.getString("exerciseAudioFocus"))
         val evidence = File(context.filesDir, "media-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
         val result = JSONObject().put("pass", false).put("audiblePlaybackVerified", false).put("visibleGuestVerified", false)
             .put("guestAcceptancePassed", false).put("heldAudioFocusRequested", heldFocus)
             .put("concurrentWindowsRequired", requireConcurrentWindows)
+            .put("keyboardWorkloadBinding", keyboard ?: JSONObject.NULL)
         val samples = JSONArray()
         val intervals = JSONArray(); val events = JSONArray()
+        fun keyboardEvent(item: JSONObject) {
+            events.put(item)
+            File(evidence, "keyboard-events.jsonl").appendText(item.toString() + "\n")
+        }
         @Suppress("DEPRECATION")
         fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
             for (key in bundle.keySet()) when (val value = bundle.get(key)) {
@@ -123,17 +161,133 @@ class GuestMediaLifecycleTest {
                         assertEquals("Lifecycle state", expected, worker.status().getString("state"))
                     }
                     var exerciseFailure: Throwable? = null
+                    var keyboardDisplay: GuestDisplay? = null
+                    var keyboardContactHeld = false
                     try {
                     assertTrue("Root must boot the selected real guest first", initial.getString("state") in listOf("running", "paused"))
                     if (extended) assertEquals("Resolve the existing worker failure before measuring; no acknowledgement shortcut", "", initial.getString("error"))
                     if (initial.getString("state") == "paused") worker.pause(false)
                     awaitState("running")
+                    val keyboardInitial = if (keyboard != null) worker.status() else null
+                    val initialKeyboardOwner = keyboardInitial?.getLong("displayInputOwner") ?: 0L
+                    val initialKeyboardGeneration = keyboardInitial?.getLong("displayInputGeneration") ?: 0L
+                    val initialKeyboardSurface = keyboardInitial?.getBundle("observations")?.getLong("surfaceGeneration") ?: 0L
+                    fun keyboardGuard(status: Bundle) {
+                        val plan = requireNotNull(keyboard)
+                        assertEquals("Reviewed worker PID", plan.getInt("workerPid"), status.getInt("pid"))
+                        assertEquals("Reviewed worker UID", plan.getInt("workerUid"), status.getInt("uid"))
+                        val stat = File("/proc/${status.getInt("pid")}/stat").readText()
+                        val start = stat.substring(stat.lastIndexOf(')') + 1).trim().split(Regex("\\s+"))[19].toLong()
+                        assertEquals("Reviewed worker start token", plan.getLong("workerStartTicks"), start)
+                        assertEquals("Keyboard workload requires running worker", "running", status.getString("state"))
+                        assertEquals("Keyboard workload worker failure", "", status.getString("error"))
+                        assertEquals("Keyboard display owner changed", initialKeyboardOwner, status.getLong("displayInputOwner"))
+                        assertEquals("Keyboard input generation changed", initialKeyboardGeneration, status.getLong("displayInputGeneration"))
+                        val observed = requireNotNull(status.getBundle("observations"))
+                        assertEquals("Keyboard Surface generation changed", initialKeyboardSurface, observed.getLong("surfaceGeneration"))
+                        assertEquals("Guest frame width changed", plan.getJSONArray("frame").getLong(0), observed.getLong("guestFrameWidth"))
+                        assertEquals("Guest frame height changed", plan.getJSONArray("frame").getLong(1), observed.getLong("guestFrameHeight"))
+                    }
+                    fun keyboardView(activity: MainActivity, status: Bundle): Pair<GuestDisplay, GuestTestViewport> {
+                        keyboardGuard(status)
+                        val plan = requireNotNull(keyboard)
+                        val display = requireNotNull(findDisplay(activity.window.decorView))
+                        if (keyboardDisplay == null) keyboardDisplay = display
+                        assertSame("Keyboard View changed", keyboardDisplay, display)
+                        assertTrue("Keyboard Surface/focus unavailable", display.holder.surface.isValid && display.hasWindowFocus())
+                        assertEquals(plan.getJSONArray("view").getInt(0), display.width)
+                        assertEquals(plan.getJSONArray("view").getInt(1), display.height)
+                        assertEquals(plan.getInt("rotation"), display.display.rotation)
+                        return display to GuestTestViewport(status, display.width, display.height)
+                    }
+                    fun checkKeyboardImage(label: String) {
+                        val plan = requireNotNull(keyboard)
+                        keyboardGuard(worker.status()); capture(label)
+                        keyboardGuard(worker.status())
+                        val path = File(context.filesDir, "screenshots/${evidence.name}/$label.png")
+                        val image = requireNotNull(BitmapFactory.decodeFile(path.absolutePath))
+                        try {
+                            assertEquals(plan.getJSONArray("frame").getInt(0), image.width)
+                            assertEquals(plan.getJSONArray("frame").getInt(1), image.height)
+                            val anchors = plan.getJSONArray("anchors")
+                            for (i in 0 until anchors.length()) {
+                                val anchor = anchors.getJSONObject(i); val box = anchor.getJSONArray("bounds")
+                                val width = box.getInt(2) - box.getInt(0); val height = box.getInt(3) - box.getInt(1)
+                                val pixels = IntArray(width * height)
+                                image.getPixels(pixels, 0, width, box.getInt(0), box.getInt(1), width, height)
+                                val rgba = ByteArray(pixels.size * 4)
+                                pixels.forEachIndexed { n, pixel ->
+                                    rgba[n * 4] = (pixel shr 16).toByte(); rgba[n * 4 + 1] = (pixel shr 8).toByte()
+                                    rgba[n * 4 + 2] = pixel.toByte(); rgba[n * 4 + 3] = (pixel ushr 24).toByte()
+                                }
+                                val hash = MessageDigest.getInstance("SHA-256").digest(rgba).joinToString("") { "%02x".format(it.toInt() and 255) }
+                                keyboardEvent(JSONObject().put("keyboardAnchor", i).put("captureLabel", label).put("rgbaSha256", hash))
+                                assertEquals("Reviewed keyboard anchor changed", anchor.getString("rgbaSha256"), hash)
+                            }
+                        } finally { image.recycle(); File(evidence, "events.json").writeText(events.toString(2)) }
+                    }
+                    fun keyboardTap(key: String, pair: Int, cutoff: Long) {
+                        val plan = requireNotNull(keyboard); val point = plan.getJSONArray(key)
+                        var beforeInput: Bundle? = null
+                        var tapDown = 0L
+                        for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                            assertTrue("Keyboard measurement cutoff", SystemClock.elapsedRealtime() < cutoff)
+                            val status = worker.status()
+                            scenario.onActivity { activity ->
+                                val (display, viewport) = keyboardView(activity, status)
+                                assertTrue("Keyboard measurement cutoff before dispatch", SystemClock.elapsedRealtime() < cutoff)
+                                val before = display.inputObservations()
+                                if (action == MotionEvent.ACTION_DOWN) {
+                                    assertArrayEquals("External held input", intArrayOf(), before.getIntArray("androidContactIds"))
+                                    beforeInput = before; tapDown = SystemClock.uptimeMillis(); keyboardContactHeld = true
+                                }
+                                val at = SystemClock.uptimeMillis(); val xy = viewport.point(point.getDouble(0).toFloat(), point.getDouble(1).toFloat())
+                                val event = MotionEvent.obtain(tapDown, at, action, xy.first, xy.second, 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                                try { assertTrue(display.dispatchTouchEvent(event)) } finally { event.recycle() }
+                                val after = display.inputObservations()
+                                keyboardEvent(JSONObject().put("keyboardPair", pair).put("key", key).put("action", action).put("rawUptimeMs", at)
+                                    .put("elapsedMs", SystemClock.elapsedRealtime()).put("viewport", viewport.receipt())
+                                    .put("viewX", xy.first).put("viewY", xy.second).put("beforeInput", encode(before)).put("afterInput", encode(after)))
+                                assertEquals(before.getLong("rejectedBatches"), after.getLong("rejectedBatches"))
+                                assertEquals(before.getLong("cancellationRequests"), after.getLong("cancellationRequests"))
+                                assertEquals(before.getLong("expectedCancellationBatches"), after.getLong("expectedCancellationBatches"))
+                                if (action == MotionEvent.ACTION_UP) {
+                                    assertArrayEquals(intArrayOf(), after.getIntArray("androidContactIds"))
+                                    assertEquals(requireNotNull(beforeInput).getLong("forwardedBatches") + 2, after.getLong("forwardedBatches"))
+                                    keyboardContactHeld = false
+                                }
+                            }
+                            if (action == MotionEvent.ACTION_DOWN) Thread.sleep(60)
+                        }
+                    }
+                    if (keyboard != null) {
+                        require(initialKeyboardOwner > 0 && initialKeyboardGeneration > 0)
+                        keyboardGuard(requireNotNull(keyboardInitial))
+                        scenario.onActivity { keyboardView(it, requireNotNull(keyboardInitial)) }
+                        checkKeyboardImage("keyboard-reviewed-start")
+                    }
                     val before = snapshot("measurement-start")
                     if (extended) capture("measurement-start")
                     val durationMs = arguments.getString("mediaSeconds", "30").toLong().coerceIn(5, 1800) * 1000
                     val deadline = SystemClock.elapsedRealtime() + durationMs
+                    var nextKeyboardPair = SystemClock.elapsedRealtime()
+                    var nextKeyboardImage = nextKeyboardPair + 30_000
+                    var keyboardPairs = 0
                     var previous = before; var blockStart = SystemClock.elapsedRealtime(); var qualifyingInBlock = 0; var totalQualifying = 0
                     while (SystemClock.elapsedRealtime() < deadline) {
+                        if (keyboard != null && SystemClock.elapsedRealtime() >= nextKeyboardPair && SystemClock.elapsedRealtime() < deadline - 4_500) {
+                            assertTrue("Keyboard pair bound", keyboardPairs < durationMs / 2_000)
+                            if (SystemClock.elapsedRealtime() >= nextKeyboardImage) {
+                                checkKeyboardImage("keyboard-${keyboardPairs.toString().padStart(4, '0')}")
+                                nextKeyboardImage = SystemClock.elapsedRealtime() + 30_000
+                            }
+                            val start = SystemClock.elapsedRealtime()
+                            assertTrue("Keyboard pair started too near end", start < deadline - 4_500)
+                            keyboardTap("letter", keyboardPairs, deadline - 3_000)
+                            Thread.sleep(250)
+                            keyboardTap("backspace", keyboardPairs, deadline - 3_000)
+                            keyboardPairs++; nextKeyboardPair = SystemClock.elapsedRealtime() + 2_000
+                        }
                         Thread.sleep(minOf(1000, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
                         val current = snapshot("running")
                         if (extended) {
@@ -165,6 +319,12 @@ class GuestMediaLifecycleTest {
                     if (requireConcurrentWindows && SystemClock.elapsedRealtime() - blockStart >= 5_000)
                         assertTrue("No concurrent counter interval in the final workload block", qualifyingInBlock > 0)
                     result.put("qualifyingCounterOverlapIntervals", totalQualifying)
+                    result.put("keyboardPairsCompleted", keyboardPairs).put("keyboardStoppedElapsedMs", SystemClock.elapsedRealtime())
+                    if (keyboard != null) {
+                        assertTrue("No keyboard pairs completed", keyboardPairs > 0)
+                        assertFalse("Keyboard contact held at measurement end", keyboardContactHeld)
+                        checkKeyboardImage("keyboard-measurement-end")
+                    }
                     val measured = snapshot("measurement-end")
                     if (extended) capture("measurement-end")
                     assertTrue("No actual guest frame reached Surface", measured.getLong("presentedFrames") > 0)
@@ -236,12 +396,17 @@ class GuestMediaLifecycleTest {
                         .put("requiresFrameProgress", arguments.getString("requireFrameProgress") == "true")
                     } catch (failure: Throwable) { exerciseFailure = failure; throw failure }
                     finally {
-                        if (heldFocus) {
+                        // Never guess a compensating backspace on a changed scene.
+                        // Only retire an in-flight local touch; no workload thread survives.
+                        if (heldFocus || keyboardContactHeld) {
                             var cleanup: Throwable? = null
                             fun release(action: () -> Unit) { try { action() } catch (failure: Throwable) { if (cleanup == null) cleanup = failure else cleanup!!.addSuppressed(failure) } }
-                            release { val focus = competingFocus; competingFocus = null; focus?.let { manager.abandonAudioFocusRequest(it) } }
-                            if (viewAvailable) release { scenario.onActivity { findDisplay(it.window.decorView)?.cancelOwnedGesture() } }
-                            release { worker.cancelInput() }
+                            if (keyboardContactHeld) release { scenario.onActivity { keyboardDisplay?.cancelOwnedGesture() } }
+                            if (heldFocus) {
+                                release { val focus = competingFocus; competingFocus = null; focus?.let { manager.abandonAudioFocusRequest(it) } }
+                                if (viewAvailable) release { scenario.onActivity { findDisplay(it.window.decorView)?.cancelOwnedGesture() } }
+                                release { worker.cancelInput() }
+                            }
                             cleanup?.let { failure ->
                                 result.put("pass", false).put("cleanupFailure", failure.toString())
                                 if (exerciseFailure == null) throw failure else exerciseFailure!!.addSuppressed(failure)
