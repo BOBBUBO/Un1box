@@ -40,7 +40,7 @@ The collector captures bounded UI XML observations before and after the counter
 window and the visible metric
 text/ages, including the PID. It rejects the wrong panel or running/paused state.
 Both label layouts are explicit: original candidate25's six rows with **Emulator
-CPU**, or a future producer's seven rows with **QEMU worker CPU** and cumulative
+CPU**, or current builds' seven rows with **QEMU worker CPU** and cumulative
 **QEMU worker CPU time**. The result retains the recognized layout; mixed or
 missing CPU rows fail. Neither layout represents genuine iOS CPU/RAM accounting.
 It records independent process CPU tick deltas and positive PSS KiB samples,
