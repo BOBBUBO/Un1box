@@ -125,6 +125,10 @@ def stage(manifest_path, output):
     launcher.mkdir(parents=True, exist_ok=True)
     for name in ("main.py", "model.py", "session.py"):
         shutil.copyfile(ROOT.parent / "launcher" / name, launcher / name)
+    services = output / "usr/share/lighttouch/app_services"
+    services.mkdir(parents=True, exist_ok=True)
+    for source in sorted((ROOT.parent / "app_services").glob("*.py")):
+        shutil.copyfile(source, services / source.name)
     for name in ("AppRun", "lighttouch.desktop", "lighttouch.svg"):
         shutil.copyfile(ROOT / name, output / name)
     (output / "AppRun").chmod(0o755)
