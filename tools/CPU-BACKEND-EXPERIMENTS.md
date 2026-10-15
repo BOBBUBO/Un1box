@@ -90,7 +90,8 @@ one whitelisted EL0 instruction before normal TCG lookup, at
 It must clear `last_tb` when switching execution engines and retain existing
 virtual-clock, exit, single-step and instruction-budget behavior. Unsupported
 instructions, all privileged execution and the board CP15 bridge initially
-remain on ordinary TCG. No such hook is implemented by this experiment.
+remain on ordinary TCG. A separate default-off QEMU prototype implements this
+strict synthetic instruction whitelist; production builds do not enable it.
 
 Relevant current ARM interfaces are concrete:
 
@@ -133,14 +134,21 @@ prefetch abort at PC=0x0c, LR=0x401204, mode=ABT. Both harness and QEMU exited
 normally, with no owned process left. This does not validate XN protection.
 
 The later harness adds MOV/ADD cases and an optional requirement for exact
-in-engine Dynarmic execution witnesses. Those newer cases and the separate
-default-off engine prototype require their own build/execution receipts;
-the six-case reference result does not qualify them.
+in-engine Dynarmic execution witnesses. A separate actual Linux/x86-64 build
+at QEMU `653c948ab2` passed the eight-case same-binary OFF/ON differential:
+complete sixteen-register/CPSR observations matched, OFF emitted no bridge
+witnesses, and ON emitted both actual Dynarmic execution witnesses. A stock
+engine passed the state assertions but correctly failed the witness-required
+negative. The real library was Ubuntu Dynarmic 6.5. The two eligible integer
+instructions executed in Dynarmic; all data loads, CP15 bootstrap and faults
+remained on real TCG. This is a default-off synthetic integration proof, not
+a useful workload benchmark or alternate iOS backend qualification.
 
-This reference establishes expected QEMU state for a future differential
-adapter. It does not execute Dynarmic inside QEMU, prove the CP15/GLES bridge,
-qualify an iOS guest or establish a speedup. There is no measured EL0 CPU-time
-share on which to base a hybrid performance prediction.
+The six-case reference establishes expected QEMU state; the separate
+two-instruction extension proves actual synthetic in-engine Dynarmic execution.
+Neither proves the board CP15/GLES bridge, qualifies an iOS guest or establishes
+a speedup. There is no measured EL0 CPU-time share on which to base a hybrid
+performance prediction.
 
 ## LLVM and other paths
 
