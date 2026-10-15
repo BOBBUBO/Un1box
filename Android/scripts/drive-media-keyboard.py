@@ -79,6 +79,11 @@ def latest_sample(data):
     return value
 
 
+PAIR_MIN_GAP_MS = 2000
+PAIR_MAX_GAP_MS = 5500
+PAIR_RESERVE_MS = 5000
+
+
 class Fence:
     """Pure decision state. No host timestamp is compared with device BOOTTIME."""
     def __init__(self, b, prior):
@@ -114,10 +119,10 @@ class Fence:
 
     def start_pair(self, clock):
         require(self.pairs < self.maximum_pairs, "pair bound reached")
-        require(clock["upperMs"] + 2000 < self.cutoff, "quiet tail or insufficient pair budget")
+        require(clock["upperMs"] + PAIR_RESERVE_MS < self.cutoff, "quiet tail or insufficient pair budget")
         if self.last_pair_ms is not None:
             gap = clock["lowerMs"] - self.last_pair_ms
-            require(2000 <= gap <= 3500, "missed cadence; never catch up")
+            require(PAIR_MIN_GAP_MS <= gap <= PAIR_MAX_GAP_MS, "missed cadence; never catch up")
         self.last_pair_ms = clock["lowerMs"]
 
     def finish_pair(self, clock):
@@ -214,6 +219,8 @@ def run(args):
     plan = {"status": "PLAN_ONLY_NO_ADB", "keyboardBindingSha256": sha(args.keyboard.read_bytes()),
             "identityBindingSha256": sha(args.binding.read_bytes()), "scriptSha256": sha(Path(__file__).read_bytes()),
             "durationSeconds": b["durationSeconds"], "cutoffDeviceBootTimeMs": Fence(b, prior).cutoff,
+            "pairStartGapMinMs": PAIR_MIN_GAP_MS, "pairStartGapMaxMs": PAIR_MAX_GAP_MS,
+            "pairStartReserveMs": PAIR_RESERVE_MS, "postTapSampleWaitMaxMs": 2000,
             "allowedActions": ["letter touchscreen tap", "backspace touchscreen tap"],
             "stableKeyboardRegionRgbSha256": anchors, "automaticStartResumeStopRecovery": False,
             "atomicImageInputBindingClaimed": False, "guestAcceptance": False, "audiblePlaybackVerified": False}
@@ -286,10 +293,10 @@ def run(args):
         while True:
             serial += 1; label = f"pair-{serial:03d}"
             clock = c.clock(label + "-ready")
-            if clock["upperMs"] + 2000 >= fence.cutoff or fence.pairs == fence.maximum_pairs:
+            if clock["upperMs"] + PAIR_RESERVE_MS >= fence.cutoff or fence.pairs == fence.maximum_pairs:
                 break
             if fence.last_pair_ms is not None:
-                wait_ms = fence.last_pair_ms + 2000 - clock["lowerMs"]
+                wait_ms = fence.last_pair_ms + PAIR_MIN_GAP_MS - clock["lowerMs"]
                 if wait_ms > 0: time.sleep(wait_ms / 1000)
             clock = guard(label + "-letter"); fence.start_pair(clock)
             for key in ("letterKeyRegion", "backspaceKeyRegion"):

@@ -9,7 +9,8 @@ Create a **new scratch Notes note** and inspect its actual guest keyboard. Do no
 edit the user's existing `Test` note. Inspect the Notes list and note identity
 before setup. Real keyboard clicks must supply the changing frames and guest
 PCM; no host text injection, keyevents, tones or guest RPC substitutes are used.
-A letter/backspace pair is attempted every two seconds. Successful Android input
+A letter/backspace pair is attempted no sooner than two seconds after the prior
+pair start, within the bounded cadence below. Successful Android input
 admission does not establish guest consumption or an audible click.
 
 ## Bind this run before execution
@@ -118,14 +119,15 @@ Older per-second samples can contain that tap's in-flight contact. Retain those
 samples and wait at most two seconds, without renewing the deadline or extending
 the cutoff; then apply every normal check to the fresh sample. Fresh held contacts
 still abort. Command completion and empty Android IDs do not establish guest UP
-consumption. The existing cadence bound remains in force and may conservatively
-abort if this wait leaves too little time; review any cadence revision explicitly
-before a new short qualification and long run.
+consumption. The reviewed controller revision allows pair starts two to 5.5
+seconds apart and reserves five seconds before starting a pair, accommodating the
+bounded fresh-sample wait. It requires a new actual 30-second qualification before
+a long run; earlier failed runs retain their original controller contracts.
 
 The conservative cutoff is `measurementStartDeviceBootTimeMs + duration -3000`.
 The legacy sample field `hostElapsedMs` is Android `SystemClock.elapsedRealtime`
 (BOOTTIME), not PC time or MotionEvent uptime. `/proc/uptime` is treated as a
-precision bracket. No pair starts without two seconds remaining, no tap without
+precision bracket. No pair starts without five seconds remaining, no tap without
 500ms, and both completion clocks must precede the cutoff. The actual test starts
 its duration after the initial capture, so this cutoff precedes its earliest
 lifecycle transition. At most15/600pairs are allowed; no catch-up bursts occur.
