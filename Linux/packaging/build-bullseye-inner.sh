@@ -48,7 +48,8 @@ python3 "$Q/contrib/portable/build-deps.py" "$B/deps-full"
 python3 "$Q/contrib/portable/build-crypto-deps.py" "$B/crypto"
 python3 "$Q/contrib/portable/build-engine.py" "$B/engine-cxx17-full" --cpp-standard=gnu++17 --prefix "$B/deps-full/prefix" --crypto-prefix "$B/crypto/prefix"
 cmake -S "$A/Linux" -B "$B/frontend" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-    -DLIGHTTOUCH_QEMU_SOURCE="$Q" -DLIGHTTOUCH_BUILD_TESTS=ON
+    -DLIGHTTOUCH_QEMU_SOURCE="$Q" -DLIGHTTOUCH_BUILD_TESTS=ON \
+    -DCMAKE_CXX_FLAGS=-DSDL_PIXELFORMAT_BGRX32=SDL_PIXELFORMAT_RGB888
 cmake --build "$B/frontend" --parallel 2
 ctest --test-dir "$B/frontend" --output-on-failure
 python3 "$A/Linux/packaging/build-mobile-deps.py" "$B/mobile"

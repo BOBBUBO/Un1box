@@ -53,6 +53,10 @@ def main():
     assert info['HostConfig']['NanoCpus'] == 2_000_000_000
     assert info['HostConfig']['PidsLimit'] == 256
     (evidence / 'container-config.json').write_text(json.dumps(info, indent=2) + '\n')
+    def interrupted(signum, frame):
+        raise InterruptedError('Build observer received signal ' + str(signum))
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGHUP, interrupted)
     start = time.monotonic()
     samples = 0
     error = None
