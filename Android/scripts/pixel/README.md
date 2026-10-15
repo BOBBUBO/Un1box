@@ -340,3 +340,14 @@ fix and shutdown sequence; it does not establish a performance improvement,
 deterministic input timing, Pixel audio/multi-touch/lifecycle acceptance or a
 subsequent guest restart. Private evidence is under
 `builds/pixel/physical-pixel10-apk26-02/`.
+
+The restored API36/16KiB x86 AVD also tested APK26 with explicit `platform`
+graphics. Its native Google SwiftShader GLES1 translator lacked required
+`GL_OES_framebuffer_object`, and the engine refused the host context. Actual
+frames showed the Apple logo/spinner, with no Home acceptance. The full300s
+diagnostic completed, but ordinary Stop produced no native shutdown receipt;
+the worker later sent itself SIG9 and writable state remained dirty. Retained
+process absence and lease release do not make that a clean shutdown. Keep this
+failed provider attempt and use a separately reviewed fresh-worker recovery
+attempt for explicit `angle-gl`; never change providers silently or reuse a
+pre-reboot clean receipt. Android remains running across these attempts.
