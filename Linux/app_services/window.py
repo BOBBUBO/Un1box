@@ -13,14 +13,15 @@ from .ipa import InstallError
 
 
 class AppsWindow:
-    def __init__(self, parent, bridge, scratch, guest_running):
+    def __init__(self, parent, bridge, scratch, guest_running, on_error=None):
         self.bridge, self.scratch, self.guest_running = bridge, Path(scratch), guest_running
+        self.on_error = on_error
         self.window = tk.Toplevel(parent)
         self.window.title("LightTouch · Apps")
         self.window.geometry("780x620")
         self.window.minsize(640, 480)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
-        self.client = CatalogClient()
+        self.client = None
         self.target = None
         self.service = None
         self.work = None
@@ -63,7 +64,19 @@ class AppsWindow:
         try:
             self.run_service("info")
         except Exception as error:
-            self.message.set(str(error))
+            self.error(error)
+
+    def error(self, error):
+        self.message.set(str(error))
+        if self.on_error:
+            self.on_error(error)
+
+    def catalog_client(self):
+        # Trust-store discovery can fail too; run it inside the background job
+        # so that the error reaches the UI and the application log.
+        if self.client is None:
+            self.client = CatalogClient()
+        return self.client
 
     def button(self, parent, text, command):
         value = ttk.Button(parent, text=text, command=command)
@@ -105,10 +118,10 @@ class AppsWindow:
                 self.run_service("info")
                 return
             query, target = self.query.get().strip(), self.target
-            self.background(lambda: {"apps": self.client.search(query, target)})
+            self.background(lambda: {"apps": self.catalog_client().search(query, target)})
             self.message.set("Searching Legacy Store…")
         except Exception as error:
-            self.message.set(str(error))
+            self.error(error)
 
     def selected(self, _event=None):
         selected = self.list.curselection()
@@ -125,7 +138,7 @@ class AppsWindow:
             if path:
                 self.run_service("install", path)
         except Exception as error:
-            self.message.set(str(error))
+            self.error(error)
 
     def download(self):
         try:
@@ -144,11 +157,11 @@ class AppsWindow:
                     self.events.put_nowait({"phase": "download", "percent": count * 100 // total if total else None})
                 except queue.Full:
                     pass
-            self.background(lambda: {"download": str(self.client.download(app, target, self.scratch,
+            self.background(lambda: {"download": str(self.catalog_client().download(app, target, self.scratch,
                                                                           progress=progress, cancelled=self.cancelled.is_set))})
             self.message.set("Downloading app…")
         except Exception as error:
-            self.message.set(str(error))
+            self.error(error)
 
     def cancel(self):
         try:
@@ -157,7 +170,7 @@ class AppsWindow:
                 self.service.cancel()
             self.message.set("Cancellation requested; an install already submitted must finish.")
         except InstallError as error:
-            self.message.set(str(error))
+            self.error(error)
 
     def before_stop(self):
         if self.service and self.service.active and self.service.mutating:
@@ -202,7 +215,7 @@ class AppsWindow:
                     result = self.service.result
                     self.message.set("Installed {}. Open it from the iOS Home screen.".format(result["bundle_id"]) if result.get("installed") else "Guest connected. Search Legacy Store or select a local IPA.")
                 else:
-                    self.message.set(self.service.error or "Guest service failed; no successful install was confirmed.")
+                    self.error(self.service.error or "Guest service failed; no successful install was confirmed.")
                 self.cleanup_download()
                 self.service = None
         while True:
@@ -218,7 +231,7 @@ class AppsWindow:
 
     def handle(self, event):
         if "error" in event:
-            self.message.set(str(event["error"]))
+            self.error(event["error"])
         if "phase" in event:
             self.message.set(event.get("status") or {"download": "Downloading app…", "upload": "Sending to guest…",
                                                     "install": "Installing…"}.get(event["phase"], event["phase"]))
@@ -248,4 +261,4 @@ class AppsWindow:
             self.run_service("install", self.pending_download)
         except Exception as error:
             self.cleanup_download()
-            self.message.set(str(error))
+            self.error(error)

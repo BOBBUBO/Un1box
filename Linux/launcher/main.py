@@ -73,7 +73,7 @@ class Launcher:
     def __init__(self, window, args):
         self.window, self.args = window, args
         self.store = Profiles(args.data_dir)
-        self.session = Session()
+        self.session = Session(self.store.directory / "logs" / ("application-" + uuid.uuid4().hex + ".log"))
         self.bridge = None
         self.apps = None
         self.current = None
@@ -336,6 +336,7 @@ class Launcher:
         return result
 
     def error(self, error):
+        self.session.record_error("launcher", error)
         self.message.set(str(error))
         messagebox.showerror("LightTouch", str(error), parent=self.window)
 
@@ -457,15 +458,16 @@ class Launcher:
             self.error(InstallError("Start iOS with the bundled guest app services to use Apps."))
             return
         self.apps = AppsWindow(self.window, lambda: self.bridge, self.store.directory / "app-downloads",
-                               lambda: self.session.active and self.job == "guest" and not self.session.stopping)
+                               lambda: self.session.active and self.job == "guest" and not self.session.stopping,
+                               on_error=lambda error: self.session.record_error("apps", error))
 
     def copy_diagnostics(self):
         try:
             report = self.session.diagnostic_report()
             self.window.clipboard_clear()
             self.window.clipboard_append(report)
-            self.message.set("Diagnostic log copied. It includes graphics startup and recent guest output.")
-            self.detail.set("Log file: " + str(self.session.log_path))
+            self.message.set("Diagnostic log copied. It includes app errors, graphics startup and recent guest output.")
+            self.detail.set("Logs: " + str(self.store.directory / "logs"))
         except (OSError, RuntimeError) as error:
             self.error(error)
 

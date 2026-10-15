@@ -32,6 +32,26 @@ class UITests(unittest.TestCase):
             self.window.after_cancel(callback)
         self.window.destroy()
 
+    def test_async_catalog_error_is_displayed_saved_and_copied(self):
+        from app_services.window import AppsWindow
+        from app_services.catalog import Target
+        bridge = type('Bridge', (), {'alive': True})()
+        with patch.object(AppsWindow, 'run_service'):
+            apps = AppsWindow(self.window, lambda: bridge, self.root / 'downloads', lambda: True,
+                              on_error=lambda error: self.ui.session.record_error('apps', error))
+        self.addCleanup(apps.window.destroy)
+        apps.target = Target('iPod2,1', '3.1.3', 'armv6')
+        failure = 'Could not connect to Legacy Store: CERTIFICATE_VERIFY_FAILED'
+        # Exercise the real background/queue/Tk path, including client creation.
+        with patch('app_services.window.CatalogClient', side_effect=ValueError(failure)):
+            apps.search()
+            apps.work.join(3)
+            apps.poll()
+        self.assertEqual(apps.message.get(), failure)
+        self.assertIn(failure, self.ui.session.application_log.read_text())
+        self.ui.copy_diagnostics()
+        self.assertIn(failure, self.window.clipboard_get())
+
     def test_file_picker_accepts_readonly_files_and_autofills_companions(self):
         source = archive(self.root / 'n72ap-7E18.itbase')
         for name in ('armv6.itpack', 'bootrom.bin'):
@@ -114,7 +134,7 @@ class UITests(unittest.TestCase):
         self.ui.vars['guest_package'].set(str(self.root / 'armv6.itpack'))
         self.ui.vars['bootrom'].set(str(self.root / 'bootrom.bin'))
         producer = self.root / 'synthetic-importer'
-        producer.write_text('#!/usr/bin/python3\nimport pathlib,sys\np=pathlib.Path(sys.argv[sys.argv.index("--base")+1]);p.mkdir();print("import 100%",flush=True)\n')
+        producer.write_text('#!' + sys.executable + '\nimport pathlib,sys\np=pathlib.Path(sys.argv[sys.argv.index("--base")+1]);p.mkdir();print("import 100%",flush=True)\n')
         producer.chmod(0o700)
         self.ui.args.frontend = str(producer)
         self.ui.import_base()

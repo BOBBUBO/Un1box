@@ -1,5 +1,6 @@
 """One owned SDL frontend per session. Never loads or reinitializes QEMU in the GUI."""
 from collections import deque
+import json
 import os
 import platform
 from pathlib import Path
@@ -7,6 +8,7 @@ import queue
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -35,7 +37,7 @@ def clean_exit(returncode, receipt):
 
 
 class Session:
-    def __init__(self):
+    def __init__(self, application_log=None):
         self.child = None
         self.thread = None
         self.queue = queue.Queue(maxsize=256)
@@ -50,31 +52,67 @@ class Session:
         self.log_path = None
         self.returncode = None
         self.reader_done = threading.Event()
+        self.application_log = Path(application_log) if application_log else None
+        self.application_errors = deque(maxlen=32)
+        self.error_lock = threading.Lock()
+
+    def record_error(self, component, error):
+        """Retain UI/network errors even when no native worker is running."""
+        event = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 "component": str(component)[:128], "error": str(error)[:8192]}
+        line = "APPLICATION_ERROR " + json.dumps(event, ensure_ascii=True) + "\n"
+        raw = line.encode("utf-8")
+        with self.error_lock:
+            self.application_errors.append(line)
+            for path in (self.application_log, self.log_path):
+                if path is None:
+                    continue
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+                    with os.fdopen(fd, "ab") as stream:
+                        # Application logs are bounded independently of native
+                        # traces; keep one previous segment for diagnosis.
+                        if path == self.application_log and os.fstat(stream.fileno()).st_size >= 1024 * 1024:
+                            path.replace(path.with_suffix(".previous.log"))
+                            new_fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                            with os.fdopen(new_fd, "wb") as fresh:
+                                fresh.write(raw)
+                        else:
+                            stream.write(raw)
+                except OSError as log_error:
+                    # Failure to save diagnostics must not hide the real error.
+                    print("LightTouch: could not write {}: {}".format(path, log_error), file=sys.stderr)
 
     @property
     def active(self):
         return self.child is not None and (self.child.poll() is None or not self.reader_done.is_set())
 
     def diagnostic_report(self):
-        if not self.log_path:
-            raise RuntimeError("Start iOS once before copying its diagnostic log.")
+        with self.error_lock:
+            application = "".join(self.application_errors)
+        if not self.log_path and not application:
+            raise RuntimeError("No diagnostic log is available yet.")
         # Retain driver initialization and recent failure output without loading
         # a potentially 64MiB trace into the UI thread or clipboard.
-        with self.log_path.open("rb") as stream:
-            beginning = stream.read(65536)
-            size = stream.seek(0, os.SEEK_END)
-            if size > len(beginning):
-                stream.seek(max(len(beginning), size - 65536))
-                ending = stream.read(65536)
-            else:
-                ending = b""
+        beginning, ending = b"", b""
+        if self.log_path and self.log_path.is_file():
+            with self.log_path.open("rb") as stream:
+                beginning = stream.read(65536)
+                size = stream.seek(0, os.SEEK_END)
+                if size > len(beginning):
+                    stream.seek(max(len(beginning), size - 65536))
+                    ending = stream.read(65536)
         header = ["LightTouch Linux diagnostic log", "Host: " + platform.platform(),
                   "Desktop session: " + os.environ.get("XDG_SESSION_TYPE", "unknown"),
-                  "Log file: " + str(self.log_path), "Worker: " + str(self.identity),
+                  "Log file: " + str(self.log_path), "Application log: " + str(self.application_log),
+                  "Worker: " + str(self.identity),
                   "Latest status: " + str(self.status), "Final receipt: " + str(self.final), "", "--- Log start ---"]
         text = "\n".join(header) + "\n" + beginning.decode("utf-8", errors="replace")
         if ending:
             text += "\n--- Recent log output ---\n" + ending.decode("utf-8", errors="replace")
+        if application:
+            text += "\n--- Application errors ---\n" + application
         return text
 
     def start(self, command, log_path, env=None):
@@ -92,7 +130,7 @@ class Session:
         self.reader_done.clear()
         self.log_path = Path(log_path)
         self.log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = os.open(str(self.log_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(str(self.log_path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600)
         log = os.fdopen(fd, "wb")
         try:
             self.child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
