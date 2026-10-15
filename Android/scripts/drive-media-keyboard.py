@@ -134,6 +134,28 @@ def collect_initial_evidence(identity, helper, collector, spec):
     helper.record_metadata(collector, spec, "initial-record")
 
 
+def focused_own_window(data):
+    """Read the top-focused display from a bounded full WindowManager dump."""
+    require(len(data) <= 131072, "window focus dump exceeds bound")
+    text = data.decode("utf-8", errors="strict")
+    top = re.findall(r"(?m)^\s*mTopFocusedDisplayId=(\d+)\s*$", text)
+    require(len(top) == 1, "unique top-focused display unavailable")
+    current = None
+    focused = {}
+    for line in text.splitlines():
+        display = re.match(r"\s*Display: mDisplayId=(\d+)(?:\s|$)", line)
+        if display:
+            current = display[1]
+        focus = re.match(r"\s*mCurrentFocus=(.*)$", line)
+        if focus:
+            require(current is not None and current not in focused, "ambiguous display focus")
+            focused[current] = focus[1]
+    value = focused.get(top[0], "")
+    require(re.fullmatch(r"Window\{[0-9a-f]+ u\d+ org\.lighttouch\.android/(?:org\.lighttouch\.android\.)?\.?MainActivity\}", value) is not None,
+            "top-focused display is not own MainActivity")
+    return {"topFocusedDisplayId": int(top[0]), "window": value}
+
+
 def tap_script(pid, start, cutoff, x, y, folder):
     # Values come only from validated integer identities/rectangles and the
     # closed media-folder pattern. Android input stays at shell UID; metadata
@@ -188,10 +210,10 @@ def run(args):
         trace = c.read(label + "-trace", "tail -c 65536 " + shlex.quote("files/" + b["mediaFolder"] + "/observations.jsonl"))[0]
         s = latest_sample(trace); clock = c.clock(label + "-clock")
         fence.sample(s, clock)
-        focus = c.read(label + "-focus", "dumpsys window windows | grep 'mCurrentFocus=' | head -c 4097", app=False)[0]
-        require(len(focus) <= 4096 and len(focus.splitlines()) == 1 and
-                re.search(rb"\borg\.lighttouch\.android/(?:org\.lighttouch\.android\.)?\.?MainActivity\b", focus),
-                "focused window is not own MainActivity")
+        # SDK36 omits display focus from `window windows`; full output also
+        # includes inactive virtual displays, whose null focus is not current.
+        focus = c.read(label + "-focus", "dumpsys window | head -c 131073", app=False)[0]
+        helper.write_json(out / (label + "-focused-window.json"), focused_own_window(focus))
         png = c.read(label + "-android", "screencap -p | head -c 8388609", app=False)[0]
         actual_anchors = image_regions(png, b)
         helper.write_json(out / (label + "-roi.json"), {"actualRgbSha256": actual_anchors,
