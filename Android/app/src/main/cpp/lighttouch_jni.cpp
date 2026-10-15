@@ -793,8 +793,8 @@ JNI(debugSelectGraphicsProvider) jstring JNICALL Java_org_lighttouch_android_Nat
     if(runtime || starting)return string(env,"Graphics provider selection requires a fresh unused worker");
     if(graphics_provider_fixed)return string(env,!graphics_provider_failure.empty()?graphics_provider_failure:
         unsigned(choice)==graphics_provider_choice?"":"Graphics provider is fixed; use a fresh worker to change it");
-#ifndef __x86_64__
-    if(choice==1)return string(env,"The packaged ANGLE experiment is available only for x86-64");
+#if !defined(__x86_64__) && !defined(__aarch64__)
+    if(choice==1)return string(env,"The packaged ANGLE experiment requires ARM64 or x86-64");
 #endif
     graphics_provider_choice=unsigned(choice);graphics_provider_fixed=true;
     if(choice==1) {

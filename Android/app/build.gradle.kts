@@ -145,31 +145,41 @@ tasks.register("recordApkRuntimeArtifacts") {
 
 // The optional provider is staged only in debug APKs, never linked directly or
 // included in release. Its selection remains a closed worker-only debug enum.
-val angleLibraries = providers.gradleProperty("angleLibraries")
-val angleManifest = providers.gradleProperty("angleManifest")
-val angleNotices = providers.gradleProperty("angleNotices")
-val angleManifestSha = providers.gradleProperty("angleManifestSha256")
-val angleNoticesSha = providers.gradleProperty("angleNoticesSha256")
+// Legacy names continue to select x86; ARM64 has independent mandatory pins.
+val angleInputs = mapOf(
+    "x86_64" to listOf("angleLibraries", "angleManifest", "angleNotices", "angleManifestSha256", "angleNoticesSha256"),
+    "arm64-v8a" to listOf("angleArm64Libraries", "angleArm64Manifest", "angleArm64Notices", "angleArm64ManifestSha256", "angleArm64NoticesSha256")
+).mapValues { (_, names) -> names.map { providers.gradleProperty(it) } }
 val angleStage = layout.buildDirectory.dir("generated/angleRuntime")
 val prepareAngleRuntime = tasks.register<Exec>("prepareAngleRuntime") {
-    val selected = listOf(angleLibraries, angleManifest, angleNotices, angleManifestSha, angleNoticesSha)
-    require(selected.all { it.isPresent } || selected.none { it.isPresent }) {
-        "Supply angleLibraries, angleManifest, angleNotices and their two manifest SHA256 pins together"
+    val packagedAbis = providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",")
+    angleInputs.forEach { (abi, properties) ->
+        require(properties.all { it.isPresent } || properties.none { it.isPresent }) {
+            "Supply all five ANGLE runtime/closure/notice inputs and pins for $abi"
+        }
+    }
+    val selected = angleInputs.filterValues { properties -> properties.all { it.isPresent } }
+    require(selected.keys.all { it in packagedAbis }) { "ANGLE provider ABI must be packaged in targetAbis" }
+    if ("arm64-v8a" in selected) {
+        require((android.defaultConfig.minSdk ?: 0) >= 29) { "The fixed ARM64 ANGLE provider requires minSdk >= 29" }
     }
     inputs.file(rootProject.file("scripts/stage-angle-runtime.py"))
-    inputs.property("angleEnabled", angleLibraries.isPresent)
-    if (angleLibraries.isPresent) {
-        require("x86_64" in providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(","))
-        inputs.dir(angleLibraries.map { file(it) }); inputs.file(angleManifest.map { file(it) }); inputs.dir(angleNotices.map { file(it) })
-        inputs.property("angleManifestSha", angleManifestSha); inputs.property("angleNoticesSha", angleNoticesSha)
+    inputs.property("angleABIs", selected.keys.sorted())
+    selected.forEach { (abi, properties) ->
+        inputs.dir(properties[0].map { file(it) })
+        inputs.file(properties[1].map { file(it) })
+        inputs.dir(properties[2].map { file(it) })
+        inputs.property("angleManifestSha-$abi", properties[3])
+        inputs.property("angleNoticesSha-$abi", properties[4])
     }
     outputs.dir(angleStage)
     doFirst {
         val arguments = mutableListOf("python3", rootProject.file("scripts/stage-angle-runtime.py").absolutePath, angleStage.get().asFile.absolutePath)
-        if (angleLibraries.isPresent) {
-            arguments += listOf("--libraries", angleLibraries.get(), "--manifest", angleManifest.get(), "--notices", angleNotices.get(),
-                "--manifest-sha256", angleManifestSha.get(), "--notices-sha256", angleNoticesSha.get(),
-                "--readelf", androidComponents.sdkComponents.ndkDirectory.get().file("toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf").asFile.absolutePath)
+        selected.forEach { (abi, properties) ->
+            arguments += listOf("--bundle", abi) + properties.map { it.get() }
+        }
+        if (selected.isNotEmpty()) {
+            arguments += listOf("--readelf", androidComponents.sdkComponents.ndkDirectory.get().file("toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf").asFile.absolutePath)
         }
         commandLine(arguments)
     }
