@@ -191,3 +191,16 @@ No free-running/block caller is enabled; bypassing interrupt/debug/timer exits
 would be incorrect. No alternate iOS, board CP15/GLES, Android, AArch64,
 interrupt/lifecycle, cache/invalidation or speed qualification follows.
 The fresh 8 MiB JIT per invocation is still a correctness scaffold.
+
+The follow-up actually executed at QEMU `c6a943c63a` with this harness source
+`4632ba2c`: all35 complete integer/CPSR states matched OFF/ON/stock across four
+fresh-process suites. Exactly23 actual Dynarmic execution witnesses occurred
+only on ON (4historical,8integer,8flags/branches,3loads). All four stock
+witness-required negatives passed their state assertions and correctly failed
+only missing alternate execution; all12 QEMU sessions exited0/retired. Real
+TCG permission/translation/alignment/prefetch faults and byte/writeback/SP/
+Thumb fallbacks remained equal. The larger capsule has no enabled block caller;
+no iOS/Android/AArch64/interrupt/lifecycle/cache or speed result is established.
+Exact source/binary/library hashes and raw private evidence are retained in the
+integration receipt; these real synthetic observations do not advertise a
+production backend improvement.
