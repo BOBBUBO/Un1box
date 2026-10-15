@@ -1,6 +1,7 @@
 """One owned SDL frontend per session. Never loads or reinitializes QEMU in the GUI."""
 from collections import deque
 import os
+import platform
 from pathlib import Path
 import queue
 import re
@@ -53,6 +54,28 @@ class Session:
     @property
     def active(self):
         return self.child is not None and (self.child.poll() is None or not self.reader_done.is_set())
+
+    def diagnostic_report(self):
+        if not self.log_path:
+            raise RuntimeError("Start iOS once before copying its diagnostic log.")
+        # Retain driver initialization and recent failure output without loading
+        # a potentially 64MiB trace into the UI thread or clipboard.
+        with self.log_path.open("rb") as stream:
+            beginning = stream.read(65536)
+            size = stream.seek(0, os.SEEK_END)
+            if size > len(beginning):
+                stream.seek(max(len(beginning), size - 65536))
+                ending = stream.read(65536)
+            else:
+                ending = b""
+        header = ["LightTouch Linux diagnostic log", "Host: " + platform.platform(),
+                  "Desktop session: " + os.environ.get("XDG_SESSION_TYPE", "unknown"),
+                  "Log file: " + str(self.log_path), "Worker: " + str(self.identity),
+                  "Latest status: " + str(self.status), "Final receipt: " + str(self.final), "", "--- Log start ---"]
+        text = "\n".join(header) + "\n" + beginning.decode("utf-8", errors="replace")
+        if ending:
+            text += "\n--- Recent log output ---\n" + ending.decode("utf-8", errors="replace")
+        return text
 
     def start(self, command, log_path, env=None):
         if self.active:

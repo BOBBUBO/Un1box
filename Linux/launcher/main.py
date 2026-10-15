@@ -198,6 +198,7 @@ class Launcher:
         self.button(config, "Export settings…", self.export_profile).pack(side="left", padx=8)
         self.button(advanced, "Save device settings", self.save).pack(anchor="w")
         ttk.Label(diagnostics, textvariable=self.stats, justify="left", wraplength=610).pack(anchor="w", pady=(0, 12))
+        ttk.Button(diagnostics, text="Copy diagnostic log", command=self.copy_diagnostics).pack(anchor="w", pady=(0, 10))
         self.log = tk.Text(diagnostics, height=8, bg=PALETTE["white"], fg=PALETTE["ink"], relief="flat",
                            font=("DejaVu Sans Mono", 9), wrap="word", state="disabled")
         self.log.pack(fill="both", expand=True)
@@ -457,6 +458,16 @@ class Launcher:
             return
         self.apps = AppsWindow(self.window, lambda: self.bridge, self.store.directory / "app-downloads",
                                lambda: self.session.active and self.job == "guest" and not self.session.stopping)
+
+    def copy_diagnostics(self):
+        try:
+            report = self.session.diagnostic_report()
+            self.window.clipboard_clear()
+            self.window.clipboard_append(report)
+            self.message.set("Diagnostic log copied. It includes graphics startup and recent guest output.")
+            self.detail.set("Log file: " + str(self.session.log_path))
+        except (OSError, RuntimeError) as error:
+            self.error(error)
 
     def stop(self):
         try:
