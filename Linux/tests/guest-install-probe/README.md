@@ -127,3 +127,15 @@ downloaded, and no target/phone/AVD/fixture operation performed. Runtime UIKit
 behavior, guest signature acceptance, actual install, visible icon, launch,
 touch and clean shutdown remain unqualified. The built app is explicitly
 `BUILT_SIGNED_UNQUALIFIED_IPA` until actual target evidence establishes them.
+
+The next runtime handoff is [ACCEPTANCE.md](ACCEPTANCE.md): it covers the actual
+desktop chooser, private service bridge, measured icon/launch/tap proof and strict
+clean stop. `install_acceptance.py` prints a plan by default; only the exclusive
+session owner may execute its bounded service diagnostic. It cannot qualify
+pixels or the desktop chooser. Its synthetic guards can be checked without any
+guest, daemon or native device library:
+
+```sh
+python3 -m unittest discover -s Linux/tests/guest-install-probe \
+  -p test_install_acceptance.py -v
+```
