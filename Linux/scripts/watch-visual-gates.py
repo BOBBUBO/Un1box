@@ -22,7 +22,7 @@ SCENES = {
 # Native portrait n72 status-bar time only. Wi-Fi, battery, all application
 # pixels and the complete dock remain protected. This never identifies Home;
 # the caller must already have inspected the original full image as Home.
-HOME_CLOCK_BOX = (130, 1, 190, 19)
+HOME_CLOCK_BOX = (129, 1, 190, 19)
 # Explicit operator assertion of a blank focused n72 editor is required.
 # Only RGB in this exact insertion-caret rectangle may vary during its fade.
 EDITOR_CARET_BOX = (32, 104, 35, 126)
@@ -95,7 +95,7 @@ def image_continuity(original, current, scene, blank_focused_editor=False):
                     abs(height) != 480 or planes != 1 or bits != 32 or compression != 0):
                 return result
             heights.append(height)
-        if original[:54] != current[:54]:
+        if original[:54] != current[:54] or original[57::4] != current[57::4]:
             return result
         x1, y1, x2, y2 = HOME_CLOCK_BOX
         def protected(data, height):

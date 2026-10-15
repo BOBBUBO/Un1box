@@ -38,16 +38,16 @@ def changed_pixel(data, x, y, channel=0):
 class HomeClockImages(unittest.TestCase):
     def test_only_declared_clock_region_can_differ(self):
         old = n72_bitmap()
-        for x, y in ((130, 1), (145, 4), (189, 18)):
+        for x, y in ((129, 1), (130, 1), (145, 4), (189, 18)):
             result = module.image_continuity(old, changed_pixel(old, x, y), 'Home Screen')
             self.assertTrue(result['matched'])
             self.assertFalse(result['full_BMP_identical'])
             self.assertTrue(result['no_new_scene_asserted'])
-            self.assertEqual(result['excluded_clock_box'], [130, 1, 190, 19])
+            self.assertEqual(result['excluded_clock_box'], [129, 1, 190, 19])
 
     def test_clock_boundary_grid_dock_battery_wifi_and_alpha_changes_reject(self):
         old = n72_bitmap()
-        for x, y in ((129, 1), (190, 1), (130, 0), (130, 19), (30, 40),
+        for x, y in ((128, 5), (129, 19), (190, 1), (130, 0), (130, 19), (30, 40),
                      (150, 240), (50, 420), (306, 9), (48, 8)):
             for channel in range(4):
                 self.assertFalse(module.image_continuity(old, changed_pixel(old, x, y, channel),

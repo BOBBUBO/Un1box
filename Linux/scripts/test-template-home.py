@@ -66,7 +66,7 @@ class ActualReferences(unittest.TestCase):
         self.assertTrue(self.check(home=pixel(self.refs['home'], 145, 4)))
 
     def test_nonclock_icon_dock_wifi_battery_alpha_and_black_rejected(self):
-        for x, y in ((48, 8), (306, 9), (45, 60), (150, 240), (40, 420), (129, 4), (190, 4)):
+        for x, y in ((48, 8), (306, 9), (45, 60), (150, 240), (40, 420), (128, 4), (190, 4)):
             self.assertFalse(self.check(home=pixel(self.refs['home'], x, y)), (x, y))
         self.assertFalse(self.check(home=pixel(self.refs['home'], 145, 4, 3)))
         self.assertFalse(self.check(home=self.refs['home'][:54] + bytes(320 * 480 * 4)))
