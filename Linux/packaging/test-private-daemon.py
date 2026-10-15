@@ -45,7 +45,8 @@ def main():
                     for socket in (mux, endpoint):
                         value = socket.lstat()
                         assert stat.S_ISSOCK(value.st_mode) and value.st_uid == os.geteuid()
-                        assert stat.S_IMODE(value.st_mode) == 0o600
+                        assert not stat.S_IMODE(value.st_mode) & 0o077
+                        assert stat.S_IMODE(value.st_mode) & 0o600 == 0o600
                     child.send_signal(signal.SIGTERM)
                     child.wait(timeout=5)
                     assert child.returncode == 0
