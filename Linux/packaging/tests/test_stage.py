@@ -1,0 +1,38 @@
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+spec = importlib.util.spec_from_file_location("stage", Path(__file__).resolve().parents[1] / "stage-appimage.py")
+stage = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(stage)
+
+
+class PrivacyTests(unittest.TestCase):
+    def test_private_assets_and_escape_paths_rejected(self):
+        for value in ("../guest.itpack", "/usr/lib/file", "usr/../secret", "usr/nand/chunk", "usr/lib/nor.bin", "usr/assets/firmware.ipsw", "usr/lib/guest.itpack", "usr/lib/libc.so.6", "usr/lib/libEGL.so.1"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                stage.target(value)
+        self.assertEqual(str(stage.target("usr/lib/lighttouch/libqemu-arm.so")), "usr/lib/lighttouch/libqemu-arm.so")
+
+    def test_failed_manifest_cannot_create_package_or_copy_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.write_text("synthetic")
+            manifest = dict(schema=1, architecture="x86_64", glibc_max="2.31", python_stdlib="python3.9", files=[dict(source=str(source), destination="usr/bin/lighttouch-linux", sha256=hashlib.sha256(source.read_bytes()).hexdigest(), license="test-only")])
+            path = root / "manifest.json"
+            path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "must include"):
+                stage.stage(path, root / "AppDir")
+            self.assertFalse((root / "AppDir").exists())
+            manifest["files"][0]["sha256"] = "0" * 64
+            path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                stage.read_manifest(path)
+
+
+if __name__ == "__main__":
+    unittest.main()
