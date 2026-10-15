@@ -54,7 +54,7 @@ class Session:
     def active(self):
         return self.child is not None and (self.child.poll() is None or not self.reader_done.is_set())
 
-    def start(self, command, log_path):
+    def start(self, command, log_path, env=None):
         if self.active:
             raise RuntimeError("A guest is already active. Stop it before starting another.")
         self.queue = queue.Queue(maxsize=256)
@@ -73,7 +73,7 @@ class Session:
         log = os.fdopen(fd, "wb")
         try:
             self.child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                          stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+                                          stderr=subprocess.STDOUT, start_new_session=True, close_fds=True, env=env)
         except Exception:
             log.close()
             self.reader_done.set()
