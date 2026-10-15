@@ -47,6 +47,14 @@ class GuestUnlockTest {
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue("Explicit unlock diagnosis required", arguments.getString("exerciseGuestUnlock") == "true")
         assumeTrue("Root must have inspected the n72 Lock layout", arguments.getString("observedN72LockLayout") == "true")
+        val expectedApk = requireNotNull(arguments.getString("expectedMainApkSha256")).also {
+            require(it.matches(Regex("[0-9a-f]{64}"))) { "Exact main APK SHA256 required" }
+        }
+        val pid = requireNotNull(arguments.getString("expectedWorkerPid")?.toIntOrNull()).also { require(it > 0) }
+        val ticks = requireNotNull(arguments.getString("expectedWorkerStartTicks")).also { require((it.toLongOrNull() ?: 0) > 0) }
+        val boot = requireNotNull(arguments.getString("expectedBootId")).also {
+            require(it.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")))
+        }
         val context = instrumentation.targetContext
         val evidence = File(context.filesDir, "unlock-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
         val result = JSONObject().put("hostExerciseCompleted", false).put("guestAcceptancePassed", false)
@@ -54,6 +62,8 @@ class GuestUnlockTest {
             .put("observedN72LockLayoutOptIn", true).put("automaticScreenClassification", false)
             .put("hostDeadlineClock", "elapsedRealtime (BOOTTIME)").put("motionEventClock", "uptimeMillis (MONOTONIC)")
             .put("guestVirtualDwellMeasured", false)
+            .put("expectedMainApkSha256", expectedApk).put("expectedWorkerPid", pid)
+            .put("expectedWorkerStartTicks", ticks).put("expectedBootId", boot)
         val timeline = JSONArray()
         val events = JSONArray()
         @Suppress("DEPRECATION")
@@ -70,17 +80,28 @@ class GuestUnlockTest {
             File(evidence, "timeline.json").writeText(timeline.toString(2))
             File(evidence, "motion-events.json").writeText(events.toString(2))
         }
+        fun processIdentity() {
+            assertNotEquals(Process.myPid(), pid)
+            assertEquals("Android boot changed", boot, File("/proc/sys/kernel/random/boot_id").readText().trim())
+            val fields = File("/proc/$pid/stat").readText().substringAfterLast(')').trim().split(Regex("\\s+"))
+            assertEquals("Worker PID reused", ticks, fields[19])
+            assertFalse("Worker retired", fields[0] in listOf("Z", "X"))
+            val uid = File("/proc/$pid/status").useLines { rows -> rows.first { it.startsWith("Uid:") } }
+                .substringAfter(':').trim().split(Regex("\\s+"))[0].toInt()
+            assertEquals("Worker UID changed", Process.myUid(), uid)
+        }
         try {
             val installed = acceptanceSha256(File(context.applicationInfo.sourceDir))
             result.put("installedMainApkSha256", installed)
-            assertEquals("This isolated runner controls the sealed candidate19 main APK",
-                "9235077fd3f34b4b59f483417115a3d310ce11fbf12d8c367efc3354ff8d7271", installed)
+            assertEquals("Installed main APK identity", expectedApk, installed)
+            processIdentity()
             ExistingWorker(context).use { binding ->
                 val worker = binding.get()
+                processIdentity()
                 val initial = worker.status()
                 assertTrue("Existing guest required; no Start/recovery is performed", initial.getBoolean("sessionStarted"))
                 assertTrue("Existing running/paused guest required", initial.getString("state") in listOf("running", "paused"))
-                val pid = initial.getInt("pid")
+                assertEquals("Existing worker binding", pid, initial.getInt("pid"))
                 assertEquals(Process.myUid(), initial.getInt("uid")); assertTrue(pid > 0); assertNotEquals(Process.myPid(), pid)
                 val baselineFrames = requireNotNull(initial.getBundle("observations")).getLong("producedFrames")
                 result.put("initialWorker", encode(initial)).put("workerPid", pid).put("appUid", Process.myUid())
@@ -88,6 +109,7 @@ class GuestUnlockTest {
                 persist()
                 ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                     fun status(label: String): Bundle {
+                        processIdentity()
                         val state = worker.status()
                         timeline.put(JSONObject().put("label", label).put("hostElapsedMs", SystemClock.elapsedRealtime()).put("status", encode(state)))
                         assertEquals("Worker replaced", pid, state.getInt("pid")); assertEquals(Process.myUid(), state.getInt("uid"))
@@ -104,6 +126,7 @@ class GuestUnlockTest {
                         assertEquals("Activity must remain resumed through captures", Lifecycle.State.RESUMED, scenario.state)
                         val state = snapshot ?: status(label)
                         val target = File(context.filesDir, "screenshots/${evidence.name}/$label.png")
+                        processIdentity()
                         val error = worker.screenshot(target.absolutePath)
                         timeline.put(JSONObject().put("capture", target.absolutePath).put("label", label)
                             .put("hostElapsedMs", SystemClock.elapsedRealtime()).put("captureError", error)
@@ -134,6 +157,7 @@ class GuestUnlockTest {
                     var downTime = 0L
                     var upAttempted = false
                     fun send(action: Int, x: Float, state: Bundle) {
+                        processIdentity()
                         onActivity { activity ->
                             val display = requireNotNull(findDisplay(activity.window.decorView)) { "Production GuestDisplay missing" }
                             check(display.holder.surface.isValid && display.hasWindowFocus()) { "Guest Surface/focus unavailable" }
@@ -165,6 +189,7 @@ class GuestUnlockTest {
                         var before = status("bound-existing")
                         if (before.getString("state") == "paused") {
                             require(arguments.getString("resumeExisting") == "true") { "Paused worker requires explicit resumeExisting" }
+                            processIdentity()
                             worker.pause(false)
                             before = status("resume-requested")
                         }
@@ -180,6 +205,7 @@ class GuestUnlockTest {
                             val pulse = JSONObject().put("label", "power-wake").put("requestedHostHoldMs", 500)
                                 .put("downHostElapsedMs", SystemClock.elapsedRealtime())
                             timeline.put(pulse)
+                            processIdentity()
                             try { worker.button(1, true); pulse.put("downReturnedHostElapsedMs", SystemClock.elapsedRealtime()); Thread.sleep(500) }
                             finally { worker.button(1, false); pulse.put("upHostElapsedMs", SystemClock.elapsedRealtime()) }
                             val deadline = SystemClock.elapsedRealtime() + 15_000
@@ -246,7 +272,7 @@ class GuestUnlockTest {
                             try { upAttempted = true; send(MotionEvent.ACTION_UP, .85f, status("release-after-failure")) }
                             catch (failure: Throwable) { result.put("upReleaseFailure", failure.toString()) }
                         }
-                        try { worker.cancelInput(); wire?.drain(events.length() - 1); result.put("cleanupWorker", encode(worker.status())) }
+                        try { processIdentity(); worker.cancelInput(); wire?.drain(events.length() - 1); result.put("cleanupWorker", encode(worker.status())) }
                         catch (failure: Exception) { result.put("cancelFailure", failure.toString()) }
                         persist()
                     }
