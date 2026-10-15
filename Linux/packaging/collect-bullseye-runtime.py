@@ -128,7 +128,7 @@ def collect(args):
             subprocess.run(['git', '-C', str(source), 'archive', '--format=tar.gz', 'HEAD'], stdout=stream, check=True)
         add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, name + ' corresponding source')
         source_index[name] = revision
-    for directory in (args.engine.parent.parent / 'deps', args.engine.parent.parent / 'crypto'):
+    for directory in args.dependency:
         manifest = directory / 'dependency-manifest.json'
         if manifest.exists():
             value = json.loads(manifest.read_text())
@@ -156,6 +156,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--frontend', type=Path, required=True)
     parser.add_argument('--engine', type=Path, required=True)
+    parser.add_argument('--dependency', type=Path, action='append', default=[])
     collect(parser.parse_args())
 
 
