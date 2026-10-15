@@ -8,6 +8,7 @@ tree. This script has its own fixed 25-second observation bound and QMP quit.
 """
 import argparse
 import json
+import os
 import pathlib
 import socket
 import struct
@@ -77,6 +78,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('qemu', type=pathlib.Path)
     parser.add_argument('output', type=pathlib.Path)
+    parser.add_argument('--require-dynarmic-probe', action='store_true',
+                        help='Require actual engine bridge witnesses; never valid for stock QEMU')
     args = parser.parse_args()
     root = args.output.resolve()
     root.mkdir(exist_ok=False)
@@ -85,7 +88,7 @@ def main():
     if len(str(gdb_path)) >= 100:
         raise RuntimeError('Use an isolated output path shorter than 90 characters')
     argv = [str(args.qemu.resolve()), '-M', 'none', '-cpu',
-            'arm1176,has_el3=off', '-m', '16M', '-accel', 'tcg,tb-size=8',
+            'arm1176,has_el3=off', '-m', '16M', '-accel', 'tcg,thread=single,tb-size=8',
             '-nodefaults', '-display', 'none', '-serial', 'none', '-monitor', 'none',
             '-S', '-qmp', f'unix:{qmp_path},server=on,wait=off',
             '-gdb', f'unix:{gdb_path},server=on,wait=off']
@@ -117,7 +120,11 @@ def main():
 
     with (root / 'engine.log').open('wb') as log:
         try:
-            process = subprocess.Popen(argv, stdout=log, stderr=log)
+            environment = os.environ.copy()
+            environment.pop('LT_DYNARMIC_PROBE', None)
+            if args.require_dynarmic_probe:
+                environment['LT_DYNARMIC_PROBE'] = '1'
+            process = subprocess.Popen(argv, stdout=log, stderr=log, env=environment)
             result['pid'] = process.pid
             while not qmp_path.exists() or not gdb_path.exists():
                 if process.poll() is not None:
@@ -159,6 +166,19 @@ def main():
             for _ in range(6):
                 gdb.step()
             record('mmu-enabled-bootstrap', gdb.state(), {'r15': 0x1018, 'mode': 0x13})
+            # Two exact whitelisted instructions for the real engine bridge.
+            # Control runs use ordinary TCG and must produce identical states.
+            gdb.write(0x1300, struct.pack('<3I', 0xe3a0002a, 0xe2800001, 0xeafffffe))
+            gdb.set(25, 0x10)
+            gdb.set(0, 19)
+            gdb.set(15, 0x1300)
+            gdb.step()
+            record('el0-mov-integer-bridge', gdb.state(),
+                   {'r0': 42, 'r15': 0x1304, 'mode': 0x10})
+            gdb.step()
+            record('el0-add-integer-bridge', gdb.state(),
+                   {'r0': 43, 'r15': 0x1308, 'mode': 0x10})
+            gdb.set(25, 0xd3)
             # Reusable LDR with sentinel destination and following instruction.
             gdb.write(0x1200, struct.pack('<3I', 0xe5910000, 0xe3a02077, 0xeafffffe))
             for name, address, expected_pc, expected_mode in [
@@ -208,6 +228,16 @@ def main():
                     result['quit_error'] = str(error)
             if process:
                 result['exit_code'] = process.poll()
+            if result['status'] == 'REFERENCE_OBSERVED' and args.require_dynarmic_probe:
+                witnesses = [
+                    'LT_DYNARMIC_PROBE executed=1 pc=0x00001300 opcode=0xe3a0002a r0=42',
+                    'LT_DYNARMIC_PROBE executed=2 pc=0x00001304 opcode=0xe2800001 r0=43',
+                ]
+                actual_log = (root / 'engine.log').read_text(errors='replace')
+                result['dynarmic_witnesses'] = {line: line in actual_log for line in witnesses}
+                if not all(result['dynarmic_witnesses'].values()):
+                    result['status'] = 'FAILED'
+                    result['error'] = 'Missing actual in-engine Dynarmic execution witnesses'
             # The external owner guard retires any remaining owned process;
             # absence of a normal exit is always a failed result here.
             if process and process.poll() is None:
