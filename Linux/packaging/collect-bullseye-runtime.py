@@ -178,6 +178,7 @@ def collect(args):
                     subprocess.run(['git', '-C', str(daemon), 'archive', '--format=tar.gz', value['daemon_revision']], stdout=stream, check=True)
                 add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, 'QEMU usbmuxd corresponding source')
                 add(daemon / 'COPYING', 'usr/share/licenses/LightTouch/usbmuxd/COPYING', 'QEMU usbmuxd license')
+                add(app / 'Linux/packaging/patches/usbmuxd-linux-standard-headers.patch', 'usr/share/licenses/LightTouch/usbmuxd/linux-standard-headers.patch', 'Applied QEMU usbmuxd build compatibility patch')
     sealing_notices = args.engine.parent.parent / 'sealing-notices'
     if sealing_notices.exists():
         expected = json.loads((sealing_notices / 'INPUT-SHA256.json').read_text())

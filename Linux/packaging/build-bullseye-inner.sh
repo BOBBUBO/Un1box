@@ -52,8 +52,8 @@ cmake -S "$A/Linux" -B "$B/frontend" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_FLAGS=-DSDL_PIXELFORMAT_BGRX32=SDL_PIXELFORMAT_RGB888
 cmake --build "$B/frontend" --parallel 2
 ctest --test-dir "$B/frontend" --output-on-failure
-python3 "$A/Linux/packaging/build-mobile-deps.py" "$B/mobile-v2"
+python3 "$A/Linux/packaging/build-mobile-deps.py" "$B/mobile-v3"
 python3 "$A/Linux/packaging/collect-bullseye-runtime.py" --output "$B/runtime" \
     --frontend "$B/frontend/lighttouch-linux" --engine "$B/engine-cxx17-full/libqemu-arm.so" \
-    --dependency "$B/deps-full" --dependency "$B/crypto" --dependency "$B/mobile-v2"
+    --dependency "$B/deps-full" --dependency "$B/crypto" --dependency "$B/mobile-v3"
 printf '\nLIGHTTOUCH_BULLSEYE_BUILD_COMPLETE\n'
