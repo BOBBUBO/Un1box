@@ -22,6 +22,24 @@ def inspect(name):
     return json.loads(subprocess.check_output(['docker', 'inspect', name], text=True, timeout=5))[0]
 
 
+def alternate_objects(common):
+    """Retain readonly object closure of shared clones, including nested alternates."""
+    found = set()
+    pending = [common / 'objects']
+    while pending:
+        objects = pending.pop().resolve(strict=True)
+        if objects in found:
+            continue
+        found.add(objects)
+        alternates = objects / 'info/alternates'
+        if alternates.is_file():
+            for line in alternates.read_text().splitlines():
+                if line:
+                    path = Path(line)
+                    pending.append(path if path.is_absolute() else objects / path)
+    return found
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, required=True)
@@ -41,6 +59,10 @@ def main():
     assert os.statvfs(output).f_bavail * os.statvfs(output).f_frsize >= 4 * 1024**3
     common = Path(subprocess.check_output(['git', '-C', str(qemu), 'rev-parse', '--path-format=absolute', '--git-common-dir'], text=True).strip())
     app_common = Path(subprocess.check_output(['git', '-C', str(app), 'rev-parse', '--path-format=absolute', '--git-common-dir'], text=True).strip())
+    extra_mounts = []
+    for path in sorted(alternate_objects(common) | alternate_objects(app_common)):
+        if not path.is_relative_to(common) and not path.is_relative_to(app_common):
+            extra_mounts += ['--mount', 'type=bind,src=%s,dst=%s,readonly' % (path, path)]
     inner = ['bash', '/src/app/Linux/packaging/build-bullseye-inner.sh']
     image = IMAGE
     if args.collect_only_image:
@@ -57,7 +79,7 @@ def main():
                '--mount', 'type=bind,src=%s,dst=%s,readonly' % (common, common),
                '--mount', 'type=bind,src=%s,dst=%s,readonly' % (app_common, app_common),
                '--mount', 'type=bind,src=%s,dst=/build' % output,
-               '-e', 'LIGHTTOUCH_QEMU_SOURCE=' + str(qemu), '-e', 'LIGHTTOUCH_APP_SOURCE=/src/app', image] + inner
+               '-e', 'LIGHTTOUCH_QEMU_SOURCE=' + str(qemu), '-e', 'LIGHTTOUCH_APP_SOURCE=/src/app'] + extra_mounts + [image] + inner
     subprocess.run(command, check=True, stdout=subprocess.PIPE)
     info = inspect(args.name)
     assert info['HostConfig']['Memory'] == 4 * 1024**3
