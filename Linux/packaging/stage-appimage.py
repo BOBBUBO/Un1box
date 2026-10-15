@@ -129,7 +129,7 @@ def stage(manifest_path, output):
             raise ValueError("Copied payload checksum mismatch")
     launcher = output / "usr/share/lighttouch/launcher"
     launcher.mkdir(parents=True, exist_ok=True)
-    for name in ("main.py", "model.py", "session.py"):
+    for name in ("main.py", "model.py", "session.py", "preparation.py"):
         shutil.copyfile(ROOT.parent / "launcher" / name, launcher / name)
     services = output / "usr/share/lighttouch/app_services"
     services.mkdir(parents=True, exist_ok=True)
