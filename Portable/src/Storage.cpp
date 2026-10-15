@@ -295,7 +295,17 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
 struct Stage {
     fs::path path, destination;
     bool published = false;
-    explicit Stage(const char *dest) {
+    bool bulk_sync = false;
+    explicit Stage(const char *dest, bool archive = false) {
+#if defined(__linux__) && !defined(__ANDROID__) && defined(SYS_syncfs)
+        // An archive may contain over 100,000 tiny NAND files. Flush the
+        // unpublished transaction once rather than serializing every file's
+        // write behind a separate storage barrier. Android retains its existing
+        // per-file policy; syncfs can be restricted by its sandbox.
+        bulk_sync = archive;
+#else
+        (void)archive;
+#endif
         require(dest && fs::path(dest).is_absolute(), "destination must be absolute");
         destination = fs::path(dest).lexically_normal();
         require(!fs::exists(fs::symlink_status(destination)), "destination already exists");
@@ -334,13 +344,44 @@ struct Stage {
         for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) {
             if (observation)
                 observation->checkpoint();
-            sync_dir(*it);
+            if (!bulk_sync)
+                sync_dir(*it);
             io(chmod(it->c_str(), 0500) == 0, "make base directory immutable");
         }
-        sync_dir(path);
+        if (!bulk_sync)
+            sync_dir(path);
         io(chmod(path.c_str(), 0500) == 0, "make base immutable");
         if (observation)
             observation->checkpoint();
+#if defined(__linux__) && !defined(__ANDROID__) && defined(SYS_syncfs)
+        if (bulk_sync) {
+            Fd stage_fd(open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+            io(stage_fd.n >= 0, "open unpublished import for sync");
+            // All staged data, directory entries and final permissions must be
+            // durable BEFORE rename publishes the complete base. This flushes
+            // the containing filesystem, so unrelated dirty writes can add time.
+            if (syscall(SYS_syncfs, stage_fd.n) != 0) {
+                const int failure = errno;
+                if (failure != ENOSYS && failure != EPERM && failure != EINVAL)
+                    io(false, "sync imported filesystem");
+                // Unsupported/restricted filesystem: retain the old durability
+                // guarantee by opening and flushing each completed file.
+                for (const auto &entry : fs::recursive_directory_iterator(path)) {
+                    if (observation)
+                        observation->checkpoint();
+                    if (entry.is_regular_file()) {
+                        auto file = open_read(entry.path());
+                        io(fsync(file.n) == 0, "sync extracted file fallback");
+                    }
+                }
+                for (auto it = dirs.rbegin(); it != dirs.rend(); ++it)
+                    sync_dir(*it);
+                sync_dir(path);
+            }
+            if (observation)
+                observation->checkpoint();
+        }
+#endif
 #ifdef SYS_renameat2
         io(syscall(SYS_renameat2, AT_FDCWD, path.c_str(), AT_FDCWD, destination.c_str(), RENAME_NOREPLACE) == 0,
            "publish base");
@@ -526,7 +567,7 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
             for (size_t p = name.find('/'); p != std::string::npos; p = name.find('/', p + 1))
                 lt::require(!names.count(name.substr(0, p)), "file/directory conflict");
         }
-        lt::Stage stage(c->destination);
+        lt::Stage stage(c->destination, true);
         observation.begin("extracting", total);
         z_stream z{};
         lt::require(inflateInit(&z) == Z_OK, "inflate initialization failed", LT_IO);
@@ -543,7 +584,8 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         auto finish_target = [&] {
             if (target) {
                 lt::io(ftruncate(target->n, off_t(target_size)) == 0, "size sparse archive entry");
-                lt::io(fsync(target->n) == 0, "sync extracted file");
+                if (!stage.bulk_sync)
+                    lt::io(fsync(target->n) == 0, "sync extracted file");
                 target.reset();
             }
         };
