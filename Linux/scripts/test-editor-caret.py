@@ -12,6 +12,7 @@ import unittest
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--original', type=Path, required=True)
 parser.add_argument('--current', type=Path, required=True)
+parser.add_argument('--series', type=Path, help='Actual A03 continuity directory;23caret-only positives plus clock24negative')
 args, rest = parser.parse_known_args()
 spec = importlib.util.spec_from_file_location('gates', Path(__file__).with_name('watch-visual-gates.py'))
 gates = importlib.util.module_from_spec(spec)
@@ -36,15 +37,16 @@ class EditorCaretTests(unittest.TestCase):
     def check_pair(self, old, new, **kwargs):
         return gates.image_continuity(old, new, SCENE, **kwargs)
 
-    def test_actual_pair_passes_only_the_two_vetted_templates(self):
+    def test_actual_pair_has_explicit_66pixel_RGB_tolerance(self):
         for old, new in [(ORIGINAL, CURRENT), (CURRENT, ORIGINAL)]:
             result = self.check_pair(old, new, blank_focused_editor=True)
             self.assertTrue(result['matched'])
             self.assertFalse(result['full_BMP_identical'])
-            self.assertEqual(result['policy'], 'n72-blank-editor-caret-templates-v1')
+            self.assertEqual(result['policy'], 'n72-explicit-blank-editor-caret-RGB-v2')
             self.assertEqual(result['protected_original_sha256'], result['protected_current_sha256'])
-            self.assertIn(result['caret_original_sha256'], gates.EDITOR_CARET_TEMPLATES)
-            self.assertIn(result['caret_current_sha256'], gates.EDITOR_CARET_TEMPLATES)
+            self.assertEqual(result['tolerated_RGB_pixels'],66)
+            self.assertTrue(result['no_caret_shape_or_color_recognition'])
+            self.assertTrue(result['all_alpha_protected'])
 
     def test_same_full_image_keeps_original_behavior(self):
         self.assertTrue(self.check_pair(ORIGINAL, ORIGINAL)['full_BMP_identical'])
@@ -57,11 +59,13 @@ class EditorCaretTests(unittest.TestCase):
         for scene in ['Notes written marker', 'Notes saved marker', 'Home Screen']:
             self.assertFalse(gates.image_continuity(ORIGINAL, CURRENT, scene, True)['matched'])
 
-    def test_unknown_current_caret_or_tiny_glyph_rejected(self):
-        self.assertFalse(self.check_pair(ORIGINAL, mutate(CURRENT, 33, 110), blank_focused_editor=True)['matched'])
+    def test_RGB_inside_exact_ROI_is_explicitly_tolerated_not_recognized(self):
+        for c in range(3):
+            self.assertTrue(self.check_pair(ORIGINAL, mutate(CURRENT,33,110,c),blank_focused_editor=True)['matched'])
 
-    def test_unknown_original_caret_rejected(self):
-        self.assertFalse(self.check_pair(mutate(ORIGINAL, 33, 110), CURRENT, blank_focused_editor=True)['matched'])
+    def test_tolerance_is_symmetric_and_RGB_only(self):
+        self.assertTrue(self.check_pair(mutate(ORIGINAL,33,110),CURRENT,blank_focused_editor=True)['matched'])
+        self.assertFalse(self.check_pair(mutate(ORIGINAL,33,110,3),CURRENT,blank_focused_editor=True)['matched'])
 
     def test_every_boundary_and_other_body_pixel_protected(self):
         for x, y in [(31, 110), (35, 110), (33, 103), (33, 126), (40, 110), (80, 180)]:
@@ -100,6 +104,18 @@ class EditorCaretTests(unittest.TestCase):
     def test_cropped_black_and_partial_images_rejected(self):
         for data in [CURRENT[:-4], bytes(len(CURRENT)), CURRENT[:54] + bytes(len(CURRENT) - 54)]:
             self.assertFalse(self.check_pair(ORIGINAL, data, blank_focused_editor=True)['matched'])
+
+    def test_actual_A03_continuum_and_clock_rejection(self):
+        if args.series is None:self.skipTest('actual A03 series not supplied')
+        paths=sorted(args.series.glob('attempt-*/native.bmp'))
+        self.assertEqual(len(paths),24)
+        for i,path in enumerate(paths,1):
+            result=self.check_pair(ORIGINAL,path.read_bytes(),blank_focused_editor=True)
+            self.assertEqual(result['matched'],i<24,path.parent.name)
+
+    def test_equal_invalid_blank_BMP_still_requires_shape_validation(self):
+        for data in (b'bad',ORIGINAL[:-1]):
+            self.assertFalse(self.check_pair(data,data,blank_focused_editor=True)['matched'])
 
     def test_inputs_unchanged(self):
         self.assertEqual(hashlib.sha256(args.original.read_bytes()).hexdigest(), ORIGINAL_HASH)
