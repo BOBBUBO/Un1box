@@ -84,7 +84,7 @@ def collect(args):
         if library.exists():
             system(library, 'usr/lib/' + soname)
     for prefix in custom_prefixes:
-        if prefix.parent.name == 'mobile':
+        if (prefix / 'bin/usbmuxd-qemu').is_file():
             system(prefix / 'bin/usbmuxd-qemu', 'usr/bin/usbmuxd-qemu')
             for library in sorted((prefix / 'lib').glob('*.so*')):
                 if library.is_file():

@@ -46,7 +46,7 @@ def main():
     env = dict(os.environ, PKG_CONFIG_PATH=str(prefix / 'lib/pkgconfig'),
                CFLAGS='-O2 -fPIC', LDFLAGS='-Wl,-rpath,' + str(prefix / 'lib'),
                LD_LIBRARY_PATH=str(prefix / 'lib'), NOCONFIGURE='1')
-    recipe = dict(schema=1, packages=packages, daemon_revision=DAEMON,
+    recipe = dict(schema=1, packages=packages, daemon_revision=DAEMON, daemon_forced_headers=['stdbool.h', 'time.h'],
                   recipe_sha256=sha(__file__),
                   patch_sha256=sha(APP / 'build-support/patches/libimobiledevice-sslv3-ios1.patch'),
                   compiler=subprocess.check_output(['cc', '--version'], text=True).splitlines()[0])
@@ -72,6 +72,9 @@ def main():
             run([tree / 'configure'] + options, tree)
         run(['make', '-j2'], tree)
         run(['make', 'install'], tree)
+    # Upstream's macOS build obtains these declarations transitively. Force the
+    # standard declarations for GCC10 without editing the pinned daemon source.
+    env['CFLAGS'] += ' -include stdbool.h -include time.h'
     daemon = output / 'usbmuxd-source'
     if not daemon.exists():
         run(['git', 'clone', 'https://github.com/samhenrigold/usbmuxd.git', daemon], output)
