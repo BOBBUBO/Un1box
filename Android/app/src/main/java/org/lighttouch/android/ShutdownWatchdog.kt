@@ -72,9 +72,13 @@ internal class ShutdownWatchdog(
     private enum class Call(val phase: String) {
         STOP("shutdown-admission"), CANCEL("contact-cancellation"), STATUS("terminal-poll"), RECEIPT("terminal-receipt")
     }
-    private fun publish(change: (ShutdownDebugProgress, Long) -> ShutdownDebugProgress) {
-        val at = now()
-        debugProgress.updateAndGet { old -> change(old, at).copy(revision = old.revision + 1, updatedAtMs = at) }
+    private inline fun publish(crossinline change: (ShutdownDebugProgress, Long) -> ShutdownDebugProgress) {
+        // Observability must not prevent native admission or deadline disposal.
+        try {
+            val at = now()
+            debugProgress.updateAndGet { old -> change(old, at).copy(revision = old.revision + 1, updatedAtMs = at) }
+        } catch (_: Exception) { /* The prior immutable snapshot remains available, possibly stale. */ }
+        catch (_: OutOfMemoryError) { /* No allocation-dependent diagnostic may hold up disposal. */ }
     }
     private fun setProgress(value: ShutdownProgress) {
         progress.set(value)

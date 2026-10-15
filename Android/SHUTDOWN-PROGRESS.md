@@ -10,10 +10,13 @@ The snapshot identifies the worker and uses Android
 absent `lastReturnedNativeStatus` mean **unknown**, not zero work or a successful
 native poll. `snapshotAgeMs` and the cached native result's `ageMs` identify old
 information. They are not host-PC time or guest virtual time.
+Diagnostic publication is best effort: an allocation or diagnostic-clock failure
+may leave an older snapshot, and cannot prevent native admission or disposal.
 
 Each callback has `entered`, `returned`, and `threw` counters and its last
 entry/return timestamp. `returned` counts normal Java callback returns;
-`threw` counts caught exceptions. Neither establishes engine acknowledgement.
+`threw` counts caught exceptions. Counters describe recorded callbacks and may
+be incomplete if diagnostic publication fails. Neither establishes engine acknowledgement.
 A cancel callback returns no cancellation result. The four phases distinguish
 `shutdown-admission`, `contact-cancellation`, `terminal-poll`, and
 `terminal-receipt`. A blocked second status call can therefore coexist with a
