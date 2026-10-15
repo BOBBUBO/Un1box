@@ -23,12 +23,22 @@ Important actual boundaries are:
 - `check_halt_on_memory_access` and execute-denial callbacks provide useful
   hooks; precise architectural abort state must be demonstrated separately.
 
-`dynarmic-contract-probe.cpp` prepares ten actual JIT cases at ARMv6K: CPS/RFE/SRS
+`dynarmic-contract-probe.cpp` prepares eleven actual JIT cases at ARMv6K: CPS/RFE/SRS
 fallback, attempted SVC-to-IRQ mode change, CP15 read/write callbacks, SVC,
-MMIO, data-fault halt and execute denial. Expected unsupported behavior is
+MMIO, generic-halt negative control, explicit MemoryAbort and execute denial. Expected unsupported behavior is
 deliberately reported rather than emulated by a fake interpreter. A successful
 probe means the documented boundaries were observed, not that privileged
 instructions or an iOS guest work.
+
+The first actual Linux/x86-64 run compiled successfully and observed the first
+eight boundaries. It then failed its data-fault assumption: generic
+`HaltExecution()` sets `UserDefined1` and lets the block finish. Source inspection
+identified the specific `HaltReason::MemoryAbort` check. The original failure is
+retained; it is a probe API mistake, not a demonstrated library defect. A second
+finite probe is prepared with the original generic halt as a negative control
+and the specific memory-abort path checked for preserved destination register,
+fault PC and suppressed following instruction. That follow-up is unexecuted at
+this checkpoint.
 
 Example build against an externally supplied Dynarmic installation:
 

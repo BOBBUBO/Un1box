@@ -21,6 +21,7 @@ struct Environment final : UserCallbacks {
     unsigned fallback = 0, svc = 0, faults = 0, mmio = 0, noexecute = 0;
     unsigned last_fallback_count = 0;
     bool deny_code = false;
+    bool memory_abort = false;
     void Halt() { jit->HaltExecution(); }
     std::optional<std::uint32_t> MemoryReadCode(VAddr a) override {
         if (deny_code || a >= ram.size()) return std::nullopt;
@@ -28,7 +29,11 @@ struct Environment final : UserCallbacks {
     }
     std::uint64_t Read(std::uint32_t a, unsigned width) {
         if (a == 0x1000 && width == 4) { ++mmio; return 42; }
-        if (a >= ram.size() || width > ram.size() - a) { ++faults; Halt(); return 0; }
+        if (a >= ram.size() || width > ram.size() - a) {
+            ++faults;
+            jit->HaltExecution(memory_abort ? HaltReason::MemoryAbort : HaltReason::UserDefined1);
+            return 0;
+        }
         std::uint64_t v = 0;
         for (unsigned i = 0; i < width; ++i) v |= std::uint64_t(ram[a+i]) << (8*i);
         return v;
@@ -92,9 +97,10 @@ static void Probe(const std::string& name, std::uint32_t opcode) {
     Jit jit{cfg}; env.jit = &jit;
     jit.SetCpsr(0x13);
     jit.Regs()[0] = name == "msr-control" ? 0x12 : 0x13;
-    jit.Regs()[1] = name == "data-fault" ? 0xdead0000 : 0x1000;
+    jit.Regs()[1] = name == "data-fault" || name == "generic-halt-fault" ? 0xdead0000 : 0x1000;
+    env.memory_abort = name == "data-fault";
     if (name == "noexecute") env.deny_code = true;
-    if (name == "data-fault") jit.Run(); else jit.Step();
+    const auto halt = name == "data-fault" || name == "generic-halt-fault" ? jit.Run() : jit.Step();
     bool contract = false;
     if (name == "cps" || name == "rfe" || name == "srs") contract = env.fallback == 1 && env.last_fallback_count == 1;
     if (name == "msr-control") contract = (jit.Cpsr() & 31) == 0x13;
@@ -102,10 +108,11 @@ static void Probe(const std::string& name, std::uint32_t opcode) {
     if (name == "cp15-write") contract = cp->writes == 1 && cp->control == 0x13;
     if (name == "svc") contract = env.svc == 1;
     if (name == "mmio-read") contract = env.mmio == 1 && jit.Regs()[0] == 42;
-    if (name == "data-fault") contract = env.faults == 1 && jit.Regs()[2] == 0;
+    if (name == "generic-halt-fault") contract = env.faults == 1 && jit.Regs()[2] == 0x77;
+    if (name == "data-fault") contract = env.faults == 1 && jit.Regs()[2] == 0 && jit.Regs()[0] == 0x13 && jit.Regs()[15] == 0 && Has(halt,HaltReason::MemoryAbort);
     if (name == "noexecute") contract = env.noexecute == 1;
-    std::printf("{\"case\":\"%s\",\"contract_observed\":%s,\"r0\":%u,\"r2\":%u,\"cpsr\":%u,\"fallback\":%u,\"faults\":%u,\"noexecute\":%u,\"mmio\":%u,\"cp15_reads\":%u,\"cp15_writes\":%u}\n",
-                name.c_str(),contract?"true":"false",jit.Regs()[0],jit.Regs()[2],jit.Cpsr(),env.fallback,env.faults,env.noexecute,env.mmio,cp->reads,cp->writes);
+    std::printf("{\"case\":\"%s\",\"contract_observed\":%s,\"r0\":%u,\"r2\":%u,\"pc\":%u,\"cpsr\":%u,\"halt_reason\":%u,\"fallback\":%u,\"faults\":%u,\"noexecute\":%u,\"mmio\":%u,\"svc\":%u,\"cp15_reads\":%u,\"cp15_writes\":%u}\n",
+                name.c_str(),contract?"true":"false",jit.Regs()[0],jit.Regs()[2],jit.Regs()[15],jit.Cpsr(),static_cast<unsigned>(halt),env.fallback,env.faults,env.noexecute,env.mmio,env.svc,cp->reads,cp->writes);
     Require(contract,name);
 }
 
@@ -119,6 +126,7 @@ int main() {
         Probe("cp15-write", 0xee010f10); // mcr p15,0,r0,c1,c0,0
         Probe("svc", 0xef000001);
         Probe("mmio-read", 0xe5910000); // ldr r0,[r1]
+        Probe("generic-halt-fault", 0xe5910000); // Negative control: generic halt is not an abort.
         Probe("data-fault", 0xe5910000);
         Probe("noexecute", 0xe1a00000);
     } catch (const std::exception& e) {
