@@ -81,6 +81,12 @@ lt_status lt_library_adopt_legacy(lt_library *, const lt_library_import_config *
                                   lt_record_info *, lt_error *);
 lt_status lt_import_archive(const lt_import_config *, lt_error *);
 lt_status lt_import_directory(const lt_import_config *, lt_error *);
+/* Additive phase observer; existing config/callback ABI remains unchanged.
+ * phase is hashing, extracting, or verifying; done/total refer to that phase.
+ * A nonzero return cancels before publication and removes staging. */
+typedef int (*lt_import_phase_fn)(void *, const char *phase, uint64_t done, uint64_t total);
+lt_status lt_import_archive_observed(const lt_import_config *, lt_import_phase_fn, void *, lt_error *);
+lt_status lt_import_directory_observed(const lt_import_config *, lt_import_phase_fn, void *, lt_error *);
 lt_status lt_sha256_file(const char *path, char hex[65], lt_error *);
 /* Device handle holds an exclusive flock lease until close. Base must be separate
  * from state. State is pinned to base lock checksum. Dirty state is never erased:

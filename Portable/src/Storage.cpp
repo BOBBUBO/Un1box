@@ -73,6 +73,27 @@ struct AdmissionProgress {
         checkpoint();
     }
 };
+struct ImportObservation {
+    lt_import_phase_fn callback = nullptr;
+    void *opaque = nullptr;
+    const char *phase = "hashing";
+    uint64_t done = 0, total = 0;
+    void checkpoint() const {
+        require(!callback || callback(opaque, phase, done, total) == 0, "import cancelled", LT_CANCELLED);
+    }
+    void begin(const char *name, uint64_t bytes = 0) {
+        phase = name;
+        done = 0;
+        total = bytes;
+        checkpoint();
+    }
+    static int notify(void *opaque, uint64_t done, uint64_t total) {
+        auto &self = *static_cast<ImportObservation *>(opaque);
+        self.done = done;
+        self.total = total;
+        return self.callback ? self.callback(self.opaque, self.phase, done, total) : 0;
+    }
+};
 static std::string digest_fd(int fd, AdmissionProgress *progress = nullptr, uint64_t planned_bytes = 0) {
     Sha256 hash;
     std::array<char, 65536> b{};
@@ -296,21 +317,30 @@ struct Stage {
             fs::remove_all(path, ec);
         }
     }
-    void finish() {
-        validate_base(path);
+    void finish(ImportObservation *observation = nullptr) {
+        AdmissionProgress verify{ImportObservation::notify, observation};
+        if (observation)
+            observation->begin("verifying");
+        validate_base(path, observation ? &verify : nullptr);
         std::vector<fs::path> dirs;
         for (const auto &e : fs::recursive_directory_iterator(path)) {
+            if (observation)
+                observation->checkpoint();
             if (e.is_directory())
                 dirs.push_back(e.path());
             else
                 io(chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
         }
         for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) {
+            if (observation)
+                observation->checkpoint();
             sync_dir(*it);
             io(chmod(it->c_str(), 0500) == 0, "make base directory immutable");
         }
         sync_dir(path);
         io(chmod(path.c_str(), 0500) == 0, "make base immutable");
+        if (observation)
+            observation->checkpoint();
 #ifdef SYS_renameat2
         io(syscall(SYS_renameat2, AT_FDCWD, path.c_str(), AT_FDCWD, destination.c_str(), RENAME_NOREPLACE) == 0,
            "publish base");
@@ -322,6 +352,12 @@ struct Stage {
         sync_dir(destination.parent_path());
     }
 };
+static void sparse_write(int fd, const uint8_t *bytes, size_t size) {
+    if (std::all_of(bytes, bytes + size, [](uint8_t value) { return value == 0; }))
+        io(lseek(fd, off_t(size), SEEK_CUR) >= 0, "seek zero archive span");
+    else
+        write_all(fd, bytes, size);
+}
 static uint64_t limit(const lt_import_config *c) {
     return c->max_bytes ? std::min<uint64_t>(c->max_bytes, 64ull << 30) : 64ull << 30;
 }
@@ -447,12 +483,21 @@ lt_status lt_sha256_file(const char *p, char h[65], lt_error *e) {
     });
 }
 lt_status lt_import_archive(const lt_import_config *c, lt_error *e) {
+    return lt_import_archive_observed(c, nullptr, nullptr, e);
+}
+lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_fn observer, void *opaque, lt_error *e) {
     return lt::guard(e, [&] {
         lt::abi(c);
         lt::require(c->source && c->expected_sha256 && strlen(c->expected_sha256) == 64,
                     "archive requires expected SHA256");
         auto input = lt::open_read(c->source);
-        lt::require(lt::digest_fd(input.n) == c->expected_sha256, "archive SHA256 mismatch");
+        struct stat source_stat {};
+        lt::io(fstat(input.n, &source_stat) == 0 && source_stat.st_size >= 0, "stat archive");
+        lt::ImportObservation observation{observer, opaque};
+        observation.begin("hashing", uint64_t(source_stat.st_size));
+        lt::AdmissionProgress hashing{lt::ImportObservation::notify, &observation};
+        hashing.total = uint64_t(source_stat.st_size);
+        lt::require(lt::digest_fd(input.n, &hashing, hashing.total) == c->expected_sha256, "archive SHA256 mismatch");
         lt::io(lseek(input.n, 0, SEEK_SET) == 0, "rewind archive");
         uint8_t h[12];
         lt::read_all(input.n, h, sizeof h);
@@ -482,6 +527,7 @@ lt_status lt_import_archive(const lt_import_config *c, lt_error *e) {
                 lt::require(!names.count(name.substr(0, p)), "file/directory conflict");
         }
         lt::Stage stage(c->destination);
+        observation.begin("extracting", total);
         z_stream z{};
         lt::require(inflateInit(&z) == Z_OK, "inflate initialization failed", LT_IO);
         struct Z {
@@ -492,21 +538,26 @@ lt_status lt_import_archive(const lt_import_config *c, lt_error *e) {
         int status = Z_OK;
         uint64_t written = 0;
         size_t next = 0;
-        uint64_t remaining = 0;
+        uint64_t remaining = 0, target_size = 0;
         std::unique_ptr<lt::Fd> target;
+        auto finish_target = [&] {
+            if (target) {
+                lt::io(ftruncate(target->n, off_t(target_size)) == 0, "size sparse archive entry");
+                lt::io(fsync(target->n) == 0, "sync extracted file");
+                target.reset();
+            }
+        };
         auto advance = [&] {
             while (remaining == 0 && next < entries.array.size()) {
-                if (target) {
-                    lt::io(fsync(target->n) == 0, "sync extracted file");
-                    target.reset();
-                }
+                observation.checkpoint();
+                finish_target();
                 const auto &entry = entries.array[next++];
                 auto path = stage.path / entry.at("name").string();
                 lt::fs::create_directories(path.parent_path());
                 target = std::make_unique<lt::Fd>(
                     open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
                 lt::io(target->n >= 0, "create archive entry");
-                remaining = entry.at("size").integer();
+                remaining = target_size = entry.at("size").integer();
             }
             return remaining > 0;
         };
@@ -527,35 +578,41 @@ lt_status lt_import_archive(const lt_import_config *c, lt_error *e) {
             while (offset < count) {
                 lt::require(advance(), "payload exceeds index");
                 size_t take = size_t(std::min<uint64_t>(remaining, count - offset));
-                lt::write_all(target->n, out.data() + offset, take);
+                lt::sparse_write(target->n, out.data() + offset, take);
                 remaining -= take;
                 offset += take;
                 written += take;
             }
             lt::progress(c, written, total);
+            observation.done = written;
+            observation.checkpoint();
         }
         lt::require(z.avail_in == 0, "trailing archive payload");
         char extra;
         lt::require(read(input.n, &extra, 1) == 0, "trailing archive bytes");
         lt::require(!advance() && written == total, "payload shorter than index");
-        if (target)
-            lt::io(fsync(target->n) == 0, "sync final entry");
-        target.reset();
+        finish_target();
         lt::progress(c, total, total);
-        stage.finish();
+        stage.finish(&observation);
     });
 }
 lt_status lt_import_directory(const lt_import_config *c, lt_error *e) {
+    return lt_import_directory_observed(c, nullptr, nullptr, e);
+}
+lt_status lt_import_directory_observed(const lt_import_config *c, lt_import_phase_fn observer, void *opaque, lt_error *e) {
     return lt::guard(e, [&] {
         lt::abi(c);
         lt::require(c->source && lt::fs::path(c->source).is_absolute(), "source must be absolute");
         lt::require(!lt::fs::is_symlink(lt::fs::symlink_status(c->source)), "source symlink refused");
         auto source = lt::fs::canonical(c->source);
         lt::Stage stage(c->destination);
+        lt::ImportObservation observation{observer, opaque};
+        observation.begin("extracting");
         lt::require(!lt::contained(source, stage.path), "import destination inside source");
         uint64_t total = 0, written = 0;
         std::vector<lt::fs::path> files;
         for (const auto &entry : lt::fs::recursive_directory_iterator(source)) {
+            observation.checkpoint();
             lt::require(!entry.is_symlink(), "symlink source refused");
             if (entry.is_directory())
                 continue;
@@ -565,6 +622,8 @@ lt_status lt_import_directory(const lt_import_config *c, lt_error *e) {
             total += n;
             files.push_back(entry.path());
         }
+        observation.total = total;
+        observation.checkpoint();
         for (const auto &file : files) {
             auto relative = file.lexically_relative(source);
             lt::safe_name(relative.generic_string());
@@ -573,8 +632,10 @@ lt_status lt_import_directory(const lt_import_config *c, lt_error *e) {
             lt::copy_file(file, dest);
             written += lt::fs::file_size(file);
             lt::progress(c, written, total);
+            observation.done = written;
+            observation.checkpoint();
         }
-        stage.finish();
+        stage.finish(&observation);
     });
 }
 lt_status lt_device_open(const lt_device_config *c, lt_device **out, lt_error *e) {
