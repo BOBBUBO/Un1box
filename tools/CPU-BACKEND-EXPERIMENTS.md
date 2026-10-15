@@ -299,3 +299,56 @@ is a correctness scaffold and has no measured speed benefit. Before applying a
 hybrid engine to iOS, measure representative actual EL0 hot-code coverage and
 qualify Thumb/stores/CP15/device/interrupt boundaries and ARM64 deployment.
 All real iOS boards and production Android builds still use TCG.
+
+
+## Research03 corrected runtime and research04 throughput preparation
+
+Root executed the corrected four-process plan once against the unchanged
+QEMU12c2c7bc6e binary. Its scoped result passed: nine complete OFF/ON/stock
+block states matched; corrected async pause/resume/code-change contracts
+validated14083 real Run witnesses with exact stopped state. Every owned
+process retired normally. Original failed attempt01 remains FAILED. This is
+synthetic x86/Linux correctness, not an iOS/ARM64 or speed result.
+
+Research04 is SOURCE ONLY. The independent `LT_DYNARMIC_THROUGHPUT=1` switch
+requires the existing explicit block switch and MachineNone eligibility. It
+retains the original two-through-eight instruction/MMU/context/debug/exit
+boundaries, but checks instruction structure rather than interpreting ALU
+results in C. Only existing r0-r12 immediate ALU/CMP/terminal branches are
+admitted; loads stay on the prior correctness path. Unwritten registers,
+protected CPSR bits, terminal PC possibilities, exact tick budget and absence
+of data callbacks are checked before commit. Correctness mode still checks
+full expected state. The external oracle must check exact changed values.
+Per-block logging is replaced with one segment aggregate containing actual
+committed instruction/block counts, cold/warm totals and boundary timestamps.
+The throughput diagnostic cap is1048576 blocks, then TCG. No default changes.
+
+New UNRUN `arm1176-dynarmic-throughput.py` proposes a finite four-instruction
+countdown loop with1 or65536 iterations, SVC and privileged ARMv6 CP15 WFI.
+It checks all16registers/fullCPSR against a closed-form terminal oracle. The
+ON summary must prove exactly4*N alternate instructions, one cold block and
+N-1 warm hits with terminal PC/flags/countdown values. Same-binary OFF and a
+stock witness-negative must produce identical full terminal state; missing
+execution evidence cannot masquerade as a qualified alternate path.
+
+No observer pause/input occurs while the finite workload runs. The observer
+records complete process and vCPU-thread CPU ticks/identity and uses a sleeping
+vCPU only as a completion hint, then verifies actual terminal state. A stall
+fails the exact state gate. Wall observation has1ms polling/at least5ms wait;
+it is not precise guest completion latency. Linux CPU ticks may be too coarse
+for a short cold run; report raw ticks and resolution, never divide zeros into
+a speed ratio. Aggregate first/cold-end/last clocks bracket actual preparation,
+allocation/translation and host-loop work, not pure JIT costs. Cold1 and warm65536
+fresh-process samples distinguish setup from repeated complete execution; even
+a favorable isolated x86 result would not predict iOS performance.
+
+Go/no-go path: measure complete candidate CPU cost against same-built TCG;
+attribute any loss to MMU/snapshot/dispatcher boundaries before extending scope.
+If safe boundary work dominates, stop this hybrid direction. If a material
+benefit is plausible, measure unchanged real-iOS privileged/EL0 and ARM/Thumb
+hot-code share before spending on missing instructions. Then qualify live data
+MMU, faults, SMC/context invalidation, actual device IRQ/timer/debug and board
+PL0 CP15/GLES handoffs. Run equivalent differential contracts on ARM64 Linux,
+then Android app-UID JIT/cache/lifecycle and4/16KiB hosts, before an isolated
+real-guest A/B. No useful coverage or end-to-end gain means no production option.
+This source does not add a modern phone CPU engine or claim a speedup.
