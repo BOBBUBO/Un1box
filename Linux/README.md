@@ -1,3 +1,27 @@
+The graphical device launcher can select a prepared base, matching guest tools
+and board boot assets, keep separate writable state, and start the SDL frontend:
+
+```sh
+/usr/bin/python3 Linux/launcher/main.py \
+  --frontend /path/to/lighttouch-linux \
+  --engine /path/to/libqemu-arm.so
+```
+
+It requires Python 3.9+ with Tk 8.6. Profiles and logs live under the private XDG
+data directory; already read-only bases can be referenced in place. Each Start
+creates a fresh native session, and Stop waits for the actual shutdown receipt.
+The monitor reports emulator-process CPU/PSS and host CPU/RAM; guest OS CPU/RAM
+is unavailable. See [launcher setup](launcher/README.md) for asset and recovery
+details.
+
+AppImage packaging is in progress. The current native binaries require glibc
+2.38; a glibc 2.31 compatibility target requires rebuilt binaries and dependencies,
+followed by actual package and guest tests. No broadly compatible AppImage has
+been qualified yet. See [packaging](packaging/README.md) for the audited staging
+format. Firmware and guest assets remain external to the application bundle.
+Persistent cross-session TCG translation reuse is separate work and is not yet
+implemented or qualified in the delivered engine.
+
 The SDL frontend runs a fresh native worker for each session and consumes the
 Portable C ABI. It does not assemble machine arguments or duplicate firmware logic.
 Control/status use a private Unix socket; frames use a readonly shared memfd and PCM
