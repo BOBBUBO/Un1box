@@ -61,3 +61,10 @@ occupied Binder thread pool may prevent a response even though the accessor
 itself takes no admission lock. Do not infer a native stage from a missing
 sample, start a replacement worker, or repeat Stop to obtain different evidence.
 This collector has not been executed on a target merely by compiling it.
+
+The existing fresh-worker `debugArmQmp()` opt-in also enables the engine's
+bounded shutdown-decision trace (`IT_SHUTDOWN_DIAG=1`). Ordinary starts explicitly
+set it to `0`; there is no new provider, shutdown route or deadline. Matching
+engine support is required. Engine trace timestamps use host monotonic time,
+while these Java snapshots use BOOTTIME; do not subtract them without paired
+clock calibration, especially across device suspend.

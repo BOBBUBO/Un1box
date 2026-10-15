@@ -353,6 +353,11 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
         if(setenv("LIGHTTOUCH_GLES_PROVIDER",graphics_provider_name(),1)!=0) {
             starting=false;diagnostic="Cannot select the fixed guest graphics provider";return string(env,diagnostic);
         }
+        // Reuse the existing explicit fresh-worker debug arm. Ordinary starts
+        // overwrite inherited values so shutdown decision tracing stays off.
+        if(setenv("IT_SHUTDOWN_DIAG",qmp_requested?"1":"0",1)!=0) {
+            starting=false;diagnostic="Cannot configure shutdown diagnostics";return string(env,diagnostic);
+        }
     }
     // Integrity admission can hash many gigabytes. It must not hold the frame,
     // status, input or lifecycle mutex while the library performs that work.
