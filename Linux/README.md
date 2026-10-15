@@ -159,13 +159,27 @@ can legitimately skip the captured sequence.
 
 The inspected Home/editor recorder retries current captures at most2Hz within
 its original12s operation and129/179s scene deadlines. Every caret phase and
-transient-copy rejection is retained; admission requires full BMP equality to
-the actual inspected image, fresh coherent copy/diagnostics and current owner.
+transient-copy rejection is retained; Notes admission requires full BMP equality
+to the actual inspected image, fresh coherent copy/diagnostics and current owner.
+For an already inspected native320x480 Home image, the recorder permits changes
+only inside the status-clock rectangle `(130,1)-(190,19)` (end exclusive).
+Every other BGRA pixel and the complete BMP header must match exactly. The
+receipt records the excluded rectangle, both protected-byte hashes and the
+truthful full-image equality result. Unknown shapes and changed icons, dock,
+Wi-Fi or battery reject; this comparison never identifies a new scene.
 It never masks the caret, refreshes the honest inspection time or classifies a
 new scene. The earlier Lock/source-freshness and direct legacy gates are unchanged.
 Sealed frontend3a738/native sourceb690 includes this proof; its ten sanitized
 host CTests passed. Prior sealed binaries and failed run09 receipts do not gain
 the new proof retroactively, and no new guest behavior is inferred from host tests.
+
+The CPU control minute pair initially described as partial Home was misread
+from previews. Direct native RGB comparison found identical icon grid and dock,
+with408 changed color components confined to clock bounds `(145,4)-(161,15)`.
+The earlier C15 pair likewise differed only in the clock. Preserve their failed
+whole-image gates; neither a renderer regression nor a causal repair by the
+outgoing-attachment fix follows from those pairs. The narrow Home-clock policy
+is prospective and does not create a past gate or completed minute workload.
 
 The optional fixed `--saved-marker` watchdog profile uses Home129 then a
 truthfully named saved-marker179 gate for a separately authorized read worker.

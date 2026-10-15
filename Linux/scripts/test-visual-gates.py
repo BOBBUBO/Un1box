@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tempfile
 import time
@@ -15,6 +16,65 @@ import unittest
 spec = importlib.util.spec_from_file_location('visual_gates', Path(__file__).with_name('watch-visual-gates.py'))
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+
+
+def n72_bitmap():
+    """Host-only BMP fixture; no scene content or guest acceptance assertion."""
+    data = bytearray(54 + 320 * 480 * 4)
+    data[:2] = b'BM'
+    struct.pack_into('<I', data, 2, len(data))
+    struct.pack_into('<I', data, 10, 54)
+    struct.pack_into('<IiiHHII', data, 14, 40, 320, -480, 1, 32, 0, 320 * 480 * 4)
+    data[54:] = bytes(range(256)) * (320 * 480 * 4 // 256)
+    return bytes(data)
+
+
+def changed_pixel(data, x, y, channel=0):
+    result = bytearray(data)
+    result[54 + (y * 320 + x) * 4 + channel] ^= 1
+    return bytes(result)
+
+
+class HomeClockImages(unittest.TestCase):
+    def test_only_declared_clock_region_can_differ(self):
+        old = n72_bitmap()
+        for x, y in ((130, 1), (145, 4), (189, 18)):
+            result = module.image_continuity(old, changed_pixel(old, x, y), 'Home Screen')
+            self.assertTrue(result['matched'])
+            self.assertFalse(result['full_BMP_identical'])
+            self.assertTrue(result['no_new_scene_asserted'])
+            self.assertEqual(result['excluded_clock_box'], [130, 1, 190, 19])
+
+    def test_clock_boundary_grid_dock_battery_wifi_and_alpha_changes_reject(self):
+        old = n72_bitmap()
+        for x, y in ((129, 1), (190, 1), (130, 0), (130, 19), (30, 40),
+                     (150, 240), (50, 420), (306, 9), (48, 8)):
+            for channel in range(4):
+                self.assertFalse(module.image_continuity(old, changed_pixel(old, x, y, channel),
+                                                        'Home Screen')['matched'], (x, y, channel))
+
+    def test_black_or_partial_icon_grid_rejects(self):
+        old = n72_bitmap()
+        black = bytearray(old)
+        black[54 + 20 * 320 * 4:54 + 385 * 320 * 4] = bytes(365 * 320 * 4)
+        self.assertFalse(module.image_continuity(old, bytes(black), 'Home Screen')['matched'])
+        partial = changed_pixel(old, 45, 60)
+        self.assertFalse(module.image_continuity(old, partial, 'Home Screen')['matched'])
+
+    def test_editor_and_other_scenes_keep_full_image_equality(self):
+        old = n72_bitmap()
+        for scene in ('Notes focused new editor', 'Notes written marker', 'Notes saved marker', 'Lock Screen'):
+            self.assertFalse(module.image_continuity(old, changed_pixel(old, 145, 4), scene)['matched'])
+
+    def test_shape_format_header_truncation_and_trailing_bytes_reject(self):
+        old = n72_bitmap()
+        for current in (old[:-1], old + b'x', b'unknown image'):
+            self.assertFalse(module.image_continuity(old, current, 'Home Screen')['matched'])
+        for offset, fmt, value in ((18, '<i', 321), (22, '<i', -479), (28, '<H', 24),
+                                    (30, '<I', 1), (10, '<I', 55), (38, '<I', 1)):
+            current = bytearray(changed_pixel(old, 145, 4))
+            struct.pack_into(fmt, current, offset, value)
+            self.assertFalse(module.image_continuity(old, bytes(current), 'Home Screen')['matched'])
 
 
 class Gates(unittest.TestCase):
@@ -147,11 +207,11 @@ class ContinuityGates(unittest.TestCase):
                          inspected_monotonic_ns=110_000_000_000, window=42, viewport=[480, 800],
                          continuity=self.proof)
         self.before = copy.deepcopy(self.gate)
-        self.current_bytes = b'full native BMP host fixture, not a guest'
+        self.original_bytes = self.current_bytes = b'full native BMP host fixture, not a guest'
 
     def check(self, now=180_000_000_000):
         return module.valid_continuity_gate(
-            self.gate, self.original, self.current, b'full native BMP host fixture, not a guest',
+            self.gate, self.original, self.current, self.original_bytes,
             self.current_bytes, self.identity, 'Home Screen', 130_000_000_000, now)
 
     def test_true_inspection_ten_seconds_after_original_capture_has_current_proof(self):
@@ -166,6 +226,30 @@ class ContinuityGates(unittest.TestCase):
     def test_changed_clock_or_any_byte_rejects(self):
         self.current_bytes += b'one clock pixel changed'
         self.assertFalse(self.check())
+
+    def test_home_clock_exception_requires_explicit_recomputed_proof(self):
+        self.original_bytes = n72_bitmap()
+        self.current_bytes = changed_pixel(self.original_bytes, 145, 4)
+        self.assertFalse(self.check())
+        self.proof['image_comparison'] = module.image_continuity(self.original_bytes, self.current_bytes,
+                                                                'Home Screen')
+        self.assertTrue(self.check())
+        self.proof['image_comparison']['protected_current_sha256'] = 'forged'
+        self.assertFalse(self.check())
+
+    def test_clock_exception_never_relaxes_ownership_age_or_deadline(self):
+        self.original_bytes = n72_bitmap()
+        self.current_bytes = changed_pixel(self.original_bytes, 145, 4)
+        self.proof['image_comparison'] = module.image_continuity(self.original_bytes, self.current_bytes,
+                                                                'Home Screen')
+        for owner, key, value in ((self.proof, 'worker_start_ticks', 'reused'),
+                                   (self.current, 'sleeping', 1),
+                                   (self.current, 'shared_generation', 41),
+                                   (self.proof, 'verified_monotonic_ns', 130_000_000_001)):
+            previous = owner[key]
+            owner[key] = value
+            self.assertFalse(self.check(), key)
+            owner[key] = previous
 
     def test_fake_scene_or_missing_model_observation_rejects(self):
         self.gate['model_inspected'] = False
