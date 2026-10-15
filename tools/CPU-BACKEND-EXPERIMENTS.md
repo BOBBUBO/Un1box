@@ -204,3 +204,55 @@ no iOS/Android/AArch64/interrupt/lifecycle/cache or speed result is established.
 Exact source/binary/library hashes and raw private evidence are retained in the
 integration receipt; these real synthetic observations do not advertise a
 production backend improvement.
+
+
+## Research03 prepared useful blocks (SOURCE ONLY / NOT COMPILED OR RUN)
+
+`arm1176-dynarmic-blocks.py` proposes a concrete next correctness milestone
+for the default-off QEMU `LT_DYNARMIC_BLOCK_PROBE=1` caller. It is independent
+of the historical single-step switch. One genuine `Jit::Run` executes a
+branch-terminated two-through-eight-instruction plan, using a retained private
+eight-MiB JIT and one cached signature. Code/MMU/RAM identity is checked each
+entry, dynamic data snapshots are refreshed, and TCG handoffs invalidate code.
+Only MachineNone/ARM1176/EL0/little-endian/single-vCPU is eligible. Full final
+integer/CPSR state, exact ticks and ordered read counts must agree before commit.
+The exact engine contract and unqualified boundaries are described in QEMU
+`docs/devel/lt-dynarmic-probe.md`.
+
+The new harness is **UNRUN**. `--suite contracts` has nine observations:
+
+- Dynamic-load three-iteration loop, then changed-code loop at the same PC.
+  Each must really execute three five-instruction Dynarmic blocks with fresh
+  read results42/99/123, one JIT allocation and two cache reuses.
+- Three-instruction block followed by real data permission abort, and separately
+  unmapped instruction-fetch abort; normal TCG delivers the true fault state.
+- Unsupported SVC tail and eight instructions with no terminal branch must
+  reject the entire alternate block and execute TCG.
+- Single-step, actual GDB breakpoint and actual read watchpoint remain TCG.
+
+The contracts matrix must compare complete16-register/CPSR states from the
+same-built OFF/ON and stock witness-required negative. ON must emit exactly
+its expected genuine block witnesses; OFF/stock must emit none. Stock must
+pass every state assertion then fail solely the missing-witness requirement.
+`--suite async --require-block` is a distinct ON-only proposed test: stop a
+running two-instruction loop, match committed PC/r0 with the last witness,
+resume and require a warm hit, then change code while stopped and require
+fresh compilation. It fails if the16384-block diagnostic cap is reached.
+This tests QMP pause/resume only, not hardware IRQ/timer injection or iOS
+lifecycle. Each running phase keeps its original5s deadline; total harness
+observation limit25s, ordinary QMP quit, external process-tree guard required.
+
+The current source has not been compiled or target-executed. LLVM instruction
+disassembly, Python AST parsing and source diff checks are the only proposed
+pre-build validation. No phone, AVD, fixture, historical SDK, product default
+or canonical branch is changed. Historical tested research02 binaries and
+raw receipts remain preserved; its correctness result does not qualify this
+new caller. A separate reviewed finite build and runtime allocation is needed.
+
+The snapshot planner evaluates every expected instruction in C and emits
+per-block diagnostic output. This is a correctness scaffold, not a measured
+performance candidate. A later go/no-go decision must measure representative
+EL0 coverage and separately quantify translation, warm compiled execution,
+MMU preparation, callbacks and cross-engine handoff. ARM64 Android/iOS,
+Thumb/stores/VFP/CP15/device services and asynchronous device timing are still
+unqualified. All real boards retain TCG.
