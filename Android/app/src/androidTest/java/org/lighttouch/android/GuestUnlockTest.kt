@@ -152,21 +152,53 @@ class GuestUnlockTest {
                     }
                     var wire: GuestTouchWireEvidence? = null
                     var gestureDisplay: GuestDisplay? = null
-                    var gestureWidth = 0
-                    var gestureHeight = 0
+                    var admittedViewport: GuestUnlockReadiness.Viewport? = null
+                    var gestureViewport: GuestUnlockReadiness.Viewport? = null
+                    val viewIds = java.util.IdentityHashMap<GuestDisplay, Int>()
+                    // Read the existing UI state without changing the pinned main APK.
+                    // Missing/renamed getters fail closed; native wake alone is insufficient.
+                    val uiStatus = MainActivity::class.java.getDeclaredMethod("getStatus").apply { isAccessible = true }
+                    val uiAsleep = MainActivity::class.java.getDeclaredMethod("getDisplayAsleep").apply { isAccessible = true }
+                    fun viewport(activity: MainActivity, state: Bundle): GuestUnlockReadiness.Viewport {
+                        val display = requireNotNull(findDisplay(activity.window.decorView)) { "Production GuestDisplay missing" }
+                        val io = requireNotNull(state.getBundle("observations"))
+                        return GuestUnlockReadiness.Viewport(display, display.width, display.height,
+                            state.getLong("displayInputGeneration"), io.getLong("surfaceGeneration"),
+                            uiStatus.invoke(activity) == "running" && uiAsleep.invoke(activity) == false,
+                            awakePixels(state) && scenario.state == Lifecycle.State.RESUMED &&
+                                display.holder.surface.isValid && display.hasWindowFocus() &&
+                                display.isLaidOut && !display.isLayoutRequested)
+                    }
+                    fun viewportReceipt(value: GuestUnlockReadiness.Viewport): JSONObject {
+                        val display = value.view as GuestDisplay
+                        val id = viewIds[display] ?: (viewIds.size + 1).also { viewIds[display] = it }
+                        return JSONObject().put("viewIdentity", id).put("viewIdentityHash", System.identityHashCode(display))
+                            .put("width", value.width).put("height", value.height)
+                            .put("inputGeneration", value.inputGeneration).put("surfaceGeneration", value.surfaceGeneration)
+                            .put("awakeUi", value.awakeUi).put("usable", value.usable)
+                            .put("viewInput", encode(display.inputObservations()))
+                    }
                     var downTime = 0L
                     var upAttempted = false
                     fun send(action: Int, x: Float, state: Bundle) {
                         processIdentity()
+                        val current = status("before-touch-$action")
                         onActivity { activity ->
-                            val display = requireNotNull(findDisplay(activity.window.decorView)) { "Production GuestDisplay missing" }
-                            check(display.holder.surface.isValid && display.hasWindowFocus()) { "Guest Surface/focus unavailable" }
+                            val observed = viewport(activity, current)
+                            val display = observed.view as GuestDisplay
+                            val expected = gestureViewport ?: requireNotNull(admittedViewport)
+                            val changed = !observed.ready() || !observed.sameViewport(expected)
+                            val comparison = JSONObject().put("action", action).put("hostElapsedMs", SystemClock.elapsedRealtime())
+                                .put("before", viewportReceipt(expected)).put("after", viewportReceipt(observed))
+                                .put("sameViewObject", observed.view === expected.view).put("changed", changed)
+                            timeline.put(JSONObject().put("viewportBeforeDispatch", comparison))
+                            if (changed) { result.put("viewportChange", comparison); persist() }
+                            check(!changed) { "Viewport changed during unlock; cancelled contacts must not be continued" }
                             if (gestureDisplay == null) {
-                                gestureDisplay = display; gestureWidth = display.width; gestureHeight = display.height
+                                check(action == MotionEvent.ACTION_DOWN) { "New viewport requires a new DOWN" }
+                                gestureDisplay = display; gestureViewport = observed
                             }
-                            check(display === gestureDisplay && display.width == gestureWidth && display.height == gestureHeight) {
-                                "Viewport changed during unlock; cancelled contacts must not be continued"
-                            }
+                            check(display === gestureDisplay) { "Production GuestDisplay replaced during unlock" }
                             val viewport = GuestTestViewport(state, display.width, display.height)
                             val point = viewport.point(x, .92f)
                             val properties = arrayOf(MotionEvent.PointerProperties().apply { id = 7; toolType = MotionEvent.TOOL_TYPE_FINGER })
@@ -250,6 +282,29 @@ class GuestUnlockTest {
                         if (beforeCapturePath == null) beforeCapturePath = capture("before-swipe", ready)
                         result.put("beforeGestureCapturePath", beforeCapturePath)
                         assertEquals(Lifecycle.State.RESUMED, scenario.state)
+                        // MainActivity observes wake on its own 500ms poll. Wait for
+                        // the actual UI and layout to settle before owning contacts.
+                        val settlingBegan = SystemClock.elapsedRealtime()
+                        val settling = GuestUnlockReadiness(settlingBegan)
+                        var admittedReceipt: JSONObject? = null
+                        do {
+                            val observed = status("await-stable-awake-ui")
+                            var stable = false
+                            onActivity { activity ->
+                                val candidate = viewport(activity, observed)
+                                val now = SystemClock.elapsedRealtime()
+                                timeline.put(JSONObject().put("viewportAdmission", viewportReceipt(candidate)).put("hostElapsedMs", now))
+                                stable = settling.observe(now, candidate)
+                                if (stable) { admittedViewport = candidate; admittedReceipt = viewportReceipt(candidate) }
+                            }
+                            if (stable) break
+                            Thread.sleep(50)
+                        } while (true)
+                        result.put("stableAwakeUiAdmission", requireNotNull(admittedReceipt))
+                            .put("stableAwakeUiAdmissionElapsedMs", SystemClock.elapsedRealtime() - settlingBegan)
+                            .put("minimumStableAwakeUiMs", GuestUnlockReadiness.STABLE_MS)
+                            .put("stableAwakeUiDeadlineMs", GuestUnlockReadiness.DEADLINE_MS)
+                        persist()
                         downTime = SystemClock.uptimeMillis()
                         send(MotionEvent.ACTION_DOWN, .20f, ready)
                         for (step in 1..15) {
