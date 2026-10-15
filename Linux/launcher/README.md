@@ -12,6 +12,14 @@ import command into a new immutable destination; archives require a known SHA-25
 The launcher never chmods or rewrites the source. This avoids redundant copies of
 large, already verified extracted fixtures.
 
+Choose **Import .itbase archive…** for a `.itbase` file; provide its verified SHA-256
+and a writable parent folder for the imported copy. **Prepared base folder →
+Choose folder…** selects an already-extracted base, so its folder-only browser
+does not list archive files. **Copy base folder…** imports an extracted folder
+when a separate immutable copy is needed. Read-only `.itbase`, `.itpack` and boot
+asset source files are supported; select guest tools and boot assets with their
+separate **Choose file…** buttons.
+
 Each device profile references an absolute prepared-base path, a separate writable
 state folder and its matching guest package. New state is created by the native
 runtime. Existing state is retained; a dirty state requires explicit recovery.

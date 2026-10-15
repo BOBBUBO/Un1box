@@ -99,7 +99,7 @@ class Launcher:
         form.pack(fill="x")
         form.columnconfigure(1, weight=1)
         self.field(form, 0, "Device name", "name")
-        self.field(form, 1, "Prepared base", "base", "folder")
+        self.field(form, 1, "Prepared base folder", "base", "folder")
         self.field(form, 2, "Writable state", "state", "folder")
         self.field(form, 3, "Guest tools", "guest_package", "file")
         self.field(form, 4, "Boot asset (n72)", "bootrom", "file")
@@ -107,8 +107,9 @@ class Launcher:
                   style="Muted.TLabel", justify="left", wraplength=600).pack(anchor="w", pady=(8, 12))
         tools = ttk.Frame(content)
         tools.pack(fill="x")
-        self.button(tools, "Import base copy…", self.import_base).pack(side="left")
-        self.button(tools, "Export configuration…", self.export_profile).pack(side="left", padx=8)
+        self.button(tools, "Import .itbase archive…", self.import_base).pack(side="left")
+        self.button(tools, "Copy base folder…", lambda: self.import_base(archive=False)).pack(side="left", padx=8)
+        self.button(tools, "Export configuration…", self.export_profile).pack(side="left")
         choices = ttk.Frame(content)
         choices.pack(fill="x", pady=(14, 8))
         audio = ttk.Checkbutton(choices, text="Audio", variable=self.audio)
@@ -146,7 +147,8 @@ class Launcher:
         entry.grid(row=row, column=1, sticky="ew", pady=5)
         self.widgets.append(entry)
         if browse:
-            self.button(parent, "Browse…", lambda: self.browse(name, browse)).grid(row=row, column=2, padx=(8, 0), pady=5)
+            title = "Choose folder…" if browse == "folder" else "Choose file…"
+            self.button(parent, title, lambda: self.browse(name, browse)).grid(row=row, column=2, padx=(8, 0), pady=5)
 
     def browse(self, name, kind):
         value = filedialog.askdirectory(parent=self.window, title="Choose " + name.replace("_", " "), mustexist=name != "state") if kind == "folder" else filedialog.askopenfilename(parent=self.window, title="Choose " + name.replace("_", " "))
@@ -230,11 +232,9 @@ class Launcher:
         except (SetupError, OSError) as error:
             self.error(error)
 
-    def import_base(self):
-        archive = messagebox.askyesnocancel("Import prepared base", "Import an archive?\n\nYes: prepared-base archive with a verified SHA-256.\nNo: extracted prepared-base folder.\n\nThis creates a new immutable copy and preserves the source.", parent=self.window)
-        if archive is None:
-            return
-        source = filedialog.askopenfilename(parent=self.window, title="Choose prepared-base archive") if archive else filedialog.askdirectory(parent=self.window, title="Choose extracted prepared base")
+    def import_base(self, archive=True):
+        source = filedialog.askopenfilename(parent=self.window, title="Import prepared-base archive (.itbase)",
+                                            filetypes=[("Prepared base", "*.itbase"), ("All files", "*")]) if archive else filedialog.askdirectory(parent=self.window, title="Choose extracted prepared base")
         if not source:
             return
         digest = simpledialog.askstring("Archive SHA-256", "Paste the verified archive SHA-256:", parent=self.window) if archive else ""
