@@ -33,6 +33,8 @@ def collect(args):
     files = {}
     packages = set()
     pending = []
+    custom_prefixes = [directory.resolve() / 'prefix' for directory in args.dependency]
+    library_env = dict(os.environ, LD_LIBRARY_PATH=':'.join(str(p / 'lib') for p in custom_prefixes))
     payload = output / 'payload'
     payload.mkdir()
 
@@ -60,6 +62,10 @@ def collect(args):
 
     def system(source, destination):
         # Resolve soname links only after asking dpkg about the lexical filename.
+        for prefix in custom_prefixes:
+            if source.resolve().is_relative_to(prefix):
+                add(source, destination, 'Pinned private dependency; bundled source and notices')
+                return
         package = owner(str(source))
         add(source, destination, 'Debian ' + package + '; bundled copyright/source inventory', package)
 
@@ -77,13 +83,19 @@ def collect(args):
         library = Path('/usr/lib/x86_64-linux-gnu') / soname
         if library.exists():
             system(library, 'usr/lib/' + soname)
+    for prefix in custom_prefixes:
+        if prefix.parent.name == 'mobile':
+            system(prefix / 'bin/usbmuxd-qemu', 'usr/bin/usbmuxd-qemu')
+            for library in sorted((prefix / 'lib').glob('*.so*')):
+                if library.is_file():
+                    system(library, 'usr/lib/lighttouch/' + library.name)
     observed = set()
     while pending:
         elf, original = pending.pop()
         if elf in observed:
             continue
         observed.add(elf)
-        result = run(['ldd', original])
+        result = run(['ldd', original], env=library_env)
         if 'not found' in result:
             raise RuntimeError('Unresolved build-time dependency: ' + result)
         for line in result.splitlines():
@@ -137,10 +149,24 @@ def collect(args):
             for package in value['packages']:
                 if built is not None and package['name'] not in built:
                     continue
-                archive = directory / package['archive']
+                source_root = directory / 'sources' if (directory / 'sources').is_dir() else directory
+                archive = source_root / package['archive']
                 if stage.sha(archive) != package['sha256']:
                     raise RuntimeError('Dependency source hash mismatch: ' + str(archive))
                 add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, package['name'] + ' corresponding source; notices inside archive')
+                tree_name = package.get('directory') or re.sub(r'\.tar\.(?:xz|gz|bz2)$', '', package['archive'])
+                tree = source_root / tree_name
+                for filename in ('COPYING', 'COPYING.LIB', 'COPYING.LESSER', 'LICENSE', 'LICENSE.txt', 'COPYINGv2', 'COPYINGv3'):
+                    notice = tree / filename
+                    if notice.is_file():
+                        add(notice, 'usr/share/licenses/LightTouch/' + package['name'] + '/' + filename, package['name'] + ' license text')
+            daemon = directory / 'usbmuxd-source'
+            if daemon.exists():
+                archive = notices / ('usbmuxd-' + value['daemon_revision'] + '.tar.gz')
+                with archive.open('wb') as stream:
+                    subprocess.run(['git', '-C', str(daemon), 'archive', '--format=tar.gz', value['daemon_revision']], stdout=stream, check=True)
+                add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, 'QEMU usbmuxd corresponding source')
+                add(daemon / 'COPYING', 'usr/share/licenses/LightTouch/usbmuxd/COPYING', 'QEMU usbmuxd license')
     source_index['packaging_source_sha256'] = {p.name: stage.sha(p) for p in sorted(HERE.glob('*')) if p.is_file()}
     (notices / 'source-revisions.json').write_text(json.dumps(source_index, indent=2) + '\n')
     add(notices / 'source-revisions.json', 'usr/share/licenses/LightTouch/source-revisions.json', 'Build source provenance')
