@@ -68,3 +68,11 @@ set it to `0`; there is no new provider, shutdown route or deadline. Matching
 engine support is required. Engine trace timestamps use host monotonic time,
 while these Java snapshots use BOOTTIME; do not subtract them without paired
 clock calibration, especially across device suspend.
+
+The shared publisher allows an agent it has previously observed up to five
+seconds to refresh after resume or cancellation before asking the engine to
+choose a shutdown route. It polls without blocking the publisher or BQL and
+uses diagnostic phase `6` while waiting. This consumes the existing 35-second
+shutdown budget. A board on which no agent has ever appeared retains immediate
+fallback; an agent that never refreshes reaches fallback after the fixed wait.
+Neither that fallback nor a successful request constitutes confirmed shutdown.

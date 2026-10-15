@@ -3,6 +3,7 @@
 #include "Lifecycle.hpp"
 #include "PcmEpoch.hpp"
 #include "VmPauseControl.hpp"
+#include "GuestShutdownAdmission.hpp"
 #include "FrameStorage.hpp"
 #include "Base64.hpp"
 #include "qemu-ios-ui.h"
@@ -200,6 +201,7 @@ struct lt_runtime {
     }
     void publish() {
         bool quit_sent = false;
+        lt::GuestShutdownAdmission shutdown_admission;
         while (!done) {
             try {
                 if (engine->ready()) {
@@ -216,6 +218,7 @@ struct lt_runtime {
                     else if (pause_action == lt::VmPauseControl::Action::resume)
                         engine->resume();
                     agent_state = uint32_t(engine->agent_status());
+                    shutdown_admission.observe(agent_state.load());
                     if (shutdown_ready && shutdown_requested.exchange(false)) {
                         shutdown_phase = 2;
                         engine->cancel();
@@ -231,11 +234,21 @@ struct lt_runtime {
                             engine->agent_cancel(cancelled.c_str());
                         if (engine->paused())
                             engine->resume();
-                        shutdown_phase = 3;
-                        int route = engine->shutdown();
-                        lt::require(route > 0, "engine did not admit guest shutdown", LT_ENGINE);
-                        shutdown_route = uint32_t(route);
-                        shutdown_phase = 4;
+                        shutdown_admission.request(lt::now_ns());
+                    }
+                    if (shutdown_ready && shutdown_admission.pending()) {
+                        // Cancellation can revoke a previously alive agent's
+                        // claim. Read again instead of using the pre-cancel poll.
+                        agent_state = uint32_t(engine->agent_status());
+                        if (shutdown_admission.admit(agent_state.load(), lt::now_ns())) {
+                            shutdown_phase = 3;
+                            int route = engine->shutdown();
+                            lt::require(route > 0, "engine did not admit guest shutdown", LT_ENGINE);
+                            shutdown_route = uint32_t(route);
+                            shutdown_phase = 4;
+                        } else {
+                            shutdown_phase = 6; // Refresh within the original shutdown deadline.
+                        }
                     }
                     if (stopping && shutdown_route == 1 && !shutdown_reply_received) {
                         char *raw = engine->agent_result();

@@ -174,6 +174,8 @@ typedef struct {
     uint32_t size, version;
     uint32_t engine_ready, display_sleeping;
     int32_t backlight_level;
+    /* shutdown_phase: 0 idle, 1 requested, 2 cancel, 3 submit, 4 await halt,
+     * 5 confirmed, 6 await agent refresh (inside the original grace period). */
     uint32_t agent_status, shutdown_phase, shutdown_route;
     int32_t shutdown_reply_status;
     uint32_t shutdown_reply_received;
