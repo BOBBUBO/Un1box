@@ -178,6 +178,17 @@ def collect(args):
                     subprocess.run(['git', '-C', str(daemon), 'archive', '--format=tar.gz', value['daemon_revision']], stdout=stream, check=True)
                 add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, 'QEMU usbmuxd corresponding source')
                 add(daemon / 'COPYING', 'usr/share/licenses/LightTouch/usbmuxd/COPYING', 'QEMU usbmuxd license')
+    sealing_notices = args.engine.parent.parent / 'sealing-notices'
+    if sealing_notices.exists():
+        expected = json.loads((sealing_notices / 'INPUT-SHA256.json').read_text())
+        actual = {p.name for p in sealing_notices.iterdir() if p.is_file()}
+        if actual != set(expected) | {'INPUT-SHA256.json'}:
+            raise RuntimeError('Unmanifested AppImage runtime notice/source input')
+        for name, checksum in expected.items():
+            path = sealing_notices / name
+            if path.name != name or path.is_symlink() or stage.sha(path) != checksum:
+                raise RuntimeError('AppImage runtime source/notice hash mismatch')
+            add(path, 'usr/share/licenses/AppImage/' + name, 'AppImage runtime source/license provenance')
     source_index['packaging_source_sha256'] = {p.name: stage.sha(p) for p in sorted(HERE.glob('*')) if p.is_file()}
     (notices / 'source-revisions.json').write_text(json.dumps(source_index, indent=2) + '\n')
     add(notices / 'source-revisions.json', 'usr/share/licenses/LightTouch/source-revisions.json', 'Build source provenance')
