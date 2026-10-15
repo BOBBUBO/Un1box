@@ -87,7 +87,12 @@ def main():
     # Only the executable is copied. Never install daemon units/rules globally.
     (prefix / 'bin').mkdir(parents=True, exist_ok=True)
     import shutil
-    shutil.copyfile(daemon / 'src/usbmuxd', prefix / 'bin/usbmuxd-qemu')
+    executable = daemon / 'src/.libs/usbmuxd'
+    if not executable.exists():
+        executable = daemon / 'src/usbmuxd'
+    if executable.read_bytes()[:4] != b'\x7fELF':
+        raise RuntimeError('Refuse to package a libtool build-tree wrapper')
+    shutil.copyfile(executable, prefix / 'bin/usbmuxd-qemu')
     (prefix / 'bin/usbmuxd-qemu').chmod(0o755)
     recipe['outputs'] = {str(p.relative_to(prefix)): sha(p.resolve()) for p in sorted(prefix.rglob('*')) if p.is_file()}
     (output / 'dependency-manifest.json').write_text(json.dumps(recipe, indent=2) + '\n')
