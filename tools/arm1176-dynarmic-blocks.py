@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UNRUN MachineNone useful-block/cache/exit contracts; external guard required.
+"""MachineNone useful-block/cache/exit contracts; external guard required.
 
 No firmware, real board, iOS, Android or throughput result. Original25s total
 observation bound; each running phase keeps its original5s deadline.
@@ -64,6 +64,57 @@ def witnesses(path):
                 [int(v, 16 if i in [2, 3] else 10) for i, v in enumerate(values)]))
             rows.append(row)
     return rows
+
+
+WARM_WINDOW = 8
+
+
+def warm_pair_end(rows):
+    """Require two consecutive genuine cache hits within first eight blocks."""
+    for index in range(1, min(len(rows), WARM_WINDOW)):
+        pair = rows[index-1:index+1]
+        if all(row['reused'] and not row['code_reads'] for row in pair) and \
+                pair[0]['generation'] == pair[1]['generation']:
+            return index
+    return None
+
+
+def validate_async_phase(phase, baseline, before, rows, state):
+    """Pure evidence checks; never executes or repairs the engine."""
+    if not rows or rows[-1]['run'] >= 16384:
+        raise RuntimeError('Missing blocks or diagnostic cap reached')
+    warm_end = warm_pair_end(rows)
+    if warm_end is None:
+        raise RuntimeError('No two warm hits within first eight compiled blocks')
+    increment = 2 if phase == 'modified-code-resume' else 1
+    previous_generation = before[-1]['generation'] if before else 0
+    prior_generation = previous_generation
+    for index, row in enumerate(rows):
+        if row['run'] != len(before)+index+1 or \
+                row['r0'] != baseline['regs'][0]+increment*(index+1):
+            raise RuntimeError('Architectural progress discontinuity')
+        if row['count'] != 2 or row['pc'] != 0x1a00 or \
+                row['next'] != 0x1a00 or row['data_reads'] or row['jit'] != 1:
+            raise RuntimeError('Unexpected actual loop execution contract')
+        if row['reused']:
+            if row['code_reads'] or row['generation'] != prior_generation:
+                raise RuntimeError('Cache hit has inconsistent generation/code reads')
+        elif not row['code_reads'] or row['generation'] <= prior_generation:
+            raise RuntimeError('Compilation has no fresh generation/code reads')
+        prior_generation = row['generation']
+    if phase in ['pause', 'modified-code-resume'] and rows[0]['reused']:
+        raise RuntimeError('Initial or modified code reused stale compilation')
+    expected = {'regs': list(baseline['regs']), 'cpsr': baseline['cpsr']}
+    expected['regs'][0] += increment*len(rows)
+    expected['regs'][15] = 0x1a00
+    if state != expected or state['regs'][0] != rows[-1]['r0']:
+        raise RuntimeError('Full stopped state differs from exact committed loop state')
+    return {'baseline': baseline, 'increment': increment,
+            'first_generation': rows[0]['generation'],
+            'previous_generation': previous_generation,
+            'resume_recompiled': phase == 'resume' and not rows[0]['reused'],
+            'warm_pair_end_index': warm_end, 'warm_window_blocks': WARM_WINDOW,
+            'exact_continuity': True, 'full_stopped_state_equal': True}
 
 
 def main():
@@ -256,12 +307,18 @@ def main():
                     before_rows=witnesses(root/'engine.log')
                     if phase=='modified-code-resume':
                         gdb.write(0x1a00,struct.pack('<I',0xe2800002))
+                    baseline=gdb.state()
                     deadline=time.monotonic()+5
                     start()
-                    while len(witnesses(root/'engine.log'))==len(before_rows):
+                    while True:
+                        observed=witnesses(root/'engine.log')[len(before_rows):]
+                        if warm_pair_end(observed) is not None:
+                            break
+                        if len(observed) >= WARM_WINDOW:
+                            raise RuntimeError('No two warm hits within first eight compiled blocks')
                         check_time()
                         if time.monotonic()>=deadline:
-                            raise TimeoutError('No actual useful-block witness before original5s deadline')
+                            raise TimeoutError('No bounded warm reuse before original5s deadline')
                         time.sleep(.001)
                     reply=stop()
                     state=gdb.state()
@@ -272,10 +329,12 @@ def main():
                     row=record(phase,state,{'r0':last['r0'],'r15':0x1a00,
                                'mode':0x10},len(before_rows),None)
                     row['debug_reply']=reply
-                    if phase=='resume' and not after[0]['reused']:
-                        raise RuntimeError('Compiled block not retained across pause/resume')
-                    if phase=='modified-code-resume' and (after[0]['reused'] or not after[0]['code_reads']):
-                        raise RuntimeError('Changed instruction reused stale compiled code')
+                    # A pending stop can conservatively hand off to TCG and
+                    # invalidate code. Resumption may compile once again;
+                    # require exact architectural continuity and bounded warm
+                    # reuse instead of weakening that correct invalidation.
+                    row['async_contract']=validate_async_phase(
+                        phase,baseline,before_rows,after,state)
             result['status']='BLOCK_CONTRACTS_OBSERVED'
         except Exception as error:
             result['status']='FAILED'

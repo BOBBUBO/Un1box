@@ -256,3 +256,46 @@ EL0 coverage and separately quantify translation, warm compiled execution,
 MMU preparation, callbacks and cross-engine handoff. ARM64 Android/iOS,
 Thumb/stores/VFP/CP15/device services and asynchronous device timing are still
 unqualified. All real boards retain TCG.
+
+
+## Actual research03 contracts and prospective async correction
+
+QEMU `12c2c7bc6e` built and actually ran against App harness `be4477b2`.
+Independent review compared all44 complete16-register/CPSR observations across
+OFF/ON/stock: historical35 plus nine useful-block contracts matched exactly.
+ON produced23 historical Step witnesses and eight genuine Run witnesses;
+OFF/stock produced none. Five stock negatives passed every state assertion
+then failed solely missing alternate witnesses. Each native engine exited0.
+Actual five-instruction loops read42/99/123 and reused compiled code; true
+faults, unsupported tails, branch-budget exhaustion and debugger fallback
+remained correct in this synthetic scope.
+
+The aggregate attempt remains **FAILED**. The async test incorrectly required
+its very first resumed block to reuse compiled code. QMP Stop can leave an exit
+request that conservatively takes the TCG handoff and invalidates the cached
+block. Recorded execution correctly continued r0 from200 to3318, compiled a
+fresh generation2, then produced3117 genuine warm hits. This is useful scoped
+evidence, not a passing async suite; its code-modification phase never ran.
+All original logs and failed receipts remain unchanged.
+
+The prospective harness correction changes acceptance only. It preserves engine
+exit/invalidation behavior, requires exact per-block r0/run continuity and full
+stopped register/CPSR equality, and requires two consecutive genuine warm hits
+within the first eight resumed blocks. A resumed first block may either reuse
+its previous generation or compile a newer generation with code reads. Changed
+code must always cause a fresh generation and compilation; stale reuse fails.
+The original25s total and5s phase deadlines,16384 cap and normal QMP exit remain.
+The corrected live test is UNRUN. Offline checker review of the two recorded
+phases and mutated-evidence negatives does not backfill the failed attempt.
+
+After corrected async execution, the next useful CPU milestone is a separately
+reviewed synthetic throughput candidate: separate cold translation and warm
+execution costs, eliminate diagnostic per-block printing and duplicate C
+instruction-result interpretation, retain actual MMU/fallback/exit safeguards,
+and compare finite identical workloads against TCG with external final-state
+oracles. Count total process CPU time including preparation and engine handoff;
+a raw JIT-only win is insufficient. The current tiny-block snapshot interpreter
+is a correctness scaffold and has no measured speed benefit. Before applying a
+hybrid engine to iOS, measure representative actual EL0 hot-code coverage and
+qualify Thumb/stores/CP15/device/interrupt boundaries and ARM64 deployment.
+All real iOS boards and production Android builds still use TCG.
