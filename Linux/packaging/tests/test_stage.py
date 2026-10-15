@@ -12,6 +12,14 @@ spec.loader.exec_module(stage)
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_host_wayland_cannot_be_shadowed_by_bundled_libraries(self):
+        for soname in ("libwayland-client.so.0", "libwayland-server.so.0",
+                       "libwayland-cursor.so.0", "libwayland-egl.so.1"):
+            with self.subTest(soname=soname):
+                self.assertIn(soname, stage.HOST_LIBRARIES)
+                with self.assertRaisesRegex(ValueError, "graphics provider"):
+                    stage.target("usr/lib/" + soname)
+
     def test_loader_abi_tags_cannot_bypass_glibc_floor(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "synthetic-elf"

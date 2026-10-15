@@ -16,6 +16,11 @@ HOST_LIBRARIES = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "li
 # These must match the host Mesa/vendor driver stack as well. Old bundled
 # versions can hide entry points required by a newer host EGL provider.
 HOST_LIBRARIES.update({"libgbm.so.1", "libdrm.so.2"})
+# Host EGL providers link Wayland even when our context is surfaceless. An old
+# bundled client can prevent a newer Mesa vendor from loading at all (for
+# example, wl_proxy_marshal_flags was added after Debian 11's Wayland 1.18).
+HOST_LIBRARIES.update({"libwayland-client.so.0", "libwayland-server.so.0",
+                       "libwayland-cursor.so.0", "libwayland-egl.so.1"})
 FORBIDDEN = {"device.lock.json", "nor.bin", "kboot.bin", "gid-blobs.bin", "iboot.bin", "bootrom.bin", ".dirty", ".base-identity"}
 REQUIRED = {"usr/bin/python3", "usr/bin/lighttouch-linux", "usr/lib/lighttouch/libqemu-arm.so", "usr/share/licenses/LightTouch/SOURCE.txt"}
 

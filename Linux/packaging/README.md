@@ -15,6 +15,9 @@ providers are deliberately excluded. Keeping the host's libstdc++/libgcc avoids
 loading an older bundled C++ runtime into modern vendor graphics drivers; the
 payload's required GLIBCXX/CXXABI symbols are recorded in runtime-manifest.json. Generic EGL/GLES/GL dispatch and vendor
 GPU drivers must be supplied by the host; no software fallback is selected.
+The host also supplies GBM, DRM and Wayland libraries. Mesa's EGL provider can
+link Wayland even for a surfaceless context; bundling an older Wayland client can
+prevent that provider from loading before any guest drawing occurs.
 
 Manifest schema (each file has a real absolute source, destination, SHA-256 and
 license provenance):
