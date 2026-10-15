@@ -4,6 +4,8 @@ Status: source-only plan after research04's `STOP_CURRENT_CANDIDATE` result.
 No guest run, new backend, CPU speedup, device qualification or profiler
 allocation is claimed here. Production iOS continues to use QEMU TCG.
 
+The concrete next allocation is the [two-recording Settings runbook](TCG-SETTINGS-PROFILE-RUNBOOK.md). It reuses the original collectors and has no guest Start authority.
+
 The useful question is why the **first observed app/menu action** is slower
 than repetition on the same guest. New TCG translation is one hypothesis.
 Guest executable paging, dyld work, filesystem caches, application
