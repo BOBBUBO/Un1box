@@ -23,18 +23,16 @@ SCENES = {
 # pixels and the complete dock remain protected. This never identifies Home;
 # the caller must already have inspected the original full image as Home.
 HOME_CLOCK_BOX = (130, 1, 190, 19)
-# Explicitly inspected blank n72 Notes editor only. These are the two vetted
-# 3x22 caret appearances from the retained failed run, not arbitrary ROI data.
+# Explicit operator assertion of a blank focused n72 editor is required.
+# Only RGB in this exact insertion-caret rectangle may vary during its fade.
 EDITOR_CARET_BOX = (32, 104, 35, 126)
-EDITOR_CARET_TEMPLATES = frozenset((
-    'b5a8cfb8ee40b51b14cd72452d93a92b43ebe010e2cb3bacdf76c3c139997119',
-    'b43f55f3f80cce2f7e0fd98aa1e760652138ff003f7d1059014ee68d4eb31e5f',
-))
 
 
 def editor_caret_continuity(original, current, result):
-    """Protect headers/alpha/all other pixels; accept only two known carets."""
-    result.update(policy='n72-blank-editor-caret-templates-v1', caret_box=list(EDITOR_CARET_BOX))
+    """Explicit 66-pixel RGB tolerance, not caret shape/color recognition."""
+    result.update(policy='n72-explicit-blank-editor-caret-RGB-v2', matched=False, caret_box=list(EDITOR_CARET_BOX),
+                  tolerated_RGB_pixels=66, tolerated_RGB_bytes=198,
+                  all_alpha_protected=True, no_caret_shape_or_color_recognition=True)
     try:
         heights = []
         for data in (original, current):
@@ -68,21 +66,20 @@ def editor_caret_continuity(original, current, result):
         result.update(caret_original_sha256=old_caret, caret_current_sha256=new_caret,
                       protected_original_sha256=hashlib.sha256(old).hexdigest(),
                       protected_current_sha256=hashlib.sha256(new).hexdigest(),
-                      matched=(old_caret in EDITOR_CARET_TEMPLATES and
-                               new_caret in EDITOR_CARET_TEMPLATES and old == new))
+                      matched=old == new)
     except (ValueError, struct.error):
         pass
     return result
 
 
 def image_continuity(original, current, scene, blank_focused_editor=False):
-    """Exact bytes, or explicitly scoped Home clock/blank-editor caret policy."""
+    """Exact bytes, or explicit Home clock/blank-editor 66-pixel RGB tolerance."""
     result = {'policy': 'full-BMP-v1', 'matched': bool(original) and original == current,
               'full_BMP_identical': original == current, 'no_new_scene_asserted': True}
-    if result['matched']:
-        return result
     if scene == 'Notes focused new editor' and blank_focused_editor is True:
         return editor_caret_continuity(original, current, result)
+    if result['matched']:
+        return result
     if scene != 'Home Screen':
         return result
     result.update(policy='n72-Home-clock-only-v1', excluded_clock_box=list(HOME_CLOCK_BOX))

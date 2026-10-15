@@ -101,12 +101,13 @@ balanced input; the policy does not operate X11, run an engine or own a worker.
 
 For a personally inspected **blank focused n72 portrait Notes editor**, the
 recorder now accepts an explicit `--blank-focused-editor` assertion. This permits
-only the two retained, model-vetted caret templates at native rectangle
-`[32,104,35,126]`. Header bytes, every alpha byte and every other pixel remain
-exact. Unknown caret pixels, a moved caret, clock/body/keyboard changes or another
-scene reject. This is not an empty-editor classifier; the caller must actually
-inspect that scene. The assertion is retained in both the inspection and current
-copy proof. Existing failed attempts are never re-admitted retroactively.
+only RGB within the exact native rectangle `[32,104,35,126]` (66 pixels,
+198 RGB bytes) to vary during the insertion-caret fade. This explicit tolerance
+requires the operator's actual blank-focused-editor observation; it does not
+recognize caret shapes or colors. BMP shape, headers, every alpha byte and every
+outside pixel remain exact. The status clock, editor date, keyboard and body
+receive no exception. Written/saved-marker scenes retain full-BMP comparison.
+Every raw phase stays retained, and prior failed A01/A03 gates remain failed.
 
 Written and saved marker scenes retain full-image equality. After typing, read
 the entire unique body, inspect and tap Done, then capture and inspect the full
