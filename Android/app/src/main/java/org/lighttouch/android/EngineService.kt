@@ -262,6 +262,7 @@ class EngineService : Service() {
             putString("clock", "android.SystemClock.elapsedRealtime/BOOTTIME")
             putLong("observedAtHostMs", observedAt); putLong("revision", snapshot.revision)
             putBoolean("cachedJavaProgressOnly", true); putBoolean("shutdownConfirmationInferred", false)
+            putBoolean("diagnosticPublicationBestEffort", true)
             putBoolean("terminalReceiptAuthority", false); putBoolean("requested", snapshot.requested)
             snapshot.updatedAtMs?.let { putLong("snapshotUpdatedAtHostMs", it); putLong("snapshotAgeMs", (observedAt - it).coerceAtLeast(0)) }
             snapshot.acceptedAtMs?.let { putLong("acceptedAtHostMs", it) }

@@ -6,12 +6,31 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /** Tests the production coordinator with blocked functions; never loads/kills a native worker. */
 class ShutdownWatchdogTest {
     private fun nowMillis(): Long = System.nanoTime() / 1_000_000
     private fun cleanStatus() = arrayOf("stopped", "", "", "", "", "platform", "0", "0", "1", "1", "0", "0", "0")
+    @Test fun diagnosticPublicationFailureCannotPreventCleanTerminalDisposal() {
+        for (failure in listOf(IllegalStateException("diagnostic clock failed"), OutOfMemoryError("diagnostic allocation failed"))) {
+            val failNextDiagnostic = AtomicBoolean(false); val disposed = CountDownLatch(1)
+            val terminal = AtomicReference<ShutdownReceipt>()
+            val coordinator = ShutdownWatchdog(400, {
+                if (failNextDiagnostic.compareAndSet(true, false)) throw failure
+                nowMillis()
+            }, { "" }, {}, {
+                // The next publication records this return; core deadline/receipt clocks remain usable.
+                failNextDiagnostic.set(true); cleanStatus()
+            }, { terminal.set(it); disposed.countDown() })
+            assertTrue(coordinator.request()); assertTrue(disposed.await(1, TimeUnit.SECONDS))
+            assertFalse(failNextDiagnostic.get())
+            assertEquals("native-terminal", terminal.get().reason); assertTrue(terminal.get().cleanConfirmed)
+            assertEquals("native-terminal", coordinator.cachedProgress().disposalReason)
+            assertNull("Failed diagnostic update cannot invent a cached poll", coordinator.cachedProgress().lastReturnedStatus)
+        }
+    }
     @Test fun cachedProgressRemainsReadableWhileEveryAdmissionStageIsActuallyBlocked() {
         for (blockedStage in listOf("shutdown-admission", "contact-cancellation", "terminal-poll", "terminal-receipt")) {
             val entered = CountDownLatch(1); val release = CountDownLatch(1); val returned = CountDownLatch(1)
