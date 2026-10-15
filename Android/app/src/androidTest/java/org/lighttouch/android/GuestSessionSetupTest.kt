@@ -21,7 +21,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Explicit service creation or existing-worker arming; never starts/resumes a guest. */
+/** Explicit creation/arming or read-only observation; never starts/resumes a guest. */
 @RunWith(AndroidJUnit4::class)
 class GuestSessionSetupTest {
     private fun withExistingWorker(context: Context, action: (IEngine) -> Unit) {
@@ -83,6 +83,82 @@ class GuestSessionSetupTest {
                 receipt.put("after", encode(after)).put("afterHostElapsedNs", SystemClock.elapsedRealtimeNanos())
                 unused(after); assertEquals(initial.getInt("pid"), after.getInt("pid")); assertEquals(initial.getInt("uid"), after.getInt("uid"))
                 receipt.put("pass", true).put("workerPid", after.getInt("pid")).put("appUid", after.getInt("uid"))
+            }
+        } catch (failure: Throwable) { receipt.put("failure", failure.toString()); throw failure }
+        finally { File(evidence, "result.json").writeText(receipt.toString(2)) }
+    }
+    @Test fun observeExistingUnusedWorkerWithoutArming() {
+        val arguments = InstrumentationRegistry.getArguments()
+        assumeTrue("Explicit unused-worker observation required", arguments.getString("observeGuestSession") == "true")
+        val expectedApk = requireNotNull(arguments.getString("expectedMainApkSha256")).also {
+            require(it.matches(Regex("[0-9a-f]{64}"))) { "Exact main APK SHA256 required" }
+        }
+        val expectedPid = requireNotNull(arguments.getString("expectedWorkerPid")?.toIntOrNull()).also { require(it > 0) }
+        val expectedTicks = requireNotNull(arguments.getString("expectedWorkerStartTicks")).also {
+            require((it.toLongOrNull() ?: 0) > 0) { "Exact positive worker start ticks required" }
+        }
+        val expectedBoot = requireNotNull(arguments.getString("expectedBootId")).also {
+            require(it.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")))
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val evidence = File(context.filesDir, "unused-observation-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
+        val receipt = JSONObject().put("pass", false).put("guestAcceptance", false)
+            .put("guestStartedByTest", false).put("workerRestartedByTest", false)
+            .put("inputArmingCalls", 0).put("ordinaryForegroundCalls", 0).put("bindingFlags", 0)
+            .put("expectedMainApkSha256", expectedApk).put("expectedWorkerPid", expectedPid)
+            .put("expectedWorkerStartTicks", expectedTicks).put("expectedBootId", expectedBoot)
+        @Suppress("DEPRECATION")
+        fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
+            for (key in bundle.keySet()) when (val value = bundle.get(key)) {
+                is Bundle -> put(key, encode(value))
+                is LongArray -> put(key, JSONArray(value.toList()))
+                is IntArray -> put(key, JSONArray(value.toList()))
+                else -> put(key, value ?: JSONObject.NULL)
+            }
+        }
+        fun processIdentity() {
+            assertNotEquals("Worker must remain a separate process", Process.myPid(), expectedPid)
+            assertEquals("Android boot changed", expectedBoot, File("/proc/sys/kernel/random/boot_id").readText().trim())
+            val fields = File("/proc/$expectedPid/stat").readText().substringAfterLast(')').trim().split(Regex("\\s+"))
+            assertEquals("Worker PID reused", expectedTicks, fields[19])
+            assertFalse("Worker retired", fields[0] in listOf("Z", "X"))
+            val uid = File("/proc/$expectedPid/status").useLines { rows -> rows.first { it.startsWith("Uid:") } }
+                .substringAfter(':').trim().split(Regex("\\s+"))[0].toInt()
+            assertEquals("Worker UID changed", Process.myUid(), uid)
+        }
+        fun unused(state: Bundle) {
+            val required = setOf("pid", "uid", "state", "sessionStarted", "nativePollSnapshotValid", "error",
+                "nativeStateDirty", "nativeStorageFailed", "graphicsProviderChoice", "graphicsProviderFixed",
+                "touchTraceConfigured", "observations")
+            assertTrue("Incomplete unused-worker status", state.keySet().containsAll(required))
+            assertEquals(expectedPid, state.getInt("pid")); assertEquals(Process.myUid(), state.getInt("uid"))
+            assertEquals("stopped", state.getString("state")); assertFalse(state.getBoolean("sessionStarted"))
+            assertFalse(state.getBoolean("nativePollSnapshotValid")); assertEquals("", state.getString("error"))
+            assertFalse(state.getBoolean("nativeStateDirty")); assertFalse(state.getBoolean("nativeStorageFailed"))
+            assertEquals("angle-gl", state.getString("graphicsProviderChoice")); assertTrue(state.getBoolean("graphicsProviderFixed"))
+            assertFalse("Pre-native trace configuration is not delivery qualification", state.getBoolean("touchTraceConfigured"))
+            val observations = requireNotNull(state.getBundle("observations"))
+            assertTrue("Missing producer-frame status", observations.containsKey("producedFrames"))
+            assertEquals(0L, observations.getLong("producedFrames"))
+        }
+        try {
+            assertTrue("Debug build required", context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
+            val actualApk = acceptanceSha256(File(context.applicationInfo.sourceDir))
+            receipt.put("mainApkSha256", actualApk)
+            assertEquals("Installed main APK identity", expectedApk, actualApk)
+            processIdentity()
+            withExistingWorker(context) { worker ->
+                processIdentity()
+                val before = worker.status()
+                receipt.put("before", encode(before)).put("beforeHostElapsedNs", SystemClock.elapsedRealtimeNanos())
+                processIdentity(); unused(before)
+                val after = worker.status()
+                receipt.put("after", encode(after)).put("afterHostElapsedNs", SystemClock.elapsedRealtimeNanos())
+                processIdentity(); unused(after)
+                assertEquals("Installed main APK changed during observation", expectedApk,
+                    acceptanceSha256(File(context.applicationInfo.sourceDir)))
+                processIdentity()
+                receipt.put("workerPid", expectedPid).put("appUid", Process.myUid()).put("pass", true)
             }
         } catch (failure: Throwable) { receipt.put("failure", failure.toString()); throw failure }
         finally { File(evidence, "result.json").writeText(receipt.toString(2)) }
