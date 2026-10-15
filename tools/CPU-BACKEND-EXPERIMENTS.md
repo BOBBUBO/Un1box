@@ -37,8 +37,12 @@ identified the specific `HaltReason::MemoryAbort` check. The original failure is
 retained; it is a probe API mistake, not a demonstrated library defect. A second
 finite probe is prepared with the original generic halt as a negative control
 and the specific memory-abort path checked for preserved destination register,
-fault PC and suppressed following instruction. That follow-up is unexecuted at
-this checkpoint.
+fault PC and suppressed following instruction. The second actual Linux run
+passed all eleven cases: the generic-halt negative executed the next instruction,
+whereas explicit MemoryAbort preserved r0, retained PC=0 and suppressed the next
+instruction. Execute denial reached the callback but returned JIT PC=4; a real
+adapter must retain fault-event context and implement architectural exception
+entry. This result qualifies these small library contracts only.
 
 Example build against an externally supplied Dynarmic installation:
 
