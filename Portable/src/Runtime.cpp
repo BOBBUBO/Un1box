@@ -234,8 +234,13 @@ struct lt_runtime {
                             engine->agent_cancel(cancelled.c_str());
                         if (engine->paused())
                             engine->resume();
-                        shutdown_admission.request(lt::now_ns());
+                        if (shutdown_admission.request(lt::now_ns(), engine->display_sleeping()))
+                            engine->button(QEMU_IOS_BUTTON_HOME, true); // Wake without a power-button toggle.
                     }
+                    // Balance our wake even if the pause-admission boundary
+                    // changes. Route selection alone does not own release.
+                    if (shutdown_admission.release_wake(lt::now_ns()))
+                        engine->button(QEMU_IOS_BUTTON_HOME, false);
                     if (shutdown_ready && shutdown_admission.pending()) {
                         // Cancellation can revoke a previously alive agent's
                         // claim. Read again instead of using the pre-cancel poll.
@@ -358,6 +363,8 @@ struct lt_runtime {
                 }
                 worker_failed = true;
                 if (engine->ready() && !quit_sent) {
+                    if (shutdown_admission.wake_down())
+                        engine->button(QEMU_IOS_BUTTON_HOME, false);
                     engine->cancel();
                     engine->quit();
                     quit_sent = true;
@@ -365,6 +372,8 @@ struct lt_runtime {
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
+        if (shutdown_admission.wake_down() && engine->ready())
+            engine->button(QEMU_IOS_BUTTON_HOME, false);
         try {
             lt::clean_device(device, confirmed && !storage_failed && !worker_failed && exit_code == 0);
         } catch (const std::exception &e) {
@@ -573,10 +582,10 @@ lt_status lt_runtime_poll(lt_runtime *r, lt_runtime_status *out, lt_error *e) {
 lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && r->started && !r->done && !r->stopping, "runtime not active", LT_AGAIN);
-        r->engine->cancel();
         {
             std::lock_guard<std::mutex> lock(r->mutex);
             lt::require(!r->stopping, "runtime is stopping", LT_AGAIN);
+            r->engine->cancel();
             r->motion_clock.reset();
             r->pcm.transition(paused != 0);
             r->vm_pause.request(paused != 0);
@@ -715,6 +724,7 @@ lt_status lt_runtime_touch(lt_runtime *r, const lt_touch_batch *b, lt_error *e) 
                            b->contacts[i].y};
         }
         std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(!r->stopping, "input runtime inactive", LT_AGAIN);
         lt::result(r->engine->touch(++r->input_id, b->timestamp_ns, contacts, b->count));
     });
 }
@@ -734,8 +744,11 @@ lt_status lt_runtime_input_status(lt_runtime *r, lt_input_status *out, lt_error 
 lt_status lt_runtime_cancel_input(lt_runtime *r, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r, "null runtime");
-        lt::result(r->engine->cancel());
         std::lock_guard<std::mutex> lock(r->mutex);
+        // Stop owns its initial cancellation and subsequent wake pulse. A late
+        // surface/watchdog cancellation must not clip that pulse or the fallback.
+        if (!r->stopping)
+            lt::result(r->engine->cancel());
         r->motion_clock.reset();
     });
 }
@@ -743,6 +756,8 @@ lt_status lt_runtime_button(lt_runtime *r, uint32_t button, uint32_t down, lt_er
     return lt::guard(e, [&] {
         lt::require(r && r->started && !r->done && !r->stopping, "button runtime inactive", LT_AGAIN);
         lt::require(button <= 3 && down <= 1, "invalid hardware button");
+        std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(!r->stopping, "button runtime inactive", LT_AGAIN);
         r->engine->button(int(button), down != 0);
     });
 }
@@ -752,6 +767,7 @@ lt_status lt_runtime_motion(lt_runtime *r, const lt_motion *m, lt_error *e) {
         lt::abi(m);
         uint64_t now = lt::now_ns();
         std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(!r->stopping, "motion inactive", LT_AGAIN);
         r->motion_clock.validate(m->kinds, m->timestamp_ns, now);
         QemuIosPortableMotion sample{};
         static_assert(sizeof(sample) == sizeof(*m));
@@ -893,6 +909,7 @@ lt_status lt_runtime_guest_request(lt_runtime *r, const lt_guest_request *c, uin
                         std::string::npos,
                 "invalid installed bundle ID");
         std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(!r->stopping, "guest runtime is stopping", LT_AGAIN);
         lt::require(r->guest_result.state != 1, "guest operation already pending", LT_BUSY);
         uint64_t id = ++r->guest_sequence;
         std::string wire_id = "lighttouch-" + std::to_string(id);

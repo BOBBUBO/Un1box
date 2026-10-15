@@ -40,4 +40,42 @@ int main() {
     overflow.observe(2); overflow.request(maximum - 1);
     assert(!overflow.admit(2, maximum - 1));
     assert(overflow.admit(2, maximum));
+
+    // An asleep guest cannot refresh just because the VM is running. Wake it
+    // once, balance Home before shutdown admission, and retain the fixed cap.
+    GuestShutdownAdmission sleeping;
+    sleeping.observe(1); sleeping.observe(2);
+    assert(sleeping.request(10 * second, true));
+    assert(sleeping.wake_down());
+    assert(!sleeping.request(11 * second, true));
+    assert(!sleeping.admit(1, 10 * second));
+    assert(!sleeping.release_wake(10 * second + GuestShutdownAdmission::wake_pulse_ns - 1));
+    assert(sleeping.release_wake(10 * second + GuestShutdownAdmission::wake_pulse_ns));
+    assert(!sleeping.release_wake(11 * second));
+    assert(!sleeping.wake_down());
+    assert(sleeping.admit(1, 11 * second));
+    assert(!sleeping.request(12 * second, true));
+
+    GuestShutdownAdmission sleepy_lost;
+    sleepy_lost.observe(2);
+    assert(sleepy_lost.request(10 * second, true));
+    assert(sleepy_lost.release_wake(11 * second));
+    assert(!sleepy_lost.admit(2, 15 * second - 1));
+    assert(sleepy_lost.admit(2, 15 * second));
+
+    GuestShutdownAdmission old_board;
+    assert(!old_board.request(0, true)); // Never observed an agent: do not wake.
+    assert(old_board.admit(0, 0));
+    GuestShutdownAdmission awake;
+    awake.observe(1);
+    assert(!awake.request(0, false));
+    assert(awake.admit(1, 0));
+
+    GuestShutdownAdmission sleepy_overflow;
+    sleepy_overflow.observe(2);
+    assert(sleepy_overflow.request(maximum - 1, true));
+    assert(!sleepy_overflow.release_wake(maximum - 1));
+    assert(!sleepy_overflow.admit(1, maximum));
+    assert(sleepy_overflow.release_wake(maximum));
+    assert(sleepy_overflow.admit(2, maximum));
 }

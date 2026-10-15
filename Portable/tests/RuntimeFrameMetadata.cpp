@@ -18,6 +18,26 @@ static lt_frame_info metadata(uint64_t sequence) {
 }
 
 int main() {
+    // Exercise the actual Stop/cancel entry points without any engine: after
+    // Stop owns input, the watchdog's immediate cancel and later surface-loss
+    // cancels must not enqueue an engine-wide release that clips its wake pulse.
+    {
+        auto stopping = std::make_unique<lt_runtime>(nullptr);
+        stopping->started = true;
+        lt_error error{sizeof(error), LT_ABI_VERSION, 0, {}};
+        assert(lt_runtime_request_shutdown(stopping.get(), &error) == LT_OK);
+        assert(stopping->stopping && stopping->shutdown_requested);
+        for (unsigned i = 0; i < 100; ++i)
+            assert(lt_runtime_cancel_input(stopping.get(), &error) == LT_OK);
+        assert(lt_runtime_button(stopping.get(), 0, 1, &error) == LT_AGAIN);
+        assert(lt_runtime_pause(stopping.get(), 1, &error) == LT_AGAIN);
+        assert(lt_runtime_request_shutdown(stopping.get(), &error) == LT_OK);
+        stopping->done = true;
+        assert(lt_runtime_destroy(stopping.release(), &error) == LT_OK);
+    }
+#ifdef LIGHTTOUCH_TEST_WRAP_THROW
+    throws = 0; // The following assertions measure only normal metadata polling.
+#endif
     auto runtime = std::make_unique<lt_runtime>(nullptr);
     runtime->mapping_bytes = sizeof(lt_shared_frame) + 8;
     runtime->shared = static_cast<lt_shared_frame *>(mmap(nullptr, runtime->mapping_bytes,

@@ -76,3 +76,15 @@ uses diagnostic phase `6` while waiting. This consumes the existing 35-second
 shutdown budget. A board on which no agent has ever appeared retains immediate
 fallback; an agent that never refreshes reaches fallback after the fixed wait.
 Neither that fallback nor a successful request constitutes confirmed shutdown.
+
+When this previously observed agent's guest display is asleep, the publisher
+first sends one balanced Home pulse (150 ms). VM Resume alone does not wake
+the iOS display or its sleeping daemon. Home release is submitted before route admission;
+the pulse and agent polling share the same fixed five-second refresh window
+and original 35-second shutdown deadline. An awake display and a board with no
+observed agent receive no extra button input. This behavior still requires
+target qualification; it does not turn a shutdown request into a clean receipt.
+The engine button API is asynchronous; submission does not prove actual GPIO
+release. Once Stop owns input, later external contact cancellations reset the
+local ledger without enqueueing another full engine cancel. The publisher owns
+the initial cancellation, wake pulse and final cleanup under that boundary.
