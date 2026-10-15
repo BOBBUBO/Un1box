@@ -77,6 +77,65 @@ must prove:
 This is a substantial accelerator integration, not a selectable build flag.
 No speedup magnitude or engineering completion date is established.
 
+## Concrete QEMU boundary and asset-free reference
+
+The production shared library exports `qemu_ios_*` lifecycle/command APIs;
+it does not export `CPUARMState`, the ARM MMU walk or CP15 implementation.
+An external caller cannot use those APIs to implement a genuine full-system
+Dynarmic memory adapter. A successful mock callback would not resolve this.
+
+The first real in-engine experiment should be disabled by default and attempt
+one whitelisted EL0 instruction before normal TCG lookup, at
+`accel/tcg/cpu-exec.c:cpu_exec_loop`, after interrupt and breakpoint checks.
+It must clear `last_tb` when switching execution engines and retain existing
+virtual-clock, exit, single-step and instruction-budget behavior. Unsupported
+instructions, all privileged execution and the board CP15 bridge initially
+remain on ordinary TCG. No such hook is implemented by this experiment.
+
+Relevant current ARM interfaces are concrete:
+
+- `cpsr_read` / `cpsr_write` reconstruct cached condition flags, change modes
+  and bank registers. Copying only `uncached_cpsr` is incorrect. VFP registers
+  use `aa32_vfp_dreg`; FPSCR requires its accessor. An initial integer-only
+  instruction whitelist can defer VFP execution, not silently discard state.
+- `arm_cpu_tlb_fill_align(..., probe=true)` checks the actual MMU without
+  delivering an exception. Permissions, access width/alignment, MMU index and
+  physical address-space attributes must all be preserved. Debug memory APIs
+  used by GDB are unsuitable for runtime guest permission enforcement.
+- The same helper's fault path calls `cpu_restore_state` and the static
+  `arm_deliver_fault`, which exits QEMU execution nonlocally. A Dynarmic memory
+  callback must first retain exact fault context and return through its JIT;
+  architectural fault delivery must occur back in QEMU. Calling this path
+  directly across active C++ frames would be unsafe.
+- Every relevant QEMU TLB/code invalidation path must invalidate the alternate
+  cache or advance its context identity. Initially flushing on every handoff
+  is conservative for a correctness proof, with no performance expectation.
+- `hw/arm/ipod_touch_2g.c` registers PL0 CP15 QEMU_CALL, and
+  `hw/arm/guest-services.c:qemu_call` reaches the real GLES service. A generic
+  machine-none test cannot prove this board registration or GLES dispatch.
+
+`arm1176-mmu-reference.py` uses an already built engine, `-M none`, ARM1176,
+16 MiB legal synthetic RAM and an 8 MiB TCG cache. GDB loads real short
+descriptor page tables and CP15 bootstrap instructions, then observes actual
+EL0 register/mode/fault results. It requires an external owned-process
+resource/deadline guard; there is no engine build, iOS fixture, display or
+Android device involved.
+
+The first actual run passed MMU bootstrap, EL0 readable load, permission abort
+and translation abort. It failed an execute-never assumption: the current
+QEMU `get_S1prot` explicitly clears XN before ARMv7, so ARM1176 executed the
+load and encountered its unmapped data address. This is retained as a failed
+test assumption and an existing implementation boundary, not advertised as
+architecturally correct execute-never behavior. The next prepared source
+isolates that behavior with a readable data address, checks abort LR values
+and adds a genuine unmapped instruction-fetch prefetch abort. It remains
+unqualified until its separate bounded execution receipt exists.
+
+This reference establishes expected QEMU state for a future differential
+adapter. It does not execute Dynarmic inside QEMU, prove the CP15/GLES bridge,
+qualify an iOS guest or establish a speedup. There is no measured EL0 CPU-time
+share on which to base a hybrid performance prediction.
+
 ## LLVM and other paths
 
 | Candidate | Source-backed assessment | Next decision |
