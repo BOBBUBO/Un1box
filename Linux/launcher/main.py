@@ -14,7 +14,7 @@ import uuid
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from model import FORMAT, VERSION, Profiles, SetupError, import_command, load_profile, save_json, start_command, validate
+from model import FORMAT, VERSION, Profiles, SetupError, import_command, inspect_base, load_profile, save_json, start_command, validate
 from session import Session, clean_exit
 from preparation import Preparation
 
@@ -118,6 +118,8 @@ class Launcher:
             ttk.Label(row, text=hint, style="Muted.TLabel", wraplength=620).pack(anchor="w", pady=(3, 6))
             picker = ttk.Frame(row)
             picker.pack(fill="x")
+            if variable is self.vars["bootrom"]:
+                self.button(picker, "Clear", lambda: self.vars["bootrom"].set("")).pack(side="right", padx=(8, 0))
             self.button(picker, caption, action).pack(side="right", padx=(8, 0))
             entry = ttk.Entry(picker, textvariable=variable, state="readonly")
             entry.pack(side="left", fill="x", expand=True)
@@ -177,7 +179,7 @@ class Launcher:
                                            filetypes=[("iOS system (.itbase)", "*.itbase"), ("All files", "*")])
         if not source:
             return
-        if not self.current:
+        if not self.current or any(p["id"] == self.current and p.get("base") for p in self.store.devices):
             self.new()
         self.selected_source = source
         self.system_file.set(source)
@@ -209,9 +211,10 @@ class Launcher:
 
     def field(self, parent, row, label, name, browse=None):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=5)
-        entry = ttk.Entry(parent, textvariable=self.vars[name])
+        entry = ttk.Entry(parent, textvariable=self.vars[name], state="readonly" if name == "base" else "normal")
         entry.grid(row=row, column=1, sticky="ew", pady=5)
-        self.widgets.append(entry)
+        if name != "base":
+            self.widgets.append(entry)
         if browse:
             title = "Choose folder…" if browse == "folder" else "Choose file…"
             self.button(parent, title, lambda: self.browse(name, browse)).grid(row=row, column=2, padx=(8, 0), pady=5)
@@ -222,12 +225,19 @@ class Launcher:
         types = [("Guest tools (.itpack)", "*.itpack"), ("All files", "*")] if name == "guest_package" else [("Boot file (.bin)", "*.bin"), ("All files", "*")]
         value = filedialog.askdirectory(parent=self.window, title=titles[name], mustexist=name != "state") if kind == "folder" else filedialog.askopenfilename(parent=self.window, title=titles[name], filetypes=types)
         if value:
+            if name == "base" and any(p["id"] == self.current and p.get("base") != value for p in self.store.devices):
+                self.new()
             self.vars[name].set(value)
             if name == "base":
                 self.selected_source = None
                 self.system_file.set(value)
                 self.start_button.configure(text="Start iOS")
                 self.message.set("Installed system selected. No import or extra copy is needed.")
+                try:
+                    if inspect_base(value)["board"] == "n81ap":
+                        self.vars["bootrom"].set("")
+                except (SetupError, OSError):
+                    pass  # The regular Start validation supplies the actionable error.
 
     def _list(self):
         self.devices.delete(0, "end")
@@ -327,6 +337,7 @@ class Launcher:
         self.preparation = Preparation(self.selected_source)
         self.setup_started = time.monotonic()
         self.cancel_requested = False
+        self.import_bytes = None
         self.job = "prepare"
         self.set_busy(True)
         self.progress["value"] = 0

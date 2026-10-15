@@ -50,6 +50,29 @@ class UITests(unittest.TestCase):
         self.assertEqual(self.ui.vars['base'].get(), str(base))
         self.assertEqual(self.ui.start_button['text'], 'Start iOS')
 
+    def test_replacing_saved_system_preserves_old_device_and_uses_new_state(self):
+        old = self.ui.profile()
+        old['base'] = str(self.root / 'original system')
+        self.ui.store.save(old)
+        self.ui._list()
+        source = archive(self.root / 'n72ap-new.itbase')
+        with patch.object(main.filedialog, 'askopenfilename', return_value=str(source)):
+            self.ui.choose_system()
+        self.assertNotEqual(self.ui.current, old['id'])
+        self.assertNotEqual(self.ui.vars['state'].get(), old['state'])
+        self.assertIn(old, self.ui.store.devices)
+
+    def test_n81_existing_base_clears_old_boot_file(self):
+        base = self.root / 'n81 base'
+        base.mkdir()
+        (base / 'device.lock.json').write_text(json.dumps(dict(format=1, board='n81ap', build='8C148', boot_strategy='kboot')))
+        base.chmod(0o500)
+        self.addCleanup(lambda: base.chmod(0o700))
+        self.ui.vars['bootrom'].set('/old/bootrom.bin')
+        with patch.object(main.filedialog, 'askdirectory', return_value=str(base)):
+            self.ui.browse('base', 'folder')
+        self.assertEqual(self.ui.vars['bootrom'].get(), '')
+
     def test_background_setup_completion_is_saved_for_next_launch(self):
         # Synthetic process stands in for the native importer only to exercise
         # GUI process completion, automatic persistence and the Start transition.
