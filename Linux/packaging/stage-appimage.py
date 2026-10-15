@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent
-HOST_LIBRARIES = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "libresolv.so.2", "libutil.so.1", "ld-linux-x86-64.so.2", "libEGL.so.1", "libGLESv2.so.2", "libGL.so.1", "libGLX.so.0", "libOpenGL.so.0", "libGLdispatch.so.0", "libvulkan.so.1"}
+HOST_LIBRARIES = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "libresolv.so.2", "libutil.so.1", "ld-linux-x86-64.so.2", "libEGL.so.1", "libGLESv2.so.2", "libGL.so.1", "libGLX.so.0", "libOpenGL.so.0", "libGLdispatch.so.0", "libvulkan.so.1", "libstdc++.so.6", "libgcc_s.so.1"}
 FORBIDDEN = {"device.lock.json", "nor.bin", "kboot.bin", "gid-blobs.bin", "iboot.bin", "bootrom.bin", ".dirty", ".base-identity"}
 REQUIRED = {"usr/bin/python3", "usr/bin/lighttouch-linux", "usr/lib/lighttouch/libqemu-arm.so", "usr/share/licenses/LightTouch/SOURCE.txt"}
 
@@ -104,6 +104,7 @@ def stage(manifest_path, output):
         raise ValueError("AppDir destination already exists; do not overwrite an audited package")
     available = {PurePosixPath(f["destination"]).name for f in manifest["files"] if str(PurePosixPath(f["destination"]).parent) in ("usr/lib", "usr/lib/lighttouch")}
     elf_report = {}
+    cxx_versions = set()
     # Validate complete payload before creating any destination.
     for entry in manifest["files"]:
         source = Path(entry["source"])
@@ -113,6 +114,8 @@ def stage(manifest_path, output):
             if absent:
                 raise ValueError("Unbundled native dependencies for %s: %s" % (source, ", ".join(sorted(absent))))
             elf_report[entry["destination"]] = needed
+            versions = subprocess.run(["readelf", "--version-info", str(source)], capture_output=True, text=True, check=True).stdout
+            cxx_versions.update(re.findall(r"\b(?:GLIBCXX|CXXABI)_[A-Za-z0-9_.]+\b", versions))
     output.mkdir(parents=True, mode=0o755)
     for entry in manifest["files"]:
         destination = output / entry["destination"]
@@ -132,7 +135,7 @@ def stage(manifest_path, output):
     for name in ("AppRun", "lighttouch.desktop", "lighttouch.svg"):
         shutil.copyfile(ROOT / name, output / name)
     (output / "AppRun").chmod(0o755)
-    report = {"schema": 1, "architecture": "x86_64", "compatibility_target": "glibc2.31; actual distro qualification pending", "manifest_sha256": sha(manifest_path), "host_provided_sonames": sorted(HOST_LIBRARIES), "ELF_NEEDED": elf_report,
+    report = {"schema": 1, "architecture": "x86_64", "compatibility_target": "glibc2.31; actual distro qualification pending", "manifest_sha256": sha(manifest_path), "host_provided_sonames": sorted(HOST_LIBRARIES), "ELF_NEEDED": elf_report, "host_cpp_symbol_versions": sorted(cxx_versions),
               "files": {str(p.relative_to(output)): sha(p) for p in sorted(output.rglob("*")) if p.is_file()}, "guest_assets_included": False, "guest_acceptance": False}
     (output / "runtime-manifest.json").write_text(json.dumps(report, indent=2) + "\n")
     return report

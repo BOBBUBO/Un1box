@@ -10,8 +10,10 @@ substituted.
 Build frontend, engine, dependencies and a relocatable Python 3.9+ with Tk 8.6 in
 a glibc 2.31 x86_64 build environment. The compatibility target is kernel 5.4+,
 glibc 2.31+ and X11/XWayland. Current-host artifacts must pass the symbol check;
-relabelling a binary does not lower its glibc requirement. Host glibc and graphics
-providers are deliberately excluded. Generic EGL/GLES/GL dispatch and vendor
+relabelling a binary does not lower its glibc requirement. Host glibc, GCC runtime libraries and graphics
+providers are deliberately excluded. Keeping the host's libstdc++/libgcc avoids
+loading an older bundled C++ runtime into modern vendor graphics drivers; the
+payload's required GLIBCXX/CXXABI symbols are recorded in runtime-manifest.json. Generic EGL/GLES/GL dispatch and vendor
 GPU drivers must be supplied by the host; no software fallback is selected.
 
 Manifest schema (each file has a real absolute source, destination, SHA-256 and

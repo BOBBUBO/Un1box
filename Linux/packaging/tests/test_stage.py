@@ -30,7 +30,7 @@ class PrivacyTests(unittest.TestCase):
                 self.assertEqual(stage.elf_requirements(path), [])
 
     def test_private_assets_and_escape_paths_rejected(self):
-        for value in ("../guest.itpack", "/usr/lib/file", "usr/../secret", "usr/nand/chunk", "usr/lib/nor.bin", "usr/assets/firmware.ipsw", "usr/lib/guest.itpack", "usr/lib/libc.so.6", "usr/lib/libEGL.so.1"):
+        for value in ("../guest.itpack", "/usr/lib/file", "usr/../secret", "usr/nand/chunk", "usr/lib/nor.bin", "usr/assets/firmware.ipsw", "usr/lib/guest.itpack", "usr/lib/libc.so.6", "usr/lib/libEGL.so.1", "usr/lib/libstdc++.so.6", "usr/lib/libgcc_s.so.1"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 stage.target(value)
         self.assertEqual(str(stage.target("usr/lib/lighttouch/libqemu-arm.so")), "usr/lib/lighttouch/libqemu-arm.so")
