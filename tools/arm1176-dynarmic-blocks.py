@@ -48,12 +48,21 @@ PATTERN = re.compile(r'^LT_DYNARMIC_BLOCK run=(\d+) count=(\d+) '
     r'code_reads=(\d+) data_reads=(\d+) jit=(\d+) generation=(\d+)$')
 
 
-def witnesses(path):
+def witnesses(path, byte_offset=0):
     rows = []
+    # While a resumed loop runs, avoid reparsing earlier phases before Stop.
+    # The final stopped log is still independently parsed in full below.
+    with path.open('rb') as stream:
+        if byte_offset:
+            stream.seek(byte_offset - 1)
+            if stream.read(1) != b'\n':
+                raise RuntimeError('Witness tail offset is not a complete-record boundary')
+        stream.seek(byte_offset)
+        text = stream.read().decode(errors='replace')
     # Live reads can see the last fprintf before its terminating newline.
     # Only complete records may become evidence; the stopped final log is
     # checked separately for an incomplete final witness.
-    for line in path.read_text(errors='replace').split('\n')[:-1]:
+    for line in text.split('\n')[:-1]:
         if line.startswith('LT_DYNARMIC_BLOCK '):
             match = PATTERN.fullmatch(line)
             if not match:
@@ -308,10 +317,11 @@ def main():
                     if phase=='modified-code-resume':
                         gdb.write(0x1a00,struct.pack('<I',0xe2800002))
                     baseline=gdb.state()
+                    before_offset=(root/'engine.log').stat().st_size
                     deadline=time.monotonic()+5
                     start()
                     while True:
-                        observed=witnesses(root/'engine.log')[len(before_rows):]
+                        observed=witnesses(root/'engine.log',before_offset)
                         if warm_pair_end(observed) is not None:
                             break
                         if len(observed) >= WARM_WINDOW:
