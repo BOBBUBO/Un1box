@@ -512,6 +512,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         val exitedPid = workerPid
         engine = null; resetPerformanceObservation(); workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
         status = if (unexpected) "failed" else "stopped"
+        detail = ""
         if (unexpected) error = "Guest worker exited unexpectedly; writable state retained. Start creates a fresh worker. Private diagnostics are retained."
         else if (engineExpectedExit) error = "Guest worker disposed; writable state retained. Shutdown confirmation receipt is unavailable."
         Thread({
