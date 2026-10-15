@@ -66,9 +66,24 @@ def inspect(path, target=None):
                 name = entry.filename
                 parts = PurePosixPath(name).parts
                 if (name in names or name.startswith("/") or ".." in parts or "\\" in name or
-                        entry.flag_bits & 1):
+                        name.rstrip("/") != str(PurePosixPath(name)) or entry.flag_bits & 1):
                     raise InstallError("The IPA contains unsafe, duplicate or encrypted ZIP members.")
                 names.add(name)
+                if stat.S_ISLNK(entry.external_attr >> 16):
+                    if entry.file_size > 4096:
+                        raise InstallError("The IPA contains an invalid symbolic link.")
+                    link = archive.read(entry).decode("utf-8")
+                    resolved = list(PurePosixPath(name).parent.parts)
+                    if (not link or link.startswith("/") or "\\" in link or "\0" in link or
+                            len(parts) < 3 or parts[0] != "Payload" or not parts[1].endswith(".app")):
+                        raise InstallError("The IPA contains an unsafe symbolic link.")
+                    for component in PurePosixPath(link).parts:
+                        if component == "..":
+                            if len(resolved) <= 2:
+                                raise InstallError("The IPA contains a symbolic link outside its app.")
+                            resolved.pop()
+                        elif component != ".":
+                            resolved.append(component)
             candidates = [e for e in entries if len(PurePosixPath(e.filename).parts) == 3 and
                           e.filename.startswith("Payload/") and e.filename.endswith(".app/Info.plist")]
             if len(candidates) != 1 or candidates[0].file_size > 1024**2:
@@ -98,7 +113,7 @@ def inspect(path, target=None):
             return {"bundle_id": bundle, "name": info.get("CFBundleDisplayName", bundle),
                     "executable": member, "repair": not bool((entry.external_attr >> 16) & 0o111),
                     "minimum_os": info.get("MinimumOSVersion"), "bytes": path.stat().st_size}
-    except (OSError, zipfile.BadZipFile, KeyError, plistlib.InvalidFileException, struct.error, TypeError) as error:
+    except (OSError, UnicodeError, zipfile.BadZipFile, KeyError, plistlib.InvalidFileException, struct.error, TypeError) as error:
         raise InstallError("The IPA is incomplete or has invalid app metadata: " + str(error)) from error
 
 

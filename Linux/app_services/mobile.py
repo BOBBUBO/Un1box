@@ -33,7 +33,7 @@ class Mobile:
             "afc_client_new": [P, P, PP], "afc_client_free": [P],
             "afc_get_device_info_key": [P, C.c_char_p, PP],
             "afc_make_directory": [P, C.c_char_p], "afc_remove_path": [P, C.c_char_p],
-            "afc_file_open": [P, C.c_char_p, C.c_uint64, C.POINTER(C.c_uint64)],
+            "afc_file_open": [P, C.c_char_p, C.c_int, C.POINTER(C.c_uint64)],
             "afc_file_write": [P, C.c_uint64, C.c_char_p, C.c_uint32, C.POINTER(C.c_uint32)],
             "afc_file_close": [P, C.c_uint64], "instproxy_client_new": [P, P, PP],
             "instproxy_client_free": [P], "instproxy_install": [P, C.c_char_p, P, CALLBACK, P],

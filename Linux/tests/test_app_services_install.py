@@ -86,6 +86,25 @@ class ArchiveTests(unittest.TestCase):
             with self.assertRaises(InstallError):
                 inspect(link)
 
+    def test_zip_aliases_and_escaping_symlinks_cannot_override_guest_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "test.ipa"
+            archive(source, extra=("Payload//Test.app/Test", "alias"))
+            with self.assertRaisesRegex(InstallError, "unsafe"):
+                inspect(source, N72)
+            for target, allowed in (("../../../outside", False), ("/var/mobile/outside", False), ("data.txt", True)):
+                archive(source)
+                with zipfile.ZipFile(source, "a") as out:
+                    member = zipfile.ZipInfo("Payload/Test.app/link")
+                    member.create_system = 3
+                    member.external_attr = (stat.S_IFLNK | 0o777) << 16
+                    out.writestr(member, target)
+                if allowed:
+                    inspect(source, N72)
+                else:
+                    with self.assertRaisesRegex(InstallError, "symbolic link"):
+                        inspect(source, N72)
+
 
 class FakeLib:
     """Scripted public C API; pointer widths and partial writes are exercised."""
