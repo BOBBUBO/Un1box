@@ -726,23 +726,31 @@ static bool frame_copy(const lt_shared_frame *shared, std::vector<uint8_t> &pixe
 static int frontend(const Options &o, int argc, char **argv) {
     if (!o.import.empty()) {
         lt_error e{sizeof(e), 1, 0, {}};
+        struct ImportLog {
+            std::string phase;
+            int percent = -1;
+        } log;
         lt_import_config config{sizeof(config),
                                 1,
                                 o.import.c_str(),
                                 o.base.c_str(),
                                 o.sha.c_str(),
                                 0,
-                                [](void *, uint64_t n, uint64_t total) {
-                                    static int last = -1;
-                                    int p = int(n * 100 / (total ? total : 1));
-                                    if (p != last) {
-                                        std::cerr << "import " << p << "%\n";
-                                        last = p;
-                                    }
-                                    return 0;
-                                },
+                                nullptr,
                                 nullptr};
-        check(fs::is_directory(o.import) ? lt_import_directory(&config, &e) : lt_import_archive(&config, &e), e);
+        auto progress = [](void *opaque, const char *phase, uint64_t done, uint64_t total) {
+            auto &log = *static_cast<ImportLog *>(opaque);
+            int percent = total ? int((static_cast<long double>(done) * 100) / total) : 0;
+            if (log.phase != phase || log.percent != percent) {
+                std::cerr << "import phase=" << phase << " percent=" << percent << " done=" << done
+                          << " total=" << total << "\n";
+                log.phase = phase;
+                log.percent = percent;
+            }
+            return interrupt_requested ? 1 : 0;
+        };
+        check(fs::is_directory(o.import) ? lt_import_directory_observed(&config, progress, &log, &e)
+                                        : lt_import_archive_observed(&config, progress, &log, &e), e);
     }
     if (o.engine.empty() && !o.import.empty()) {
         std::cout << "prepared base imported: " << o.base << "\n";
@@ -1570,6 +1578,7 @@ static int frontend(const Options &o, int argc, char **argv) {
 }
 int main(int argc, char **argv) {
     try {
+        InterruptGuard import_and_library_interrupts;
         auto o = options(argc, argv);
         prepare_library(o);
         if (!o.worker && !o.library.empty() && o.engine.empty())
