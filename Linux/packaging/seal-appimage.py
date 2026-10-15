@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import shutil
 import signal
 import subprocess
 import time
@@ -54,11 +55,15 @@ def main():
     if available() < 6 * 1024**3:
         raise RuntimeError('Sealing needs at least6GiB available host memory')
     a.evidence.mkdir(parents=True)
+    # appimagetool replaces .DirIcon in its input. Preserve the audited AppDir
+    # (which may be root-owned from Docker) and mutate only this private copy.
+    scratch = a.evidence / 'sealing.AppDir'
+    shutil.copytree(a.appdir, scratch)
     command = [str(a.tool.resolve()), '--appimage-extract-and-run', '--no-appstream',
                '--runtime-file', str(a.runtime.resolve()), '--comp', 'gzip',
                '--mksquashfs-opt', '-processors', '--mksquashfs-opt', '2',
                '--mksquashfs-opt', '-mem', '--mksquashfs-opt', '256M',
-               str(a.appdir.resolve()), str(a.output.resolve())]
+               str(scratch.resolve()), str(a.output.resolve())]
     start = time.monotonic()
     error = None
     with (a.evidence / 'seal.log').open('w') as log:
