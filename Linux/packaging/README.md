@@ -71,3 +71,34 @@ broad Linux compatibility is claimed until the actual launcher, same-engine gues
 boot/render/multi-touch/audio/clean restart and targeted distro matrix run.
 AppImage FUSE is optional: users can use `--appimage-extract` and `squashfs-root/AppRun`
 when FUSE is unavailable. The native guest worker semantics remain unchanged.
+
+The Debian 11 build recipe uses the signed archived Debian repositories and a
+bounded Docker container. Keep its build product directory separate from a fresh
+per-attempt evidence directory; the runner refuses to overwrite evidence. It
+limits memory and memory+swap to 4 GiB, CPUs to two and PIDs to 256, samples the
+actual cgroup, and stops at 25 minutes or below 6 GiB available host memory.
+Admission requires 8 GiB available. All supplied source mounts stay read-only;
+QEMU's editable Python setup writes only into a private source clone retaining
+the exact commit. GCC 10 uses an explicitly stamped `gnu++17` override; upstream's
+default is unchanged.
+
+```sh
+python3 Linux/packaging/run-bounded-build.py \
+  --app /absolute/committed/LightTouch \
+  --qemu /absolute/committed/qemu-ios \
+  --output /private/build-products \
+  --evidence /private/build-products/attempt-01 \
+  --name lighttouch-bullseye-build01
+```
+
+The QEMU recipe must support `--cpp-standard=gnu++17`. Dependencies must first be
+hash-verified and extracted by the pinned portable `--prepare-only` recipes using
+a host Python with the safe tar extraction filter; Debian 11's Python 3.9 lacks
+that API. Put these prepared public source trees in `OUTPUT/deps` and
+`OUTPUT/crypto`. Never place private guest material in this build directory.
+`collect-bullseye-runtime.py` records actual ELF dependency closure, also includes
+SDL's dynamically loaded ALSA/Pulse roots, and bundles Python/Tcl/Tk, copyright
+texts and native/dependency source archives. Its inventory records precise Debian
+source versions. Distribution additionally requires retaining the complete
+matching Debian/runtime source closure; an inventory alone is not that closure.
+The AppDir still requires actual relocation, display/audio and guest tests.
