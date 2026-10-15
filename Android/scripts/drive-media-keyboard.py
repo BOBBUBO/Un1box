@@ -89,6 +89,12 @@ class Fence:
         self.last_sample_ms = 0
         self.pairs = 0
         self.failed = False
+        self.last_owned_tap = None
+
+    def owned_tap_completed(self, key, clock):
+        require(key in ("letterKeyRegion", "backspaceKeyRegion"), "unknown owned tap")
+        require(clock["upperMs"] < self.cutoff, "owned tap crossed cutoff")
+        self.last_owned_tap = {"key": key, "commandReturnedDeviceBootTimeUpperMs": clock["upperMs"]}
 
     def sample(self, s, clock):
         require(not self.failed, "controller already retired")
@@ -117,6 +123,34 @@ class Fence:
     def finish_pair(self, clock):
         require(clock["upperMs"] < self.cutoff, "input crossed quiet cutoff; remote completion uncertain")
         self.pairs += 1
+
+
+class PostTapSampleFence:
+    """A later status read must begin after our known input command returned."""
+    def __init__(self, owned_tap, first_clock, cutoff_ms):
+        self.owned_tap = owned_tap
+        self.first_clock = first_clock
+        # This deadline is fixed once per guard, never renewed by polling.
+        self.deadline_ms = min(first_clock["upperMs"] + 2000, cutoff_ms - 500)
+
+    def ready(self, sample, clock):
+        require(clock["lowerMs"] >= self.first_clock["lowerMs"], "sample-wait clock regressed")
+        require(clock["upperMs"] <= self.deadline_ms, "post-owned-tap sample wait expired or reached cutoff")
+        require(sample.get("label") in ("running", "measurement-start"), "measurement phase ended or changed")
+        if self.owned_tap is None:
+            return True
+        begin, end = sample.get("readBeginElapsedNs"), sample.get("readEndElapsedNs")
+        require(type(begin) is int and type(end) is int and 0 < begin <= end,
+                "bounded media status read timestamps required after owned tap")
+        require(end < (clock["upperMs"] + 1) * 1000000, "media status read is in the future")
+        return begin > self.owned_tap["commandReturnedDeviceBootTimeUpperMs"] * 1000000
+
+    def receipt(self, sample, clock):
+        return {"ownedTap": self.owned_tap, "waitStartedDeviceClock": self.first_clock,
+                "waitDeadlineDeviceBootTimeMs": self.deadline_ms, "observedDeviceClock": clock,
+                "sampleReadBeginElapsedNs": sample.get("readBeginElapsedNs"),
+                "sampleReadEndElapsedNs": sample.get("readEndElapsedNs"),
+                "sampleLabel": sample.get("label"), "guestUpConsumptionInferred": False}
 
 
 def image_regions(data, b):
@@ -207,8 +241,20 @@ def run(args):
 
     def guard(label):
         identity(label)
-        trace = c.read(label + "-trace", "tail -c 65536 " + shlex.quote("files/" + b["mediaFolder"] + "/observations.jsonl"))[0]
-        s = latest_sample(trace); clock = c.clock(label + "-clock")
+        sample_fence = None
+        for attempt in range(21):
+            suffix = "" if attempt == 0 else f"-wait-{attempt:02d}"
+            trace = c.read(label + "-trace" + suffix, "tail -c 65536 " + shlex.quote("files/" + b["mediaFolder"] + "/observations.jsonl"))[0]
+            s = latest_sample(trace); clock = c.clock(label + "-clock" + suffix)
+            if sample_fence is None:
+                sample_fence = PostTapSampleFence(fence.last_owned_tap, clock, fence.cutoff)
+            helper.write_json(out / (label + f"-sample-fence-{attempt:02d}.json"), sample_fence.receipt(s, clock))
+            if sample_fence.ready(s, clock):
+                break
+            require(attempt < 20, "post-owned-tap sample poll bound reached")
+            time.sleep(.1)
+        # Empty IDs, generation, ownership, errors and all other existing checks
+        # are required on this entirely post-command read; none are waived.
         fence.sample(s, clock)
         # SDK36 omits display focus from `window windows`; full output also
         # includes inactive virtual displays, whose null focus is not current.
@@ -262,6 +308,7 @@ def run(args):
                 finally: c.deadline = old_deadline
                 clock = c.clock(label + "-" + key + "-completed")
                 require(clock["upperMs"] < fence.cutoff, "tap completion exceeded cutoff")
+                fence.owned_tap_completed(key, clock)
                 if key == "backspaceKeyRegion": unmatched_letter = False
             fence.finish_pair(clock)
             helper.write_json(out / (label + ".json"), {"completedPairs": fence.pairs, "deviceBootTimeMs": clock,
