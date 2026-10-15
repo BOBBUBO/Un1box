@@ -51,7 +51,7 @@ def validate(plan, now):
     require(isinstance(command, list) and command and all(isinstance(x, str) and '\0' not in x for x in command), 'argv')
     require(Path(command[0]).is_absolute(), 'absolute executable required')
     require(Path(plan.get('cwd', '')).is_absolute() and Path(plan['cwd']).is_dir(), 'cwd')
-    require(type(plan.get('timeout_seconds')) in (int, float) and 0 < plan['timeout_seconds'] <= 600, 'finite timeout <=600s required')
+    require(type(plan.get('timeout_seconds')) in (int, float) and 0 < plan['timeout_seconds'] <= 1800, 'finite timeout <=1800s required')
     require(type(plan.get('admission_deadline_ns')) is int and 0 < plan['admission_deadline_ns'] - now <= 90_000_000_000, 'original finite admission deadline')
     pins = plan.get('sha256')
     require(isinstance(pins, dict) and pins and command[0] in pins, 'executable/source pins required')

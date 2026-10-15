@@ -48,6 +48,24 @@ class DetachedTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0)
         self.assertIn(b'REVIEW ONLY', run.stdout)
 
+    def test_long_acceptance_remains_finite_and_admission_stays_fresh(self):
+        path = self.plan('print("not launched during validation")\n')
+        plan = json.loads(path.read_text())
+        for timeout in (780, 1500, 1800):
+            with self.subTest(timeout=timeout):
+                plan['timeout_seconds'] = timeout
+                d.validate(plan, time.monotonic_ns())
+        for timeout in (0, -1, 1800.001, float('inf'), float('nan'), True, '780'):
+            with self.subTest(rejected=timeout):
+                plan['timeout_seconds'] = timeout
+                with self.assertRaisesRegex(ValueError, 'finite timeout'):
+                    d.validate(plan, time.monotonic_ns())
+        plan['timeout_seconds'] = 1800
+        plan['admission_deadline_ns'] = time.monotonic_ns()+91_000_000_000
+        with self.assertRaisesRegex(ValueError, 'admission'):
+            d.validate(plan, time.monotonic_ns())
+        self.assertFalse((self.root/'result').exists())
+
     def test_child_survives_invoking_session_hangup(self):
         plan = self.plan('import time\ntime.sleep(.8)\nprint("collected")\n')
         out = self.root / 'result'
