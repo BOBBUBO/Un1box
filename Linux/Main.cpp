@@ -4,6 +4,7 @@
 #include "TouchScript.hpp"
 #include "ControlDelivery.hpp"
 #include "Presentation.hpp"
+#include "ControlBar.hpp"
 #include "ReplayQueue.hpp"
 #include "Admission.hpp"
 #include "ContactOwnership.hpp"
@@ -218,7 +219,8 @@ static Options options(int argc, char **argv) {
                 << "lighttouch-linux --base DIR --state DIR --engine LIB [--rom FILE] [--package ITPACK]\n  [--import "
                    "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
                    "[--no-audio] [--trace-io] [--debug-touch-trace]\n\nMouse left/right: contacts 1/2. H: Home, P: "
-                   "Power, Space: pause, "
+                   "Power (guest sleep/wake), Space: pause/resume, +/-: volume, R: rotate, S: host screenshot.\n"
+                   "Visible controls below the guest mirror these shortcuts. "
                    "Escape: cancel admission or orderly "
                    "stop. Validation:900s absolute/30s checkpoint budget; Ctrl+C cancels or stops.\nC: release all "
                    "contacts. F5: pinch in. F6: labeled two-contact pinch. F7: "
@@ -898,6 +900,7 @@ static int frontend(const Options &o, int argc, char **argv) {
         window = SDL_CreateWindow(last_window_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 480, 800,
                                   SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
         require(window, SDL_GetError());
+        SDL_SetWindowMinimumSize(window, 320, 240);
         renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
         if (!renderer)
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
@@ -1057,6 +1060,7 @@ static int frontend(const Options &o, int argc, char **argv) {
     };
     uint32_t pcm_peak_abs = 0;
     lt::ContactOwnership ownership;
+    lt::WindowControls controls;
     auto &contacts = ownership.contacts;
     auto &fingers = ownership.fingers;
     uint32_t next_finger = 10000, display_rotation = 0;
@@ -1087,6 +1091,7 @@ static int frontend(const Options &o, int argc, char **argv) {
             ownership.admitted(p.touch);
         if (delivery.needs_cancel() || p.kind == Cancel || p.kind == Pause || p.kind == Stop) {
             ownership.clear();
+            controls.clear();
             const auto dropped = lt::discard_replay(script, next_script);
             if (o.trace_io)
                 std::cout << "trace_replay_cancel observed_monotonic_ns=" << now_ns() << " pending_dropped=" << dropped
@@ -1095,6 +1100,13 @@ static int frontend(const Options &o, int argc, char **argv) {
         if (!sent)
             std::cerr << "control backpressure: command " << p.kind << " rejected\n";
         return sent;
+    };
+    auto hardware_edge = [&](int button, bool down) {
+        Packet p;
+        p.kind = Button;
+        p.button = uint32_t(button);
+        p.value = down;
+        return submit(p);
     };
     bool screenshot_written = false;
     uint64_t diagnostics_monotonic_ns = 0;
@@ -1154,6 +1166,36 @@ static int frontend(const Options &o, int argc, char **argv) {
             stop_since = now_ns();
         }
     };
+    auto cancel_controls = [&] {
+        Packet p;
+        p.kind = Cancel;
+        submit(p);
+        ownership.clear();
+        controls.clear();
+    };
+    auto activate_control = [&](lt::WindowAction action) {
+        if (stopping)
+            return;
+        if (action == lt::WindowAction::pause) {
+            Packet p;
+            p.kind = Pause;
+            p.value = !paused;
+            submit(p);
+        } else if (action == lt::WindowAction::rotate) {
+            cancel_controls();
+            display_rotation = (display_rotation + 90) % 360;
+        } else if (action == lt::WindowAction::screenshot) {
+            const std::string path = o.screenshot.empty()
+                ? o.state + "/screenshot-" + std::to_string(frame.sequence) + ".bmp" : o.screenshot;
+            try {
+                capture(path);
+            } catch (const std::exception &e) {
+                std::cerr << "live host screenshot failed: " << e.what() << "\n";
+            }
+        } else if (action == lt::WindowAction::stop)
+            stop();
+    };
+    std::array<int, 5> controls_viewport{};
     if (admission_cancelled || interrupt_requested)
         stop();
     if (!audio_failure.empty())
@@ -1255,6 +1297,7 @@ static int frontend(const Options &o, int argc, char **argv) {
             } else if (update.kind == Reply) {
                 std::cerr << "command failed: " << update.error.message << "\n";
                 ownership.clear();
+                controls.clear();
                 if (update.reserved == Pause) {
                     audio_failure = update.error.message;
                     sink.fault(stop);
@@ -1278,6 +1321,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                           << " engine_result=" << update.input_status.engine_result << "\n";
                 if (update.input_status.state == 3) {
                     ownership.clear();
+                    controls.clear();
                     lt::discard_replay(script, next_script);
                     std::cerr << update.error.message << "\n";
                 }
@@ -1350,20 +1394,26 @@ static int frontend(const Options &o, int argc, char **argv) {
             require(SDL_UpdateTexture(texture, nullptr, pixels.data(), int(frame.stride)) == 0,
                     std::string("SDL texture update: ") + SDL_GetError());
         }
-        if (renderer && texture) {
+        if (renderer) {
             int width = 0, height = 0;
             require(SDL_GetRendererOutputSize(renderer, &width, &height) == 0,
                     std::string("SDL renderer output: ") + SDL_GetError());
-            double display_width = (display_rotation % 180) ? frame.height : frame.width;
-            double display_height = (display_rotation % 180) ? frame.width : frame.height;
-            double scale = std::min(double(width) / display_width, double(height) / display_height);
-            SDL_Rect dest{int((width - frame.width * scale) / 2), int((height - frame.height * scale) / 2),
-                          int(frame.width * scale), int(frame.height * scale)};
+            int logical_width = 0, logical_height = 0;
+            SDL_GetWindowSize(window, &logical_width, &logical_height);
+            require(logical_width > 0 && logical_height > 0, "invalid window geometry");
+            require(SDL_RenderSetScale(renderer, float(width) / logical_width, float(height) / logical_height) == 0,
+                    std::string("SDL renderer scale: ") + SDL_GetError());
+            const lt::ControlBarLayout layout{logical_width, logical_height};
+            const auto viewport = layout.guest(frame.width, frame.height, display_rotation);
+            SDL_Rect dest{int((logical_width - frame.width * viewport.scale) / 2),
+                          int((layout.top() - frame.height * viewport.scale) / 2),
+                          int(frame.width * viewport.scale), int(frame.height * viewport.scale)};
             require(SDL_SetRenderDrawColor(renderer, 24, 24, 24, 255) == 0,
                     std::string("SDL clear color: ") + SDL_GetError());
             require(SDL_RenderClear(renderer) == 0, std::string("SDL clear: ") + SDL_GetError());
-            require(SDL_RenderCopyEx(renderer, texture, nullptr, &dest, display_rotation, nullptr, SDL_FLIP_NONE) == 0,
+            require(!texture || SDL_RenderCopyEx(renderer, texture, nullptr, &dest, display_rotation, nullptr, SDL_FLIP_NONE) == 0,
                     std::string("SDL rotated frame: ") + SDL_GetError());
+            lt::draw_control_bar(renderer, layout, controls, paused, stopping);
             SDL_RenderPresent(renderer);
         }
         SDL_Event event;
@@ -1371,6 +1421,10 @@ static int frontend(const Options &o, int argc, char **argv) {
             if (window) {
                 int w = 0, h = 0;
                 SDL_GetWindowSize(window, &w, &h);
+                const std::array<int, 5> geometry{w, h, int(frame.width), int(frame.height), int(display_rotation)};
+                if (geometry != controls_viewport && controls.any())
+                    cancel_controls();
+                controls_viewport = geometry;
                 ownership.resized(w, h, int(frame.width), int(frame.height), int(display_rotation), [&] {
                     Packet p;
                     p.kind = Cancel;
@@ -1380,48 +1434,79 @@ static int frontend(const Options &o, int argc, char **argv) {
                                   << " width=" << w << " height=" << h << " reason=changed" << std::endl;
                 });
             }
+            if (window && (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION ||
+                           event.type == SDL_FINGERUP || event.type == SDL_MOUSEBUTTONDOWN ||
+                           event.type == SDL_MOUSEBUTTONUP || event.type == SDL_MOUSEMOTION)) {
+                const bool finger = event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION ||
+                                    event.type == SDL_FINGERUP;
+                const bool motion = event.type == SDL_FINGERMOTION || event.type == SDL_MOUSEMOTION;
+                const bool down = event.type == SDL_FINGERDOWN || event.type == SDL_MOUSEBUTTONDOWN;
+                const bool up = event.type == SDL_FINGERUP || event.type == SDL_MOUSEBUTTONUP;
+                if ((finger && event.tfinger.touchId == SDL_MOUSE_TOUCHID) ||
+                    (!finger && (motion ? event.motion.which : event.button.which) == SDL_TOUCH_MOUSEID))
+                    continue;
+                int w = 0, h = 0;
+                SDL_GetWindowSize(window, &w, &h);
+                const double px = finger ? event.tfinger.x * w : motion ? event.motion.x : event.button.x;
+                const double py = finger ? event.tfinger.y * h : motion ? event.motion.y : event.button.y;
+                const lt::ControlBarLayout layout{w, h};
+                const auto action = layout.hit(px, py);
+                if (!finger && motion) {
+                    bool consumed = false;
+                    for (int button : {SDL_BUTTON_LEFT, SDL_BUTTON_RIGHT}) {
+                        const lt::WindowControls::Owner owner{0, button};
+                        if (controls.owns(owner)) {
+                            consumed = true;
+                            if (!controls.matches(owner, action))
+                                controls.leave(owner, hardware_edge);
+                        }
+                    }
+                    if (consumed && !contacts.count(1) && !contacts.count(2))
+                        continue;
+                } else {
+                    const lt::WindowControls::Owner owner{finger ? 1 : 0,
+                        finger ? event.tfinger.fingerId : int64_t(event.button.button)};
+                    if (controls.owns(owner)) {
+                        if (up)
+                            controls.release(owner, action, hardware_edge, activate_control);
+                        else if (motion && !controls.matches(owner, action))
+                            controls.leave(owner, hardware_edge);
+                        continue;
+                    }
+                    if (down && action != lt::WindowAction::none) {
+                        if (!stopping && (finger || event.button.button == SDL_BUTTON_LEFT))
+                            controls.press(owner, action, hardware_edge);
+                        continue;
+                    }
+                }
+            }
             if (event.type == SDL_QUIT)
                 stop();
             else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
-                Packet p;
-                p.kind = Cancel;
-                submit(p);
-                ownership.clear();
+                cancel_controls();
             } else if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
                 bool down = event.type == SDL_KEYDOWN;
                 if (event.key.repeat)
                     continue;
                 auto key = event.key.keysym.sym;
                 if (key == SDLK_ESCAPE && down)
-                    stop();
-                else if (key == SDLK_SPACE && down) {
-                    paused = !paused;
-                    Packet p;
-                    p.kind = Pause;
-                    p.value = paused;
-                    submit(p);
-                } else if (key == SDLK_s && down) {
-                    std::string path = o.screenshot.empty()
-                                           ? o.state + "/screenshot-" + std::to_string(frame.sequence) + ".bmp"
-                                           : o.screenshot;
-                    try {
-                        capture(path);
-                    } catch (const std::exception &e) {
-                        std::cerr << "live screenshot failed: " << e.what() << "\n";
-                    }
-                } else if ((key == SDLK_r || key == SDLK_c) && down) {
-                    Packet p;
-                    p.kind = Cancel;
-                    submit(p);
-                    ownership.clear();
-                    if (key == SDLK_r)
-                        display_rotation = (display_rotation + 90) % 360;
-                } else if (key == SDLK_h || key == SDLK_p || key == SDLK_EQUALS || key == SDLK_MINUS) {
-                    Packet p;
-                    p.kind = Button;
-                    p.button = key == SDLK_h ? 0 : key == SDLK_p ? 1 : key == SDLK_EQUALS ? 2 : 3;
-                    p.value = down;
-                    submit(p);
+                    activate_control(lt::WindowAction::stop);
+                else if (key == SDLK_SPACE && down)
+                    activate_control(lt::WindowAction::pause);
+                else if (key == SDLK_s && down)
+                    activate_control(lt::WindowAction::screenshot);
+                else if (key == SDLK_r && down)
+                    activate_control(lt::WindowAction::rotate);
+                else if (key == SDLK_c && down)
+                    cancel_controls();
+                else if (key == SDLK_h || key == SDLK_p || key == SDLK_EQUALS || key == SDLK_MINUS) {
+                    const auto action = key == SDLK_h ? lt::WindowAction::home : key == SDLK_p ? lt::WindowAction::power
+                        : key == SDLK_EQUALS ? lt::WindowAction::louder : lt::WindowAction::quieter;
+                    const lt::WindowControls::Owner owner{2, key};
+                    if (down)
+                        controls.press(owner, action, hardware_edge);
+                    else
+                        controls.release(owner, action, hardware_edge, activate_control);
                 } else if ((key == SDLK_F5 || key == SDLK_F6) && down) {
                     std::cerr << "deterministic touch replay (guest acceptance requires observation)\n";
                     for (int step = 0; step <= 12; step++) {
@@ -1473,14 +1558,10 @@ static int frontend(const Options &o, int argc, char **argv) {
                        (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP)) {
                 int width = 0, height = 0;
                 SDL_GetWindowSize(window, &width, &height);
-                double display_width = (display_rotation % 180) ? frame.height : frame.width,
-                       display_height = (display_rotation % 180) ? frame.width : frame.height;
-                double scale = std::min(double(width) / display_width, double(height) / display_height),
-                       left = (width - display_width * scale) / 2, top = (height - display_height * scale) / 2, x = 0,
-                       y = 0;
-                lt_status mapped =
-                    lt_map_contact(event.tfinger.x * width, event.tfinger.y * height, left, top, display_width * scale,
-                                   display_height * scale, display_rotation, &x, &y);
+                const auto viewport = lt::ControlBarLayout{width, height}.guest(frame.width, frame.height, display_rotation);
+                double x = 0, y = 0;
+                lt_status mapped = lt_map_contact(event.tfinger.x * width, event.tfinger.y * height,
+                    viewport.left, viewport.top, viewport.width, viewport.height, display_rotation, &x, &y);
                 if (mapped != LT_OK && fingers.count(event.tfinger.fingerId)) {
                     ownership.outside(false, [&] {
                         Packet p;
@@ -1513,15 +1594,12 @@ static int frontend(const Options &o, int argc, char **argv) {
                     continue;
                 int width = 0, height = 0;
                 SDL_GetWindowSize(window, &width, &height);
-                double display_width = (display_rotation % 180) ? frame.height : frame.width,
-                       display_height = (display_rotation % 180) ? frame.width : frame.height;
-                double scale = std::min(double(width) / display_width, double(height) / display_height),
-                       left = (width - display_width * scale) / 2, top = (height - display_height * scale) / 2;
+                const auto viewport = lt::ControlBarLayout{width, height}.guest(frame.width, frame.height, display_rotation);
                 double x = 0, y = 0;
                 int px = event.type == SDL_MOUSEMOTION ? event.motion.x : event.button.x,
                     py = event.type == SDL_MOUSEMOTION ? event.motion.y : event.button.y;
-                lt_status mapped = lt_map_contact(px, py, left, top, display_width * scale, display_height * scale,
-                                                  display_rotation, &x, &y);
+                lt_status mapped = lt_map_contact(px, py, viewport.left, viewport.top,
+                    viewport.width, viewport.height, display_rotation, &x, &y);
                 if ((contacts.count(1) || contacts.count(2)) && ownership.outside(mapped == LT_OK, [&] {
                         Packet p;
                         p.kind = Cancel;
