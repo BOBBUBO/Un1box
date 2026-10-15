@@ -13,6 +13,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 HOST_LIBRARIES = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1", "libresolv.so.2", "libutil.so.1", "ld-linux-x86-64.so.2", "libEGL.so.1", "libGLESv2.so.2", "libGL.so.1", "libGLX.so.0", "libOpenGL.so.0", "libGLdispatch.so.0", "libvulkan.so.1", "libstdc++.so.6", "libgcc_s.so.1"}
+# These must match the host Mesa/vendor driver stack as well. Old bundled
+# versions can hide entry points required by a newer host EGL provider.
+HOST_LIBRARIES.update({"libgbm.so.1", "libdrm.so.2"})
 FORBIDDEN = {"device.lock.json", "nor.bin", "kboot.bin", "gid-blobs.bin", "iboot.bin", "bootrom.bin", ".dirty", ".base-identity"}
 REQUIRED = {"usr/bin/python3", "usr/bin/lighttouch-linux", "usr/lib/lighttouch/libqemu-arm.so", "usr/share/licenses/LightTouch/SOURCE.txt"}
 
