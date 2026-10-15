@@ -27,9 +27,7 @@ class Bridge:
             if not path.is_absolute() or not path.is_file():
                 raise InstallError("Guest app services are missing from this build: " + str(path))
         for path in (self.pairing, self.logs):
-            path.mkdir(mode=0o700, parents=True, exist_ok=True)
-            if path.is_symlink() or path.stat().st_uid != os.geteuid() or path.stat().st_mode & 0o077:
-                raise InstallError("Guest service data folders must be private and owned by this user.")
+            self._prepare_data_directory(path)
         self.directory = Path(tempfile.mkdtemp(prefix="lighttouch-usb-"))
         self.socket = self.directory / "mux.sock"
         self.endpoint = self.directory / "qemu.sock"
@@ -52,6 +50,73 @@ class Bridge:
         except BaseException:
             self.close()
             raise
+
+    @staticmethod
+    def _prepare_data_directory(path):
+        """Migrate only the exact owned folder, traversing without symlinks.
+
+        Existing ancestors are never chmodded. Open directory FDs pin the
+        ownership/mode checks and fchmod to the same object, not a replaced path.
+        """
+        path = Path(path)
+        if not path.is_absolute() or ".." in path.parts or len(path.parts) < 2:
+            raise InstallError("Guest service data folder {}: choose an absolute directory without '..'.".format(path))
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        parent_fd = None
+        target_fd = None
+        traversed = Path(path.anchor)
+
+        def open_component(parent, name, component):
+            try:
+                try:
+                    return os.open(name, flags, dir_fd=parent)
+                except FileNotFoundError:
+                    try:
+                        os.mkdir(name, mode=0o700, dir_fd=parent)
+                    except FileExistsError:
+                        pass  # Re-open with O_NOFOLLOW and check the actual object.
+                    return os.open(name, flags, dir_fd=parent)
+            except OSError as error:
+                reason = error.strerror or str(error)
+                try:
+                    entry = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    if stat.S_ISLNK(entry.st_mode):
+                        reason = "is a symbolic link; choose its real directory instead"
+                    elif not stat.S_ISDIR(entry.st_mode):
+                        reason = "is not a directory"
+                except OSError:
+                    pass
+                raise InstallError("Guest service data folder {}: {}: {}.".format(path, component, reason)) from error
+
+        try:
+            parent_fd = os.open(path.anchor, flags)
+            for name in path.parts[1:-1]:
+                traversed = traversed / name
+                next_fd = open_component(parent_fd, name, traversed)
+                os.close(parent_fd)
+                parent_fd = next_fd
+            target_fd = open_component(parent_fd, path.name, path)
+            value = os.fstat(target_fd)
+            if not stat.S_ISDIR(value.st_mode):
+                raise InstallError("Guest service data folder {}: is not a directory.".format(path))
+            if value.st_uid != os.geteuid():
+                raise InstallError("Guest service data folder {}: owned by uid {}, expected uid {}; choose a folder owned by this user.".format(
+                    path, value.st_uid, os.geteuid()))
+            if stat.S_IMODE(value.st_mode) != 0o700:
+                os.fchmod(target_fd, 0o700)
+            checked = os.fstat(target_fd)
+            entry = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if (not stat.S_ISDIR(entry.st_mode) or (entry.st_dev, entry.st_ino) != (checked.st_dev, checked.st_ino) or
+                    checked.st_uid != os.geteuid() or stat.S_IMODE(checked.st_mode) != 0o700):
+                raise InstallError("Guest service data folder {}: directory changed during setup; no bridge was started.".format(path))
+        except OSError as error:
+            raise InstallError("Guest service data folder {}: {}. Check ownership and access permissions.".format(
+                path, error.strerror or str(error))) from error
+        finally:
+            if target_fd is not None:
+                os.close(target_fd)
+            if parent_fd is not None:
+                os.close(parent_fd)
 
     @staticmethod
     def _private_socket(path):
