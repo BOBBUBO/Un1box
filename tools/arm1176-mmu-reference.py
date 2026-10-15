@@ -176,11 +176,25 @@ def main():
                 gdb.step()
                 expected = {'r0': 42 if name == 'el0-readable' else 19,
                             'r2': 0, 'r15': expected_pc, 'mode': expected_mode}
+                if name != 'el0-readable':
+                    expected['r14'] = 0x1208
                 record(name, gdb.state(), expected)
+            # The current engine's get_S1prot clears XN before ARMv7. Keep
+            # this observed implementation boundary explicit, rather than
+            # claiming that ARM1176 execute-never protection was qualified.
             gdb.set(25, 0x10)
+            gdb.set(0, 19)
+            gdb.set(1, 0x2000)
             gdb.set(15, 0x201200)
             gdb.step()
-            record('el0-execute-never-abort', gdb.state(), {'r15': 0x0c, 'mode': 0x17})
+            record('reference-pre-v7-xn-ignored', gdb.state(),
+                   {'r0': 42, 'r2': 0, 'r15': 0x201204, 'mode': 0x10})
+            # A genuinely unmapped instruction fetch must enter prefetch abort.
+            gdb.set(25, 0x10)
+            gdb.set(15, 0x401200)
+            gdb.step()
+            record('el0-unmapped-prefetch-abort', gdb.state(),
+                   {'r15': 0x0c, 'r14': 0x401204, 'mode': 0x17})
             result['status'] = 'REFERENCE_OBSERVED'
         except Exception as error:
             result['status'] = 'FAILED'
