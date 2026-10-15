@@ -112,3 +112,11 @@ input/audio/lifecycle/cleanup and required page-size coverage. Neither staging,
 raw probe success nor package validation closes those gates. Preserve separate
 platform-route results and all original notice/source provenance; source access
 and component license review remain separate from rendering acceptance.
+
+The matched `GuestAngleProviderTest` selects the metadata and ZIP entries for
+the actual closed host ABI. `coldRecover=true` explicitly requests recovery of
+the selected interrupted record; it never retries an ordinary Start as recovery.
+The existing foreground QMP observer accepts `debugGraphicsProvider=angle-gl`
+(or `platform`) only before a fresh worker starts, so a bounded observed guest
+session can use this same packaged route. Neither argument changes the app's
+normal default. Snapshot-only observation refuses a provider selector.

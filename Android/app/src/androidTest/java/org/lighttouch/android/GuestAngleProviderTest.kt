@@ -49,6 +49,15 @@ class GuestAngleProviderTest {
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue("Explicit packaged ANGLE guest opt-in required", arguments.getString("exerciseAngleGuest") == "true")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val abi = android.os.Build.SUPPORTED_ABIS[0]
+        val providerManifest = when (abi) {
+            "x86_64" -> "providers/angle-runtime.json"
+            "arm64-v8a" -> "providers/angle-runtime-arm64-v8a.json"
+            else -> error("No packaged debug ANGLE provider for host ABI $abi")
+        }
+        val recoveryArgument = arguments.getString("coldRecover", "false")
+        require(recoveryArgument in listOf("true", "false"))
+        val coldRecover = recoveryArgument == "true"
         val evidence = File(context.filesDir, "angle-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
         val receipt = JSONObject().put("providerDispatchObserved", false).put("guestAcceptancePassed", false)
             .put("visibleGuestVerified", false).put("audiblePlaybackVerified", false)
@@ -67,13 +76,14 @@ class GuestAngleProviderTest {
             File(evidence, "observations.json").writeText(timeline.toString(2))
         }
         try {
-            assertEquals("Only the explicitly packaged x86 experiment is accepted", "x86_64", android.os.Build.SUPPORTED_ABIS[0])
-            val manifest = JSONObject(context.assets.open("providers/angle-runtime.json").bufferedReader().use { it.readText() })
-            receipt.put("runtimeManifest", manifest).put("installedApkSha256", acceptanceSha256(File(context.applicationInfo.sourceDir)))
+            val manifest = JSONObject(context.assets.open(providerManifest).bufferedReader().use { it.readText() })
+            assertEquals("Provider host ABI", abi, manifest.getString("abi"))
+            receipt.put("hostAbi", abi).put("coldRecoveryRequested", coldRecover)
+                .put("runtimeManifest", manifest).put("installedApkSha256", acceptanceSha256(File(context.applicationInfo.sourceDir)))
             ZipFile(context.applicationInfo.sourceDir).use { apk ->
                 val libraries = manifest.getJSONObject("libraries")
                 for (name in listOf("libEGL_lighttouch_angle.so", "libGLESv1_CM_lighttouch_angle.so", "libGLESv2_lighttouch_angle.so")) {
-                    val entry = requireNotNull(apk.getEntry("lib/x86_64/$name"))
+                    val entry = requireNotNull(apk.getEntry("lib/$abi/$name"))
                     val digest = MessageDigest.getInstance("SHA-256")
                     apk.getInputStream(entry).use { input -> val bytes = ByteArray(65536); while (true) { val n = input.read(bytes); if (n < 0) break; digest.update(bytes, 0, n) } }
                     assertEquals("Packaged provider identity", libraries.getJSONObject(name).getString("sha256"), digest.digest().joinToString("") { "%02x".format(it) })
@@ -93,7 +103,7 @@ class GuestAngleProviderTest {
                     assertEquals("angle-gl", selected.getString("graphicsProviderChoice")); assertTrue(selected.getBoolean("graphicsProviderFixed"))
                     val record = arguments.getString("recordId") ?: requireNotNull(worker.records().firstOrNull { it.getBoolean("selected") }?.getString("id"))
                     scenario.onActivity { it.startForegroundService(Intent(it, EngineService::class.java)) }
-                    val started = worker.start(record)
+                    val started = if (coldRecover) worker.recoverStart(record) else worker.start(record)
                     assertEquals(started.toString(), "", started.getString("error"))
                     assertTrue("Provider setter admitted after start", worker.debugSelectGraphicsProvider(1).isNotEmpty())
                     receipt.put("workerPid", started.getInt("pid")).put("appUid", Process.myUid()).put("recordId", record)
