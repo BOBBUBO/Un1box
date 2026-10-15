@@ -326,8 +326,10 @@ The throughput diagnostic cap is1048576 blocks, then TCG. No default changes.
 New UNRUN `arm1176-dynarmic-throughput.py` proposes a finite four-instruction
 countdown loop with1 or65536 iterations, SVC and privileged ARMv6 CP15 WFI.
 It checks all16registers/fullCPSR against a closed-form terminal oracle. The
-ON summary must prove exactly4*N alternate instructions, one cold block and
-N-1 warm hits with terminal PC/flags/countdown values. Same-binary OFF and a
+ON aggregates must prove exactly4*N alternate instructions across all segments,
+one cold block and segment-blocks-minus-one warm hits per segment, with exact
+cumulative PC/flags/countdown values. Ordinary async exits may split a workload;
+total native CPU time includes that cost and cold/warm counts remain measured. Same-binary OFF and a
 stock witness-negative must produce identical full terminal state; missing
 execution evidence cannot masquerade as a qualified alternate path.
 

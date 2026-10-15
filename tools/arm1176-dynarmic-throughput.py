@@ -228,13 +228,27 @@ def main():
                 result['witness_error']='Unexpected per-instruction/block diagnostic logging'
             ws=result['aggregate_witnesses']
             if args.require_throughput:
-                valid=len(ws)==1
-                if valid:
-                    w=ws[0];n=args.iterations
-                    valid=(w['blocks']==n and w['instructions']==4*n and
-                           w['cold']==1 and w['warm']==n-1 and w['pc']==0x1c10 and
-                           w['r0']==n and w['r1']==0 and w['cpsr']==0x60000010 and
-                           w['first_us']<=w['cold_end_us']<=w['last_us'])
+                n=args.iterations
+                completed=0
+                valid=bool(ws)
+                previous_last=0
+                for w in ws:
+                    completed+=w['blocks']
+                    last=completed==n
+                    valid &= (0<w['blocks'] and completed<=n and
+                              w['instructions']==4*w['blocks'] and
+                              w['cold']==1 and w['warm']==w['blocks']-1 and
+                              w['pc']==(0x1c10 if last else 0x1c00) and
+                              w['r0']==completed and w['r1']==n-completed and
+                              w['cpsr']==(0x60000010 if last else 0x20000010) and
+                              previous_last<=w['first_us']<=w['cold_end_us']<=w['last_us'])
+                    previous_last=w['last_us']
+                valid &= completed==n
+                result['aggregate_totals']={
+                    'segments':len(ws),'blocks':completed,
+                    'instructions':sum(w['instructions'] for w in ws),
+                    'cold':sum(w['cold'] for w in ws),
+                    'warm':sum(w['warm'] for w in ws)}
                 if not valid:
                     result['status']='FAILED'
                     result['witness_error']='Required exact aggregate execution witness missing or different'
