@@ -163,3 +163,31 @@ performance prediction.
 Dynarmic is 0BSD; its optional dependencies must be reviewed for the selected
 build. HQEMU inherits QEMU GPL terms and separately patched LLVM licensing.
 No package or distribution clearance follows from a research-only probe.
+
+## Prepared follow-up: checked RAM, flags and branches (not run)
+
+QEMU source now prepares actual data-MMU-checked aligned positive-offset LDR
+word snapshots, broader r0-r12 immediate ALU operations, CMP/NZCV, and
+B/BEQ/BNE. The C++ bridge receives only a value capsule and verifies the
+actual JIT result against complete per-instruction integer/CPSR expectations.
+Rejected access/width/opcode/region or any state mismatch preserves original
+QEMU state for ordinary TCG. No live QEMU helper enters a C++ callback.
+Breakpoints/watchpoints reject the alternate path conservatively.
+
+`arm1176-dynarmic-contracts.py` is a new **UNRUN** follow-up input. Its three
+fresh-process suites use no firmware: eight ordinary integer cases, eight
+flag/branch cases, and eleven memory/fallback cases (only three eligible loads).
+Memory negatives include actual MMU permission/translation/alignment faults,
+non-whitelisted byte/writeback/SP forms and Thumb fallback. Alignment tests
+prospectively set SCTLR.A in the real CP15 bootstrap; no observed outcome is
+claimed. Same-binary OFF/ON runs must compare every sixteen-register/CPSR
+observation and exact execution witnesses, then a stock witness-required run
+must fail even if its TCG state observations pass. Preserve any failed input
+assumption separately, as with the historical pre-v7 XN correction.
+
+A bounded eight-step snapshot planner/capsule is source preparation only.
+**The live engine hook still passes budget=1 and requires GDB single-step.**
+No free-running/block caller is enabled; bypassing interrupt/debug/timer exits
+would be incorrect. No alternate iOS, board CP15/GLES, Android, AArch64,
+interrupt/lifecycle, cache/invalidation or speed qualification follows.
+The fresh 8 MiB JIT per invocation is still a correctness scaffold.
