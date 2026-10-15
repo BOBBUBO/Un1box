@@ -161,17 +161,17 @@ class KeyboardFenceTest(unittest.TestCase):
     def test_quiet_cutoff_and_no_late_pair(self):
         b, p = binding(); f = k.Fence(b, p)
         self.assertEqual(f.cutoff, 127000)
-        f.start_pair(clock(124900)); f.finish_pair(clock(125900))
+        f.start_pair(clock(121990)); f.finish_pair(clock(125900))
         self.assertEqual(f.pairs, 1)
-        with self.assertRaises(ValueError): f.start_pair(clock(125000))
+        with self.assertRaises(ValueError): k.Fence(b, p).start_pair(clock(121991))
         with self.assertRaises(ValueError): f.finish_pair(clock(126995))
 
     def test_device_clock_only_cadence_and_no_catchup(self):
         b, p = binding(); f = k.Fence(b, p)
         f.start_pair(clock(101000)); f.finish_pair(clock(101500))
-        for at in (102999, 104501):
+        for at in (102999, 106501):
             with self.assertRaises(ValueError): f.start_pair(clock(at))
-        f.start_pair(clock(103000)); self.assertEqual(f.last_pair_ms, 103000)
+        f.start_pair(clock(106500)); self.assertEqual(f.last_pair_ms, 106500)
 
     def test_phase_and_identity_surface_ownership_changes_abort(self):
         b, p = binding()
