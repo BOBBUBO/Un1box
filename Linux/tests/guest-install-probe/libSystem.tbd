@@ -6,5 +6,5 @@ current-version: 1.0
 compatibility-version: 1.0
 exports:
   - archs: [ armv6 ]
-    symbols: [ _dlopen, _dlsym, _write, __exit ]
+    symbols: [ _dlopen, _dlsym, _write, __exit, dyld_stub_binder ]
 ...

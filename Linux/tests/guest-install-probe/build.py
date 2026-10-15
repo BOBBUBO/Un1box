@@ -35,13 +35,77 @@ def inspect_macho(path):
         raise ValueError("Expected a complete 32-bit ARMv6 Mach-O")
     commands, cursor = [], 28
     for _ in range(count):
+        if cursor + 8 > 28 + size:
+            raise ValueError("Mach-O load command truncated")
         command, length = struct.unpack_from("<II", data, cursor)
         if length < 8 or cursor + length > 28 + size:
             raise ValueError("Invalid Mach-O load-command extent")
         commands.append(command)
         cursor += length
+    if cursor != 28 + size:
+        raise ValueError("Mach-O load-command size mismatch")
     return {"cpu": cpu, "subtype": subtype, "filetype": filetype, "flags": flags,
             "commands": commands, "bytes": len(data), "sha256": sha(path)}
+
+
+def verify_code_signature(path):
+    """Independently verify CodeDirectory page hashes; require legacy SHA-1."""
+    data = Path(path).read_bytes()
+    inspect_macho(path)
+    count = struct.unpack_from("<I", data, 16)[0]
+    cursor = 28
+    location = None
+    for _ in range(count):
+        command, length = struct.unpack_from("<II", data, cursor)
+        if command == 0x1d:
+            if length != 16 or location is not None:
+                raise ValueError("Invalid or duplicate code-signature command")
+            location = struct.unpack_from("<II", data, cursor + 8)
+        cursor += length
+    if location is None:
+        raise ValueError("No embedded code signature")
+    offset, size = location
+    if size < 12 or offset < cursor or offset + size > len(data):
+        raise ValueError("Truncated embedded code signature")
+    signature = data[offset:offset + size]
+    magic, length, entries = struct.unpack_from(">III", signature)
+    table_end = 12 + entries * 8
+    if magic != 0xfade0cc0 or not 12 <= length <= size or table_end > length:
+        raise ValueError("Invalid signature SuperBlob")
+    directories = []
+    for index in range(entries):
+        slot, begin = struct.unpack_from(">II", signature, 12 + index * 8)
+        if begin < table_end or begin + 8 > length:
+            raise ValueError("Invalid signature blob location")
+        blob_magic, blob_length = struct.unpack_from(">II", signature, begin)
+        if blob_length < 8 or begin + blob_length > length:
+            raise ValueError("Invalid signature blob extent")
+        if blob_magic != 0xfade0c02:
+            continue
+        blob = signature[begin:begin + blob_length]
+        if len(blob) < 44:
+            raise ValueError("Truncated CodeDirectory")
+        _, _, version, flags, hashes, identifier, special, slots, limit = struct.unpack_from(">9I", blob)
+        hash_size, hash_type, platform, page_bits = struct.unpack_from("4B", blob, 36)
+        if (hash_type not in (1, 2) or hash_size != {1: 20, 2: 32}[hash_type] or
+                not 0 < page_bits <= 20 or limit != offset):
+            raise ValueError("Unsupported signature hash layout")
+        page = 1 << page_bits
+        if (not slots or slots != (limit + page - 1) // page or
+                hashes - special * hash_size < 44 or hashes + slots * hash_size > len(blob) or
+                not 44 <= identifier < hashes - special * hash_size or
+                b"\0" not in blob[identifier:hashes - special * hash_size]):
+            raise ValueError("Invalid CodeDirectory page slots")
+        function = hashlib.sha1 if hash_type == 1 else hashlib.sha256
+        for number in range(slots):
+            actual = function(data[number * page:min(limit, (number + 1) * page)]).digest()[:hash_size]
+            if actual != blob[hashes + number * hash_size:hashes + (number + 1) * hash_size]:
+                raise ValueError("Code signature page hash differs")
+        directories.append({"slot": slot, "version": version, "flags": flags, "hashType": hash_type,
+                            "pages": slots, "codeLimit": limit, "pageHashesVerified": True})
+    if not any(entry["slot"] == 0 and entry["hashType"] == 1 for entry in directories):
+        raise ValueError("No primary legacy SHA-1 CodeDirectory for iOS 3.1.3")
+    return directories
 
 
 def tiny_limits():
@@ -125,7 +189,7 @@ def build(args):
             return receipt
         analysis = inspect_macho(binary)
         receipt["unsignedExecutable"] = analysis
-        if analysis["filetype"] != 2 or 5 not in analysis["commands"] or 0x80000028 in analysis["commands"] or 0x80000022 in analysis["commands"]:
+        if analysis["filetype"] != 2 or 5 not in analysis["commands"] or 0x80000028 in analysis["commands"]:
             receipt["blockers"].append("Linked executable lacks legacy LC_UNIXTHREAD or has unsupported modern dyld metadata.")
             return receipt
         if not receipt["signer"]:
@@ -138,6 +202,7 @@ def build(args):
         if 0x1d not in analysis["commands"]:
             receipt["blockers"].append("Signed output has no LC_CODE_SIGNATURE.")
             return receipt
+        receipt["codeSignature"] = verify_code_signature(binary)
         app = out / "Payload" / "InstallProbe.app"
         app.mkdir(mode=0o700, parents=True)
         shutil.copyfile(binary, app / "InstallProbe")
