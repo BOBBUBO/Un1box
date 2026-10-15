@@ -131,7 +131,7 @@ def collect(args):
     add(source_notice, 'usr/share/licenses/LightTouch/SOURCE.txt', 'Corresponding source notice')
     # Retain exact clean source revisions, not the entire private workspace.
     app = HERE.parents[1]
-    qemu = Path(os.environ['LIGHTTOUCH_QEMU_SOURCE'])
+    qemu = args.engine.parent.parent / 'qemu-source'
     source_index = {}
     for name, source in (('LightTouch', app), ('qemu-ios', qemu)):
         revision = run(['git', '-C', source, 'rev-parse', 'HEAD']).strip()
@@ -140,6 +140,17 @@ def collect(args):
             subprocess.run(['git', '-C', str(source), 'archive', '--format=tar.gz', 'HEAD'], stdout=stream, check=True)
         add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, name + ' corresponding source')
         source_index[name] = revision
+    for source in sorted((qemu / 'subprojects').iterdir()):
+        if source.is_dir() and (source / '.git').exists():
+            revision = run(['git', '-C', source, 'rev-parse', 'HEAD']).strip()
+            wrap = source.with_suffix('.wrap')
+            if not wrap.exists() or not re.search(r'^revision\s*=\s*' + re.escape(revision) + r'\s*$', wrap.read_text(), re.MULTILINE):
+                raise RuntimeError('Subproject source revision differs from pinned wrap: ' + str(source))
+            archive = notices / (source.name + '-' + revision + '.tar.gz')
+            with archive.open('wb') as stream:
+                subprocess.run(['git', '-C', str(source), 'archive', '--format=tar.gz', revision], stdout=stream, check=True)
+            add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, 'QEMU pinned subproject corresponding source')
+            source_index['subproject/' + source.name] = revision
     for directory in args.dependency:
         manifest = directory / 'dependency-manifest.json'
         if manifest.exists():
