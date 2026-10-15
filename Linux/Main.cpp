@@ -897,7 +897,14 @@ static int frontend(const Options &o, int argc, char **argv) {
     if (!o.headless) {
         sdl.initialized = true; // SDL_Quit also cleans a partially failed init.
         require(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0, SDL_GetError());
-        window = SDL_CreateWindow(last_window_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 480, 800,
+        SDL_Rect available{};
+        int initial_width = 480, initial_height = 800;
+        if (SDL_GetDisplayUsableBounds(0, &available) == 0 && available.w > 0 && available.h > 0) {
+            initial_width = std::min(initial_width, std::max(320, available.w - 48));
+            initial_height = std::min(initial_height, std::max(240, available.h - 64));
+        }
+        window = SDL_CreateWindow(last_window_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                  initial_width, initial_height,
                                   SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
         require(window, SDL_GetError());
         SDL_SetWindowMinimumSize(window, 320, 240);

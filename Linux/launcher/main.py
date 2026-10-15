@@ -26,6 +26,49 @@ from app_services.window import AppsWindow
 PALETTE = {"paper": "#F3F6FA", "ink": "#1C304A", "muted": "#596C83", "blue": "#285BB5", "line": "#D9E2EF", "white": "#FFFFFF"}
 
 
+class ScrollPanel(ttk.Frame):
+    """Keep setup fields reachable while the session controls stay on screen."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.canvas = tk.Canvas(self, background=PALETTE["paper"], highlightthickness=0, width=1, height=1)
+        bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.content = ttk.Frame(self.canvas, padding=16)
+        item = self.canvas.create_window(0, 0, window=self.content, anchor="nw")
+        self.content.bind("<Configure>", lambda _: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(item, width=event.width))
+        top = self.winfo_toplevel()
+        for event in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            top.bind(event, self.wheel, add="+")
+        top.bind("<FocusIn>", self.reveal_focus, add="+")
+
+    def contains(self, widget):
+        while widget is not None:
+            if widget is self:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
+
+    def wheel(self, event):
+        if self.contains(event.widget):
+            step = -1 if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0 else 1
+            self.canvas.yview_scroll(step * 3, "units")
+            return "break"
+
+    def reveal_focus(self, event):
+        if not self.contains(event.widget) or event.widget in (self.canvas, self):
+            return
+        y = event.widget.winfo_rooty() - self.content.winfo_rooty()
+        height = max(1, self.content.winfo_height())
+        first, last = self.canvas.yview()
+        if y < first * height:
+            self.canvas.yview_moveto(y / height)
+        elif y + event.widget.winfo_height() > last * height:
+            self.canvas.yview_moveto((y + event.widget.winfo_height() - self.canvas.winfo_height()) / height)
+
+
 class Launcher:
     def __init__(self, window, args):
         self.window, self.args = window, args
@@ -62,8 +105,11 @@ class Launcher:
 
     def _build(self):
         self.window.title("LightTouch")
-        self.window.geometry("1040x810")
-        self.window.minsize(950, 760)
+        # Leave room for desktop panels and window decorations on 768px displays.
+        available_width = max(320, self.window.winfo_screenwidth() - 64)
+        available_height = max(240, self.window.winfo_screenheight() - 96)
+        self.window.geometry(f"{min(1040, available_width)}x{min(810, available_height)}")
+        self.window.minsize(min(950, available_width), min(540, available_height))
         self.window.configure(bg=PALETTE["paper"])
         style = ttk.Style()
         style.theme_use("clam")
@@ -96,15 +142,19 @@ class Launcher:
         self.button(sidebar, "+ Add iOS device", self.new).pack(fill="x", pady=(12, 0))
         content = ttk.Frame(body)
         content.pack(side="left", fill="both", expand=True)
+        # Pack the footer first so it retains space when the window is short.
+        footer = ttk.Frame(content)
+        footer.pack(side="bottom", fill="x", pady=(12, 0))
         self.heading = ttk.Label(content, text="Add iOS device", style="Heading.TLabel")
         self.heading.pack(anchor="w", pady=(0, 12))
         notebook = ttk.Notebook(content)
         notebook.pack(fill="both", expand=True)
-        setup = ttk.Frame(notebook, padding=16)
-        advanced = ttk.Frame(notebook, padding=16)
+        setup_panel = ScrollPanel(notebook)
+        advanced_panel = ScrollPanel(notebook)
+        setup, advanced = setup_panel.content, advanced_panel.content
         diagnostics = ttk.Frame(notebook, padding=16)
-        notebook.add(setup, text="  iOS files  ")
-        notebook.add(advanced, text="  Advanced  ")
+        notebook.add(setup_panel, text="  iOS files  ")
+        notebook.add(advanced_panel, text="  Advanced  ")
         notebook.add(diagnostics, text="  Session details  ")
         ttk.Label(setup, textvariable=self.selection_hint, wraplength=620, style="Muted.TLabel").pack(anchor="w", pady=(0, 12))
         for title, hint, variable, action, caption in (
@@ -151,11 +201,11 @@ class Launcher:
         self.log = tk.Text(diagnostics, height=8, bg=PALETTE["white"], fg=PALETTE["ink"], relief="flat",
                            font=("DejaVu Sans Mono", 9), wrap="word", state="disabled")
         self.log.pack(fill="both", expand=True)
-        ttk.Label(content, textvariable=self.message, font=("DejaVu Sans", 11, "bold"), wraplength=650).pack(anchor="w", pady=(16, 4))
-        ttk.Label(content, textvariable=self.detail, style="Muted.TLabel", wraplength=650).pack(anchor="w", pady=(0, 8))
-        self.progress = ttk.Progressbar(content, mode="determinate", maximum=100)
+        ttk.Label(footer, textvariable=self.message, font=("DejaVu Sans", 11, "bold"), wraplength=650).pack(anchor="w", pady=(0, 4))
+        ttk.Label(footer, textvariable=self.detail, style="Muted.TLabel", wraplength=650).pack(anchor="w", pady=(0, 8))
+        self.progress = ttk.Progressbar(footer, mode="determinate", maximum=100)
         self.progress.pack(fill="x", pady=(0, 10))
-        actions = ttk.Frame(content)
+        actions = ttk.Frame(footer)
         actions.pack(fill="x")
         self.start_button = self.button(actions, "Start iOS", self.start, "Accent.TButton")
         self.start_button.pack(side="left")

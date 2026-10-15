@@ -21,9 +21,16 @@ class UITests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.window = main.tk.Tk()
-        self.addCleanup(self.window.destroy)
+        self.addCleanup(self.destroy_window)
         args = argparse.Namespace(data_dir=str(self.root / 'library'), frontend='/missing/frontend', engine='/missing/engine')
         self.ui = main.Launcher(self.window, args)
+
+    def destroy_window(self):
+        # Tests use several Tk roots in one interpreter; retire owned callbacks
+        # before their Tcl commands disappear and another root pumps events.
+        for callback in self.window.tk.splitlist(self.window.tk.call('after', 'info')):
+            self.window.after_cancel(callback)
+        self.window.destroy()
 
     def test_file_picker_accepts_readonly_files_and_autofills_companions(self):
         source = archive(self.root / 'n72ap-7E18.itbase')
@@ -49,6 +56,32 @@ class UITests(unittest.TestCase):
         self.assertIsNone(self.ui.preparation)
         self.assertEqual(self.ui.vars['base'].get(), str(base))
         self.assertEqual(self.ui.start_button['text'], 'Start iOS')
+
+    def test_session_controls_remain_visible_in_short_window(self):
+        self.window.geometry('950x540')
+        self.window.update()
+        top = self.window.winfo_rooty()
+        bottom = top + self.window.winfo_height()
+        for button in (self.ui.start_button, self.ui.stop_button, self.ui.cancel_button, self.ui.apps_button):
+            self.assertTrue(button.winfo_ismapped())
+            self.assertGreaterEqual(button.winfo_rooty(), top)
+            self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), bottom)
+
+        # The third picker must remain reachable when setup needs scrolling.
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        boot = next(child for child in descendants(self.window)
+                    if isinstance(child, main.ttk.Button) and child['text'] == 'Choose boot file…')
+        panel = boot.master
+        while not isinstance(panel, main.ScrollPanel):
+            panel = panel.master
+        panel.canvas.yview_moveto(1)
+        self.window.update()
+        self.assertGreaterEqual(boot.winfo_rooty(), panel.canvas.winfo_rooty())
+        self.assertLessEqual(boot.winfo_rooty() + boot.winfo_height(),
+                             panel.canvas.winfo_rooty() + panel.canvas.winfo_height())
 
     def test_replacing_saved_system_preserves_old_device_and_uses_new_state(self):
         old = self.ui.profile()
