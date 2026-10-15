@@ -48,8 +48,11 @@ def main():
     parser.add_argument('--name', required=True)
     parser.add_argument('--evidence', type=Path, required=True, help='Fresh evidence directory; build products may be resumed')
     parser.add_argument('--collect-only-image', help='Explicit saved successful build environment; run no compilers')
+    parser.add_argument('--refresh-frontend', action='store_true', help='Rebuild/test only the frontend in the saved build environment before collection')
     parser.add_argument('--runtime-name', default='runtime', help='Fresh runtime output directory name')
     args = parser.parse_args()
+    if args.refresh_frontend and not args.collect_only_image:
+        parser.error('--refresh-frontend requires --collect-only-image')
     assert available() >= 8 * 1024**3, 'Build admission needs8GiB available host RAM'
     app, qemu, output = args.app.resolve(), args.qemu.resolve(), args.output.resolve()
     assert args.runtime_name and Path(args.runtime_name).name == args.runtime_name
@@ -73,6 +76,8 @@ def main():
                  '--engine', '/build/engine-cxx17-full/libqemu-arm.so',
                  '--dependency', '/build/deps-full', '--dependency', '/build/crypto',
                  '--dependency', '/build/mobile-v3']
+        if args.refresh_frontend:
+            inner = ['python3', '/src/app/Linux/packaging/refresh-frontend.py', '--'] + inner
     command = ['docker', 'create', '--name', args.name, '--memory=4g', '--memory-swap=4g', '--cpus=2', '--pids-limit=256',
                '--mount', 'type=bind,src=%s,dst=/src/app,readonly' % app,
                '--mount', 'type=bind,src=%s,dst=%s,readonly' % (qemu, qemu),
