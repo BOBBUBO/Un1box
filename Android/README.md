@@ -51,7 +51,7 @@ not only JNI.
 ## Build and run
 
 Follow the concise [verified build/install/run guide](BUILD-AND-RUN.md) for
-candidate20's exact source revisions, required engine/firmware/ANGLE/frontend
+the current baseline's exact source revisions, required engine/firmware/ANGLE/frontend
 notice inputs, complete Gradle properties and APK checks. It separates tested
 build/host admission commands from manual guest readiness and open acceptance.
 Keep build outputs and guest material outside the checkout. Build both real
