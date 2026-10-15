@@ -42,6 +42,21 @@ def clock(at):
 
 
 class KeyboardFenceTest(unittest.TestCase):
+    def test_actual_sdk36_top_display_focus_and_inactive_null(self):
+        # Actual Poco SDK36 excerpts: `window windows` had no focus field;
+        # full output carries an inactive display7 and the active display0.
+        actual = (b'  Display: mDisplayId=7\n  mCurrentFocus=null\n'
+                  b'  Display: mDisplayId=0 (organized)\n'
+                  b'  mCurrentFocus=Window{774ee2f u0 org.lighttouch.android/org.lighttouch.android.MainActivity}\n'
+                  b'  mTopFocusedDisplayId=0\n')
+        self.assertEqual(k.focused_own_window(actual)['topFocusedDisplayId'], 0)
+        for bad in (b'', actual.replace(b'mTopFocusedDisplayId=0', b'mTopFocusedDisplayId=7'),
+                    actual.replace(b'org.lighttouch.android/org.lighttouch.android.MainActivity',
+                                   b'com.android.launcher3/com.android.launcher3.uioverrides.QuickstepLauncher'),
+                    actual + b'  mTopFocusedDisplayId=0\n',
+                    actual + b'  mCurrentFocus=null\n', b'x' * 131073):
+            with self.assertRaises(ValueError): k.focused_own_window(bad)
+
     def test_initial_identity_and_record_metadata_keep_distinct_receipts(self):
         # Exercise the real metadata reader with exclusive-write receipts,
         # including the selected-record read shared by both collection paths.
