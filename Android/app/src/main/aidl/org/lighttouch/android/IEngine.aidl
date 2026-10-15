@@ -33,4 +33,5 @@ interface IEngine {
     long displayInputGeneration(long lease);
     Bundle performance(long observationEpoch);
     String debugArmVcpuAccounting();
+    Bundle debugShutdownProgress();
 }

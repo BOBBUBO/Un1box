@@ -38,6 +38,11 @@ class EngineService : Service() {
     private val binder = object : IEngine.Stub() {
         override fun performance(observationEpoch: Long): Bundle = performanceSampler.request(Binder.getCallingPid(), observationEpoch)
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
+        override fun debugShutdownProgress(): Bundle {
+            requireDebugDiagnosis()
+            // Do not route this through status()/observations(): those enter JNI.
+            return shutdownProgressBundle(shutdownWatchdog.cachedProgress())
+        }
         override fun debugArmQmp(): String { requireDebugDiagnosis(); return Native.debugArmQmp() }
         override fun debugArmVcpuAccounting(): String {
             requireDebugDiagnosis()
@@ -242,6 +247,43 @@ class EngineService : Service() {
                 .put("audiblePlaybackVerified", false).put("visibleGuestVerified", false)
             File(filesDir, "worker-observations-${Process.myPid()}.json").writeText(receipt.toString(2))
         } catch (_: Exception) { /* State markers and per-worker native logs remain authoritative. */ }
+    }
+    /** Cached Java facts only, callable while the stop admission thread is blocked. */
+    private fun shutdownProgressBundle(snapshot: ShutdownDebugProgress): Bundle {
+        val observedAt = SystemClock.elapsedRealtime()
+        fun call(value: ShutdownCallProgress) = Bundle().apply {
+            putLong("entered", value.entered); putLong("returned", value.returned); putLong("threw", value.threw)
+            value.lastEnteredAtMs?.let { putLong("lastEnteredAtHostMs", it) }
+            value.lastReturnedAtMs?.let { putLong("lastReturnedAtHostMs", it) }
+            value.lastException?.let { putString("lastException", it) }
+        }
+        return Bundle().apply {
+            putInt("workerPid", Process.myPid()); putInt("workerUid", Process.myUid())
+            putString("clock", "android.SystemClock.elapsedRealtime/BOOTTIME")
+            putLong("observedAtHostMs", observedAt); putLong("revision", snapshot.revision)
+            putBoolean("cachedJavaProgressOnly", true); putBoolean("shutdownConfirmationInferred", false)
+            putBoolean("terminalReceiptAuthority", false); putBoolean("requested", snapshot.requested)
+            snapshot.updatedAtMs?.let { putLong("snapshotUpdatedAtHostMs", it); putLong("snapshotAgeMs", (observedAt - it).coerceAtLeast(0)) }
+            snapshot.acceptedAtMs?.let { putLong("acceptedAtHostMs", it) }
+            snapshot.deadlineMs?.let { putLong("deadlineHostMs", it) }
+            putString("phase", snapshot.phase); putString("progressError", snapshot.error)
+            snapshot.phaseEnteredAtMs?.let { putLong("phaseEnteredAtHostMs", it) }
+            snapshot.phaseLastReturnedAtMs?.let { putLong("phaseLastReturnedAtHostMs", it) }
+            putBundle("stopCall", call(snapshot.stop)); putBundle("cancelCall", call(snapshot.cancel))
+            putBundle("statusCall", call(snapshot.status)); putBundle("receiptCall", call(snapshot.receipt))
+            putBoolean("nativeStatusEverReturned", snapshot.lastReturnedStatus != null)
+            snapshot.lastReturnedStatus?.let { returned -> putBundle("lastReturnedNativeStatus", Bundle().apply {
+                putLong("returnedAtHostMs", returned.returnedAtMs); putLong("ageMs", (observedAt - returned.returnedAtMs).coerceAtLeast(0))
+                putLong("pollNumber", returned.pollNumber); putString("state", returned.state); putString("error", returned.error)
+                putBoolean("pollSnapshotValid", returned.native.valid); putBoolean("guestShutdownConfirmed", returned.native.confirmed)
+                returned.native.dirty?.let { putBoolean("dirty", it) }
+                returned.native.storageFailed?.let { putBoolean("storageFailed", it) }
+                returned.native.engineExit?.let { putInt("engineExit", it) }
+                putBoolean("cachedOnlyNotCurrentPoll", true); putBoolean("flagsRequireValidSnapshot", true)
+            }) }
+            snapshot.disposalReason?.let { putString("disposalReason", it) }
+            snapshot.disposalRequestedAtMs?.let { putLong("disposalRequestedAtHostMs", it) }
+        }
     }
     private fun persistStopError(message: String) {
         try { File(filesDir, "worker-stop-error-${Process.myPid()}.txt").writeText(message) } catch (_: java.io.IOException) { /* State markers remain authoritative. */ }
