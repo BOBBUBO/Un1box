@@ -83,6 +83,10 @@ def validate_home(gate, lock_receipt, home_receipt, lock_bmp, home_bmp,
     try:
         checked = int(gate['verified_monotonic_ns'])
         released = int(gate['slider_released_monotonic_ns'])
+        down_begin = int(gate['slider_down_begin_monotonic_ns'])
+        down_end = int(gate['slider_down_end_monotonic_ns'])
+        up_begin = int(gate['slider_up_begin_monotonic_ns'])
+        up_end = int(gate['slider_up_end_monotonic_ns'])
         lock_checked = int(gate['lock_verified_monotonic_ns'])
         return (gate['proof_kind'] == POLICY and gate['model_inspected'] is False and
                 gate['template_matched'] is True and gate['scene'] == 'Home Screen' and
@@ -95,8 +99,10 @@ def validate_home(gate, lock_receipt, home_receipt, lock_bmp, home_bmp,
                 isinstance(gate['window'], int) and gate['window'] > 0 and
                 gate['viewport'] == gate['lock_viewport'] and len(gate['viewport']) == 2 and
                 all(type(v) is int and 0 < v <= 16384 for v in gate['viewport']) and
-                identity['hello_monotonic_ns'] <= lock_checked < released <=
-                int(home_receipt['frame_monotonic_ns']) <= checked <= deadline and checked <= now and
+                gate['slider_balanced_contact'] is True and
+                identity['hello_monotonic_ns'] <= lock_checked <= down_begin <= down_end <
+                up_begin <= up_end <= released <= int(home_receipt['copy_started_monotonic_ns']) and
+                down_end <= int(home_receipt['frame_monotonic_ns']) <= checked <= deadline and checked <= now and
                 valid_current(lock_receipt, gate['lock_status'], identity, lock_checked, lock=True) and
                 valid_current(home_receipt, gate['status'], identity, checked) and
                 GATES.valid_scene_transition(lock_receipt, home_receipt, lock_bmp, home_bmp) and
@@ -165,9 +171,10 @@ class Live:
         start = time.monotonic_ns()
         value = subprocess.run(['xdotool', *args], env=self.env, text=True, capture_output=True,
                                timeout=2 if release else min(2, remaining), check=True)
+        self.last_event = dict(start_monotonic_ns=start, end_monotonic_ns=time.monotonic_ns(),
+                               argv=['xdotool', *args], stdout=value.stdout)
         with (self.out / 'controls.jsonl').open('a') as log:
-            log.write(json.dumps(dict(start_monotonic_ns=start, end_monotonic_ns=time.monotonic_ns(),
-                                      argv=['xdotool', *args], stdout=value.stdout)) + '\n')
+            log.write(json.dumps(self.last_event) + '\n')
         return value.stdout.strip()
 
     def viewport(self):
@@ -249,12 +256,18 @@ def slider(live, viewport):
     move(.18)
     try:
         live.x('mousedown', '1')
+        down = dict(live.last_event)
         for step in range(1, 11):
             move(.18 + .074 * step)
             time.sleep(.1)
     finally:
         live.x('mouseup', '1', release=True)
-    return time.monotonic_ns()
+    up = dict(live.last_event)
+    return dict(slider_down_begin_monotonic_ns=down['start_monotonic_ns'],
+                slider_down_end_monotonic_ns=down['end_monotonic_ns'],
+                slider_up_begin_monotonic_ns=up['start_monotonic_ns'],
+                slider_up_end_monotonic_ns=up['end_monotonic_ns'],
+                slider_released_monotonic_ns=time.monotonic_ns(), slider_balanced_contact=True)
 
 
 def description(path):
@@ -340,7 +353,7 @@ def main():
             (out / 'before-down-admission.json').write_text(json.dumps(dict(
                 checked_monotonic_ns=checked, status=current_status, model_inspected=False)) + '\n')
         live.before_down = final_down_admission
-        released = slider(live, viewport)
+        edges = slider(live, viewport)
         live.before_down = None
         live.deadline = deadline
         home_desc, home_receipt, home_bmp, home_viewport, status, checked = live.wait_match(
@@ -352,7 +365,7 @@ def main():
                     worker_start_ticks=live.worker['start_ticks'], window=live.window,
                     viewport=home_viewport, lock_viewport=viewport, lock_capture=lock_desc,
                     lock_verified_monotonic_ns=lock_checked, lock_status=lock_status,
-                    slider_released_monotonic_ns=released, status=status, verified_monotonic_ns=checked,
+                    **edges, status=status, verified_monotonic_ns=checked,
                     guest_acceptance=False)
         require(validate_home(gate, lock_receipt, home_receipt, lock_bmp, home_bmp, refs, identity,
                               live.worker, started['boot_id'], deadline, time.monotonic_ns()), 'final proof rejected')
