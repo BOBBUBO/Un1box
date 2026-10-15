@@ -85,6 +85,15 @@ grant for excluded source or private Apple assets. See
 [dependency coverage](../../Android/DEPENDENCY-NOTICES.md) and
 [frontend notices](../../Android/FRONTEND-NOTICES.md).
 
+If matching engine source/relink kits are supplied outside the run ZIP, record
+their exact manifest hashes **and how this recipient can access them**. An
+operator-only path or a repository URL that omits dependency sources and relink
+inputs does not establish recipient access. For a local transfer, a separately
+accessible source directory can avoid duplicating the run assets; verify that
+access and retain the applicable source-delivery method. Do not describe a bare
+manifest hash as delivery of the files it authenticates. Source/relink material
+and an actually executed rebuild/relink are separate evidence claims.
+
 `APK-NOTICES.json` should inventory exact embedded notice paths and bytes from
 the actual APK. `PROVENANCE.json` binds the values in section1, the chosen base
 origin and compatibility limits. Keep private asset hashes in the private bundle,
@@ -92,6 +101,11 @@ not public source. Use relative bundle paths and receipt digests; avoid copying
 host cache paths, endpoints, device identifiers or raw producer logs into it.
 Publish legal source separately only within the authorized source workflow;
 never upload the private ZIP, assets or their private provenance to Git/cloud.
+
+This privacy rule for the mixed archive and Apple assets adds no restriction to
+the licenses of separable covered code. Retain recipients' redistribution and
+modification rights under those licenses; do not require separate publisher
+permission to exercise them.
 
 Write directly from the four immutable input files and selected source-kit files
 using streaming ZIP reads/writes with Zip64 enabled. Compression and temporary
