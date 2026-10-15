@@ -24,7 +24,25 @@ class GuestQmpSnapshotTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val evidence = File(context.filesDir, "qmp-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
         val receipt = JSONObject().put("diagnosisCaptured", false).put("guestBootProven", false)
+            .put("hostTimestampClock", "Android SystemClock.elapsedRealtime/BOOTTIME")
+            .put("nativeMonotonicClockMustNotBeMixedWithHostTimestampClock", true)
         val snapshots = JSONArray()
+        @Suppress("DEPRECATION")
+        fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
+            for (key in bundle.keySet()) when (val value = bundle.get(key)) {
+                is Bundle -> put(key, encode(value))
+                is IntArray -> put(key, JSONArray(value.toList()))
+                is LongArray -> put(key, JSONArray(value.toList()))
+                else -> put(key, value)
+            }
+        }
+        fun atomic(name: String, value: String) {
+            val pending = File(evidence, ".$name.pending")
+            pending.writeText(value)
+            check(pending.renameTo(File(evidence, name))) { "Atomic diagnostic publication failed: $name" }
+        }
+        fun persistSnapshots() = atomic("snapshots.json", snapshots.toString(2))
+        fun persistReceipt() = atomic("result.json", receipt.toString(2))
         try {
             receipt.put("installedApkSha256", acceptanceSha256(File(context.applicationInfo.sourceDir)))
             ZipFile(context.applicationInfo.sourceDir).use { apk ->
@@ -39,6 +57,12 @@ class GuestQmpSnapshotTest {
                     val worker = binding.get()
                     val initial = worker.status()
                     assertEquals(Process.myUid(), initial.getInt("uid")); assertNotEquals(Process.myPid(), initial.getInt("pid"))
+                    val workerPid = initial.getInt("pid")
+                    fun checkIdentity(state: Bundle) {
+                        assertEquals("Worker PID changed during diagnosis", workerPid, state.getInt("pid"))
+                        assertEquals("Worker UID changed during diagnosis", Process.myUid(), state.getInt("uid"))
+                    }
+                    receipt.put("initialWorker", encode(initial)); persistReceipt()
                     val snapshotOnly = arguments.getString("snapshotOnly") == "true"
                     val touchWireTrace = arguments.getString("touchWireTrace") == "true"
                     val accountingArgument = arguments.getString("debugVcpuAccounting", "false")
@@ -87,6 +111,8 @@ class GuestQmpSnapshotTest {
                         if (coldRecover) worker.recoverStart(requireNotNull(record)) else worker.start(requireNotNull(record))
                     }
                     val requestedHoldSeconds = arguments.getString("qmpHoldSeconds", "0").toLong()
+                    checkIdentity(started)
+                    receipt.put("startedWorker", encode(started))
                     val holdSeconds = requestedHoldSeconds.coerceIn(0, 3600)
                     receipt.put("snapshotOnly", snapshotOnly).put("requestedHoldSeconds", requestedHoldSeconds)
                         .put("holdSeconds", holdSeconds)
@@ -108,7 +134,10 @@ class GuestQmpSnapshotTest {
                     assertTrue("Private QMP endpoint unavailable; inspect engineLog", endpoint.exists())
                     Thread.sleep(arguments.getString("qmpSettleSeconds", "30").toLong().coerceIn(0, 180) * 1000)
                     fun capture(index: Int, phase: String) {
+                        val beforeReadBegin = SystemClock.elapsedRealtimeNanos()
                         val before = worker.status()
+                        val beforeReadEnd = SystemClock.elapsedRealtimeNanos()
+                        checkIdentity(before)
                         val captured = worker.debugQmpSnapshot()
                         val diagnostics = JSONObject()
                         before.getBundle("observations")?.let { observed ->
@@ -119,11 +148,13 @@ class GuestQmpSnapshotTest {
                                 diagnostics.put(key, observed.get(key) ?: JSONObject.NULL)
                         }
                         val item = JSONObject().put("diagnostics", diagnostics).put("index", index).put("phase", phase).put("error", captured.getString("error"))
+                            .put("statusBefore", encode(before))
+                            .put("statusBeforeReadBeginElapsedNs", beforeReadBegin).put("statusBeforeReadEndElapsedNs", beforeReadEnd)
                             .put("path", captured.getString("path")).put("engineState", before.getString("state"))
                             .put("touchTraceConfigured", before.getBoolean("touchTraceConfigured"))
                             .put("vcpuAccountingConfigured", before.getBoolean("vcpuAccountingConfigured"))
                             .put("engineLog", before.getString("engineLog")).put("hostElapsedMs", SystemClock.elapsedRealtime())
-                        snapshots.put(item); File(evidence, "snapshots.json").writeText(snapshots.toString(2))
+                        snapshots.put(item); persistSnapshots()
                         assertEquals(captured.toString(), "", captured.getString("error"))
                         val lines = File(requireNotNull(captured.getString("path"))).readLines().map { JSONObject(it) }
                         assertTrue("Missing QMP greeting", lines.first().has("QMP"))
@@ -136,7 +167,13 @@ class GuestQmpSnapshotTest {
                             .put("cpuState", responses.getValue("lt-cpu-state").getString("return"))
                             .put("fixedKernelInstructions", responses.getValue("lt-instructions").getString("return"))
                             .put("fixedCallerInstructions", responses.getValue("lt-caller").getString("return"))
-                        File(evidence, "snapshots.json").writeText(snapshots.toString(2))
+                        val afterReadBegin = SystemClock.elapsedRealtimeNanos()
+                        val after = worker.status()
+                        val afterReadEnd = SystemClock.elapsedRealtimeNanos()
+                        item.put("statusAfter", encode(after))
+                            .put("statusAfterReadBeginElapsedNs", afterReadBegin).put("statusAfterReadEndElapsedNs", afterReadEnd)
+                        persistSnapshots()
+                        checkIdentity(after)
                     }
                     val count = arguments.getString("qmpSamples", "3").toInt().coerceIn(1, 12)
                     repeat(count) { capture(it, "snapshot"); Thread.sleep(3000) }
@@ -144,18 +181,18 @@ class GuestQmpSnapshotTest {
                         .put("appUid", Process.myUid()).put("privateEndpoint", endpoint.absolutePath).put("snapshots", snapshots)
                     val holdMs = holdSeconds * 1000
                     receipt.put("stage", if (holdMs > 0) "holding-foreground" else "complete")
-                    File(evidence, "result.json").writeText(receipt.toString(2))
+                    persistReceipt()
                     val holdDeadline = SystemClock.elapsedRealtime() + holdMs
                     var index = count
                     while (SystemClock.elapsedRealtime() < holdDeadline) {
                         Thread.sleep(minOf(10_000, (holdDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
                         capture(index++, "foreground-hold")
-                        File(evidence, "result.json").writeText(receipt.toString(2))
+                        persistReceipt()
                     }
                     receipt.put("stage", "complete").put("normalInstrumentationMayForceStopOnFinish", true)
                 }
             }
         } catch (failure: Throwable) { receipt.put("failure", failure.toString()); throw failure }
-        finally { File(evidence, "result.json").writeText(receipt.toString(2)) }
+        finally { persistReceipt() }
     }
 }
