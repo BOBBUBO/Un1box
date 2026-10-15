@@ -52,16 +52,18 @@ user's session solely on this proposal.
    fresh existing-worker collector plan. Retain PID/TID/start identity, host
    boot ID and mapped library evidence. Collector ownership and GUI/input
    ownership must agree; starting a profiler does not grant guest control.
-3. Predeclare a small navigation sequence: Home to Settings, a specific menu,
-   Home, then exactly the same sequence twice. Retain input dispatch times and
-   native frame plus displayed-surface evidence. Declare complete-content
-   endpoints before reviewing results. No coordinate-only inferred pass,
-   queued input into a sleeping surface or frame-counter-only completion.
-4. Allocate one original 40-second Linux recording spanning the first sequence
-   and repeats, with host-monotonic phase boundaries. Only use this plan if the
-   existing guest/operator can complete those phases inside the fixed window;
-   otherwise mark incomplete and propose a separately reviewed bounded design.
-   Do not extend the recording or silently reclassify unfinished phases.
+3. Predeclare Home to the complete Settings root as the single action for each
+   recording. After the first recording, return to Home and personally inspect
+   it before repeating the same action in the same worker. Retain input
+   dispatch times and native frame plus displayed-surface evidence. Declare
+   complete-content endpoints before reviewing results. No submenu, extra
+   repeat, queued input into a sleeping surface or frame-counter-only pass.
+4. Allocate two original 40-second Linux recordings, each within its original
+   48-second outer bound, with host-monotonic input/frame phase boundaries.
+   Require the runbook's 160-second admission reserve before the first begins.
+   If either phase cannot fit its existing guest/operator allocation, preserve
+   the incomplete comparison. Do not extend recordings, reset the guest's
+   original Stop clock or silently reclassify unfinished phases.
 5. Stop the profiler normally and preserve its terminal receipt, all raw data,
    lost/unknown sample counts and exact input/frame references. The operator
    retains responsibility for ordinary guest shutdown and same-state safety.

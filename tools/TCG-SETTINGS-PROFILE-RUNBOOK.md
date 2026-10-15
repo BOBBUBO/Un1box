@@ -95,6 +95,8 @@ and pinned `watch-ready-captures.py` (SHA256
 `3497952b88b0e15ec914490aa4cfc6042a340659fb73e2a3b3f73be4b5a53e2b`).
 The new run must explicitly bind these sources and its existing operator grant.
 Do not stage files into or operate an old/live run without its owner.
+Use `control.py capture` for `--source-capture`: its receipt is flat. A frame
+watcher's nested `receipt.json` is not an interchangeable source receipt.
 
 For **each** recording, the GUI operator first captures and actually inspects
 Home and the Settings icon. Coordinates `.14,.68` are the historical n72 layout,
@@ -131,6 +133,12 @@ most 20 native frames/2 Hz within its original ten-second operation deadline,
 and retains source inspection and actual `controls.jsonl` input edges. Wait for
 terminal success before any dependent capture/input. Preserve failure and stop
 this comparison on any failed prerequisite; there is no automatic retry.
+The helper reports the watcher's exit without propagating it as its own exit.
+Independently require `watcher_returncode == 0` and the watcher's `result.json`
+to report `fresh_nonblack_capture_retained == true`; helper exit zero alone
+does not qualify a capture. Inspect each selected frame's receipt flags and
+raw BMP hash before its image review. Preview conversion has a separate
+three-second budget after the sole capture writer exits.
 The operator personally inspects the retained frame sequence. Neither this
 helper nor the profiler classifies scenes or proves a Settings endpoint.
 
