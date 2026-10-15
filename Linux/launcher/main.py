@@ -456,13 +456,25 @@ class Launcher:
         lines = self.session.poll()
         if self.session.active and self.job == "import":
             for line in lines:
+                stage = re.fullmatch(r"import phase=(hashing|extracting|verifying) percent=(\d+) done=(\d+) total=(\d+)", line)
+                if stage:
+                    phase, percent, done, total = stage.groups()
+                    labels = {"hashing": "Checking system archive", "extracting": "Unpacking iOS system", "verifying": "Checking unpacked system"}
+                    self.progress["value"] = min(100, int(percent))
+                    self.message.set("%s: %s%%" % (labels[phase], percent))
+                    self.import_bytes = (int(done), int(total))
+                    continue
                 match = re.fullmatch(r"import (\d+)%", line)
                 if match:
                     percent = min(100, int(match[1]))
                     self.progress["value"] = percent
                     self.message.set("Unpacking iOS system: %d%%" % percent if percent < 100 else "Checking the unpacked system…")
             elapsed = int(time.monotonic() - self.setup_started)
-            self.detail.set("%dm %02ds elapsed · The system can expand to many GiB. Original files stay unchanged." % divmod(elapsed, 60))
+            detail = "%dm %02ds elapsed" % divmod(elapsed, 60)
+            if getattr(self, "import_bytes", None):
+                done, total = self.import_bytes
+                detail += " · %.2f / %.2f GiB in this step" % (done / 1024**3, total / 1024**3)
+            self.detail.set(detail + " · Original files stay unchanged.")
             if self.cancel_requested:
                 self.message.set("Cancelling setup and removing the incomplete import…")
         if lines:
