@@ -11,4 +11,7 @@ unset PYTHONPATH PYTHONSTARTUP PYTHONUSERBASE
 export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/lighttouch${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$APPDIR/usr/bin/python3" -s "$APPDIR/usr/share/lighttouch/launcher/main.py" \
     --frontend "$APPDIR/usr/bin/lighttouch-linux" \
-    --engine "$APPDIR/usr/lib/lighttouch/libqemu-arm.so" "$@"
+    --engine "$APPDIR/usr/lib/lighttouch/libqemu-arm.so" \
+    --usbmuxd "$APPDIR/usr/bin/usbmuxd-qemu" \
+    --imobile-library "$APPDIR/usr/lib/lighttouch/libimobiledevice-1.0.so.6" \
+    --plist-library "$APPDIR/usr/lib/lighttouch/libplist-2.0.so.4" "$@"

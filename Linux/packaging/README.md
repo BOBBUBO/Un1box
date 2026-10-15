@@ -10,8 +10,10 @@ substituted.
 Build frontend, engine, dependencies and a relocatable Python 3.9+ with Tk 8.6 in
 a glibc 2.31 x86_64 build environment. The compatibility target is kernel 5.4+,
 glibc 2.31+ and X11/XWayland. Current-host artifacts must pass the symbol check;
-relabelling a binary does not lower its glibc requirement. Host glibc and graphics
-providers are deliberately excluded. Generic EGL/GLES/GL dispatch and vendor
+relabelling a binary does not lower its glibc requirement. Host glibc, GCC runtime libraries and graphics
+providers are deliberately excluded. Keeping the host's libstdc++/libgcc avoids
+loading an older bundled C++ runtime into modern vendor graphics drivers; the
+payload's required GLIBCXX/CXXABI symbols are recorded in runtime-manifest.json. Generic EGL/GLES/GL dispatch and vendor
 GPU drivers must be supplied by the host; no software fallback is selected.
 
 Manifest schema (each file has a real absolute source, destination, SHA-256 and
@@ -57,17 +59,79 @@ x86_64 with GLIBC requirements at most 2.31, and checks declared ELF NEEDED clos
 It writes `runtime-manifest.json` with exact bundled hashes and host dependencies.
 `dlopen` dependencies still require explicit runtime inventory and actual tests.
 
-Use an independently pinned/audited `appimagetool` executable to seal the AppDir:
+Use `seal-appimage.py` with its hash-pinned tool and runtime to seal the AppDir:
 
 ```sh
-ARCH=x86_64 /private/tools/appimagetool /private/package/LightTouch.AppDir \
-  /private/package/LightTouch-x86_64.AppImage
+python3 Linux/packaging/seal-appimage.py \
+  --appdir /private/package/LightTouch.AppDir \
+  --tool /private/tools/appimagetool-x86_64.AppImage \
+  --runtime /private/tools/runtime-x86_64 \
+  --output /private/package/LightTouch-x86_64.AppImage \
+  --evidence /private/package/seal-01
 ```
 
 Record tool/version/hash, package hash, source revisions and complete payload in
 private build receipts. AppImage sealing and binary builds require the shared
-heavy-resource slot; do not run them concurrently with a guest. No AppImage or
-broad Linux compatibility is claimed until the actual launcher, same-engine guest
-boot/render/multi-touch/audio/clean restart and targeted distro matrix run.
+heavy-resource slot; do not run them concurrently with a guest. The sealer uses a
+writable scratch copy, zstd compression, two compression threads and a five-minute
+deadline. A real experimental AppImage was sealed on 2026-10-15 after all 12 native
+Debian 11 CTests and the 163-ELF/1,281-file staging audit passed. Actual launcher,
+same-engine guest boot/render/multi-touch/audio/clean restart and targeted distro
+qualification remain required before claiming broad Linux compatibility.
 AppImage FUSE is optional: users can use `--appimage-extract` and `squashfs-root/AppRun`
 when FUSE is unavailable. The native guest worker semantics remain unchanged.
+
+The Debian 11 build recipe uses the signed archived Debian repositories and a
+bounded Docker container. Keep its build product directory separate from a fresh
+per-attempt evidence directory; the runner refuses to overwrite evidence. It
+limits memory and memory+swap to 4 GiB, CPUs to two and PIDs to 256, samples the
+actual cgroup, and stops at 25 minutes or below 6 GiB available host memory.
+Admission requires 8 GiB available. All supplied source mounts stay read-only;
+QEMU's editable Python setup writes only into a private source clone retaining
+the exact commit. GCC 10 uses an explicitly stamped `gnu++17` override; upstream's
+default is unchanged.
+
+```sh
+python3 Linux/packaging/run-bounded-build.py \
+  --app /absolute/committed/LightTouch \
+  --qemu /absolute/committed/qemu-ios \
+  --output /private/build-products \
+  --evidence /private/build-products/attempt-01 \
+  --name lighttouch-bullseye-build01
+```
+
+The QEMU recipe must support `--cpp-standard=gnu++17`. Dependencies must first be
+hash-verified and extracted by the pinned portable `--prepare-only` recipes using
+a host Python with the safe tar extraction filter; Debian 11's Python 3.9 lacks
+that API. Put these prepared public source trees in `OUTPUT/deps-full` and
+`OUTPUT/crypto`; prepare the mobile dependencies with `build-mobile-deps.py
+OUTPUT/mobile-v3 --prepare-only`. Never place private guest material in this build directory.
+`collect-bullseye-runtime.py` records actual ELF dependency closure, also includes
+SDL's dynamically loaded ALSA/Pulse roots, and bundles Python/Tcl/Tk, copyright
+texts and native/dependency source archives. Its inventory records precise Debian
+source versions. Distribution additionally requires retaining the complete
+matching Debian/runtime source closure; an inventory alone is not that closure.
+The AppDir still requires actual relocation, display/audio and guest tests.
+
+If compilation completed but collection failed, retain that attempt and save its
+stopped container with `docker commit`. The runner's explicit
+`--collect-only-image IMAGE --runtime-name runtime-next` mode runs only collection
+with the same resource guards, producing a fresh runtime directory and evidence.
+Readonly recursive Git alternates are mounted to preserve shared-clone source
+archives without mutating the supplied repositories.
+
+Fetch exact Debian source archives into a separate corresponding-source bundle:
+
+```sh
+python3 Linux/packaging/fetch-debian-sources.py \
+  --inventory /private/package/debian-source-inventory.json \
+  --output /private/source-bundle/debian \
+  --apt-workdir /private/source-bundle/apt \
+  --keyring /private/verified/debian-archive-keyring.gpg
+```
+
+This uses signed archive indices and private APT state, installs nothing, records
+hashes, and has a 20-minute total deadline. Preserve its complete source bundle
+beside the AppImage. The AppImage runtime's additional static-library source and
+license requirements must also be audited; Debian source completion alone does
+not qualify the whole artifact.
