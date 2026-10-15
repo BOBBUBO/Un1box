@@ -187,6 +187,11 @@ def collect(args):
                 for license_name in ('COPYING.GPLv2', 'COPYING.GPLv3'):
                     add(daemon / license_name, 'usr/share/licenses/LightTouch/usbmuxd/' + license_name, 'QEMU usbmuxd license')
                 add(app / 'Linux/packaging/patches/usbmuxd-linux-standard-headers.patch', 'usr/share/licenses/LightTouch/usbmuxd/linux-standard-headers.patch', 'Applied QEMU usbmuxd build compatibility patch')
+                if value.get('daemon_private_config_patch_sha256'):
+                    patch = app / 'Linux/packaging/patches/usbmuxd-private-qemu-config.patch'
+                    if stage.sha(patch) != value['daemon_private_config_patch_sha256']:
+                        raise RuntimeError('QEMU usbmuxd private configuration patch changed')
+                    add(patch, 'usr/share/licenses/LightTouch/usbmuxd/private-qemu-config.patch', 'Applied owner-only private QEMU pairing configuration patch')
     sealing_notices = args.engine.parent.parent / 'sealing-notices'
     if sealing_notices.exists():
         expected = json.loads((sealing_notices / 'INPUT-SHA256.json').read_text())
