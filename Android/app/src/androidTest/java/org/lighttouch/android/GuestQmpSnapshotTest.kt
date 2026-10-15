@@ -45,6 +45,13 @@ class GuestQmpSnapshotTest {
                     require(accountingArgument in listOf("true", "false")) { "debugVcpuAccounting must be true or false" }
                     val vcpuAccounting = accountingArgument == "true"
                     val coldRecover = arguments.getString("coldRecover") == "true"
+                    val providerArgument = arguments.getString("debugGraphicsProvider")
+                    require(providerArgument == null || providerArgument in listOf("platform", "angle-gl")) {
+                        "debugGraphicsProvider must be platform or angle-gl"
+                    }
+                    require(providerArgument == null || !snapshotOnly) {
+                        "A provider may only be selected before a fresh worker starts"
+                    }
                     require(!coldRecover || !snapshotOnly) { "Cold recovery requires a fresh worker; snapshotOnly cannot recover an existing session" }
                     receipt.put("coldRecoveryRequested", coldRecover).put("shutdownConfirmationInferred", false)
                     receipt.put("touchWireTraceRequested", touchWireTrace).put("initialTouchTraceConfigured", initial.getBoolean("touchTraceConfigured"))
@@ -63,6 +70,11 @@ class GuestQmpSnapshotTest {
                     } else {
                         assertFalse("Root must dispose any consumed worker first", initial.getBoolean("sessionStarted"))
                         assertEquals("stopped", initial.getString("state"))
+                        if (providerArgument != null) {
+                            assertEquals("Fixed packaged provider selection", "", worker.debugSelectGraphicsProvider(
+                                if (providerArgument == "angle-gl") 1 else 0))
+                            receipt.put("requestedGraphicsProvider", providerArgument)
+                        }
                         if (vcpuAccounting) {
                             assertEquals("Fixed vCPU accounting must be configured before Start", "", worker.debugArmVcpuAccounting())
                             val armed = worker.status()
