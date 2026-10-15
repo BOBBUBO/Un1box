@@ -121,3 +121,61 @@ start a guest or copy assets into the repository:
 ```sh
 python3 Linux/scripts/test-editor-caret.py --original /private/model-inspected-editor.bmp --current /private/model-vetted-current-editor.bmp
 ```
+
+The optional `template-home-witness.py` is a separate, explicitly named proof
+route for early n72 navigation. It does not create an inspection timestamp or
+set `model_inspected=true` for new images. Its only references are the retained
+A02 Lock and Home captures personally vetted by Root, bound through
+`template_references_path` and `template_references_sha256` in the authorized
+run inputs. The manifest pins both native BMPs and their original receipts;
+Root's stated reference inspection is recorded without an invented timestamp.
+Do not substitute an arbitrary screenshot or a new scene label.
+
+Arm it as a third **manager-owned observer** in the reviewed fresh profile,
+using the same observer PID/pidfd/retirement handling as the wake witness:
+
+```python
+('template-home', [sys.executable, str(R / 'template-home-witness.py'),
+                   '--run', str(R), '--execute'])
+```
+
+Copy/pin `template-home-witness.py`, `watch-visual-gates.py`, and
+`lock-continuity.py` together in that profile. Pin the reference manifest in the
+inputs and pin the new source files through the existing source/external
+manifest preflight. This is a **source staging command**, not guest launch
+authorization. The ordinary reviewed `launch.py --execute` remains the single
+entry point after a separate Root grant. No native or engine rebuild is needed.
+
+The controller waits for the original HELLO and the wake witness's closed
+screenshot-writer handoff. It then owns `live.bmp` exclusively; there is no
+concurrent screenshot reader/writer. It rechecks current boot, UID, frontend
+PID/start/argv, worker PID/start/parent/argv, window PID/focus and viewport before
+input. If the current RUNNING display is asleep, it sends at most one balanced
+Home150ms before awaiting the Lock template. An awake display receives no wake
+pulse. No agent requirement is added before the wake pulse. Fresh captures,
+coherent even-generation readback, awake/backlight/agent checks and the existing
+exact Earth/knob/lock-symbol anchors precede a balanced mapped slider gesture.
+There is no PNG conversion, model handoff or watcher wait between that admission
+and the gesture. Each capture stage is capped at12s and2Hz, clipped by the
+original Home129 deadline. Unknown scenes reject; failed attempts remain raw.
+
+Home requires a newer source sequence and actual changed pixels after the
+slider, with a source timestamp at/after its release, plus the vetted full Home
+BMP comparison. Only the existing tiny status-clock box is excluded; headers,
+all alpha bytes, Wi-Fi, battery, every icon, background and dock are protected.
+This template proof can satisfy the **navigation watchdog prerequisite** under
+its distinct schema, `proof_kind=root-vetted-n72-lock-home-v1`,
+`template_matched=true`, `model_inspected=false`. Root must personally view the
+retained current target PNGs before final acceptance. It is neither a fresh
+model inspection nor target acceptance by itself. The prior A02 gate failure
+stays failed and unchanged.
+
+Notes is deliberately not templated: list contents change after legitimate
+writes, and the retained editor's header date/clock/keyboard state is not a
+newly authorized dynamic mask. Once the Home template witness finishes, the
+operator still personally inspects the actual Notes list and blank editor,
+uses `--blank-focused-editor` only for that actual scene before179, reads the
+full UUID after TYPE190, verifies/taps Done, then records an exact full-body
+written marker without caret/keyboard and returns to the list before SYNC220.
+Original179/190/220/260/35 and all native/outer budgets remain unchanged. B
+remains separately gated on genuine A write/save/clean evidence and Root grant.

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Request ordinary Stop unless inspected Home/editor receipts precede fixed RPCs."""
+"""Request ordinary Stop unless reviewed scene prerequisites precede fixed RPCs."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -252,6 +253,14 @@ def read_capture(root, description):
 def load_gate(root, name, identity, scene, deadline_ns, now_ns, expected_marker=None):
     try:
         gate = json.loads((root / name).read_text())
+        if gate.get('proof_kind') == 'root-vetted-n72-lock-home-v1':
+            if scene != 'Home Screen' or name != 'home-gate.json':
+                return False
+            spec = importlib.util.spec_from_file_location(
+                'template_home_validation', Path(__file__).with_name('template-home-witness.py'))
+            policy = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(policy)
+            return policy.load_home_gate(root, gate, identity, deadline_ns, now_ns)
         if scene in ('Notes written marker', 'Notes saved marker'):
             if (not expected_marker or gate.get('observed_marker') != expected_marker or
                     'continuity' not in gate):
@@ -330,7 +339,7 @@ def main():
                     print(json.dumps(result), flush=True)
                     return
             if now >= hello + 179_000_000_000:
-                print(json.dumps({'both_inspection_gates_present': True, 'guest_acceptance': False}), flush=True)
+                print(json.dumps({'both_scene_prerequisites_present': True, 'guest_acceptance': False}), flush=True)
                 return
             time.sleep(.05)
     except BaseException as error:
