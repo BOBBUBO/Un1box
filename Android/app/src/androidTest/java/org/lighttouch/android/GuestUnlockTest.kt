@@ -165,7 +165,10 @@ class GuestUnlockTest {
                         return GuestUnlockReadiness.Viewport(display, display.width, display.height,
                             state.getLong("displayInputGeneration"), io.getLong("surfaceGeneration"),
                             uiStatus.invoke(activity) == "running" && uiAsleep.invoke(activity) == false,
-                            awakePixels(state) && scenario.state == Lifecycle.State.RESUMED &&
+                            // viewport() runs inside onActivity on the app thread.
+                            // ActivityScenario.state waits for idle and must only
+                            // be queried from the instrumentation thread.
+                            awakePixels(state) && activity.lifecycle.currentState == Lifecycle.State.RESUMED &&
                                 display.holder.surface.isValid && display.hasWindowFocus() &&
                                 display.isLaidOut && !display.isLayoutRequested)
                     }
