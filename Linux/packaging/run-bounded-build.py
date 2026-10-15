@@ -29,23 +29,35 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--name', required=True)
     parser.add_argument('--evidence', type=Path, required=True, help='Fresh evidence directory; build products may be resumed')
+    parser.add_argument('--collect-only-image', help='Explicit saved successful build environment; run no compilers')
+    parser.add_argument('--runtime-name', default='runtime', help='Fresh runtime output directory name')
     args = parser.parse_args()
     assert available() >= 8 * 1024**3, 'Build admission needs8GiB available host RAM'
     app, qemu, output = args.app.resolve(), args.qemu.resolve(), args.output.resolve()
+    assert args.runtime_name and Path(args.runtime_name).name == args.runtime_name
     output.mkdir(parents=True, exist_ok=True)
     evidence = args.evidence.resolve()
     evidence.mkdir(parents=True, exist_ok=False)
     assert os.statvfs(output).f_bavail * os.statvfs(output).f_frsize >= 4 * 1024**3
     common = Path(subprocess.check_output(['git', '-C', str(qemu), 'rev-parse', '--path-format=absolute', '--git-common-dir'], text=True).strip())
     app_common = Path(subprocess.check_output(['git', '-C', str(app), 'rev-parse', '--path-format=absolute', '--git-common-dir'], text=True).strip())
+    inner = ['bash', '/src/app/Linux/packaging/build-bullseye-inner.sh']
+    image = IMAGE
+    if args.collect_only_image:
+        image = args.collect_only_image
+        inner = ['python3', '/src/app/Linux/packaging/collect-bullseye-runtime.py',
+                 '--output', '/build/' + args.runtime_name,
+                 '--frontend', '/build/frontend/lighttouch-linux',
+                 '--engine', '/build/engine-cxx17-full/libqemu-arm.so',
+                 '--dependency', '/build/deps-full', '--dependency', '/build/crypto',
+                 '--dependency', '/build/mobile-v3']
     command = ['docker', 'create', '--name', args.name, '--memory=4g', '--memory-swap=4g', '--cpus=2', '--pids-limit=256',
                '--mount', 'type=bind,src=%s,dst=/src/app,readonly' % app,
                '--mount', 'type=bind,src=%s,dst=%s,readonly' % (qemu, qemu),
                '--mount', 'type=bind,src=%s,dst=%s,readonly' % (common, common),
                '--mount', 'type=bind,src=%s,dst=%s,readonly' % (app_common, app_common),
                '--mount', 'type=bind,src=%s,dst=/build' % output,
-               '-e', 'LIGHTTOUCH_QEMU_SOURCE=' + str(qemu), '-e', 'LIGHTTOUCH_APP_SOURCE=/src/app', IMAGE,
-               'bash', '/src/app/Linux/packaging/build-bullseye-inner.sh']
+               '-e', 'LIGHTTOUCH_QEMU_SOURCE=' + str(qemu), '-e', 'LIGHTTOUCH_APP_SOURCE=/src/app', image] + inner
     subprocess.run(command, check=True, stdout=subprocess.PIPE)
     info = inspect(args.name)
     assert info['HostConfig']['Memory'] == 4 * 1024**3
