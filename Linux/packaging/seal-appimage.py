@@ -60,7 +60,7 @@ def main():
     scratch = a.evidence / 'sealing.AppDir'
     shutil.copytree(a.appdir, scratch)
     command = [str(a.tool.resolve()), '--appimage-extract-and-run', '--no-appstream',
-               '--runtime-file', str(a.runtime.resolve()), '--comp', 'gzip',
+               '--runtime-file', str(a.runtime.resolve()), '--comp', 'zstd',
                '--mksquashfs-opt', '-processors', '--mksquashfs-opt', '2',
                '--mksquashfs-opt', '-mem', '--mksquashfs-opt', '256M',
                str(scratch.resolve()), str(a.output.resolve())]
