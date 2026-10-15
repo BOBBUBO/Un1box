@@ -63,3 +63,40 @@ is already available and inspected; do not assume the stock Music library has
 a track. One concurrent screenshot chord may create one additional guest photo,
 not a repeated photo workload. New source cases are not target passes until the
 matched APKs are compiled, run and their raw evidence reviewed.
+
+The source now also offers an in-test keyboard workload through the optional
+`keyboardWorkloadBinding` JSON argument. This needs a newly compiled test APK;
+sealed Test30/31 remain unchanged. Prepare the binding **before** measurement
+with `scripts/prepare-media-keyboard-binding.py` using a current strict-collector
+`before.json`, the personally inspected raw guest PNG, actual View dimensions
+and rotation, normalized guest coordinates for a letter/backspace, and two to
+eight stable native keyboard rectangles. The helper is offline, requires an
+explicit new-scratch-note/preserve-existing-notes declaration, and writes only
+to a new private file outside Git. Pick anchors that exclude the clock, caret,
+edited text and letter popup but distinguish alphabetic keyboard geometry.
+Keep the full reviewed image and its hash; the declaration is operator evidence,
+not an automated claim that a picture depicts Notes.
+
+Pass the resulting JSON as the `keyboardWorkloadBinding` instrumentation string,
+with the existing strict media/window flags and `mediaSeconds` exactly30 or1200.
+The driver checks exact worker PID/UID/start token, native display owner/input
+generation, Surface generation, View identity/size, guest dimensions and Android
+rotation. It taps through the actual GuestDisplay path, waits at least2seconds
+after a completed pair, never catches up, and stops admitting pairs4.5seconds
+before measurement end, with a3second event cutoff. Stable native RGBA anchors
+are checked at start, at most about every30seconds while driving, and at end;
+this is periodic image evidence, not continuous scene recognition. All key
+events/coordinates/input-admission receipts are appended to
+`keyboard-events.jsonl`; normal JSON arrays remain available at termination.
+Anchor captures, observer reads and test IO have cost and are part of this
+acceptance workload, not an uncontaminated CPU performance benchmark.
+
+The driver runs synchronously inside measurement and cannot continue into the
+pause, background or focus phases. Failure cancels an in-flight local contact;
+it never guesses a compensating backspace on a changed scene. An unmatched letter
+may remain in the private scratch note. Android admission, anchor agreement,
+nonzero PCM and playback-head movement still do not establish guest text
+consumption or physically audible playback. Retain actual before/end PNG review,
+the real JUnit result and independent native clean shutdown/restoration evidence.
+Five host binding/image tests and a standalone cached Kotlin type-check passed.
+No new APK was built or run on a target; this establishes no new guest acceptance.
