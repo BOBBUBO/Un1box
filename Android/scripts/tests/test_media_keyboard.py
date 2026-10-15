@@ -42,6 +42,46 @@ def clock(at):
 
 
 class KeyboardFenceTest(unittest.TestCase):
+    def test_actual_own_tap_read_fence_defers_historical_held_sample(self):
+        # Poco03: the read ended at92166603.385411ms while the completed
+        # Android tap's immediate uptime query bracket was92166670..679ms.
+        b, prior = binding(); b['measurementStartDeviceBootTimeMs'] = 92166000
+        fence = k.Fence(b, prior)
+        fence.owned_tap_completed('letterKeyRegion', clock(92166670))
+        gate = k.PostTapSampleFence(fence.last_owned_tap, clock(92166700), fence.cutoff)
+        old = sample(92166603)
+        old.update(readBeginElapsedNs=92166601863640, readEndElapsedNs=92166603385411)
+        old['androidInput']['androidContactIds'] = [0]
+        self.assertFalse(gate.ready(old, clock(92166700)))
+        fresh = sample(92167603)
+        fresh.update(readBeginElapsedNs=92167601863640, readEndElapsedNs=92167603385411)
+        self.assertTrue(gate.ready(fresh, clock(92167700)))
+        fence.sample(fresh, clock(92167700))
+        fresh['androidInput']['androidContactIds'] = [0]
+        self.assertTrue(gate.ready(fresh, clock(92167700)))
+        with self.assertRaisesRegex(ValueError, 'held external input'):
+            fence.sample(fresh, clock(92167700))
+
+    def test_owned_sample_wait_deadline_never_renews_or_extends_cutoff(self):
+        owned = {'key': 'letterKeyRegion', 'commandReturnedDeviceBootTimeUpperMs': 101009}
+        gate = k.PostTapSampleFence(owned, clock(101100), 127000)
+        stale = sample(); stale.update(readBeginElapsedNs=101000000000, readEndElapsedNs=101001000000)
+        self.assertFalse(gate.ready(stale, clock(102000)))
+        fresh = sample(103200); fresh.update(readBeginElapsedNs=103200000000, readEndElapsedNs=103201000000)
+        with self.assertRaisesRegex(ValueError, 'expired'):
+            gate.ready(fresh, clock(103101))
+        self.assertEqual(gate.deadline_ms, 103109)
+        near_end = k.PostTapSampleFence(owned, clock(126400), 127000)
+        self.assertEqual(near_end.deadline_ms, 126500)
+        with self.assertRaisesRegex(ValueError, 'cutoff'):
+            near_end.ready(fresh, clock(126500))
+        with self.assertRaisesRegex(ValueError, 'phase'):
+            gate.ready({**stale, 'label': 'measurement-end'}, clock(101200))
+        with self.assertRaisesRegex(ValueError, 'timestamps'):
+            gate.ready(sample(), clock(101200))
+        with self.assertRaisesRegex(ValueError, 'future'):
+            gate.ready(fresh, clock(101200))
+
     def test_actual_sdk36_top_display_focus_and_inactive_null(self):
         # Actual Poco SDK36 excerpts: `window windows` had no focus field;
         # full output carries an inactive display7 and the active display0.

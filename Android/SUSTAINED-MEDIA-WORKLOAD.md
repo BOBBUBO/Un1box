@@ -112,6 +112,16 @@ before each `input touchscreen tap` recheck process start, measurement label and
 BOOTTIME cutoff. These checks are adjacent observations, **not** an atomic
 window/image/input transaction; an independent operator must not interact.
 
+After an owned tap command returns, the next guard requires a status read that
+began after the upper bound of its immediate device-clock completion bracket.
+Older per-second samples can contain that tap's in-flight contact. Retain those
+samples and wait at most two seconds, without renewing the deadline or extending
+the cutoff; then apply every normal check to the fresh sample. Fresh held contacts
+still abort. Command completion and empty Android IDs do not establish guest UP
+consumption. The existing cadence bound remains in force and may conservatively
+abort if this wait leaves too little time; review any cadence revision explicitly
+before a new short qualification and long run.
+
 The conservative cutoff is `measurementStartDeviceBootTimeMs + duration -3000`.
 The legacy sample field `hostElapsedMs` is Android `SystemClock.elapsedRealtime`
 (BOOTTIME), not PC time or MotionEvent uptime. `/proc/uptime` is treated as a
