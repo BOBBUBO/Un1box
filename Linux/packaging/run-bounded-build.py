@@ -49,18 +49,24 @@ def main():
     parser.add_argument('--evidence', type=Path, required=True, help='Fresh evidence directory; build products may be resumed')
     parser.add_argument('--collect-only-image', help='Explicit saved successful build environment; run no compilers')
     parser.add_argument('--refresh-frontend', action='store_true', help='Rebuild/test only the frontend in the saved build environment before collection')
+    parser.add_argument('--refresh-engine', action='store_true', help='Refresh only the recorded engine source revision, retaining strict cache input checks')
     parser.add_argument('--refresh-private-daemon-from', help='Fresh daemon-only mobile output reusing this existing output directory name')
+    parser.add_argument('--mobile-dependency', default='mobile-v3', help='Existing recorded mobile output directory for collection without a daemon refresh')
     parser.add_argument('--max-seconds', type=int, default=1500, help='Finite build limit, at most the original 25 minutes')
     parser.add_argument('--runtime-name', default='runtime', help='Fresh runtime output directory name')
     args = parser.parse_args()
     if args.refresh_frontend and not args.collect_only_image:
         parser.error('--refresh-frontend requires --collect-only-image')
+    if args.refresh_engine and not args.collect_only_image:
+        parser.error('--refresh-engine requires --collect-only-image')
     if args.refresh_private_daemon_from and not args.collect_only_image:
         parser.error('--refresh-private-daemon-from requires --collect-only-image')
     if not 1 <= args.max_seconds <= 1500:
         parser.error('--max-seconds must be between1 and1500')
     if args.refresh_private_daemon_from and Path(args.refresh_private_daemon_from).name != args.refresh_private_daemon_from:
         parser.error('Reused mobile output must be a directory name')
+    if args.mobile_dependency in ('.', '..') or Path(args.mobile_dependency).name != args.mobile_dependency:
+        parser.error('--mobile-dependency must be a directory name')
     assert available() >= 8 * 1024**3, 'Build admission needs8GiB available host RAM'
     app, qemu, output = args.app.resolve(), args.qemu.resolve(), args.output.resolve()
     assert args.runtime_name and Path(args.runtime_name).name == args.runtime_name
@@ -83,7 +89,7 @@ def main():
                  '--frontend', '/build/frontend/lighttouch-linux',
                  '--engine', '/build/engine-cxx17-full/libqemu-arm.so',
                  '--dependency', '/build/deps-full', '--dependency', '/build/crypto',
-                 '--dependency', '/build/mobile-private-' + args.runtime_name if args.refresh_private_daemon_from else '/build/mobile-v3']
+                 '--dependency', '/build/mobile-private-' + args.runtime_name if args.refresh_private_daemon_from else '/build/' + args.mobile_dependency]
         if args.refresh_private_daemon_from:
             inner = ['python3', '/src/app/Linux/packaging/refresh-private-daemon.py',
                      '--from', '/build/' + args.refresh_private_daemon_from,
@@ -91,6 +97,9 @@ def main():
                      '--evidence', '/build/' + args.runtime_name + '-daemon-smoke', '--'] + inner
         if args.refresh_frontend:
             inner = ['python3', '/src/app/Linux/packaging/refresh-frontend.py', '--'] + inner
+        if args.refresh_engine:
+            inner = ['python3', '/src/app/Linux/packaging/refresh-engine.py',
+                     '--evidence', '/build/' + args.runtime_name + '-engine-update', '--'] + inner
     command = ['docker', 'create', '--name', args.name, '--memory=4g', '--memory-swap=4g', '--cpus=2', '--pids-limit=256',
                '--mount', 'type=bind,src=%s,dst=/src/app,readonly' % app,
                '--mount', 'type=bind,src=%s,dst=%s,readonly' % (qemu, qemu),

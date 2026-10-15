@@ -147,6 +147,12 @@ def collect(args):
             subprocess.run(['git', '-C', str(source), 'archive', '--format=tar.gz', 'HEAD'], stdout=stream, check=True)
         add(archive, 'usr/share/licenses/LightTouch/source/' + archive.name, name + ' corresponding source')
         source_index[name] = revision
+    engine_manifest = args.engine.parent / 'portable-manifest.json'
+    built = json.loads(engine_manifest.read_text())
+    if built['source_dirty'] or built['source_revision'] != source_index['qemu-ios'] or built['library_sha256'] != stage.sha(args.engine):
+        raise RuntimeError('Collected engine does not match clean recorded QEMU source/artifact')
+    for filename in ('portable-manifest.json', 'engine-inputs.json'):
+        add(args.engine.parent / filename, 'usr/share/licenses/LightTouch/engine/' + filename, 'Recorded engine source/tool/dependency/artifact provenance')
     for source in sorted((qemu / 'subprojects').iterdir()):
         if source.is_dir() and (source / '.git').exists():
             revision = run(['git', '-C', source, 'rev-parse', 'HEAD']).strip()
