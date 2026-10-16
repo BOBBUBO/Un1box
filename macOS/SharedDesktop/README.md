@@ -137,3 +137,10 @@ networking/app services/IPA and native process counters are unavailable in the
 shared Mac host. Linux's existing app-service path is preserved. Gyro remains
 deferred and unqualified. TCG caching remains explicitly disabled unless a
 separately qualified route implements it.
+
+Packaging also includes the maintained `Desktop/app_services` catalog, IPA and
+Tk Apps sources. Staging and importing those modules does not enable Mac app
+services. A future native adapter must use the private client endpoint owned by
+DeviceRuntime, with one daemon owner and the existing Stop lifecycle; it must
+not start a competing Python bridge. LegacyStore and IPA installation still
+require actual Mac guest qualification.

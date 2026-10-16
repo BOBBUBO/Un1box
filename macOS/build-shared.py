@@ -208,6 +208,8 @@ def stage_python(source, contents):
     resources.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source / "Desktop/lighttouch_desktop", resources / "lighttouch_desktop",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(source / "Desktop/app_services", resources / "app_services",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(source / "macOS/launcher.py", resources / "launcher.py")
 
 
