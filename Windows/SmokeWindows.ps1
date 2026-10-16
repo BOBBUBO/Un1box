@@ -18,4 +18,11 @@ $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('LightTouch-NOR-identity
 & $identityTest $scratch
 if ($LASTEXITCODE -ne 0) { throw "NOR file-identity regression failed; synthetic evidence retained at $scratch" }
 [System.IO.Directory]::Delete($scratch, $false)
+$replaceTest = Join-Path $PSScriptRoot 'runtime/test-ios-file-replace.exe'
+if (!(Test-Path $replaceTest)) { throw 'Missing NAND replacement regression test.' }
+$scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('LightTouch-NAND-replace-' + [guid]::NewGuid().ToString('N'))
+[System.IO.Directory]::CreateDirectory($scratch) | Out-Null
+& $replaceTest $scratch
+if ($LASTEXITCODE -ne 0) { throw "NAND replacement regression failed; synthetic evidence retained at $scratch" }
+[System.IO.Directory]::Delete($scratch, $false)
 Write-Output 'Native loader/machine/display smoke PASS. Guest, graphics and audio acceptance remain unqualified.'

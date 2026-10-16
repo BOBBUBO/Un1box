@@ -51,7 +51,27 @@ For an asset-free native loader and NOR identity check, run
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\SmokeWindows.ps1` from the
 extracted folder. It checks separate identical-content copies, same-file names,
 hardlinks, Unicode paths and failed lookups using synthetic temporary files.
-This does not boot or alter a guest.
+It also checks repeated NAND page/erase-marker replacements and preserves
+committed data when publication fails. This does not boot or alter a guest.
+
+## Logs and the first previews
+
+Choose **Open data folder** in the launcher. Within `devices`, each saved device
+has its own folder containing `emulator.log` (native errors and graphics
+diagnostics), `serial.log` (iOS boot output) and its writable saves. The full log
+paths are `%LOCALAPPDATA%\LightTouch\Windows-preview\devices\<id>\emulator.log`
+and `serial.log` in that same folder. `library.json` maps device IDs to names.
+These files remain available after the emulator exits.
+
+The r2 engine could stop on `FMSS: cannot persist ...: File exists` when iOS
+wrote a NAND page a second time. The updated engine atomically replaces that
+private page using the native Windows replacement API. Keep your existing
+overlay and unconfirmed-shutdown marker; do not delete the page named in the
+error. Start a fresh emulator process with the updated runtime.
+
+This transitional preview has controls in the launcher. Home/Power/volume and
+other controls within the guest display window require the shared desktop
+adapter still being developed; they are not provided by this hotfix.
 
 ## Scope and limitations
 
