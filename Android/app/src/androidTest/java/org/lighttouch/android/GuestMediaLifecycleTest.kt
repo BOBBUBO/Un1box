@@ -395,7 +395,20 @@ class GuestMediaLifecycleTest {
                     result.put("pass", true).put("workerPid", initial.getInt("pid")).put("appUid", initial.getInt("uid"))
                         .put("measurementMs", durationMs).put("requiresAudio", arguments.getString("requireGuestAudio") == "true")
                         .put("requiresFrameProgress", arguments.getString("requireFrameProgress") == "true")
-                    } catch (failure: Throwable) { exerciseFailure = failure; throw failure }
+                    } catch (failure: Throwable) {
+                        exerciseFailure = failure
+                        // Capture while both the worker binding and ActivityScenario
+                        // are still open. The normal end capture follows assertions
+                        // and is therefore unreachable on a stalled media workload.
+                        // These are observations of the latest published native frame;
+                        // they do not prove the guest scanout itself was refreshed.
+                        FailureEvidence.capture(failure,
+                            { result.put("failureEvidenceAttemptedBeforeActivityClosure", true) },
+                            { snapshot("failure-before-native-capture") },
+                            { capture("failure-native-frame") },
+                            { snapshot("failure-after-native-capture") })
+                        throw failure
+                    }
                     finally {
                         // Never guess a compensating backspace on a changed scene.
                         // Only retire an in-flight local touch; no workload thread survives.
