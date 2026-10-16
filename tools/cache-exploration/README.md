@@ -149,9 +149,16 @@ The operator runs within the existing finite controller, without model/tool
 roundtrips. It sends one guarded Home/slider at HELLO+50..51s, polls actual
 coherent awake captures for exact Home-reference equality through95s, and sends
 the single Settings tap at105..106s only after a new exact continuity check.
-It polls for exact Settings-reference equality through120s. Only clock RGB
-pixels129,1..190,19 may differ; alpha, Wi-Fi, rows and all other pixels remain
-protected. Wrong images receive no scene admission. Failed input attempts are
+It polls for exact Settings-reference equality through120s. Prospective operator
+mode `n72-image-bound-v2` binds scene-specific policy names in each admission.
+Both scenes permit status clock RGB pixels129,1..190,19. Home additionally
+permits Calendar weekday RGB96,36..148,47 and date RGB100,52..145,85 (half-open
+native320x480 rectangles); Settings permits clock only. All alpha, Wi-Fi,
+Calendar border/header edges, other icons, labels and rows remain protected.
+The generic manual continuity comparator remains clock-only. The old v1
+packets/receipts and failed OFF18 stay unchanged. Wrong images receive no scene
+admission. Missing Home at95s or Settings at120s gives an explicit deadline
+failure and ordinary Stop; no later Settings input. Failed input attempts are
 consumed, with no retries. BMP/PNG/receipt/comparison files survive failures.
 Readiness120..135s, Stop180s, original ceilings and native shutdown30s remain.
 

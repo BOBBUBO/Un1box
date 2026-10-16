@@ -1,10 +1,40 @@
 """Prospective image-bound input admission; never personal scene inspection."""
 import time
+import struct
 
 from exploration_common import *
 import exploration_control as control
 
-MODE = 'n72-image-bound-v1'
+MODE = 'n72-image-bound-v2'
+HOME_POLICY = 'n72-home-clock-calendar-rgb-v1'
+SETTINGS_POLICY = 'n72-settings-clock-rgb-v1'
+# Half-open native320x480 rectangles. Preserve Calendar rounded border,
+# red header edges, white panel edges and all alpha; only glyph interiors vary.
+CLOCK = (129, 1, 190, 19)
+CALENDAR_WEEKDAY = (96, 36, 148, 47)
+CALENDAR_DATE = (100, 52, 145, 85)
+
+
+def scene_policy(scene):
+    if scene not in ('home', 'settings'):
+        raise RuntimeError('Only explicit Home or Settings image policy is supported')
+    return HOME_POLICY if scene == 'home' else SETTINGS_POLICY
+
+
+def scene_equal(first, second, scene):
+    scene_policy(scene)
+    if (len(first) != 54 + 320 * 480 * 4 or len(first) != len(second)
+            or first[:54] != second[:54] or struct.unpack_from('<ii', first, 18) != (320, -480)):
+        return False
+    masks = [CLOCK] + ([CALENDAR_WEEKDAY, CALENDAR_DATE] if scene == 'home' else [])
+    for offset, (a, b) in enumerate(zip(first[54:], second[54:])):
+        if a != b:
+            pixel, channel = divmod(offset, 4)
+            y, x = divmod(pixel, 320)
+            if channel == 3 or not any(left <= x < right and top <= y < bottom
+                                      for left, top, right, bottom in masks):
+                return False
+    return True
 
 
 def enabled(cfg):
@@ -48,7 +78,7 @@ def validate_admission(root, scene):
     record = read(root / (scene + '-admitted.json'))
     if (record.get('scope') != 'AUTOMATIC_IMAGE_BOUND_ADMISSION_ONLY'
             or record.get('model_inspected') is not False or record.get('scene_qualified') is not False
-            or record.get('scene') != scene):
+            or record.get('scene') != scene or record.get('policy') != scene_policy(scene)):
         raise RuntimeError('Automatic admission is not a personal inspection')
     directory = root / record['capture']
     if directory.parent != root:
@@ -63,8 +93,8 @@ def validate_admission(root, scene):
     if not coherent_current(receipt, record['admitted_monotonic_ns'],
                             record['frontend'], record['worker']):
         raise RuntimeError('Admitted image was not current coherent/awake')
-    if not control.unchanged_except_clock(validate_reference(record['reference']),
-                                          (directory / 'native.bmp').read_bytes()):
+    if not scene_equal(validate_reference(record['reference']),
+                       (directory / 'native.bmp').read_bytes(), scene):
         raise RuntimeError('Image-bound admission comparison changed')
     return record
 
@@ -86,10 +116,10 @@ class Operator:
         if not coherent_current(receipt, now, started['frontend'], worker):
             raise RuntimeError('Automatic capture not coherent/awake/current-owner')
         reference = self.cfg['imageBoundOperator']['references'][scene]
-        matched = control.unchanged_except_clock(validate_reference(reference),
-                                                  (directory / 'native.bmp').read_bytes())
+        matched = scene_equal(validate_reference(reference), (directory / 'native.bmp').read_bytes(), scene)
         save(directory / 'image-comparison.json', {'matched': matched, 'reference': reference,
-             'observed_monotonic_ns': now, 'model_inspected': False, 'scene_qualified': False})
+             'policy': scene_policy(scene), 'observed_monotonic_ns': now,
+             'model_inspected': False, 'scene_qualified': False})
         # Retain PNGs even for mismatches. Conversion does not renew source age.
         control.convert_bitmap(directory / 'native.bmp', directory / 'native.png')
         if not matched:
@@ -108,7 +138,7 @@ class Operator:
                   'png_sha256': digest(directory / 'native.png'),
                   'receipt_sha256': digest(directory / 'receipt.json'),
                   'reference': reference, 'frontend': started['frontend'], 'worker': worker,
-                  'policy': 'exact-except-status-clock-RGB-all-alpha-protected'}
+                  'policy': scene_policy(scene)}
         save(root / (scene + '-admitted.json'), record)
         return True
 
@@ -121,6 +151,10 @@ class Operator:
             control.home_unlock('timed-lock-unlock', matched=True)
         if not self.home_sent:
             return
+        if age >= 95 * SECOND and not (root / 'home-admitted.json').is_file():
+            raise RuntimeError('Original Home image admission deadline95s expired; no Settings input')
+        if age >= 120 * SECOND and not (root / 'settings-admitted.json').is_file():
+            raise RuntimeError('Original Settings image admission deadline120s expired')
         if 55 * SECOND <= age < 95 * SECOND and not (root / 'home-admitted.json').exists() and now >= self.next_poll:
             self.admit(root, 'home', hello)
             self.next_poll = time.monotonic_ns() + SECOND
