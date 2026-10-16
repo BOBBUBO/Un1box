@@ -2,7 +2,7 @@
 import os
 import unittest
 from lighttouch_desktop.windows_storage import (checked_path, private_acl, WindowsStorage,
-                                               SYSTEM_SID, ADMINISTRATORS_SID)
+                                               SYSTEM_SID, ADMINISTRATORS_SID, _FileInfo)
 
 USER = "S-1-5-21-1-2-3-1001"
 OTHER = "S-1-5-21-1-2-3-1002"
@@ -57,6 +57,29 @@ class PrivateAclTests(unittest.TestCase):
     def test_backend_requires_real_windows(self):
         with self.assertRaisesRegex(OSError, "requires Windows"):
             WindowsStorage()
+
+
+class FileIdentityTests(unittest.TestCase):
+    def test_native_identity_detects_replacement_size_and_write_without_access_time(self):
+        info = _FileInfo()
+        info.volume = 7
+        info.index_low = 123
+        info.size_low = 42
+        info.write.dwLowDateTime = 99
+        signature = info.signature()
+        info.access.dwLowDateTime = 555
+        self.assertEqual(signature, info.signature())
+        for field, child in [("volume", None), ("index_high", None), ("index_low", None),
+                             ("size_high", None), ("size_low", None),
+                             ("write", "dwLowDateTime"), ("write", "dwHighDateTime"),
+                             ("creation", "dwLowDateTime"), ("creation", "dwHighDateTime")]:
+            with self.subTest(field=field, child=child):
+                target = getattr(info, field) if child else info
+                name = child or field
+                previous = getattr(target, name)
+                setattr(target, name, previous + 1)
+                self.assertNotEqual(signature, info.signature())
+                setattr(target, name, previous)
 
 
 if __name__ == "__main__": unittest.main()

@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import queue
 from types import SimpleNamespace
 import unittest
 
@@ -21,6 +22,7 @@ class AdapterTests(unittest.TestCase):
                                     new_state=lambda identity: str(root / identity / "state"), persist=lambda: None)
             calls = []
             session = SimpleNamespace(stop=lambda: calls.append("stop"), active=False, stopping=False,
+                                      poll=lambda: [],
                                       record_error=lambda component,error: calls.append((component,str(error))))
             adapter = SimpleNamespace(font_family="TkDefaultFont", open_profiles=lambda path: store,
                                       create_session=lambda log: session, inspect_base=lambda path: dict(board="n81ap", build="8C148"),
@@ -37,6 +39,14 @@ class AdapterTests(unittest.TestCase):
                 ui.stop()
                 self.assertEqual(calls, ["stop"])
                 self.assertEqual(str(ui.stop_button["state"]), "disabled")
+                ui.preparation = SimpleNamespace(events=queue.Queue(), active=False,
+                                                 error="The iOS system file changed during setup. Choose it again.")
+                ui.preparation.events.put_nowait((4 * 1024**2, 235 * 1024**2))
+                ui.setup_started = 0
+                ui.tick()
+                self.assertIn("changed during setup", ui.message.get())
+                self.assertNotIn("Checking file", ui.detail.get())
+                self.assertEqual(float(ui.progress["value"]), 0)
             finally:
                 for callback in window.tk.splitlist(window.tk.call("after", "info")):
                     window.after_cancel(callback)

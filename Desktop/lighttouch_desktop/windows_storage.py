@@ -70,6 +70,14 @@ class _FileInfo(ctypes.Structure):
                 ("write", wt.FILETIME), ("volume", wt.DWORD), ("size_high", wt.DWORD),
                 ("size_low", wt.DWORD), ("links", wt.DWORD), ("index_high", wt.DWORD), ("index_low", wt.DWORD)]
 
+    def signature(self):
+        # Access time may change because we read the archive. Identity, length
+        # and last-write/creation times all come from the same native API.
+        return (self.volume, self.index_high, self.index_low,
+                self.size_high, self.size_low, self.write.dwHighDateTime,
+                self.write.dwLowDateTime, self.creation.dwHighDateTime,
+                self.creation.dwLowDateTime)
+
 
 class _SecurityAttributes(ctypes.Structure):
     _fields_ = [("length", wt.DWORD), ("descriptor", wt.LPVOID), ("inherit", wt.BOOL)]
@@ -240,6 +248,13 @@ class WindowsStorage(StorageOps):
             try: return self.open_regular(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_BINARY), path
             except FileExistsError: continue
         raise OSError("Cannot allocate a fresh private metadata file.")
+
+    def file_signature(self, fd):
+        import msvcrt
+        info = _FileInfo()
+        if not self.api.info(msvcrt.get_osfhandle(fd), ctypes.byref(info)):
+            self.api.fail("Cannot inspect the selected iOS system file.")
+        return info.signature()
 
     def flush_file(self, fd):
         import msvcrt

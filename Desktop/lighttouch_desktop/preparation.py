@@ -36,7 +36,12 @@ class Preparation:
         try:
             self.events.put_nowait((done, total))
         except queue.Full:
-            pass
+            # Retain recent progress if the UI is slower than the reader.
+            try:
+                self.events.get_nowait()
+            except queue.Empty:
+                pass
+            self.events.put_nowait((done, total))
 
     def _run(self):
         try:
@@ -45,6 +50,7 @@ class Preparation:
                 before = os.fstat(stream.fileno())
                 if not stat.S_ISREG(before.st_mode):
                     raise SetupError("Choose an iOS system file ending in .itbase.")
+                signature = self.storage.file_signature(stream.fileno())
                 header = stream.read(12)
                 if len(header) != 12 or header[:8] != b"ITPACK01":
                     raise SetupError("This is not an iOS system archive (.itbase). Extract the download ZIP first.")
@@ -75,9 +81,8 @@ class Preparation:
                     digest.update(block)
                     done += len(block)
                     self.update(done, before.st_size)
-                after = os.fstat(stream.fileno())
-                signature = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-                if signature(before) != signature(after) or signature(after) != signature(self.source.stat()):
+                after = self.storage.file_signature(stream.fileno())
+                if signature != after or after != self.storage.path_signature(self.source):
                     raise SetupError("The iOS system file changed during setup. Choose it again.")
                 if self.cancelled.is_set():
                     raise SetupError("Setup cancelled. Your original files are unchanged.")

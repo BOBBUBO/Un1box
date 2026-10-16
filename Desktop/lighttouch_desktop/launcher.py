@@ -522,6 +522,7 @@ class Launcher:
                     self.cancel_button.configure(state="disabled")
                     self.message.set(prep.error or "Setup cancelled. Your original files are unchanged.")
                     self.progress["value"] = 0
+                    self.detail.set("File check stopped. Your original files are unchanged.")
                 else:
                     try:
                         needed = prep.result["expanded_bytes"]

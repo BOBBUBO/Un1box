@@ -46,6 +46,23 @@ class StorageOps:
         self._posix()
         return tempfile.mkstemp(prefix=".lighttouch-", dir=str(directory))
 
+    def file_signature(self, fd):
+        """Stable identity and mutation metadata, using one host API family.
+
+        Compare only with other file_signature results. In particular, Windows
+        CRT fstat and path stat do not supply equivalent file identifiers.
+        """
+        self._posix()
+        info = os.fstat(fd)
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    def path_signature(self, path):
+        fd = self.open_regular(path)
+        try:
+            return self.file_signature(fd)
+        finally:
+            os.close(fd)
+
     def flush_file(self, fd):
         os.fsync(fd)
 
