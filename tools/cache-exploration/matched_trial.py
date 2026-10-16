@@ -1,7 +1,7 @@
 """Opt-in fixed schedule for shutdown diagnosis; never a speedup benchmark."""
 from exploration_common import SECOND, fields, read, save, digest
 
-MODE = 'n72-shutdown-70-105-180-v1'
+MODE = 'n72-shutdown-50-105-180-v2'
 
 
 def enabled(cfg):
@@ -17,7 +17,7 @@ def input_claim(active, root, hello, operation, now, native_pixel=None):
     """Call immediately before input; failed attempts cannot be retried."""
     if not active:
         return
-    due = {'home-unlock': 70, 'tap-settings': 105}.get(operation)
+    due = {'home-unlock': 50, 'tap-settings': 105}.get(operation)
     if due is None or not hello + due * SECOND <= now <= hello + (due + 1) * SECOND:
         raise RuntimeError('Scheduled input window missed; no input')
     if operation == 'tap-settings' and native_pixel != [44, 326]:
@@ -60,7 +60,7 @@ class Tracker:
         self.hello = hello
         age = now - hello
         # Capture each admitted scene/input receipt once; reject later rewrites.
-        for filename, deadline in [('matched-home-unlock-input.json', 71),
+        for filename, deadline in [('matched-home-unlock-input.json', 51),
                                    ('home-inspected.json', 95),
                                    ('settings-input.json', 106),
                                    ('settings-inspected.json', 120)]:
@@ -70,7 +70,7 @@ class Tracker:
             if age >= deadline * SECOND and filename not in self.seen:
                 value = read(path)
                 if filename == 'matched-home-unlock-input.json' and (
-                        value.get('hello_ns') != hello or not hello + 70 * SECOND <= value['observed_monotonic_ns'] <= hello + 71 * SECOND):
+                        value.get('hello_ns') != hello or not hello + 50 * SECOND <= value['observed_monotonic_ns'] <= hello + 51 * SECOND):
                     raise RuntimeError('Actual Home input missed schedule')
                 if filename == 'settings-inspected.json' and value.get('observed_wifi_name') != 'qemu-ios':
                     raise RuntimeError('Matched Settings Wi-Fi observation missing')
