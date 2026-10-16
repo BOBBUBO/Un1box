@@ -174,7 +174,7 @@ static void peer(int socket) {
             "worker peer UID mismatch");
 }
 struct Options {
-    std::string base, state, rom, engine, package, import, sha, screenshot, script, library, record, name;
+    std::string base, state, rom, engine, package, import, finalize_import, sha, screenshot, script, library, record, name;
     bool recover = false, headless = false, audio = true, worker = false, list = false, library_operation = false;
     bool debug_qmp = false, trace_io = false, debug_touch_trace = false;
     int control = -1, pcm = -1;
@@ -185,6 +185,7 @@ static Options options(int argc, char **argv) {
     std::map<std::string, std::string *> fields = {
         {"--base", &o.base},       {"--state", &o.state},           {"--rom", &o.rom},
         {"--engine", &o.engine},   {"--package", &o.package},       {"--import", &o.import},
+        {"--finalize-import", &o.finalize_import},
         {"--library", &o.library}, {"--record", &o.record},         {"--name", &o.name},
         {"--sha256", &o.sha},      {"--screenshot", &o.screenshot}, {"--script", &o.script}};
     for (int i = 1; i < argc; i++) {
@@ -218,7 +219,8 @@ static Options options(int argc, char **argv) {
         } else if (key == "--help") {
             std::cout
                 << "lighttouch-linux --base DIR --state DIR --engine LIB [--rom FILE] [--package ITPACK]\n  [--import "
-                   "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
+                   "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n"
+                   "  lighttouch-linux --finalize-import STAGE --base DEST\n  [--script FILE] [--screenshot BMP] "
                    "[--no-audio] [--trace-io] [--debug-touch-trace]\n\nMouse left/right: contacts 1/2. "
                 << lt::desktop_shortcut_help() << "\n"
                 << "Visible controls below the guest mirror these shortcuts. "
@@ -233,9 +235,12 @@ static Options options(int argc, char **argv) {
             throw std::runtime_error("unknown option: " + key);
     }
     require(!o.base.empty() || !o.library.empty(), "--base or --library required");
+    require(o.finalize_import.empty() || (!o.base.empty() && o.import.empty() && o.library.empty() &&
+                o.engine.empty() && !o.worker), "--finalize-import requires only a stage and --base destination");
     if (o.state.empty() && !o.base.empty())
         o.state = fs::absolute(o.base).parent_path().string() + "/state";
-    for (auto *p : {&o.base, &o.state, &o.rom, &o.engine, &o.package, &o.import, &o.screenshot, &o.script, &o.library})
+    for (auto *p : {&o.base, &o.state, &o.rom, &o.engine, &o.package, &o.import, &o.finalize_import,
+                   &o.screenshot, &o.script, &o.library})
         if (!p->empty())
             *p = fs::absolute(*p).string();
     return o;
@@ -727,7 +732,7 @@ static bool frame_copy(const lt_shared_frame *shared, std::vector<uint8_t> &pixe
     return false;
 }
 static int frontend(const Options &o, int argc, char **argv) {
-    if (!o.import.empty()) {
+    if (!o.import.empty() || !o.finalize_import.empty()) {
         lt_error e{sizeof(e), 1, 0, {}};
         struct ImportLog {
             std::string phase;
@@ -752,10 +757,14 @@ static int frontend(const Options &o, int argc, char **argv) {
             }
             return interrupt_requested ? 1 : 0;
         };
-        check(fs::is_directory(o.import) ? lt_import_directory_observed(&config, progress, &log, &e)
-                                        : lt_import_archive_observed(&config, progress, &log, &e), e);
+        if (!o.finalize_import.empty()) {
+            lt_finalize_import_config finalize{sizeof(finalize), 1, o.finalize_import.c_str(), o.base.c_str()};
+            check(lt_finalize_import_observed(&finalize, progress, &log, &e), e);
+        } else
+            check(fs::is_directory(o.import) ? lt_import_directory_observed(&config, progress, &log, &e)
+                                            : lt_import_archive_observed(&config, progress, &log, &e), e);
     }
-    if (o.engine.empty() && !o.import.empty()) {
+    if (o.engine.empty() && (!o.import.empty() || !o.finalize_import.empty())) {
         std::cout << "prepared base imported: " << o.base << "\n";
         return 0;
     }

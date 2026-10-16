@@ -188,9 +188,8 @@ static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, 
     require(little32(header.data() + 8) == 4096 && little32(header.data() + 12) == 64,
             "unsupported packed NAND page geometry");
     const uint64_t chips = little32(header.data() + 16), pages = little32(header.data() + 20);
-    // FMSS addresses at most four chips and 4096 blocks of 128 pages each.
-    // Bound before multiplication, including on hosts with 32-bit size_t.
-    require(chips && chips <= 4 && pages && pages <= 4096 * 128,
+    // The shared n72 importer emits the full four-chip FMSS address space.
+    require(chips == 4 && pages == 4096 * 128,
             "unsupported packed NAND address geometry");
     const uint64_t entries = chips * pages, index_bytes = entries * 4;
     require(index_bytes <= uint64_t(st.st_size) - header.size(), "truncated packed NAND index");
@@ -199,15 +198,27 @@ static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, 
     const uint64_t records = record_bytes / 4160;
     require(records <= entries && records == expected_pages, "packed NAND page count mismatch");
     std::array<unsigned char, 65536> index{};
+    std::vector<unsigned char> seen(size_t((records + 7) / 8), 0);
+    uint64_t referenced = 0;
     uint64_t remaining = index_bytes;
     while (remaining) {
         events.checkpoint();
         const size_t count = size_t(std::min<uint64_t>(remaining, index.size()));
         read_all(fd.n, index.data(), count);
-        for (size_t offset = 0; offset < count; offset += 4)
-            require(little32(index.data() + offset) <= records, "packed NAND index record out of bounds");
+        for (size_t offset = 0; offset < count; offset += 4) {
+            const uint64_t slot = little32(index.data() + offset);
+            require(slot <= records, "packed NAND index record out of bounds");
+            if (slot) {
+                const unsigned char mask = 1u << ((slot - 1) % 8);
+                auto &byte = seen[size_t((slot - 1) / 8)];
+                require(!(byte & mask), "duplicate packed NAND index record");
+                byte |= mask;
+                ++referenced;
+            }
+        }
         remaining -= count;
     }
+    require(referenced == records, "unreferenced packed NAND record");
     events.checkpoint();
 }
 static void validate_base(const fs::path &base, AdmissionProgress *progress = nullptr,
@@ -348,6 +359,7 @@ struct Stage {
     fs::path path, destination;
     bool published = false;
     bool bulk_sync = false;
+    bool cleanup_on_failure = true, flush_existing_files = false;
     explicit Stage(const char *dest, bool archive = false) {
 #if defined(__linux__) && !defined(__ANDROID__) && defined(SYS_syncfs)
         // An archive may contain over 100,000 tiny NAND files. Flush the
@@ -369,8 +381,42 @@ struct Stage {
         io(mkdtemp(b.data()) != nullptr, "create staging");
         path = b.data();
     }
+    Stage(const char *source, const char *dest) {
+        cleanup_on_failure = false;
+        flush_existing_files = true;
+        require(source && dest && fs::path(source).is_absolute() && fs::path(dest).is_absolute(),
+                "stage and destination must be absolute");
+        const auto input = fs::path(source).lexically_normal();
+        const auto output = fs::path(dest).lexically_normal();
+        require(input.filename() != "." && !input.filename().empty() && output.filename() != "." &&
+                    !output.filename().empty(), "invalid stage or destination name");
+        const auto parent = fs::canonical(output.parent_path());
+        require(fs::canonical(input.parent_path()) == parent && input.filename() != output.filename(),
+                "import stage must be a distinct destination sibling");
+        path = parent / input.filename();
+        destination = parent / output.filename();
+        require(!fs::exists(fs::symlink_status(destination)), "destination already exists");
+        struct stat st {};
+        io(lstat(parent.c_str(), &st) == 0, "stat import parent");
+        require(S_ISDIR(st.st_mode) && st.st_uid == geteuid() && !(st.st_mode & 0022),
+                "import parent must be owned with no external writers");
+        io(lstat(path.c_str(), &st) == 0, "stat import stage");
+        require(S_ISDIR(st.st_mode) && st.st_uid == geteuid() && (st.st_mode & 0777) == 0700,
+                "import stage must be an owned private 0700 directory");
+        // Reject aliases before integrity checking or changing permissions. In
+        // particular, chmod must never follow a caller-supplied symlink/hardlink.
+        for (const auto &entry : fs::recursive_directory_iterator(path)) {
+            io(lstat(entry.path().c_str(), &st) == 0, "stat import stage entry");
+            require(st.st_uid == geteuid() && !(st.st_mode & 0022) &&
+                        (S_ISDIR(st.st_mode) || (S_ISREG(st.st_mode) && st.st_nlink == 1)),
+                    "import stage entry must be owned and unaliased with no external writers");
+        }
+#if defined(__linux__) && !defined(__ANDROID__) && defined(SYS_syncfs)
+        bulk_sync = true;
+#endif
+    }
     ~Stage() {
-        if (!published) {
+        if (!published && cleanup_on_failure) {
             std::error_code ec;
             for (const auto &e : fs::recursive_directory_iterator(path, ec))
                 if (e.is_directory())
@@ -390,8 +436,13 @@ struct Stage {
                 observation->checkpoint();
             if (e.is_directory())
                 dirs.push_back(e.path());
-            else
+            else {
+                if (flush_existing_files && !bulk_sync) {
+                    auto file = open_read(e.path());
+                    io(fsync(file.n) == 0, "sync staged import file");
+                }
                 io(chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
+            }
         }
         for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) {
             if (observation)
@@ -577,6 +628,19 @@ lt_status lt_sha256_file(const char *p, char h[65], lt_error *e) {
 }
 lt_status lt_import_archive(const lt_import_config *c, lt_error *e) {
     return lt_import_archive_observed(c, nullptr, nullptr, e);
+}
+lt_status lt_finalize_import(const lt_finalize_import_config *c, lt_error *e) {
+    return lt_finalize_import_observed(c, nullptr, nullptr, e);
+}
+lt_status lt_finalize_import_observed(const lt_finalize_import_config *c, lt_import_phase_fn observer,
+                                     void *opaque, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::abi(c);
+        lt::ImportObservation observation{observer, opaque};
+        observation.begin("verifying");
+        lt::Stage stage(c->stage, c->destination);
+        stage.finish(&observation);
+    });
 }
 lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_fn observer, void *opaque, lt_error *e) {
     return lt::guard(e, [&] {
