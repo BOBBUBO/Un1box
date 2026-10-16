@@ -34,8 +34,9 @@ class Tests(unittest.TestCase):
         tracker = matched.Tracker({})
         self.assertIsNone(tracker.observe(None, None, 0, []))
         self.assertIsNone(tracker.finish(None, None, None))
+        self.assertTrue(matched.enabled(dict(self.cfg(), cacheTrial={'mode': 'reuse'})))
         for cfg in [dict(matchedDiagnostic=None), dict(matchedDiagnostic={'mode': 'other'}),
-                    dict(self.cfg(), cacheTrial={'mode': 'reuse'})]:
+                    dict(self.cfg(), cacheTrial={'mode': 'unknown'})]:
             with self.assertRaises(RuntimeError):
                 matched.enabled(cfg)
 

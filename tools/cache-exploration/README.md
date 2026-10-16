@@ -2,11 +2,11 @@
 
 These host scripts prepare and control one allocated Linux n72 guest
 exploration. They are diagnostic tools, not a shipping cache feature or a
-firmware download/preparation route. Cache stays off. Actual Home/Settings
+firmware download/preparation route. Cache defaults off. Actual Home/Settings
 inspection and a fresh exact-packet Root grant are required; no frame counter
 or image heuristic creates a scene pass. Preserve each failed packet/run.
 
-Deploy the five Python sources alongside the privately supplied `PLAN.json`
+Deploy the six Python helper sources alongside the privately supplied `PLAN.json`
 and artifact/receipt paths. Run `prepare-exploration.py --lock-policy` with the
 existing audited `Linux/scripts/lock-continuity.py`. Preparation inventories
 the existing immutable base, copies only small writable state using independent
@@ -107,7 +107,7 @@ timings, worker CPU and broader target acceptance remain separate follow-up work
 # Matched shutdown diagnostic
 
 Packet preparation can explicitly select `--matched-shutdown-diagnostic` for an
-OFF or fresh COLD trial. Ordinary exploration retains its immediate Stop after
+OFF, fresh COLD or qualified REUSE trial. Ordinary exploration retains its immediate Stop after
 Settings inspection. The opt-in mode binds the fixed schedule to packet inputs:
 one Home/guarded slider at original HELLO+70..71s, actual Home inspection by95s,
 one Settings input at105..106s at44,326, actual Settings inspection by120s, observed
@@ -127,5 +127,9 @@ Schedule receipts preserve the existing strict clean-shutdown/retirement gates.
 They establish neither cache speedup nor cause of an earlier shutdown failure.
 Each OFF/COLD arm needs its own clean writable seed clone; COLD starts with an
 empty isolated cache. A failed dirty trial never supplies a clean REUSE receipt.
+REUSE selects that exact retired cache with pinned clean producer receipts,
+requires its producer's actual completed matching schedule, and boots another
+fresh worker from another clone of the original clean seed. Its native hit count
+must increase: an enabled setting or surviving cache files do not prove replay.
 Deploy and pin `matched_trial.py` with the other helper modules. Existing frozen
 packets and their failed evidence remain unchanged.
