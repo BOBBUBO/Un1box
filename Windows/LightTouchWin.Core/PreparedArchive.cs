@@ -90,7 +90,7 @@ public static class PreparedArchive
             throw;
         }
     }
-    internal static void ValidateName(string name)
+    public static void ValidateName(string name)
     {
         if (string.IsNullOrEmpty(name) || name.IndexOfAny(['\\', ':', '<', '>', '"', '|', '?', '*', '\0']) >= 0)
             throw new InvalidDataException("Invalid Windows archive path.");

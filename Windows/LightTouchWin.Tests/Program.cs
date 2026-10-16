@@ -129,6 +129,33 @@ try
         using var unlocked = new FileStream(Path.Combine(state, "running.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         Check(unlocked.CanWrite, "state lock released after native exit " + mode);
     }
+    // Complete prepared-base admission, beyond the earlier preview metadata.
+    string admitted = Path.Combine(rootPath, "admission"); Directory.CreateDirectory(Path.Combine(admitted, "nand/cs0"));
+    File.WriteAllBytes(Path.Combine(admitted, "nor.bin"), [1, 2]);
+    File.WriteAllBytes(Path.Combine(admitted, "kboot.bin"), [3, 4]);
+    File.WriteAllBytes(Path.Combine(admitted, "nand/cs0/1.page"), [5, 6]);
+    string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(admitted, path)))).ToLowerInvariant();
+    string listing = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("cs0/1.page " + Hash("nand/cs0/1.page") + "\n"))).ToLowerInvariant();
+    string lockJson = JsonSerializer.Serialize(new { format = 1, board = "n81ap", build = "8C148", boot_strategy = "kboot", outputs = new {
+        nor = new { path = "nor.bin", sha256 = Hash("nor.bin") }, kboot = new { path = "kboot.bin", sha256 = Hash("kboot.bin") },
+        nand = new { path = "nand", listing_sha256 = listing, pages = 1 } } });
+    File.WriteAllText(Path.Combine(admitted, "device.lock.json"), lockJson);
+    long admittedDone = 0, admittedTotal = 0;
+    BaseAdmission.Verify(admitted, (done, total) => { admittedDone = done; admittedTotal = total; });
+    Check(admittedDone == 6 && admittedTotal == 6, "complete byte-counted output and sorted NAND-listing admission");
+    File.WriteAllBytes(Path.Combine(admitted, "nand/cs0/1.page"), [5, 7]);
+    Reject(() => BaseAdmission.Verify(admitted), "reject changed NAND page with unchanged lock");
+    File.WriteAllBytes(Path.Combine(admitted, "nand/cs0/1.page"), [5, 6]);
+    File.WriteAllBytes(Path.Combine(admitted, "nand/cs0/2.page"), [8]);
+    Reject(() => BaseAdmission.Verify(admitted), "reject additional NAND page and page-count mismatch");
+    File.Delete(Path.Combine(admitted, "nand/cs0/2.page"));
+    File.WriteAllBytes(Path.Combine(admitted, "nor.bin"), [1, 8]);
+    Reject(() => BaseAdmission.Verify(admitted), "reject changed NOR output");
+    File.WriteAllBytes(Path.Combine(admitted, "nor.bin"), [1, 2]);
+    string cleanReceipt = "FINAL status_available=1 state=0 confirmed=1 dirty=0 worker_reaped=1 worker_exit=0 worker_disposal_requested=0 frontend_return=0";
+    Check(SharedReceipt.Clean(0, cleanReceipt), "strict full native clean receipt after reap");
+    Check(!SharedReceipt.Clean(3, cleanReceipt) && !SharedReceipt.Clean(0, cleanReceipt.Replace("confirmed=1", "confirmed=0")), "receipt cannot override worker failure or unconfirmed shutdown");
+    Check(!SharedReceipt.Clean(0, cleanReceipt + " dirty=1") && !SharedReceipt.Clean(0, cleanReceipt.Replace("worker_reaped=1 ", "")), "reject duplicate and missing receipt proof fields");
     Console.WriteLine($"PASS {passed} focused assertions; host contracts only, no Windows/iOS acceptance claim.");
 }
 finally { Environment.SetEnvironmentVariable("LT_TEST_QMP_MODE", null); Directory.Delete(rootPath, true); }
