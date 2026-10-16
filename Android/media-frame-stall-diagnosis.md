@@ -73,16 +73,47 @@ Do not reuse the spent worker or mutate the protected original.
 
 ## Additional engine diagnosis needed for a precise stall attribution
 
+`captureFrameTimeline=true` now opts the visible-phase pilot into existing
+read-only QMP evidence. Arm the fixed debug QMP endpoint on the fresh worker
+before Start. Instrumentation accepts no arbitrary QMP command or QOM path:
+it locates the single n72 LCD under `/machine/unattached`, verifies the socket
+peer's exact worker PID/UID, then requests its existing `frame-timeline`.
+It retains raw responses, timeline text and current native producer/presenter
+sequences, counts and times beside each native image. History deltas require
+an exact overlapping record; reset, overrun and missing history remain
+unavailable rather than measured zero. A changed scanout base is explicitly
+not treated as changed pixels.
+
+Each QMP snapshot has one absolute 1,000 ms deadline including socket connect,
+plus a joined socket-closing guardian and read timeout. Limits are 256 KiB per
+response, 1 MiB per transcript, eight intervening events per response, 4,096
+timeline entries and sixteen snapshots. A diagnostic failure is retained and
+ends the opt-in test; it never reconnects automatically. Raw evidence stays in
+the private media-evidence directory. Full APK and actual target exercise are
+still unrun. The earlier frozen Test33 packet is unchanged and does not contain
+this later source checkpoint.
+
 The current image/status evidence cannot distinguish all actual layers. Longer
 visible phases can test transient coalescing, but another unchanged published
 image would leave guest scanout, dirty tracking, publication and acquisition
 indistinguishable. Add bounded counters before another diagnostic runtime if
 the objective is to locate the stall in one run, rather than repeat the same
-ambiguity. This addition is proposed separately; the test-only packet below
+ambiguity. This addition is proposed separately; the test-only successor
 does not contain a replacement engine or qualify a product fix.
 
-The smallest proposed engine addition is one read-only QOM property on the
-existing LCD object, returning a fixed-size snapshot with:
+For Root's engine-ownership review, the minimal proposed production file list is:
+
+* `include/hw/arm/ipod_touch_lcd.h`: per-device cumulative scan/dirty/reset counters;
+* `hw/arm/ipod_touch_lcd.c`: increment at existing scan/update boundaries and
+  expose read-only `frame-scan-counters` JSON beside `frame-timeline`;
+* `contrib/ios-app/qemu-ios-ui.c`: count existing capture/dedup/copy branches;
+  attach read-only `portable-frame-counters` to the LCD when the UI attaches;
+* `tests/slice/ipod-frame-pipeline.c`: production-function ASan/UBSan slice,
+  invoked through the existing `tests/slice/run.sh` without build-system edits.
+
+Using two existing-object properties keeps normal headless LCD builds free of
+a new dependency on the optional portable UI bridge. No public ABI/header,
+frame-copy layout, JNI or product behavior needs to change. Snapshot fields:
 
 * LCD scan attempts, dirty updates, last latched scanout base and GLES generation;
 * `ios_capture` attempts, identical-pixel suppressions and published serial;
@@ -91,14 +122,19 @@ existing LCD object, returning a fixed-size snapshot with:
 
 The existing read-only `frame-timeline` LCD property supplies vblank/latched-base
 history already; reuse it instead of inventing another frame scheduler. The
-new getter must read LCD state under the BQL and publication/copy state under
+new getters must read LCD state under the BQL and publication/copy state under
 the existing frame lock, respecting the existing BQL-to-frame-lock order.
 Keep the counters fixed in size and lifetime, with no per-frame logging,
-dynamic history, forced invalidation, or publication side effect. A fixed QMP
-request from instrumentation can collect the property at start, visible
+dynamic history, forced invalidation, or publication side effect. Count actual
+pixel copies separately from size-only metadata queries and NO_FRAME returns.
+Fixed QMP requests from instrumentation can collect the properties at start, visible
 phases and failure; the existing debug QMP endpoint must be armed on the fresh
 worker before Start. The current fixed JNI QMP snapshot does not request these
 properties, so it cannot supply these counters unchanged.
+
+Upstream portable publication adaptation `5c96b49196` is already present in
+the installed source. Do not duplicate upstream `97860b36` or remove its
+deferred complete-paint boundary. Counters observe that boundary as it stands.
 
 Comparing these stages separates unchanged guest scanout, missed dirty
 notification, deferred publication and consumer acquisition. Latest-published
