@@ -25,6 +25,14 @@ class PrivacyTests(unittest.TestCase):
             self.assertIn("relocated shared launcher import PASS", result.stdout)
             shared = output / "usr/share/lighttouch/lighttouch_desktop/launcher.py"
             self.assertEqual(shared.read_bytes(), (stage.ROOT.parents[1] / "Desktop/lighttouch_desktop/launcher.py").read_bytes())
+            services = output / "usr/share/lighttouch/app_services"
+            canonical = stage.ROOT.parents[1] / "Desktop/app_services"
+            for name in ("catalog.py", "ipa.py", "mobile.py", "bridge.py", "helper.py", "window.py"):
+                self.assertEqual((services / name).read_bytes(), (canonical / name).read_bytes())
+            self.assertNotIn(b"__path__", (services / "__init__.py").read_bytes())
+            code = "import sys;sys.path.insert(0,sys.argv[1]);from app_services.catalog import Target;from app_services.ipa import binary_slices;from app_services.bridge import Bridge;import app_services.window;assert Target('iPod2,1','3.1.3','armv6').ios == '3.1.3'"
+            subprocess.run([sys.executable, "-I", "-c", code, str(services.parent)], cwd=directory,
+                           capture_output=True, text=True, check=True, timeout=5)
 
     def test_host_wayland_cannot_be_shadowed_by_bundled_libraries(self):
         for soname in ("libwayland-client.so.0", "libwayland-server.so.0",
