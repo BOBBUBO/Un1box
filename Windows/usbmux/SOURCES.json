@@ -90,7 +90,10 @@
     "openssl"
   ],
   "qualification": {
-    "compiled_here": false,
+    "peer_connector_objects_compiled": true,
+    "object_source_revision": "b36e542ef6c8c7d90de15afdb59e61d93f3bfef5",
+    "daemon_compiled": false,
+    "native_stack_linked": false,
     "windows_executed": false,
     "shared_apps_enabled": false
   }

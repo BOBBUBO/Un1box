@@ -1,6 +1,9 @@
 # Windows guest-service OS adapter (source checkpoint)
 
-Not built or executed on Windows, not packaged, and not enabled by WindowsHost.
+The peer/connector C files cross-compile to Win64 objects with GCC13 and
+`-Wall -Wextra -Werror` (source b36e542e). No daemon/mobile library has been built
+from this adapter, linked or executed on Windows. It is not packaged or enabled
+by WindowsHost.
 The shared Apps window, catalog and IPA algorithms stay in `Desktop/app_services`.
 This directory changes only the native process/socket boundary and validates
 readiness against an already owned child. It is not a replacement installer.
