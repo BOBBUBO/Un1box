@@ -26,6 +26,7 @@ internal object Native {
     external fun debugArmQmp(): String
     external fun debugEnableTouchTrace(): String
     external fun debugArmVcpuAccounting(): String
+    external fun debugSelectTcgIrCache(enabled: Boolean): String
     external fun debugSelectGraphicsProvider(choice: Int): String
     external fun debugQmpSnapshot(): Array<String>
     external fun button(button: Int, down: Boolean): String
