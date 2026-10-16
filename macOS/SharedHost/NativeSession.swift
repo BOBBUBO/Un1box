@@ -161,7 +161,7 @@ import LightTouchSharedDesktopMac
             if let services = self.services {
                 services.start()
                 if !(await services.waitReady()) {
-                    _ = await services.retire()
+                    services.beginRetirement()
                 }
             }
             try Task.checkCancellation()

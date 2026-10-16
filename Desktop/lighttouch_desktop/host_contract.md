@@ -98,6 +98,8 @@ once with fresh private endpoints, waits at most five seconds for the live child
 and both owner-only socket nodes, then supplies only that guest endpoint to
 BootConfig. A ready receipt means endpoint admission; it does not establish
 guest pairing, protocol health, app installation or launch.
+Failed optional readiness starts retained transport teardown without awaiting it
+in guest preparation; a later FINAL still waits for that same cleanup task.
 
 Managed USBMux neither adopts stale PID files nor restarts automatically, and
 does not unlink publisher-owned endpoints. NativeSession revokes clients before
