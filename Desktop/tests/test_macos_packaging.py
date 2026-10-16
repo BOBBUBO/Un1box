@@ -46,6 +46,26 @@ assert 'Linux/launcher' not in __import__('sys').path
         self.assertFalse(list(contents.rglob("*.itpack")))
         self.assertFalse(list(contents.rglob("device.lock.json")))
 
+    def test_relocated_bundle_stages_exact_shared_services_without_starting_native_transport(self):
+        contents = self.root / "shared services.app/Contents"
+        build.stage_python(SOURCE, contents)
+        resources = contents / "Resources"
+        original = SOURCE / "Desktop/app_services"
+        staged = resources / "app_services"
+        for source in original.glob("*.py"):
+            self.assertEqual((staged / source.name).read_bytes(), source.read_bytes())
+        code = """from pathlib import Path
+import app_services.catalog as catalog
+import app_services.ipa as ipa
+import app_services.window as window
+assert Path(catalog.__file__).resolve().parent == Path.cwd() / 'app_services'
+assert Path(ipa.__file__).resolve().parent == Path.cwd() / 'app_services'
+assert Path(window.__file__).resolve().parent == Path.cwd() / 'app_services'
+"""
+        subprocess.run([sys.executable, "-s", "-c", code], cwd=resources,
+                       env=dict(os.environ, PYTHONPATH=str(resources), PYTHONNOUSERSITE="1"),
+                       check=True, capture_output=True, text=True, timeout=5)
+
     def test_runtime_rejects_escaping_links_and_relocates_internal_absolute_links(self):
         runtime = self.root / "runtime"
         (runtime / "bin").mkdir(parents=True)
