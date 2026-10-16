@@ -12,6 +12,7 @@ import time
 
 from exploration_common import *
 import cache_trial
+import matched_trial
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -19,6 +20,7 @@ def main():
     parser.add_argument('--grant', type=Path)
     args = parser.parse_args()
     cfg = read(P / 'EXPLORATION-INPUTS.json')
+    matched = matched_trial.Tracker(cfg)
     if not args.execute:
         print(__import__('json').dumps({'execution': False, 'argv': cfg['argv'],
               'cache': cfg.get('cacheTrial', {'mode': 'off'}), 'root_grant_required': True}))
@@ -205,7 +207,10 @@ def main():
                     stop('original Stop205s')
                 if now - origin >= 1150 * SECOND:
                     error = 'original outer retirement reserve'; stop(error)
-                if (R / 'settings-inspected.json').exists():
+                scheduled_stop = matched.observe(R, hello, now, complete)
+                if scheduled_stop:
+                    stop(scheduled_stop)
+                if not matched.active and (R / 'settings-inspected.json').exists():
                     stop('actual operator Home/Settings geometry captured')
                 if (R / 'operator-stop.json').exists():
                     stop('operator ordinary Stop')
@@ -279,6 +284,11 @@ def main():
             and result['seed_unchanged'] and result['immutable_base_unchanged']
             and result['home_operator_attestation'] and result['settings_operator_attestation'] and engine_mapping is not None
             and not any(item['signal'] in [9, 15] for item in signals)) else 'FAIL'
+        try:
+            result['matched_diagnostic'] = matched.finish(R, hello, stop_clock)
+        except Exception as matched_error:
+            result['status'] = 'FAIL'
+            result['matched_error'] = str(matched_error)
         try:
             settings = read(R / 'settings-input.json') if (R / 'settings-input.json').exists() else {}
             cache_receipt = cache_trial.finish(cfg, cache_before,

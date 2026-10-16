@@ -9,6 +9,7 @@ import subprocess
 
 from exploration_common import *
 import cache_trial
+import matched_trial
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -19,7 +20,10 @@ def main():
     parser.add_argument('--cache-directory', type=Path, help='Separate existing canonical private0700 directory')
     parser.add_argument('--reuse-cache-receipt', type=Path, help='Prior actual clean cache-trial.json')
     parser.add_argument('--reuse-cache-result', type=Path, help='Matching prior actual RESULT.json')
+    parser.add_argument('--matched-shutdown-diagnostic', action='store_true')
     args = parser.parse_args()
+    if args.matched_shutdown_diagnostic and args.cache_mode == 'reuse':
+        raise RuntimeError('Matched shutdown diagnosis supports OFF/COLD only')
     if args.cache_mode == 'off' and any((args.cache_directory, args.reuse_cache_receipt, args.reuse_cache_result)):
         raise RuntimeError('OFF preparation must not select experimental cache inputs')
     if args.cache_mode != 'off' and args.cache_directory is None:
@@ -146,6 +150,8 @@ def main():
                       'outerSecondsFromControllerOrigin': 1200},
            'guestExecuted': False, 'sourceSeedUnchanged': True, 'isolatedStatePrepared': True}
     cfg['cacheTrial'] = {'mode': args.cache_mode}
+    if args.matched_shutdown_diagnostic:
+        cfg['matchedDiagnostic'] = {'mode': matched_trial.MODE}
     if args.cache_mode != 'off':
         cfg['scope'] = 'ONE_EXPLICIT_EXPERIMENTAL_CACHE_CORRECTNESS_NOT_BENCHMARK'
         cfg['cacheTrial']['directory'] = str(args.cache_directory)
