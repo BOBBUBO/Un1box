@@ -11,7 +11,7 @@ struct LTDesktopWindow {
     SDL_Renderer *renderer = nullptr;
     SDL_Texture *texture = nullptr;
     int guest_width = 0, guest_height = 0;
-    bool enabled = false, stopping = false;
+    bool enabled = false, stopping = false, paused = false;
     lt::WindowControls controls;
     using Owner = lt::WindowControls::Owner;
     struct Contact { int slot; double x, y; };
@@ -67,9 +67,11 @@ struct LTDesktopWindow {
             return;
         }
         if (phase == 0 && hit != lt::WindowAction::none) {
+            if (paused && lt::desktop_button(hit) >= 0) return;
             controls.press(owner, hit, edge);
             return;
         }
+        if (paused) return;
         double x = 0, y = 0;
         const bool inside = position(px, py, x, y);
         auto found = contacts.find(owner);
@@ -113,6 +115,7 @@ struct LTDesktopWindow {
             const auto action = lt::desktop_shortcut(event.key.keysym.sym);
             const Owner owner{2, event.key.keysym.sym};
             if (action == lt::WindowAction::cancel) { if (event.type == SDL_KEYDOWN) cancel(); return; }
+            if (paused && lt::desktop_button(action) >= 0 && event.type == SDL_KEYDOWN) return;
             if (event.type == SDL_KEYDOWN) controls.press(owner, action, edge);
             else controls.release(owner, action, edge, [&](auto a) { activate(a); });
         } else if (event.type == SDL_FINGERDOWN || event.type == SDL_FINGERMOTION || event.type == SDL_FINGERUP) {
@@ -206,4 +209,9 @@ extern "C" void lt_desktop_window_enabled(LTDesktopWindow *window, int enabled) 
     if (!window) return;
     if (!enabled) window->cancel();
     window->enabled = enabled != 0 && !window->stopping;
+}
+extern "C" void lt_desktop_window_paused(LTDesktopWindow *window, int paused) {
+    if (!window) return;
+    if (paused) window->cancel();
+    window->paused = paused != 0;
 }

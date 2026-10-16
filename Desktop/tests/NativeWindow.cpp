@@ -77,6 +77,14 @@ int main() {
     events = take(); assert(events.size() == 11);
     for (int i = 0; i < 10; ++i) assert(events[i].kind == LT_DESKTOP_TOUCH && events[i].phase == 2);
     assert(events.back().kind == LT_DESKTOP_PAUSE && window.contacts.empty());
+    lt_desktop_window_paused(&window, 1);
+    window.pointer({1, 9}, 0, left, y);
+    key(SDLK_h, true); key(SDLK_h, false);
+    assert(take().empty() && window.contacts.empty());
+    // Pause remains reachable while guest touch/hardware edges are suppressed.
+    key(SDLK_SPACE, true); key(SDLK_SPACE, false);
+    events = take(); assert(events.size() == 1 && events[0].kind == LT_DESKTOP_PAUSE);
+    lt_desktop_window_paused(&window, 0);
 
     SDL_Event synthetic{}; synthetic.type = SDL_FINGERDOWN;
     synthetic.tfinger.touchId = SDL_MOUSE_TOUCHID; synthetic.tfinger.x = .5; synthetic.tfinger.y = .5;

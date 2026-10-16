@@ -19,6 +19,7 @@ import IOSurface
     private var stopping = false
     private var faulted = false
     private var booted = false
+    public var isPaused: Bool { paused }
 
     public init(
         link: DeviceLink,
@@ -121,6 +122,7 @@ import IOSurface
             case Int32(LT_DESKTOP_PAUSE.rawValue):
                 guard booted, !stopping else { continue }
                 paused.toggle()
+                lt_desktop_window_paused(window, paused ? 1 : 0)
                 link.send(.machine(paused ? .pause : .resume))
             case Int32(LT_DESKTOP_ROTATE.rawValue):
                 guard booted, !stopping else { continue }

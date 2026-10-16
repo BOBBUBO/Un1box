@@ -32,6 +32,7 @@ int lt_desktop_window_poll(LTDesktopWindow *window, LTDesktopEvent *event);
 /* Cancel emits balanced releases. Drain them before disposing the native link. */
 void lt_desktop_window_cancel(LTDesktopWindow *window);
 void lt_desktop_window_enabled(LTDesktopWindow *window, int enabled);
+void lt_desktop_window_paused(LTDesktopWindow *window, int paused);
 
 #ifdef __cplusplus
 }

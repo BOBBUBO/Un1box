@@ -13,8 +13,10 @@ native engine's CGL path; the SDL renderer presents finished guest pixels.
 The optional Swift package product is `LightTouchSharedDesktopMac`. It needs
 Swift6.2/macOS14.4 and SDL2 development headers/library discoverable by `sdl2`
 pkg-config (Homebrew `sdl2`). It is not linked into the default Cocoa executable.
-No native macOS compilation, package, guest test or shared macOS launcher is
-claimed by adding this target. A source plan is not an execution receipt.
+The `LightTouchDesktopHost` product now owns this adapter for the maintained
+shared Tk launcher through `macOS/launcher.py` and `lighttouch_desktop.macos`.
+This is implemented source with asset-free host tests, not yet a native macOS
+compilation, packaged Tcl/Tk or guest execution pass.
 
 An existing native session owner integrates it in this order:
 
@@ -53,8 +55,33 @@ That asset-free test is host evidence only, even when compiled/passing. macOS
 Mach rendezvous, signing, CGL/SDL coexistence, physical input, audio, clean guest
 shutdown/persistence and packaging require separate actual target evidence.
 
-Still required for a shared macOS application: the Python host/session/profile
-adapter for `Desktop/lighttouch_desktop/launcher.py`, native managed record
-mapping without changing the Cocoa/Linux libraries, native import/admission
-commands, strict shutdown receipt, app-service integration and packaged Tcl/Tk.
-The existing Cocoa frontend remains the reference until those pieces pass.
+The native host maps one saved profile to an official DeviceInstance under that
+profile's private state root. It admits through `FirmwareTool.admitBoot`, creates
+fresh guest-package offers and derives native boot arguments without imported
+Mac paths/endpoints. n81 uses prepared kboot/NAND/writable NOR and no separate
+ROM. No existing Cocoa/Linux state is converted or copied. Bases remain shared
+and read-only. Archive import streams to new unpublished staging, validates
+supported native assets and publishes without overwriting an existing base.
+
+Recovery markers are descriptor-relative, refuse symlinks, are fsynced and carry
+a session identity. Clean publication reacquires the stopped native lease and
+requires actual final shutdown confirmation, no storage failure, helper reaping
+and nonforced exit0. Neither native `.stopped` nor exit0 alone counts. Stop
+resumes paused guests, asks guest shutdown, then requests QEMU quit only after
+confirmation. Bounded force cleanup retains dirty state. An overdue live helper
+retains its owner rather than being orphaned with a false terminal receipt;
+external finite process-tree supervision is still required for acceptance runs.
+Host screenshots copy the existing IOSurface into isolated state/screenshots.
+
+`macOS/build-shared.py` is the explicit `macos-shared-arm64` dispatcher bundle
+recipe. It requires native Swift6.2, SDL2, engine/helper inputs and a separately
+supplied self-contained Python/Tk runtime; it relocates native dependencies and
+ad-hoc signs the development bundle. It copies no bases, guest tools or state.
+The `macos-arm64` Cocoa route remains a reference, never a shared UI pass.
+
+Native compile, SDL/CGL coexistence, packaged Tk/native dialogs, real guest
+touch/render/audio/shutdown/restart/persistence remain unqualified. Guest
+networking/app services/IPA and native process counters are unavailable in the
+shared Mac host. Linux's existing app-service path is preserved. Gyro remains
+deferred and unqualified. TCG caching remains explicitly disabled unless a
+separately qualified route implements it.
