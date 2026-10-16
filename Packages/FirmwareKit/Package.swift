@@ -18,6 +18,8 @@ let package = Package(
         .library(name: "FirmwareKit", targets: ["FirmwareKit"]),
         .library(name: "FirmwareSchema", type: .static, targets: ["FirmwareSchema"]),
         .executable(name: "firmwarekit", targets: ["FirmwareKitCLI"]),
+        // Standalone assertions for native CLT installations without SwiftTesting.
+        .executable(name: "firmware-memory-probe", targets: ["FirmwareKitMemoryProbe"]),
     ],
     dependencies: [
         .package(path: "../HostRuntime"),
@@ -52,6 +54,7 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
+        .executableTarget(name: "FirmwareKitMemoryProbe", dependencies: ["FirmwareKit"]),
         .testTarget(
             name: "FirmwareKitTests",
             dependencies: ["FirmwareKit", "FirmwareSchema", .product(name: "HostRuntime", package: "HostRuntime")]

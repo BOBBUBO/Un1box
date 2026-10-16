@@ -171,17 +171,23 @@ public enum N72NAND {
         var written = 0
         let chunk = 1024
         while n < blocks {
-            var data = try f.read(upToCount: chunk * page) ?? Data()
-            if data.count < chunk * page { data.append(Data(count: chunk * page - data.count)) }
-            try data.withUnsafeBytes { (b: UnsafeRawBufferPointer) in
-                for i in 0..<min(chunk, blocks - n) {
-                    let blk = UnsafeRawBufferPointer(rebasing: b[i * page..<(i + 1) * page])
-                    if blk.allSatisfy({ $0 == 0 }) { continue }
-                    var rec = Data(blk)
-                    rec.append(contentsOf: blankSpare)
-                    try rec.write(to: path(out, predict(n + i)))
-                    written += 1
+            // Drain autoreleased NSData/NSURL/file-I/O temporaries after each
+            // 4 MiB chunk, including all page writes, instead of after a 7 GiB scan.
+            written += try withFirmwareAutoreleasePool {
+                var data = try f.read(upToCount: chunk * page) ?? Data()
+                if data.count < chunk * page { data.append(Data(count: chunk * page - data.count)) }
+                var count = 0
+                try data.withUnsafeBytes { (b: UnsafeRawBufferPointer) in
+                    for i in 0..<min(chunk, blocks - n) {
+                        let blk = UnsafeRawBufferPointer(rebasing: b[i * page..<(i + 1) * page])
+                        if blk.allSatisfy({ $0 == 0 }) { continue }
+                        var rec = Data(blk)
+                        rec.append(contentsOf: blankSpare)
+                        try rec.write(to: path(out, predict(n + i)))
+                        count += 1
+                    }
                 }
+                return count
             }
             n += chunk
         }

@@ -323,9 +323,14 @@ public enum Preparer {
         var h = h
         let f = try FileHandle(forReadingFrom: url)
         defer { try? f.close() }
-        while let chunk = try f.read(upToCount: 1 << 22), !chunk.isEmpty {
-            h.update(data: chunk)
-            count?(chunk.count)
+        while true {
+            let bytes = try withFirmwareAutoreleasePool {
+                guard let chunk = try f.read(upToCount: 1 << 22), !chunk.isEmpty else { return 0 }
+                h.update(data: chunk)
+                count?(chunk.count)
+                return chunk.count
+            }
+            if bytes == 0 { break }
         }
         return h.finalize().hexString
     }
@@ -357,7 +362,9 @@ public enum Preparer {
         let hashes = Hashes()
         DispatchQueue.concurrentPerform(iterations: files.count) { i in
             do {
-                let h = try digest(nand.appendingPathComponent(files[i]), SHA256(), count: count)
+                let h = try withFirmwareAutoreleasePool {
+                    try digest(nand.appendingPathComponent(files[i]), SHA256(), count: count)
+                }
                 hashes.lock.withLock { hashes.sha[files[i]] = h }
             } catch { hashes.lock.withLock { hashes.error = error } }
         }
