@@ -39,11 +39,11 @@
           "x86_64"
         ]
       ],
-      "ui": "WinForms compile preview remains isolated; shared Tk/SDL adapter not implemented.",
+      "ui": "Transitional WinForms reference preview; use windows-shared-x86_64 for the maintained product UI.",
       "shared_guest_controls": false,
-      "qualification": "Native Windows compilation exists in an isolated worktree; Windows guest execution unqualified.",
+      "qualification": "User-confirmed r4 guest boot/audio/controls; separate shared Windows target acceptance remains unqualified.",
       "actions": {},
-      "blocker": "Windows preview recipes are not integrated into this source revision; shared desktop Windows adapter/package is not implemented."
+      "blocker": "Windows reference preview is not integrated into this dispatcher; use windows-shared-x86_64 stage for shared Tk/SDL packaging."
     },
     "macos-arm64": {
       "hosts": [
@@ -69,10 +69,15 @@
       }
     },
     "macos-shared-arm64": {
-      "hosts": [["darwin", "arm64"]],
+      "hosts": [
+        [
+          "darwin",
+          "arm64"
+        ]
+      ],
       "ui": "Shared Tk launcher and SDL guest window with native DeviceRuntime host; development source, target execution unqualified.",
       "shared_guest_controls": true,
-      "qualification": "Native compilation, packaged Tcl/Tk and actual guest acceptance remain unqualified; app services and native process metrics unavailable.",
+      "qualification": "Native compilation, package/sign/Python imports and finite Tk window startup checked on M4; actual shared guest, visual review, services and metrics remain unqualified.",
       "actions": {
         "bundle": {
           "recipe": "macOS/build-shared.py",
@@ -93,6 +98,31 @@
       "qualification": "Unimplemented/unqualified.",
       "actions": {},
       "blocker": "Intel macOS dependency/build qualification is pending; ARM64 artifacts cannot be relabeled."
+    },
+    "windows-shared-x86_64": {
+      "hosts": [
+        [
+          "linux",
+          "x86_64"
+        ],
+        [
+          "win32",
+          "x86_64"
+        ]
+      ],
+      "ui": "Shared Tk launcher and maintained SDL guest window; Windows host adapter.",
+      "shared_guest_controls": true,
+      "qualification": "Prebuilt staging only; actual Windows shared guest and Legacy Store/IPA services unqualified.",
+      "actions": {
+        "stage": {
+          "recipe": "Windows/tools/stage-shared.py",
+          "fixed": [
+            "--source",
+            "{source}"
+          ],
+          "resource_control": "Caller owns finite staging memory/disk/time scope; supply audited Python/Tk, helper, SDL worker and native DLL providers."
+        }
+      }
     }
   }
 }

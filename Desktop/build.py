@@ -49,8 +49,8 @@ def make_plan(target, action, output, forwarded, source=SOURCE, host=None):
         raise ValueError("Recipe is absent from this source revision: " + str(script))
     # These are dispatcher-owned; never let trailing flags change the recorded inputs.
     for token in forwarded:
-        if token.split("=", 1)[0] in {"--app", "--output"}:
-            raise ValueError("--app and --output are owned by the desktop dispatcher.")
+        if token.split("=", 1)[0] in {"--app", "--output", "--source"}:
+            raise ValueError("--app, --source and --output are owned by the desktop dispatcher.")
     fixed = [str(source) if token == "{source}" else token for token in recipe["fixed"]]
     actual_host = host or host_identity()
     return {"schema": 1, "kind": "desktop-native-build-plan", "target": target,

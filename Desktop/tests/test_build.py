@@ -28,6 +28,17 @@ class PlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not integrated"):
             build.make_plan("windows-x86_64", "bundle", "/private/windows", [])
 
+    def test_shared_windows_stages_same_source_with_explicit_prebuilt_inputs(self):
+        for host in (["linux", "x86_64"], ["win32", "x86_64"]):
+            plan = build.make_plan("windows-shared-x86_64", "stage", "/private/shared-windows", [], host=host)
+            self.assertTrue(plan["host_compatible"])
+            self.assertTrue(plan["shared_guest_controls"])
+            self.assertTrue(plan["argv"][1].endswith("Windows/tools/stage-shared.py"))
+            self.assertEqual(plan["argv"][2:4], ["--source", str(build.SOURCE)])
+            self.assertFalse(plan["guest_acceptance"])
+        with self.assertRaises(ValueError):
+            build.make_plan("windows-shared-x86_64", "bundle", "/private/shared-windows", [])
+
     def test_shared_mac_target_keeps_reference_route_separate_and_unqualified(self):
         plan = build.make_plan("macos-shared-arm64", "bundle", "/private/shared.app", [], host=["darwin", "arm64"])
         self.assertTrue(plan["host_compatible"])
@@ -37,7 +48,7 @@ class PlanTests(unittest.TestCase):
         self.assertFalse(plan["guest_acceptance"])
 
     def test_output_and_app_cannot_be_changed_by_trailing_recipe_flags(self):
-        for flag in ["--output=/elsewhere", "--output", "--app=/other/source", "--app"]:
+        for flag in ["--output=/elsewhere", "--output", "--app=/other/source", "--app", "--source=/other/source", "--source"]:
             with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, "owned"):
                 build.make_plan("linux-x86_64", "stage", "/private/stage", [flag])
         with self.assertRaisesRegex(ValueError, "outside"):

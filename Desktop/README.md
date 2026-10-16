@@ -4,8 +4,9 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) for current source adoption and planned
 Tk/SDL host adapters. Linux uses the actual shared Tk launcher and SDL controls now. Existing Mac
 Cocoa and isolated Windows WinForms previews retain their reference UI. A new
 `macos-shared-arm64` development route adopts the exact shared launcher/SDL
-window through native DeviceRuntime; its native compilation and actual target
-execution remain unqualified. Reference compile success is not UI parity.
+window through native DeviceRuntime. Native M4 compilation, development packaging,
+signature/Python-import checks and finite Tk window startup have passed. Actual
+shared Mac guest execution and visual review remain unqualified. Reference compile success is not UI parity.
 
 The maintained desktop UI is **one Python/Tk launcher and one set of SDL
 controls**, shared by Linux, Windows and macOS. Platform support belongs in host
@@ -13,8 +14,8 @@ adapters and packaging recipes. Do not add a second Windows layout or reproduce
 the launcher in C#: the WinForms preview is a temporary compatibility/debugging
 route. A shared Windows build must instantiate the existing `Launcher` and
 consume the shared control components. Its saved-device migration must preserve
-existing inputs and writable state. The Windows host adapter is still pending;
-the preview does not meet this requirement.
+existing inputs and writable state. The Windows host adapter and prebuilt staging recipe now use that shared UI;
+actual shared Windows guest execution and service parity remain unqualified.
 Android retains its touch UI; APK orchestration remains a future entrypoint
 adapter rather than an advertised output of this initial desktop foundation.
 
@@ -34,6 +35,9 @@ python3 Desktop/build.py --target linux-x86_64 --action stage --output /private/
 python3 Desktop/build.py --target linux-x86_64 --action package --output /private/LightTouch.AppImage -- \
   --appdir /private/LightTouch.AppDir --tool /private/appimagetool --runtime /private/runtime \
   --evidence /private/seal01
+python3 Desktop/build.py --target windows-shared-x86_64 --action stage --output /private/LightTouch-Windows -- \
+  --python-runtime /private/windows-python-tk --helper /private/headless-publish \
+  --worker /private/lighttouch-windows-worker.exe --native-runtime /private/audited-dlls
 python3 Desktop/build.py --target macos-arm64 --action engine --output /private/mac-engine -- \
   --qemu-source /private/committed/qemu-ios --python /opt/homebrew/bin/python3.13 \
   --openssl-prefix /opt/homebrew/opt/openssl@3 --jobs 2
@@ -50,8 +54,9 @@ Linux build delegates to the existing guarded Debian11 runner; prepare its pinne
 public dependency trees first (see `Linux/packaging/README.md`). Staging/sealing
 uses audited manifests and retains source/license obligations. Mac development
 bundles require native macOS SDK/Swift and explicit trusted prebuilt dependencies
-(see `macOS/README.md`); they are not notarized distributions. Windows and Intel
-Mac routes fail explicitly while their shared adapters/recipes are unimplemented.
+(see `macOS/README.md`); they are not notarized distributions. The Windows shared route stages verified prebuilt inputs on Linux or Windows;
+it does not download runtimes or compile the native helper/worker. Intel Mac
+routes still fail explicitly.
 A successful dispatcher receipt records child exit and file artifact hashes;
 keep underlying per-file/dependency/native-test receipts and matching source.
 No build receipt establishes guest acceptance.
@@ -74,7 +79,7 @@ implemented. The Linux service path stays available. See
 Small asset-free tests:
 
 ```sh
-/usr/bin/python3 -m unittest discover -s Desktop/tests -p 'test_*.py' -v
+PYTHONPATH=Desktop /usr/bin/python3 -m unittest discover -s Desktop/tests -p 'test_*.py' -v
 /usr/bin/python3 -m unittest discover -s Linux/launcher/tests -v
 # Isolated X11 display required for real Tk tests; no guest runs.
 cmake -S Desktop -B /private/desktop-ui-tests -DLIGHTTOUCH_DESKTOP_UI_TESTS=ON
