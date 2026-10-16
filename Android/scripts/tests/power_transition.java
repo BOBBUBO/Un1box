@@ -11,6 +11,12 @@ final class PowerTransitionHostTest {
     public static void main(String[] args) {
         GuestPowerTransition g = gate(true);
         switch (args[0]) {
+        case "shared-control-budget":
+            check(GuestPowerTransition.controlDeadline(15000, 16000) == 16000);
+            check(GuestPowerTransition.controlDeadline(1000, 16000) == 6000);
+            check(GuestPowerTransition.controlDeadline(16001, 16000) == 16000);
+            check(GuestPowerTransition.controlDeadline(1000, Long.MAX_VALUE) == 6000);
+            break;
         case "actual-black-wake":
             // Captured native sequence after old500ms wait never qualifies as awake.
             check(!sample(g, 1597, 1, 0, 940, 0, 0));

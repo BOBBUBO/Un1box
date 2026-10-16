@@ -17,7 +17,7 @@ class PowerTransitionTests(unittest.TestCase):
                         str(HERE / 'power_transition.java')], check=True, timeout=20)
 
     def test_native_transition_sequences_and_deadlines(self):
-        for scenario in ['actual-black-wake', 'delayed-wake', 'last-in-budget',
+        for scenario in ['shared-control-budget', 'actual-black-wake', 'delayed-wake', 'last-in-budget',
                          'deadline-no-renewal', 'lookup-consumes-budget', 'stale-frame',
                          'no-pixels', 'no-backlight', 'sleep-fade', 'frame-regression',
                          'clock-regression', 'identity-and-health', 'missing-pixels']:
@@ -26,6 +26,13 @@ class PowerTransitionTests(unittest.TestCase):
                     'org.lighttouch.android.PowerTransitionHostTest', scenario],
                     check=True, text=True, capture_output=True, timeout=5)
                 self.assertEqual(result.stdout.strip(), 'PASS ' + scenario)
+
+    def test_shared_deadline_reaches_the_existing_action_guard(self):
+        source = (POLICY.parent / 'GuestOrientationLifecycleTest.kt').read_text()
+        self.assertIn('fun clickControl(text: String, sharedDeadline: Long = Long.MAX_VALUE)', source)
+        self.assertIn('GuestPowerTransition.controlDeadline(SystemClock.elapsedRealtime(), sharedDeadline)', source)
+        self.assertIn('clickControl("Power", gate.deadline)', source)
+        self.assertIn('SystemClock.elapsedRealtime() < deadline && sameWindow &&', source)
 
 
 if __name__ == '__main__':
