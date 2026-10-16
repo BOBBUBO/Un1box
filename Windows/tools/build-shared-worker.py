@@ -40,6 +40,18 @@ def main():
     if len(original) != 1:
         raise RuntimeError('Expected exactly one cached portable ARM C command.')
     template = shlex.split(original[0]['command'])
+    original_source = original[0]['file']
+    old_root = (cache / original_source).resolve().parents[2]
+    # Cached native objects survive worktree cleanup. Compile changed sources
+    # against the explicitly selected checkout, not retired include paths.
+    def relocate(value):
+        prefix = '-I' if value.startswith('-I') else ''
+        if value.startswith('-') and not prefix:
+            return value
+        path = (cache / value[len(prefix):]).resolve()
+        if path.is_relative_to(old_root):
+            return prefix + str(qemu / path.relative_to(old_root))
+        return value
     response = shlex.split(args.response.read_text())
     main_object = 'qemu-system-arm.exe.p/system_main.c.obj'
     if response.count(main_object) != 1 or response[:1] != ['-o']:
@@ -65,10 +77,10 @@ def main():
         # owns true main itself and calls SDL_SetMainReady; retaining the macro
         # silently renames its entrypoint despite SDL_MAIN_HANDLED.
         argv = [value for value in template if value != '-Dmain=SDL_main']
-        original_source = original[0]['file']
         if argv.count(original_source) != 1:
             raise RuntimeError('Cached C command has unexpected source spelling.')
         argv[argv.index(original_source)] = str(source)
+        argv = [relocate(value) for value in argv]
         target = output/(source.name+'.obj')
         for flag in ('-o', '-MF', '-MQ'):
             position = argv.index(flag) + 1

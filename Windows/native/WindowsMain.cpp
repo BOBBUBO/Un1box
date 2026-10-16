@@ -218,6 +218,7 @@ static int run(int argc, char **argv) {
         // Internal engine proof is separate from the sole full session FINAL.
         std::printf("FINAL status_available=1 state=0 confirmed=%d dirty=%d worker_reaped=1 worker_exit=%d worker_disposal_requested=0 frontend_return=%d\n",
                     engine_exit == 0, !clean, engine_exit, clean ? 0 : 3);
+        std::fflush(stdout);
         return clean ? 0 : 3;
     } catch (const std::exception &failure) {
         error(failure.what());

@@ -38,6 +38,15 @@ print('FINAL status_available=1 state=0 confirmed=1 dirty=0 worker_reaped=1 work
                 self.assertEqual(calls, [(root / "worker.log", True), (root / "application.log", False)])
                 self.assertIn("Shared Windows adapter contract", session.diagnostic_report())
                 self.assertIn("retained diagnostic", session.diagnostic_report())
+                session.start([sys.executable, "-c", "print('status state=2')"], root / "next.log")
+                deadline = time.monotonic() + 3
+                while session.active and time.monotonic() < deadline:
+                    session.poll(); time.sleep(.005)
+                session.poll()
+                self.assertEqual(session.status["state"], "2")
+                report = session.diagnostic_report()
+                self.assertIn("Previous setup/session log: " + str(root / "worker.log"), report)
+                self.assertIn("FINAL status_available=1", report)
                 self.assertFalse(strict_clean_exit(0, {"confirmed": "1"}))
                 self.assertTrue(issubclass(MacSession, ManagedSession))
             finally:

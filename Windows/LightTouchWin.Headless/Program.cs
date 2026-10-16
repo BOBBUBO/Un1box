@@ -216,6 +216,8 @@ static async Task<int> MainWindows(string[] arguments)
         await child.WaitForExitAsync(); await Task.WhenAll(stdout, stderr);
         if (!duplicateFinal && Volatile.Read(ref frontendFailed) == 0 && child.ExitCode == 0 && SharedReceipt.Clean(child.ExitCode, final))
         { Console.WriteLine(final); return 0; }
+        Console.Error.WriteLine($"[windows-receipt] worker_exit={child.ExitCode} final_received={final is not null} duplicate_final={duplicateFinal} frontend_failed={Volatile.Read(ref frontendFailed)}");
+        if (final is not null) Console.Error.WriteLine("NATIVE_RECEIPT " + final);
         Console.WriteLine("FINAL status_available=0 state=0 confirmed=0 dirty=1 worker_reaped=1 worker_exit=" + child.ExitCode + " worker_disposal_requested=0 frontend_return=3");
         return 3;
     }

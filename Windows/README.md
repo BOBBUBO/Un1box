@@ -29,6 +29,15 @@ forces that check. A saved result does not detect manual changes inside NAND
 that leave the system lock unchanged; use the recheck option after modifying
 an imported system or changing its read-only permissions.
 
+The launcher reports native running/paused/stopping state instead of leaving
+the startup message on screen. Confirmed PMU shutdown, including iOS's own
+shutdown slider, lets the worker finish cleanup and release the device; clean
+completion still requires its complete terminal receipt. Storage failures keep
+state unconfirmed. Copied diagnostics include up to three preceding setup or
+session logs, so `[import-timing]` results remain available after starting iOS.
+**Install apps remains unavailable in this Windows preview:** its guest-service
+transport has not been connected. This is separate from import/startup status.
+
 This is a separate, experimental Windows frontend around the current iOS QEMU
 engine. It is not a Windows acceptance pass. Use Windows10/11 x86_64 with a real
 hardware OpenGL2.1 compatibility driver. No software GPU provider is bundled.

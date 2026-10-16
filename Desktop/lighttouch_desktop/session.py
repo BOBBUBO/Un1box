@@ -37,6 +37,7 @@ class ManagedSession:
         self.tail = deque(maxlen=100)
         self.reader_done = threading.Event()
         self.log_path = None
+        self.previous_logs = deque(maxlen=3)
         self.application_log = Path(application_log) if application_log else None
         self.final = None
         self.status = {}
@@ -60,6 +61,13 @@ class ManagedSession:
 
     def diagnostic_report(self):
         text = self.label + "\nNative log: " + str(self.log_path) + "\n"
+        for path in self.previous_logs:
+            text += "\nPrevious setup/session log: " + str(path) + "\n"
+            if path.is_file():
+                with os.fdopen(self.storage.open_regular(path), "rb") as stream:
+                    size = stream.seek(0, os.SEEK_END)
+                    stream.seek(max(0, size - 65536))
+                    text += stream.read(65536).decode("utf-8", "replace")
         if self.log_path and self.log_path.is_file():
             with os.fdopen(self.storage.open_regular(self.log_path), "rb") as stream:
                 text += stream.read(65536).decode("utf-8", "replace")
@@ -72,6 +80,8 @@ class ManagedSession:
     def start(self, command, log_path, env=None):
         if self.active:
             raise RuntimeError("Stop the current device before starting another session.")
+        if self.log_path:
+            self.previous_logs.append(self.log_path)
         self.log_path = Path(log_path)
         log = self.open_log(self.log_path, exclusive=True)
         environment = dict(os.environ if env is None else env)

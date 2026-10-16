@@ -86,7 +86,7 @@ class Launcher:
         self.recover = tk.BooleanVar(value=False)
         self.recheck = tk.BooleanVar(value=False)
         self.message = tk.StringVar(value="Choose a device, or add a prepared base to get started.")
-        self.detail = tk.StringVar(value="Native integrity checks run before every boot.")
+        self.detail = tk.StringVar(value="Choose an installed system or import a prepared .itbase file.")
         self.stats = tk.StringVar(value="Worker CPU and memory become available after Start.")
         self._build()
         self._list()
@@ -445,7 +445,9 @@ class Launcher:
         self.was_active = True
         self.set_busy(True)
         self.stop_button.configure(state="normal" if job == "guest" else "disabled")
-        self.message.set("Checking iOS files before boot…" if job == "guest" else "Preparing the iOS system…")
+        self.progress["value"] = 0
+        self.import_bytes = None
+        self.message.set("Starting iOS…" if job == "guest" else "Preparing the iOS system…")
         self.detail.set("The first setup expands the system and checks its contents. This can take several minutes." if job == "import" else "Your iOS display will open in a separate window.")
 
     def start(self):
@@ -469,8 +471,9 @@ class Launcher:
             self.store.save(profile)
             self.bridge, env = self.host.start_services(self.args, self.store.directory, self.current)
             self.launch(command, "guest", env=env)
+            self.apps_button.configure(text="Install apps…" if self.bridge else "Install apps (unavailable)")
             if self.bridge is None:
-                self.detail.set("Guest app services are unavailable in this build. Log: " + str(self.session.log_path))
+                self.detail.set("Install apps is unavailable: guest app services are not connected in this platform preview. Log: " + str(self.session.log_path))
         except (ValueError, OSError, RuntimeError) as error:
             if self.bridge:
                 self.bridge.close()
@@ -587,6 +590,9 @@ class Launcher:
             self.log.configure(state="disabled")
         if self.session.active and self.job == "guest":
             state = self.session.status.get("state")
+            for line in lines:
+                if line.startswith("admission "):
+                    self.message.set("Checking installed iOS system…")
             self.apps_button.configure(state="normal" if state == "2" and self.bridge and not self.session.stopping else "disabled")
             if not self.session.stopping and state:
                 self.message.set({"1": "Starting iOS…", "2": "Guest running", "3": "Guest paused", "4": "Stopping guest…", "5": "Guest failed — retaining state"}.get(state, "Guest session"))
@@ -622,6 +628,7 @@ class Launcher:
 
     def finished(self):
         self.was_active = False
+        job, self.job = self.job, ""
         if self.apps and self.apps.service:
             self.apps.service.cancel(guest_ended=True)
         if self.bridge:
@@ -631,7 +638,7 @@ class Launcher:
         self.cancel_button.configure(state="disabled")
         self.apps_button.configure(state="disabled")
         self.stop_button.configure(state="disabled")
-        if self.job == "import":
+        if job == "import":
             if self.session.returncode == 0:
                 self.vars["base"].set(self.pending_import)
                 self.selected_source = None
@@ -645,6 +652,8 @@ class Launcher:
                     self._list()
                 except (ValueError, OSError, RuntimeError) as error:
                     self.error(error)
+                self.pending_import = None
+                self.import_bytes = None
             else:
                 self.progress["value"] = 0
                 self.message.set("Setup cancelled. Your original files are unchanged." if self.cancel_requested else "Setup failed. See Session details for the error; your original files are unchanged.")

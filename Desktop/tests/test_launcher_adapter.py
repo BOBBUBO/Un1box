@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import queue
 from types import SimpleNamespace
 import unittest
@@ -73,6 +74,31 @@ class AdapterTests(unittest.TestCase):
                 self.assertIn("changed during setup", ui.message.get())
                 self.assertNotIn("Checking file", ui.detail.get())
                 self.assertEqual(float(ui.progress["value"]), 0)
+                # Successful setup must leave import mode before a guest starts.
+                ui.preparation = None
+                ui.job, ui.pending_import = "import", "/prepared/imported"
+                session.returncode = 0
+                store.save = Mock()
+                ui.finished()
+                self.assertEqual(ui.job, "")
+                self.assertIsNone(ui.pending_import)
+                self.assertIn("Setup complete", ui.message.get())
+                self.assertEqual(str(ui.start_button["state"]), "normal")
+                session.start = Mock()
+                ui.launch(["synthetic-native-host"], "guest")
+                self.assertEqual(float(ui.progress["value"]), 0)
+                self.assertEqual(ui.message.get(), "Starting iOS…")
+                # Native running status drives the shared UI and Apps readiness.
+                session.active, session.status = True, {"state": "2"}
+                ui.bridge = object()
+                ui.last_metrics = time.monotonic() + 10
+                ui.tick()
+                self.assertEqual(ui.message.get(), "Guest running")
+                self.assertEqual(str(ui.apps_button["state"]), "normal")
+                # A missing bridge remains unavailable even with running status.
+                ui.bridge = None
+                ui.tick()
+                self.assertEqual(str(ui.apps_button["state"]), "disabled")
             finally:
                 for callback in window.tk.splitlist(window.tk.call("after", "info")):
                     window.after_cancel(callback)
