@@ -1,7 +1,11 @@
 """Shared host wiring contracts, without claiming Win32 target execution."""
 from pathlib import Path
 from types import SimpleNamespace
+import json
+import os
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -67,6 +71,40 @@ class HostTests(unittest.TestCase):
         with patch.object(windows, 'validate', return_value={'board':'n72ap'}):
             with self.assertRaises(windows.SetupError): self.host.validate(self.profile)
             self.assertEqual(self.host.validate(self.profile, allow_dirty=True)['board'], 'n72ap')
+
+    def test_unqualified_services_never_inherit_a_foreign_bridge(self):
+        foreign = {"IT_USB_TCP": "127.0.0.1:55123", "usbmuxd_socket_address": "127.0.0.1:27015",
+                   "USBMUXD_QEMU_ADDR": "127.0.0.1:55124", "ltw_usbmux_pid": "123",
+                   "LTW_USBMUX_CREATED": "133795493571234567", "LtW_Session_Profile": "a"*32,
+                   "LTW_SESSION_TOKEN": "b"*32, "LTW_SESSION_GENERATION": "1",
+                   "LIGHTTOUCH_TEST_KEEP": "ordinary host setting"}
+        # Execute a real tiny host child through the actual session owner. No
+        # Windows APIs, daemon, network endpoint or guest is allocated here.
+        code = "import os,json; print('ENV ' + json.dumps(dict(os.environ)), flush=True)"
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit), patch.dict(os.environ, foreign):
+                environment = dict(os.environ) if explicit else None
+                before = dict(environment) if explicit else dict(os.environ)
+                owner = self.host.create_session(self.root/'application.log')
+                self.assertIsInstance(owner, windows.WindowsSession)
+                owner.start([sys.executable, '-c', code], self.root/('environment-'+str(explicit)+'.log'), environment)
+                deadline = time.monotonic() + 3
+                lines = []
+                try:
+                    while owner.active and time.monotonic() < deadline:
+                        lines.extend(owner.poll()); time.sleep(.005)
+                    lines.extend(owner.poll())
+                    self.assertFalse(owner.active)
+                    self.assertEqual(owner.returncode, 0)
+                    result = json.loads(next(line[4:] for line in lines if line.startswith('ENV ')))
+                    self.assertEqual(result['LIGHTTOUCH_TEST_KEEP'], foreign['LIGHTTOUCH_TEST_KEEP'])
+                    for key in foreign.keys() - {'LIGHTTOUCH_TEST_KEEP'}:
+                        self.assertNotIn(key, result)
+                    self.assertEqual(dict(environment) if explicit else dict(os.environ), before)
+                    self.assertEqual(self.host.start_services(self.args, self.root, self.profile['id']), (None, None))
+                finally:
+                    if owner.child.poll() is None:
+                        owner.child.kill(); owner.child.wait(timeout=1)
 
 
 if __name__ == '__main__': unittest.main()

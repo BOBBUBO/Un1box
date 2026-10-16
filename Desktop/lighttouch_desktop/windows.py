@@ -6,6 +6,7 @@ never translates metadata into QEMU arguments. Native target qualification,
 services transport and a packaged Python/Tk runtime remain separate gates.
 """
 from pathlib import Path
+import os
 import re
 
 from .profiles import (FORMAT, VERSION, Profiles, SetupError, absolute, display_title,
@@ -13,6 +14,24 @@ from .profiles import (FORMAT, VERSION, Profiles, SetupError, absolute, display_
 from .preparation import Preparation
 from .session import ManagedSession, strict_clean_exit
 from .windows_storage import WindowsStorage
+
+
+class WindowsSession(ManagedSession):
+    """Unavailable Windows services cannot inherit another profile's bridge.
+
+    Environment variables are case-insensitive on Windows. Apply the same
+    rule to explicit mappings before handing them to the shared process owner.
+    A future qualified services launch must inject its admitted endpoint through
+    the native owner, not preserve arbitrary inherited loopback configuration.
+    """
+    def start(self, command, log_path, env=None):
+        environment = dict(os.environ if env is None else env)
+        for key in list(environment):
+            name = key.upper()
+            if (name in ("IT_USB_TCP", "USBMUXD_SOCKET_ADDRESS", "USBMUXD_QEMU_ADDR") or
+                    name.startswith("LTW_USBMUX_") or name.startswith("LTW_SESSION_")):
+                environment.pop(key)
+        super().start(command, log_path, environment)
 
 
 class WindowsHost:
@@ -27,7 +46,7 @@ class WindowsHost:
         return Profiles(directory, storage=self.storage)
 
     def create_session(self, application_log):
-        return ManagedSession(application_log, storage=self.storage, label="LightTouch shared Windows launcher")
+        return WindowsSession(application_log, storage=self.storage, label="LightTouch shared Windows launcher")
 
     def inspect_base(self, path):
         return inspect_base(path, storage=self.storage)
