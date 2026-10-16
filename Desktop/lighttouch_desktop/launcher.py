@@ -84,6 +84,7 @@ class Launcher:
         self.vars = {name: tk.StringVar() for name in ("name", "base", "state", "guest_package", "bootrom")}
         self.audio = tk.BooleanVar(value=True)
         self.recover = tk.BooleanVar(value=False)
+        self.recheck = tk.BooleanVar(value=False)
         self.message = tk.StringVar(value="Choose a device, or add a prepared base to get started.")
         self.detail = tk.StringVar(value="Native integrity checks run before every boot.")
         self.stats = tk.StringVar(value="Worker CPU and memory become available after Start.")
@@ -189,6 +190,10 @@ class Launcher:
         recover = ttk.Checkbutton(advanced, text="Recover after an interrupted shutdown (keeps saved data)", variable=self.recover)
         recover.pack(anchor="w", pady=8)
         self.widgets.append(recover)
+        if getattr(self.host, "supports_validation_cache", False):
+            recheck = ttk.Checkbutton(advanced, text="Recheck all system files before starting (slow)", variable=self.recheck)
+            recheck.pack(anchor="w", pady=8)
+            self.widgets.append(recheck)
         config = ttk.Frame(advanced)
         config.pack(fill="x", pady=12)
         self.button(config, "Import settings…", self.import_profile).pack(side="left")
@@ -457,7 +462,10 @@ class Launcher:
                 self.apps.window.destroy()
                 self.apps = None
             profile = self.profile()
-            command = self.host.guest_command(self.args, profile, self.recover.get())
+            if getattr(self.host, "supports_validation_cache", False):
+                command = self.host.guest_command(self.args, profile, self.recover.get(), recheck=self.recheck.get())
+            else:
+                command = self.host.guest_command(self.args, profile, self.recover.get())
             self.store.save(profile)
             self.bridge, env = self.host.start_services(self.args, self.store.directory, self.current)
             self.launch(command, "guest", env=env)

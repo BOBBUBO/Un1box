@@ -17,6 +17,40 @@ static async Task<int> MainWindows(string[] arguments)
         if (i + 1 >= arguments.Length || !arguments[i].StartsWith("--") || !options.TryAdd(arguments[i], arguments[i + 1]))
             throw new ArgumentException("Malformed or duplicate helper option.");
     string Need(string name) => options.TryGetValue(name, out string? value) && value.Length > 0 ? value : throw new ArgumentException("Missing " + name);
+    string? validationCache = options.TryGetValue("--validation-cache", out var cachePath) ? PrivateWindows.Full(cachePath) : null;
+    bool ReuseValidation(string directory)
+    {
+        if (validationCache is null || !Directory.Exists(validationCache)) return false;
+        PrivateWindows.Ensure(validationCache);
+        var pins = PrivateWindows.Pin(validationCache, false);
+        try
+        {
+            PrivateWindows.ImmutableAsset(Path.Combine(directory, "device.lock.json"));
+            return BaseValidationCache.Matches(directory, validationCache, PrivateWindows.DirectoryIdentity(directory), PrivateWindows.Read);
+        }
+        finally { foreach (var pin in pins) pin.Dispose(); }
+    }
+    void RememberValidation(string directory)
+    {
+        if (validationCache is null) return;
+        try
+        {
+            PrivateWindows.Ensure(validationCache);
+            var pins = PrivateWindows.Pin(validationCache, false);
+            try
+            {
+                BaseValidationCache.Remember(directory, validationCache, PrivateWindows.DirectoryIdentity(directory), PrivateWindows.Read,
+                    (from, to) => {
+                        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+                        if (!PrivateWindows.MoveFileEx(from, to, 1 | 8))
+                            throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(), "Cannot save validation result.");
+                    });
+            }
+            finally { foreach (var pin in pins) pin.Dispose(); }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        { Console.Error.WriteLine("[validation-cache] Not saved; next Start will verify again: " + error.Message); }
+    }
     var importProgressClock = Stopwatch.StartNew(); string lastPhase = "";
     void Progress(string phase, long done, long total)
     {
@@ -28,7 +62,7 @@ static async Task<int> MainWindows(string[] arguments)
     }
     if (arguments[0] == "import")
     {
-        if (options.Keys.Any(k => k is not ("--source" or "--destination" or "--sha256"))) throw new ArgumentException("Unknown import option.");
+        if (options.Keys.Any(k => k is not ("--source" or "--destination" or "--sha256" or "--validation-cache"))) throw new ArgumentException("Unknown import option.");
         string source = PrivateWindows.Full(Need("--source")), destination = PrivateWindows.Full(Need("--destination"));
         string expected = Need("--sha256");
         if (expected.Length != 64 || expected.Any(c => !char.IsAsciiHexDigit(c))) throw new ArgumentException("Import requires its calculated SHA-256.");
@@ -71,12 +105,13 @@ static async Task<int> MainWindows(string[] arguments)
             Timing("protecting");
             if (!PrivateWindows.MoveFileEx(stage, destination, 8)) throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(), "Base publication failed; isolated import stage retained at " + stage);
             Timing("publishing");
+            RememberValidation(destination);
             Console.WriteLine("import phase=verifying percent=100 done=1 total=1");
             return 0;
         }
         finally { foreach (var pin in pins) pin.Dispose(); }
     }
-    if (arguments[0] != "run" || options.Keys.Any(k => k is not ("--id" or "--name" or "--base" or "--state" or "--package" or "--rom" or "--worker" or "--recover" or "--audio")))
+    if (arguments[0] != "run" || options.Keys.Any(k => k is not ("--id" or "--name" or "--base" or "--state" or "--package" or "--rom" or "--worker" or "--recover" or "--audio" or "--validation-cache" or "--recheck")))
         throw new ArgumentException("Unknown shared helper action/option.");
     string identity = Need("--id");
     if (identity.Length != 32 || identity.Any(c => !char.IsAsciiHexDigit(c))) throw new InvalidDataException("Invalid saved device identity.");
@@ -126,11 +161,17 @@ static async Task<int> MainWindows(string[] arguments)
         using (var lease = PrivateWindows.Lock(Path.Combine(state, "running.lock")))
         {
             PrivateWindows.StateTree(state);
-            var progressClock = Stopwatch.StartNew();
-            BaseAdmission.Verify(basePath, (a, b) => {
-                if (Volatile.Read(ref stopRequested) != 0) throw new OperationCanceledException("Start was cancelled before guest boot; state was retained.");
-                if (progressClock.ElapsedMilliseconds >= 100 || a == b) { Console.WriteLine($"admission done={a} total={b}"); progressClock.Restart(); }
-            }, PrivateWindows.ImmutableAsset, PrivateWindows.Read);
+            if (options.GetValueOrDefault("--recheck") != "yes" && ReuseValidation(basePath))
+                Console.WriteLine("[admission] Reusing validated read-only system; directory identity and system lock match.");
+            else
+            {
+                var progressClock = Stopwatch.StartNew();
+                BaseAdmission.Verify(basePath, (a, b) => {
+                    if (Volatile.Read(ref stopRequested) != 0) throw new OperationCanceledException("Start was cancelled before guest boot; state was retained.");
+                    if (progressClock.ElapsedMilliseconds >= 100 || a == b) { Console.WriteLine($"admission done={a} total={b}"); progressClock.Restart(); }
+                }, PrivateWindows.ImmutableAsset, PrivateWindows.Read, maxParallelism: 4);
+                RememberValidation(basePath);
+            }
             string package = PrivateWindows.Full(Need("--package"));
             assetPins.Add(PrivateWindows.Read(package));
             string rom = options.GetValueOrDefault("--rom", "");

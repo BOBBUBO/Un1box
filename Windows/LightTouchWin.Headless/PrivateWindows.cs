@@ -52,6 +52,14 @@ internal static class PrivateWindows
                 throw new IOException("Links and junctions are unsupported: " + current);
         }
     }
+    internal static string DirectoryIdentity(string value)
+    {
+        Check(value);
+        using var handle = CreateFile(Full(value), 0x80, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        if (handle.IsInvalid || !GetFileInformationByHandle(handle, out var info) || (info.Attributes & 0x410) != 0x10)
+            throw new IOException("Cannot identify prepared system directory: " + value);
+        return $"{info.Volume:X8}:{info.IndexHigh:X8}{info.IndexLow:X8}:{info.Creation.dwHighDateTime:X8}{info.Creation.dwLowDateTime:X8}";
+    }
     private static void Permissions(DirectoryInfo directory, bool immutable)
     {
         var acl = directory.GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);

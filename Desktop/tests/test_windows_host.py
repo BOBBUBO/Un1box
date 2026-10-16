@@ -66,6 +66,17 @@ class HostTests(unittest.TestCase):
         destination.mkdir()
         with self.assertRaises(windows.SetupError): self.host.import_command(self.args, str(source), destination, 'a'*64)
 
+    def test_import_and_start_share_validation_results_and_allow_explicit_recheck(self):
+        self.args.data_dir = self.root / "data"
+        source = self.root / "system.itbase"; source.write_bytes(b"fixture")
+        argv = self.host.import_command(self.args, str(source), self.root / "new", 'a' * 64)
+        expected = str(self.args.data_dir / "system-validation")
+        self.assertEqual(argv[argv.index('--validation-cache') + 1], expected)
+        with patch.object(self.host, 'validate'):
+            argv = self.host.guest_command(self.args, self.profile, False, recheck=True)
+        self.assertEqual(argv[argv.index('--validation-cache') + 1], expected)
+        self.assertEqual(argv[argv.index('--recheck') + 1], 'yes')
+
     def test_unconfirmed_preview_marker_requires_explicit_recovery(self):
         state = Path(self.profile['state']); state.mkdir(); (state/'shutdown-unconfirmed.json').write_text('{}')
         with patch.object(windows, 'validate', return_value={'board':'n72ap'}):

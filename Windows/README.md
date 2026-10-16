@@ -18,6 +18,17 @@ integrity checks. The logs include `[import-timing]` lines for hashing,
 extraction, verification, permissions and publication. Actual Windows speedup
 depends on filesystem/scanner behavior and remains to be measured on hardware.
 
+Normal Starts reuse the successful import validation for a read-only system.
+The helper checks the directory's Windows file identity, ownership/protection
+and the small `device.lock.json`, without hashing NAND again. Receipts live in
+`%LOCALAPPDATA%\LightTouch\SharedWindows\system-validation`. Older imports get
+one full, four-reader verification on their first Start with this version.
+Missing/stale receipts or replaced directories/changed system locks require a
+full check. In Advanced, **Recheck all system files before starting (slow)**
+forces that check. A saved result does not detect manual changes inside NAND
+that leave the system lock unchanged; use the recheck option after modifying
+an imported system or changing its read-only permissions.
+
 This is a separate, experimental Windows frontend around the current iOS QEMU
 engine. It is not a Windows acceptance pass. Use Windows10/11 x86_64 with a real
 hardware OpenGL2.1 compatibility driver. No software GPU provider is bundled.

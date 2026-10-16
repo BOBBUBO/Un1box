@@ -35,6 +35,7 @@ class WindowsSession(ManagedSession):
 
 
 class WindowsHost:
+    supports_validation_cache = True
     font_family = "Segoe UI"
     clean_exit = staticmethod(strict_clean_exit)
     display_title = staticmethod(display_title)
@@ -71,7 +72,14 @@ class WindowsHost:
         regular(args.frontend, "shared Windows headless host", storage=self.storage)
         return [str(Path(args.frontend).absolute())]
 
-    def guest_command(self, args, profile, recover):
+    def _validation_cache(self, args):
+        if not getattr(args, "data_dir", None):
+            return []
+        path = Path(args.data_dir) / "system-validation"
+        self.storage.ensure_directory(path)
+        return ["--validation-cache", str(path.absolute())]
+
+    def guest_command(self, args, profile, recover, recheck=False):
         self.validate(profile, allow_dirty=recover)
         identity = profile.get("id", "")
         if not isinstance(identity, str) or not re.fullmatch("[a-f0-9]{32}", identity):
@@ -83,6 +91,9 @@ class WindowsHost:
                   "--recover", "yes" if recover else "no", "--audio", "yes" if profile.get("audio", True) else "no"]
         if profile.get("bootrom"):
             command += ["--rom", absolute(profile["bootrom"])]
+        command += self._validation_cache(args)
+        if recheck:
+            command += ["--recheck", "yes"]
         return command
 
     def import_command(self, args, source, destination, sha256):
@@ -94,7 +105,7 @@ class WindowsHost:
             raise SetupError("Import destination already exists. Choose a new folder.")
         disjoint(source, destination)
         return self._helper(args) + ["import", "--source", absolute(source),
-                                    "--destination", str(destination), "--sha256", sha256.lower()]
+                                    "--destination", str(destination), "--sha256", sha256.lower()] + self._validation_cache(args)
 
     @staticmethod
     def start_services(args, directory, identity):

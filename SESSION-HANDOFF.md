@@ -27,6 +27,12 @@ The subsequent Windows import refinement overlaps ordered decompression with
 four bounded file writers, then parallelizes verification reads and per-file
 read-only ACL updates. Phase timings are logged. Focused import tests pass on
 Linux; this establishes correctness checks, not a measured Windows speedup.
+Windows now also saves successful validation outside the immutable base and
+reuses it on ordinary Starts after checking protected ownership, directory file
+identity and the system lock. Existing imports get one four-reader check;
+Advanced offers an explicit full recheck. This deliberately avoids rereading
+NAND on every Start and does not detect manual NAND changes with unchanged
+system lock. Keep that limit clear; full recheck remains available.
 
 The QEMU fork consolidates Windows WGL/storage/worker support, desktop EGL
 initialization diagnostics and the persistent symbolic-IR experiment. The cache
