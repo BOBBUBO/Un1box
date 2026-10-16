@@ -74,12 +74,57 @@ external finite process-tree supervision is still required for acceptance runs.
 Host screenshots copy the existing IOSurface into isolated state/screenshots.
 
 `macOS/build-shared.py` is the explicit `macos-shared-arm64` dispatcher bundle
-recipe. It requires native Swift6.2, SDL2, engine/helper inputs and a separately
+recipe. It requires native Swift6.2+, SDL2, engine/helper inputs and a separately
 supplied self-contained Python/Tk runtime; it relocates native dependencies and
 ad-hoc signs the development bundle. It copies no bases, guest tools or state.
+The minimum macOS version is the highest deployment floor read from **every
+actual packaged Mach-O dependency**. An installed SDL2 compatibility library
+backed by SDL3 may require macOS26; building the host with an older deployment
+target does not remove that dependency requirement.
+
+`macOS/python-runtime.py plan` prepares a per-file hash manifest from explicitly
+named Python framework, matching `_tkinter` extension and Tcl/Tk script roots.
+It includes the interpreter, framework binary and stdlib; it excludes external
+site-packages, test suites, ensurepip and bytecode. Escaping links and special
+files are refused. `export` requires that reviewed manifest's SHA256, rechecks
+all source hashes and creates an absent private output directory. This is a
+curated runtime export, not permission to redistribute an installed provider:
+matching license/source-notice auditing remains required. Example planning
+arguments (replace paths with audited native providers):
+
+```sh
+python3 macOS/python-runtime.py plan \
+  --python-prefix /explicit/Python.framework/Versions/3.13 \
+  --python-version 3.13 \
+  --tkinter /explicit/_tkinter.cpython-313-darwin.so \
+  --tcl-scripts /explicit/lib/tcl9.1 \
+  --tk-scripts /explicit/lib/tk9.1 \
+  --output-manifest /private/runtime-plan.json
+python3 macOS/python-runtime.py export \
+  --manifest /private/runtime-plan.json --manifest-sha256 REVIEWED_SHA256 \
+  --output /private/new-python-runtime
+```
+
+The exporter leaves native install names intact; the app recipe binds exported
+files back to their original hashed providers and relocates the complete native
+closure. Tcl/Tk scripts are selected inside the packaged runtime. Python runs
+without user site-packages or bytecode writes into the signed app.
+
+Shared native tools reside under `Contents/Helpers`; the maintained Tk launcher
+remains the app entrypoint. Before admission or engine loading, both tools
+provide the asset-free `--runtime-info` diagnostic. Packaging uses their actual
+Foundation main-bundle contexts to expose SwiftPM resource bundles from
+`Contents/Resources/SwiftPM`. A context outside `Contents` is rejected instead
+of relying on build-scratch resources. Native resource paths, dependency floors
+and runtime manifest binding are retained in the build receipt. Relocated
+package testing must remove access to the original build scratch/providers
+before claiming self-containment.
 The `macos-arm64` Cocoa route remains a reference, never a shared UI pass.
 
-Native compile, SDL/CGL coexistence, packaged Tk/native dialogs, real guest
+The initial shared host at source27f4b168 compiled natively on arm64 macOS26
+with Swift6.3.3 and SDL2 API2.32.74. This proves compilation of that revision;
+the subsequent runtime diagnostic/export/resource packaging source still needs
+its own execution qualification. SDL/CGL coexistence, packaged Tk/native dialogs, real guest
 touch/render/audio/shutdown/restart/persistence remain unqualified. Guest
 networking/app services/IPA and native process counters are unavailable in the
 shared Mac host. Linux's existing app-service path is preserved. Gyro remains
