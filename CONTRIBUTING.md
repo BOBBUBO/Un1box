@@ -1,5 +1,11 @@
 # Contributing to Light Touch
 
+This document retains the upstream macOS Cocoa/Xcode and firmware-preparation
+workflow. For this fork's maintained Android/Linux/Windows/macOS ports and
+shared desktop UI, start with [README.md](README.md),
+[Desktop/README.md](Desktop/README.md) and [SESSION-HANDOFF.md](SESSION-HANDOFF.md).
+
+
 Light Touch is a native macOS (AppKit) app that runs a library of emulated legacy iOS devices.
 The device catalog covers the iPhone (m68ap), iPhone 3GS (n88ap), iPhone 4 (n90ap), iPod touch 1G to 4G
 (n45ap, n72ap, n18ap, n81ap) and iPad (k48ap). Each device is prepared
