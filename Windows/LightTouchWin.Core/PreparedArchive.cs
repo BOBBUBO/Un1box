@@ -13,7 +13,8 @@ namespace LightTouchWin.Core;
 public static class PreparedArchive
 {
     private sealed record Entry(string Name, long Size);
-    private sealed record WriteJob(string Path, byte[] Buffer, int Count);
+    private sealed record WritePart(string Path, int Offset, int Count);
+    private sealed record WriteBatch(byte[] Buffer, List<WritePart> Parts);
     public static void Extract(string archive, string destination, IProgress<double>? progress = null, int maxParallelism = 4)
     {
         if (maxParallelism is < 1 or > 8) throw new ArgumentOutOfRangeException(nameof(maxParallelism));
@@ -80,52 +81,69 @@ public static class PreparedArchive
                 int current = (int)(written * 100 / Math.Max(total, 1));
                 if (current != percent) { percent = current; progress?.Report(written / (double)Math.Max(total, 1)); }
             }
-            IEnumerable<WriteJob> Inflate()
+            IEnumerable<WriteBatch> Inflate()
             {
-                foreach (var e in entries)
+                int next = 0;
+                while (next < entries.Count)
                 {
-                    string path = Path.Combine(destination, e.Name.Replace('/', Path.DirectorySeparatorChar));
-                    if (e.Size <= chunkSize)
+                    var entry = entries[next];
+                    if (entry.Size > chunkSize)
                     {
-                        byte[] buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, (int)e.Size));
-                        try { zlib.ReadExactly(buffer.AsSpan(0, (int)e.Size)); Account(buffer, (int)e.Size); }
-                        catch { ArrayPool<byte>.Shared.Return(buffer); throw; }
-                        yield return new WriteJob(path, buffer, (int)e.Size);
-                    }
-                    else
-                    {
+                        ++next;
                         // Large assets cannot occupy a whole-file RAM buffer.
-                        // Stream them while other workers finish earlier files.
+                        // Stream them while other workers finish earlier batches.
                         byte[] buffer = ArrayPool<byte>.Shared.Rent(chunkSize);
                         try
                         {
+                            string path = Path.Combine(destination, entry.Name.Replace('/', Path.DirectorySeparatorChar));
                             using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 1);
-                            long remaining = e.Size;
+                            long remaining = entry.Size;
                             while (remaining > 0)
                             {
-                                int n = zlib.Read(buffer, 0, (int)Math.Min(chunkSize, remaining));
-                                if (n == 0) throw new InvalidDataException("Truncated prepared-device data.");
+                                int n = (int)Math.Min(chunkSize, remaining);
+                                zlib.ReadExactly(buffer.AsSpan(0, n));
                                 output.Write(buffer, 0, n); Account(buffer, n); remaining -= n;
                             }
                         }
                         finally { ArrayPool<byte>.Shared.Return(buffer); }
                     }
+                    else
+                    {
+                        // Read across small-file boundaries in one inflate call.
+                        // Bound both bytes and entries (including empty files).
+                        var parts = new List<WritePart>();
+                        int count = 0;
+                        while (next < entries.Count && parts.Count < 128)
+                        {
+                            var e = entries[next];
+                            if (e.Size > chunkSize - count) break;
+                            parts.Add(new WritePart(Path.Combine(destination, e.Name.Replace('/', Path.DirectorySeparatorChar)), count, (int)e.Size));
+                            count += (int)e.Size; ++next;
+                        }
+                        byte[] buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, count));
+                        try { zlib.ReadExactly(buffer.AsSpan(0, count)); Account(buffer, count); }
+                        catch { ArrayPool<byte>.Shared.Return(buffer); throw; }
+                        yield return new WriteBatch(buffer, parts);
+                    }
                 }
                 if (zlib.ReadByte() != -1 || (b << 16 | a) != expectedAdler)
                     throw new InvalidDataException("Prepared-device checksum or payload length is invalid.");
             }
-            // One ordered inflater, at most one <=1MiB buffer per writer.
-            // NoBuffering disables Parallel's growing enumerable prefetch.
+            // One ordered inflater; each active writer owns at most 1 MiB.
+            // NoBuffering prevents growing prefetch of pooled batch buffers.
             try
             {
                 Parallel.ForEach(Partitioner.Create(Inflate(), EnumerablePartitionerOptions.NoBuffering),
-                    new ParallelOptions { MaxDegreeOfParallelism = maxParallelism }, job => {
+                    new ParallelOptions { MaxDegreeOfParallelism = maxParallelism }, batch => {
                         try
                         {
-                            using var output = new FileStream(job.Path, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 1);
-                            output.Write(job.Buffer, 0, job.Count);
+                            foreach (var part in batch.Parts)
+                            {
+                                using var output = new FileStream(part.Path, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 1);
+                                output.Write(batch.Buffer, part.Offset, part.Count);
+                            }
                         }
-                        finally { ArrayPool<byte>.Shared.Return(job.Buffer); }
+                        finally { ArrayPool<byte>.Shared.Return(batch.Buffer); }
                     });
             }
             catch (AggregateException error) { ExceptionDispatchInfo.Capture(error.Flatten().InnerExceptions[0]).Throw(); throw; }
