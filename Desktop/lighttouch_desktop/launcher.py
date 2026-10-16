@@ -13,6 +13,8 @@ import uuid
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from .profiles import InterruptedStateError
+
 PALETTE = {"paper": "#F3F6FA", "ink": "#1C304A", "muted": "#596C83", "blue": "#285BB5", "line": "#D9E2EF", "white": "#FFFFFF"}
 
 
@@ -83,12 +85,14 @@ class Launcher:
         self.widgets = []
         self.vars = {name: tk.StringVar() for name in ("name", "base", "state", "guest_package", "bootrom")}
         self.audio = tk.BooleanVar(value=True)
-        self.recover = tk.BooleanVar(value=False)
+        self.recovery_profile = None
         self.recheck = tk.BooleanVar(value=False)
         self.message = tk.StringVar(value="Choose a device, or add a prepared base to get started.")
         self.detail = tk.StringVar(value="Choose an installed system or import a prepared .itbase file.")
         self.stats = tk.StringVar(value="Worker CPU and memory become available after Start.")
         self._build()
+        for variable in (*self.vars.values(), self.audio):
+            variable.trace_add("write", lambda *_: self.clear_recovery())
         self._list()
         if not self.current:
             self.new()
@@ -187,9 +191,6 @@ class Launcher:
         self.button(form, "Choose folder…", self.choose_storage).grid(row=3, column=2, padx=(8, 0), pady=5)
         ttk.Label(advanced, text="Already imported your system? Select its folder above (the folder containing device.lock.json). It will be used without copying.\n\nStorage is managed automatically. Change these paths only to reuse or relocate an existing device.",
                   style="Muted.TLabel", wraplength=600).pack(anchor="w", pady=12)
-        recover = ttk.Checkbutton(advanced, text="Recover after an interrupted shutdown (keeps saved data)", variable=self.recover)
-        recover.pack(anchor="w", pady=8)
-        self.widgets.append(recover)
         if getattr(self.host, "supports_validation_cache", False):
             recheck = ttk.Checkbutton(advanced, text="Recheck all system files before starting (slow)", variable=self.recheck)
             recheck.pack(anchor="w", pady=8)
@@ -208,8 +209,9 @@ class Launcher:
         ttk.Label(footer, textvariable=self.detail, style="Muted.TLabel", wraplength=650).pack(anchor="w", pady=(0, 8))
         self.progress = ttk.Progressbar(footer, mode="determinate", maximum=100)
         self.progress.pack(fill="x", pady=(0, 10))
-        actions = ttk.Frame(footer)
+        actions = self.actions = ttk.Frame(footer)
         actions.pack(fill="x")
+        self.recovery_button = self.button(footer, "Boot recovered state", self.boot_recovered_state, "Accent.TButton")
         self.start_button = self.button(actions, "Start iOS", self.start, "Accent.TButton")
         self.start_button.pack(side="left")
         self.stop_button = ttk.Button(actions, text="Stop iOS", command=self.stop, state="disabled")
@@ -313,7 +315,7 @@ class Launcher:
         for name, value in self.vars.items():
             value.set(device.get(name, ""))
         self.audio.set(device.get("audio", True))
-        self.recover.set(False)
+        self.clear_recovery()
         self.heading.configure(text=device["name"] if device.get("base") else "Add iOS device")
         if device.get("base"):
             try:
@@ -450,7 +452,24 @@ class Launcher:
         self.message.set("Starting iOS…" if job == "guest" else "Preparing the iOS system…")
         self.detail.set("The first setup expands the system and checks its contents. This can take several minutes." if job == "import" else "Your iOS display will open in a separate window.")
 
-    def start(self):
+    def clear_recovery(self):
+        self.recovery_profile = None
+        self.recovery_button.pack_forget()
+
+    def boot_recovered_state(self):
+        # A recovery decision belongs only to the device/configuration shown.
+        if self.recovery_profile is not None and self.profile() == self.recovery_profile:
+            self.start(recover=True)
+
+    def guest_command(self, profile, recover):
+        if getattr(self.host, "supports_validation_cache", False):
+            return self.host.guest_command(self.args, profile, recover, recheck=self.recheck.get())
+        return self.host.guest_command(self.args, profile, recover)
+
+    def start(self, recover=False):
+        if self.session.active or self.preparation:
+            return
+        self.clear_recovery()
         if self.selected_source:
             self.import_base()
             return
@@ -464,16 +483,27 @@ class Launcher:
                 self.apps.window.destroy()
                 self.apps = None
             profile = self.profile()
-            if getattr(self.host, "supports_validation_cache", False):
-                command = self.host.guest_command(self.args, profile, self.recover.get(), recheck=self.recheck.get())
-            else:
-                command = self.host.guest_command(self.args, profile, self.recover.get())
+            command = self.guest_command(profile, recover)
             self.store.save(profile)
             self.bridge, env = self.host.start_services(self.args, self.store.directory, self.current)
             self.launch(command, "guest", env=env)
             self.apps_button.configure(text="Install apps…" if self.bridge else "Install apps (unavailable)")
             if self.bridge is None:
                 self.detail.set("Install apps is unavailable: guest app services are not connected in this platform preview. Log: " + str(self.session.log_path))
+        except InterruptedStateError as error:
+            # Validate the entire command, including runtime files checked after
+            # dirty-state admission. This only prepares arguments; it never boots.
+            try:
+                self.guest_command(profile, True)
+            except (ValueError, OSError, RuntimeError) as validation_error:
+                self.error(validation_error)
+                return
+            self.session.record_error("launcher", error)
+            self.recovery_profile = dict(profile)
+            self.recovery_button.pack(anchor="w", before=self.actions, pady=(0, 8))
+            self.message.set("The previous session ended unexpectedly. Your saved iOS data was retained.")
+            self.detail.set("Choose Boot recovered state to cold boot this device using its saved data. Recovery applies to this start only.")
+            self.recovery_button.focus_set()
         except (ValueError, OSError, RuntimeError) as error:
             if self.bridge:
                 self.bridge.close()

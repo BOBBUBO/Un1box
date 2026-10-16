@@ -18,6 +18,10 @@ class SetupError(ValueError):
     pass
 
 
+class InterruptedStateError(SetupError):
+    """Valid saved state requires explicit permission for a recovery boot."""
+
+
 def _config_bytes(path, storage):
     path = Path(path)
     if path.is_symlink() or not path.is_file():
@@ -132,7 +136,7 @@ def validate(profile, allow_dirty=False, *, storage=None):
             raise SetupError("This state belongs to another base. Choose its matching base or a new state folder.")
     dirty = target / ".dirty"
     if (dirty.exists() or dirty.is_symlink()) and not allow_dirty:
-        raise SetupError("This state has an unconfirmed shutdown. Choose Recover interrupted state to cold boot it safely.")
+        raise InterruptedStateError("This state has an unconfirmed shutdown. Recovery keeps saved data; choose Boot recovered state to cold boot it.")
     return info
 
 
