@@ -170,6 +170,46 @@ static bool contained(const fs::path &a, const fs::path &b) {
             return false;
     return ia == a.end();
 }
+static bool sha256_text(const Json &value) {
+    const auto text = value.string();
+    return text.size() == 64 && text.find_first_not_of("0123456789abcdef") == std::string::npos;
+}
+static uint32_t little32(const unsigned char *p) {
+    return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+}
+static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, AdmissionProgress &events) {
+    auto fd = open_read(path);
+    struct stat st {};
+    io(fstat(fd.n, &st) == 0, "stat packed NAND");
+    require(st.st_size >= 24, "truncated packed NAND header");
+    std::array<unsigned char, 24> header{};
+    read_all(fd.n, header.data(), header.size());
+    require(memcmp(header.data(), "ITNAND01", 8) == 0, "invalid packed NAND magic");
+    require(little32(header.data() + 8) == 4096 && little32(header.data() + 12) == 64,
+            "unsupported packed NAND page geometry");
+    const uint64_t chips = little32(header.data() + 16), pages = little32(header.data() + 20);
+    // FMSS addresses at most four chips and 4096 blocks of 128 pages each.
+    // Bound before multiplication, including on hosts with 32-bit size_t.
+    require(chips && chips <= 4 && pages && pages <= 4096 * 128,
+            "unsupported packed NAND address geometry");
+    const uint64_t entries = chips * pages, index_bytes = entries * 4;
+    require(index_bytes <= uint64_t(st.st_size) - header.size(), "truncated packed NAND index");
+    const uint64_t record_bytes = uint64_t(st.st_size) - header.size() - index_bytes;
+    require(record_bytes % 4160 == 0, "truncated packed NAND record");
+    const uint64_t records = record_bytes / 4160;
+    require(records <= entries && records == expected_pages, "packed NAND page count mismatch");
+    std::array<unsigned char, 65536> index{};
+    uint64_t remaining = index_bytes;
+    while (remaining) {
+        events.checkpoint();
+        const size_t count = size_t(std::min<uint64_t>(remaining, index.size()));
+        read_all(fd.n, index.data(), count);
+        for (size_t offset = 0; offset < count; offset += 4)
+            require(little32(index.data() + offset) <= records, "packed NAND index record out of bounds");
+        remaining -= count;
+    }
+    events.checkpoint();
+}
 static void validate_base(const fs::path &base, AdmissionProgress *progress = nullptr,
                           const std::vector<AdmissionAssetCheck> &extra_checks = {}) {
     Json j = parse(read_file(base / "device.lock.json"));
@@ -178,14 +218,24 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
     const Json &outputs = j.at("outputs");
     require(outputs.kind == Json::Object, "invalid outputs");
     const auto &nand = outputs.at("nand");
-    require(nand.at("path").string() == "nand" && nand.at("listing_sha256").string().size() == 64,
-            "missing authoritative NAND integrity record");
+    const std::string board = j.at("board").string();
+    const bool packed_nand = nand.find("format");
+    require(nand.at("path").string() == "nand", "invalid NAND output path");
+    if (packed_nand) {
+        require(board == "n72ap" && nand.at("format").string() == "ITNAND01",
+                "packed NAND is supported only for n72 ITNAND01", LT_UNSUPPORTED);
+        require(!nand.find("listing_sha256") && sha256_text(nand.at("sha256")) &&
+                    sha256_text(nand.at("source_listing_sha256")),
+                "missing authoritative packed NAND integrity record");
+        nand.at("pages").integer();
+    } else
+        require(nand.at("listing_sha256").string().size() == 64,
+                "missing authoritative NAND integrity record");
     auto required_file = [&](const std::string &key, const std::string &name) {
         const auto &r = outputs.at(key);
         require(r.at("path").string() == name && r.at("sha256").string().size() == 64,
                 "missing authoritative " + name + " integrity record");
     };
-    std::string board = j.at("board").string();
     if (board == "n72ap") {
         required_file("nor", "nor.bin");
         required_file("gid_blobs", "gid-blobs.bin");
@@ -278,6 +328,8 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
         events.checkpoint();
         require(digests.at(check.path) == check.sha256, check.message);
     }
+    if (packed_nand)
+        validate_packed_nand(base / "nand", nand.at("pages").integer(), events);
     for (const auto &check : listings) {
         events.checkpoint();
         Sha256 listing;

@@ -49,6 +49,116 @@ struct Observation {
         assert(calls.back() == std::make_pair(total, total));
     }
 };
+static void word(std::string &bytes, size_t offset, uint32_t value) {
+    for (unsigned i = 0; i < 4; i++)
+        bytes[offset + i] = char(value >> (8 * i));
+}
+static void packed_contracts(const fs::path &root) {
+    // Two records, a hole, and the largest valid record index. This fixture
+    // follows the engine's little-endian ITNAND01 layout, with tiny dimensions.
+    std::string valid(24 + 3 * 4 + 2 * 4160, '\0');
+    valid.replace(0, 8, "ITNAND01");
+    word(valid, 8, 4096);
+    word(valid, 12, 64);
+    word(valid, 16, 1);
+    word(valid, 20, 3);
+    word(valid, 24, 1);
+    word(valid, 32, 2);
+    struct Case {
+        std::string name, bytes, board = "n72ap", format = "ITNAND01", expected;
+        uint64_t pages = 2;
+        bool bad_hash = false, mixed_listing = false, missing_source = false;
+    };
+    std::vector<Case> cases{{"valid", valid}, {"bad-magic", valid}, {"short-header", valid.substr(0, 23)},
+                            {"page-size", valid}, {"spare-size", valid}, {"zero-chips", valid},
+                            {"too-many-chips", valid}, {"zero-pages", valid}, {"too-many-pages", valid},
+                            {"overflow-dimensions", valid}, {"short-index", valid.substr(0, 35)},
+                            {"short-record", valid.substr(0, valid.size() - 1)}, {"slot-outside-file", valid},
+                            {"wrong-page-count", valid}, {"bad-checksum", valid}, {"n81-packed", valid},
+                            {"unknown-format", valid}, {"ambiguous-listing", valid}, {"missing-source", valid}};
+    cases[1].bytes[0] = '!'; cases[1].expected = "magic";
+    cases[2].expected = "header";
+    word(cases[3].bytes, 8, 2048); cases[3].expected = "page geometry";
+    word(cases[4].bytes, 12, 12); cases[4].expected = "page geometry";
+    word(cases[5].bytes, 16, 0); cases[5].expected = "address geometry";
+    word(cases[6].bytes, 16, 5); cases[6].expected = "address geometry";
+    word(cases[7].bytes, 20, 0); cases[7].expected = "address geometry";
+    word(cases[8].bytes, 20, 4096 * 128 + 1); cases[8].expected = "address geometry";
+    word(cases[9].bytes, 16, UINT32_MAX); word(cases[9].bytes, 20, UINT32_MAX);
+    cases[9].expected = "address geometry";
+    cases[10].expected = "index";
+    cases[11].expected = "record";
+    word(cases[12].bytes, 24, 3); cases[12].expected = "out of bounds";
+    cases[13].pages = 1; cases[13].expected = "page count";
+    cases[14].bad_hash = true; cases[14].expected = "checksum mismatch";
+    cases[15].board = "n81ap"; cases[15].expected = "only for n72";
+    cases[16].format = "other"; cases[16].expected = "only for n72";
+    cases[17].mixed_listing = true; cases[17].expected = "integrity record";
+    cases[18].missing_source = true; cases[18].expected = "source_listing_sha256";
+    for (const auto &fixture : cases) {
+        const fs::path base = root / fixture.name / "base", state = base.parent_path() / "state";
+        put(base / "nand", fixture.bytes);
+        put(base / "nor.bin", "nor");
+        put(base / "gid-blobs.bin", "gid");
+        put(base / "iBoot.bin", "boot");
+        put(base / "source-device.lock.json", "original lock retained by common importer");
+        const std::string provenance(64, 'a');
+        const auto nand_hash = fixture.bad_hash ? std::string(64, '0') : digest(base / "nand");
+        const std::string lock =
+            "{\"format\":1,\"board\":\"" + fixture.board + "\",\"build\":\"7E18\",\"outputs\":{"
+            "\"nand\":{\"path\":\"nand\",\"format\":\"" + fixture.format + "\",\"sha256\":\"" + nand_hash +
+            "\",\"pages\":" + std::to_string(fixture.pages) +
+            (fixture.missing_source ? "" : ",\"source_listing_sha256\":\"" + provenance + "\"") +
+            (fixture.mixed_listing ? ",\"listing_sha256\":\"" + provenance + "\"" : "") +
+            "},\"nor\":{\"path\":\"nor.bin\",\"sha256\":\"" + digest(base / "nor.bin") +
+            "\"},\"iboot\":{\"path\":\"iBoot.bin\",\"sha256\":\"" + digest(base / "iBoot.bin") +
+            "\"},\"gid_blobs\":{\"path\":\"gid-blobs.bin\",\"sha256\":\"" + digest(base / "gid-blobs.bin") + "\"}}}";
+        put(base / "device.lock.json", lock);
+        for (const auto &entry : fs::directory_iterator(base))
+            assert(chmod(entry.path().c_str(), 0400) == 0);
+        assert(chmod(base.c_str(), 0500) == 0);
+        const std::string base_path = base.string(), state_path = state.string();
+        lt_device_config config{sizeof(config), 1, base_path.c_str(), state_path.c_str(), 0};
+        lt_error error{sizeof(error), 1, 0, {}};
+        lt_device *device = nullptr;
+        Observation observation{Observation::never, &device, {}};
+        const auto result = lt_device_open_observed(&config, Observation::notify, &observation, &device, &error);
+        if (!fixture.expected.empty()) {
+            if (result == LT_OK || !std::strstr(error.message, fixture.expected.c_str()))
+                std::cerr << fixture.name << ": " << result << " " << error.message << "\n";
+            assert(result != LT_OK && device == nullptr && std::strstr(error.message, fixture.expected.c_str()));
+            assert(!fs::exists(state / ".base-identity") && !fs::exists(state / ".dirty"));
+            continue;
+        }
+        assert(result == LT_OK && device);
+        // Structural index checks do not inflate the asset hashing progress.
+        observation.complete(valid.size() + 3 + 3 + 4);
+        const auto rom = root / "rom";
+        put(rom, "synthetic ROM");
+        const std::string rom_path = rom.string();
+        lt_boot_config boot{sizeof(boot), 1, "iPod-Touch-2G", rom_path.c_str(), nullptr, nullptr, 0};
+        int argc = 0;
+        const char *const *argv = nullptr;
+        assert(lt_device_boot_argv(device, &boot, &argc, &argv, &error) == LT_OK);
+        assert(argc >= 3 && std::strstr(argv[2], ("nand=" + base_path + "/nand").c_str()));
+        assert(std::strstr(argv[2], ("nandrw=" + state_path + "/nand").c_str()));
+        assert(fs::is_regular_file(base / "nand") && fs::is_directory(state / "nand"));
+        lt_device *blocked = nullptr;
+        assert(lt_device_open(&config, &blocked, &error) == LT_BUSY && !blocked);
+        lt_device_close(device);
+        device = nullptr;
+        put(state / ".dirty", "retained");
+        assert(lt_device_open(&config, &device, &error) == LT_DIRTY && !device);
+        config.allow_dirty = 1;
+        assert(lt_device_open(&config, &device, &error) == LT_OK && fs::exists(state / ".dirty"));
+        lt_device_close(device);
+        assert(digest(base / "nand") == nand_hash);
+        std::ifstream pin(state / ".base-identity");
+        std::string pinned;
+        pin >> pinned;
+        assert(pinned == digest(base / "device.lock.json"));
+    }
+}
 int main() {
     char temporary[] = "/tmp/lighttouch-observed-open-XXXXXX";
     assert(mkdtemp(temporary));
@@ -62,6 +172,7 @@ int main() {
             fs::remove_all(root);
         }
     } cleanup{root};
+    packed_contracts(root / "packed");
     const std::string page_a(131089, 'a'), page_z(65553, 'z'), nor = "nor", iboot = "boot", gid = "gid";
     const std::string identity = "{\"seed\":\"synthetic\"}";
     put(base / "nand/a.pages", page_a);
