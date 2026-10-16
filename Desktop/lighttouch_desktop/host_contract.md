@@ -1,7 +1,8 @@
 # Launcher host interface
 
 The shared `Launcher(window, args, host)` contains the actual Tk layout and user
-workflow. `LinuxHost` is the first implementation. This Python duck-typed
+workflow. `LinuxHost` is the first implementation; `MacHost` supplies a native
+DeviceRuntime adapter using these exact widgets. This Python duck-typed
 interface is internal, with no wire/firmware schema or on-disk migration.
 
 Host values/factories:
@@ -32,7 +33,11 @@ Host values/factories:
   receipt. Exit0 alone is not clean shutdown. Never infer success on timeout.
 
 Host/domain errors derive from ValueError, OSError or RuntimeError so shared UI
-presents actionable errors and retains diagnostics. Windows/macOS implementations
-are pending; no fallback adapter silently launches WinForms/Cocoa. A second host
-must implement and test these semantics, including safe filesystem/IPC/lease
-behavior, before its application advertises shared UI support.
+presents actionable errors and retains diagnostics. The Mac adapter maps the
+existing profile ID into its own isolated DeviceInstance state root and keeps
+the installed Cocoa library untouched. Stop writes to the owned native host's
+stdin; that host owns native admission, a fresh helper, audio, shutdown and
+reaping. Mac services/IPA and process counters are explicitly unavailable in
+this first slice. Native Mac compilation/package/guest behavior remain
+unqualified until target execution; synthetic host tests do not qualify them.
+Windows implementation is pending; no fallback launches WinForms/Cocoa.

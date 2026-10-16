@@ -2,8 +2,10 @@
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for current source adoption and planned
 Tk/SDL host adapters. Linux uses the actual shared Tk launcher and SDL controls now. Existing Mac
-Cocoa and isolated Windows WinForms previews do not yet adopt the shared launcher or
-SDL guest window; their native compile success is not cross-platform UI parity.
+Cocoa and isolated Windows WinForms previews retain their reference UI. A new
+`macos-shared-arm64` development route adopts the exact shared launcher/SDL
+window through native DeviceRuntime; its native compilation and actual target
+execution remain unqualified. Reference compile success is not UI parity.
 Android retains its touch UI; APK orchestration remains a future entrypoint
 adapter rather than an advertised output of this initial desktop foundation.
 
@@ -29,6 +31,10 @@ python3 Desktop/build.py --target macos-arm64 --action engine --output /private/
 python3 Desktop/build.py --target macos-arm64 --action bundle --output '/private/LightTouch Native Test.app' -- \
   --vendor-contents '/Applications/Light Touch.app/Contents' --engine /private/mac-engine/libqemu-arm.dylib \
   --scratch /private/mac-swift-build --jobs 2
+python3 Desktop/build.py --target macos-shared-arm64 --action bundle --output '/private/LightTouch Shared.app' -- \
+  --vendor-contents '/Applications/Light Touch.app/Contents' --engine /private/mac-engine/libqemu-arm.dylib \
+  --engine-revision COMMITTED_QEMU_SHA --firmwarekit /private/native/firmwarekit \
+  --python-runtime /private/self-contained-python-tk --scratch /private/shared-swift-build
 ```
 
 Linux build delegates to the existing guarded Debian11 runner; prepare its pinned
@@ -40,6 +46,13 @@ Mac routes fail explicitly while their shared adapters/recipes are unimplemented
 A successful dispatcher receipt records child exit and file artifact hashes;
 keep underlying per-file/dependency/native-test receipts and matching source.
 No build receipt establishes guest acceptance.
+
+Shared Mac development uses the same saved-profile schema but a separate default
+library (`~/Library/Application Support/LightTouch Shared Desktop`), explicit
+native admission, isolated writable state, matching guest packages and fresh
+helpers. Mac guest app services/IPA, networking and process counters are not yet
+implemented. The Linux service path stays available. See
+`macOS/SharedDesktop/README.md` for ownership and remaining target checks.
 
 Small asset-free tests:
 

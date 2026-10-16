@@ -28,6 +28,14 @@ class PlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not integrated"):
             build.make_plan("windows-x86_64", "bundle", "/private/windows", [])
 
+    def test_shared_mac_target_keeps_reference_route_separate_and_unqualified(self):
+        plan = build.make_plan("macos-shared-arm64", "bundle", "/private/shared.app", [], host=["darwin", "arm64"])
+        self.assertTrue(plan["host_compatible"])
+        self.assertTrue(plan["shared_guest_controls"])
+        self.assertTrue(plan["argv"][1].endswith("macOS/build-shared.py"))
+        self.assertIn("unqualified", plan["qualification"])
+        self.assertFalse(plan["guest_acceptance"])
+
     def test_output_and_app_cannot_be_changed_by_trailing_recipe_flags(self):
         for flag in ["--output=/elsewhere", "--output", "--app=/other/source", "--app"]:
             with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, "owned"):

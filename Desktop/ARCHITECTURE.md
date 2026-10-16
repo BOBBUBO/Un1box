@@ -51,11 +51,18 @@ The incremental `macOS/SharedDesktop/SharedGuestWindow.swift` adapter now routes
 existing DeviceLink IOSurfaces/input through `Desktop/native/Window.cpp` and
 these exact SDL controls. It is an optional source library, not yet the native
 application's window. Compilation and macOS execution remain unqualified;
-the managed-record/shared Tk host adapter and strict native shutdown receipt
-are still required. See its README for the concrete lifecycle boundary.
+the new `macOS/SharedHost` runner now implements managed native records,
+admission, fresh package offers, CoreAudio and strict shutdown receipts for the
+shared Tk `MacHost`. It uses a separate default library and leaves installed
+Cocoa/Linux libraries untouched. Shared profile/archive code now lives in
+`Desktop/lighttouch_desktop`; Linux retains compatibility imports. See the
+adapter README for the concrete lifecycle boundary and missing services.
 The upstream Xcode frontend may remain a reference, not a second source of
 product UI requirements. Adopting Tk on macOS needs packaged Tcl/Tk validation,
 main-thread event handling and native dialog/menu checks; this is unqualified.
+`macos-shared-arm64` selects the separate shared bundle recipe with an explicit
+self-contained Python/Tk runtime. Source and synthetic host tests are not a
+Mac compile, package, dialog, SDL/CGL or real guest acceptance pass.
 
 ## Incremental convergence
 

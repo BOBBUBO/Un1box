@@ -25,6 +25,7 @@ let package = Package(
         // Incremental shared SDL adapter; Cocoa remains the reference until
         // native shared launcher/admission/packaging acceptance is complete.
         .library(name: "LightTouchSharedDesktopMac", targets: ["LightTouchSharedDesktopMac"]),
+        .executable(name: "LightTouchDesktopHost", targets: ["LightTouchDesktopHost"]),
     ],
     dependencies: [
         .package(path: "Packages/HostRuntime"),
@@ -43,6 +44,13 @@ let package = Package(
         .target(name: "LightTouchSharedDesktopMac",
                 dependencies: ["CDesktopWindow", .product(name: "DeviceRuntime", package: "DeviceRuntime")],
                 path: "macOS/SharedDesktop"),
+        .executableTarget(name: "LightTouchDesktopHost",
+                dependencies: ["LightTouchSharedDesktopMac",
+                    .product(name: "HostRuntime", package: "HostRuntime"),
+                    .product(name: "DeviceRuntime", package: "DeviceRuntime"),
+                    .product(name: "FirmwareKit", package: "FirmwareKit"),
+                    .product(name: "LightTouchCore", package: "LightTouchCore")],
+                path: "macOS/SharedHost"),
         .executableTarget(
             name: "LightTouch",
             dependencies: [

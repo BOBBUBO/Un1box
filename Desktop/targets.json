@@ -52,7 +52,7 @@
           "arm64"
         ]
       ],
-      "ui": "Existing native Cocoa/Swift development/reference frontend; shared Tk/SDL adapter not implemented.",
+      "ui": "Existing native Cocoa/Swift development/reference frontend; separate shared Tk/SDL development route is macos-shared-arm64.",
       "shared_guest_controls": false,
       "qualification": "Native compile/CGL host checks only; guest parity and distribution signing unqualified.",
       "actions": {
@@ -65,6 +65,19 @@
           "recipe": "macOS/build-native.py",
           "fixed": [],
           "resource_control": "Requires external finite memory/time supervisor, native SDK/Swift and explicit trusted vendor inputs."
+        }
+      }
+    },
+    "macos-shared-arm64": {
+      "hosts": [["darwin", "arm64"]],
+      "ui": "Shared Tk launcher and SDL guest window with native DeviceRuntime host; development source, target execution unqualified.",
+      "shared_guest_controls": true,
+      "qualification": "Native compilation, packaged Tcl/Tk and actual guest acceptance remain unqualified; app services and native process metrics unavailable.",
+      "actions": {
+        "bundle": {
+          "recipe": "macOS/build-shared.py",
+          "fixed": [],
+          "resource_control": "Requires externally allocated finite native compiler/package supervisor, Swift6.2/macOS14.4+, SDL2 and explicit self-contained Python/Tk runtime."
         }
       }
     },

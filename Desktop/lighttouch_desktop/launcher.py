@@ -588,7 +588,7 @@ class Launcher:
     def update_metrics(self):
         metrics = self.session.metrics()
         host, worker = metrics["host"], metrics["worker"]
-        text = "Worker CPU/RAM: waiting for native worker identity"
+        text = metrics.get("worker_status", "Worker CPU/RAM: waiting for native worker identity")
         if worker:
             cpu = "measuring" if worker["cpu_percent"] is None else "%.0f%%" % worker["cpu_percent"]
             memory = "unavailable" if worker["pss_bytes"] is None else "%.0f MiB PSS" % (worker["pss_bytes"] / 1024**2)
