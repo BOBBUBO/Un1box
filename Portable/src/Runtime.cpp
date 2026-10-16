@@ -24,7 +24,68 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <limits>
+#include <algorithm>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+#ifdef __linux__
+#include <sched.h>
+#endif
 namespace lt {
+/*
+ * Keep the engine on the high-capacity cores of a heterogeneous (big.LITTLE)
+ * CPU. QEMU creates its vCPU, RCU and I/O threads from the calling thread, so
+ * they inherit this mask. The guest's load is bursty (a timer interrupt every
+ * millisecond, then work), which the Android scheduler reads as light load and
+ * places on little cores: on a Poco F3 that made a cold boot 1.4-1.7x slower
+ * than pinning to cores 4-7, and 5x slower when it stayed on cores 0-3.
+ * Cores at least half as capable as the biggest are kept, so the vCPU and the
+ * main loop never share one prime core. No-op on symmetric CPUs and when the
+ * kernel exposes no capacities. LT_ENGINE_CPUS=off disables it.
+ */
+static void prefer_fast_cores() {
+#ifdef __linux__
+    const char *env = getenv("LT_ENGINE_CPUS");
+    if (env && !strcmp(env, "off"))
+        return;
+    std::vector<long> capacity;
+    for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+        char path[96];
+        snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d", cpu);
+        if (access(path, F_OK) != 0)
+            break;
+        snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpu_capacity", cpu);
+        long value = 0;
+        if (FILE *f = fopen(path, "re")) {
+            if (fscanf(f, "%ld", &value) != 1)
+                value = 0;
+            fclose(f);
+        }
+        capacity.push_back(value);  /* 0: unknown (e.g. offline), never selected */
+    }
+    long biggest = 0, smallest = LONG_MAX;
+    for (long c : capacity) {
+        biggest = std::max(biggest, c);
+        if (c > 0)
+            smallest = std::min(smallest, c);
+    }
+    if (capacity.empty() || biggest <= 0 || smallest * 2 > biggest)
+        return;
+    /* Not intersected with sched_getaffinity(): that reports only the cores
+     * active right now, and Qualcomm's core_ctl isolates idle big cores, which
+     * would pin us away from exactly the cores we want. The kernel applies the
+     * cpuset itself, and core_ctl unisolates cores once our threads load them. */
+    cpu_set_t fast;
+    CPU_ZERO(&fast);
+    for (size_t cpu = 0; cpu < capacity.size(); cpu++)
+        if (capacity[cpu] * 2 >= biggest)
+            CPU_SET(cpu, &fast);
+    if (CPU_COUNT(&fast) > 0)
+        sched_setaffinity(0, sizeof fast, &fast);
+#endif
+}
 static uint64_t now_ns() {
     timespec ts{};
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -527,6 +588,7 @@ lt_status lt_runtime_start(lt_runtime *r, lt_error *e) {
             r->publisher_running = true;
             r->publisher = std::thread([r] { r->publish(); });
             r->guest = std::thread([r] {
+                lt::prefer_fast_cores();
                 int result = r->engine->main(int(r->argv.size() - 1), r->argv.data());
                 if (r->engine->storage_failed())
                     r->storage_failed = true;

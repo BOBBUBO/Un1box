@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -238,16 +239,40 @@ void present() {
                     // grows storage in its next guarded iteration. Capture reads under guard. Those concurrent
                     // reads are safe; the next write waits until this iteration
                     // and any guarded capture have finished. No runtime escapes.
+                    // Nearest-neighbour upscale, same mapping as a per-pixel
+                    // divide: the source column of each target column is
+                    // computed once per frame, each source row is converted
+                    // once, and repeated target rows are copies of it. A
+                    // 320x480 guest on a 1080x2400 panel used to cost two
+                    // integer divides per target pixel, ~2.6M per frame.
+                    static thread_local std::vector<uint32_t> columns;
+                    const int x0=std::max(int(view.left),0);
+                    int x1=x0;
+                    while(x1<view.left+view.width && x1<target.width)++x1;
+                    columns.resize(size_t(std::max(x1-x0,0)));
+                    for(int x=x0;x<x1;++x)
+                        columns[x-x0]=std::min(uint32_t((x-view.left)*source.width/view.width),source.width-1)*4;
+                    const uint32_t *previous=nullptr;
+                    uint32_t previous_sy=UINT32_MAX;
                     for(int y=0;y<target.height;++y) {
                         auto *row=static_cast<uint32_t *>(target.bits)+y*target.stride;
-                        std::fill(row,row+target.width,0xff000000u);
-                        if(y<view.top || y>=view.top+view.height)continue;
+                        if(y<view.top || y>=view.top+view.height) {
+                            std::fill(row,row+target.width,0xff000000u);
+                            continue;
+                        }
                         uint32_t sy=std::min(uint32_t((y-view.top)*source.height/view.height),source.height-1);
-                        for(int x=int(view.left);x<view.left+view.width && x<target.width;++x) {
-                            uint32_t sx=std::min(uint32_t((x-view.left)*source.width/view.width),source.width-1);
-                            const uint8_t *p=pixels.data()+sy*source.stride+sx*4;
+                        if(previous && sy==previous_sy) {
+                            memcpy(row,previous,size_t(target.width)*4);
+                            continue;
+                        }
+                        std::fill(row,row+x0,0xff000000u);
+                        std::fill(row+x1,row+target.width,0xff000000u);
+                        const uint8_t *src=pixels.data()+sy*source.stride;
+                        for(int x=x0;x<x1;++x) {
+                            const uint8_t *p=src+columns[x-x0];
                             row[x]=uint32_t(p[2])|(uint32_t(p[1])<<8)|(uint32_t(p[0])<<16)|0xff000000u;
                         }
+                        previous=row;previous_sy=sy;
                     }
                 }
                 // Exactly one post for every successful lock, including invalid
