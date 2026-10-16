@@ -359,10 +359,11 @@ public nonisolated enum BootRecipe {
     ) throws -> (boot: URL, nand: URL, writableNOR: URL?) {
         let fm = FileManager.default
         let kboot = base.appendingPathComponent(boot)
-        let nand = base.appendingPathComponent("nand", isDirectory: true)
+        let nand = base.appendingPathComponent("nand")
         for file in [kboot, nand] + also.map(base.appendingPathComponent) where !fm.fileExists(atPath: file.path) {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: file.path])
         }
+        try PackedNAND.verify(base: base, verifyDigest: false)
         try fm.createDirectory(at: overlay, withIntermediateDirectories: true)
         if let writableNOR, !fm.fileExists(atPath: writableNOR.path) {
             let source = base.appendingPathComponent("nor.bin")

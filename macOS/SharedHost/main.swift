@@ -26,7 +26,8 @@ do {
     } else {
         let task = Task.detached {
             do {
-                try importArchive(arguments)
+                if arguments.operation == "finalize-import" { try finalizeImport(arguments) }
+                else { try importArchive(arguments) }
                 exit(0)
             } catch {
                 hostLine("LightTouch: prepared-base import failed: \(error)")

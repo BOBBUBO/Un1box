@@ -163,7 +163,7 @@ internal static class PrivateWindows
         { handle.Dispose(); throw new IOException("Asset must be a regular independent file: " + path); }
         return new FileStream(handle, FileAccess.Read);
     }
-    internal static void Freeze(string value, int maxParallelism = 4)
+    internal static void Freeze(string value, int maxParallelism = 4, Action? checkCancellation = null)
     {
         if (maxParallelism is < 1 or > 8) throw new ArgumentOutOfRangeException(nameof(maxParallelism));
         Check(value);
@@ -174,6 +174,7 @@ internal static class PrivateWindows
             while (pending.TryPop(out var directory))
             {
                 Check(directory); directories.Add(directory);
+                checkCancellation?.Invoke();
                 foreach (string path in Directory.EnumerateFileSystemEntries(directory))
                 {
                     if (Directory.Exists(path)) { Check(path); pending.Push(path); }
@@ -188,6 +189,7 @@ internal static class PrivateWindows
                 new ParallelOptions { MaxDegreeOfParallelism = maxParallelism }, batch => {
                     foreach (string path in batch)
                     {
+                        checkCancellation?.Invoke();
                         Check(path);
                         // Protected read-only file DACL, not merely decorative READONLY.
                         var acl = new FileSecurity(); acl.SetOwner(User); acl.SetAccessRuleProtection(true, false);
@@ -202,8 +204,34 @@ internal static class PrivateWindows
         // All file writes/ACL updates are complete before restricting parents.
         for (int i = directories.Count - 1; i >= 0; --i)
         {
+            checkCancellation?.Invoke();
             File.SetAttributes(directories[i], File.GetAttributes(directories[i]) | FileAttributes.ReadOnly);
             new DirectoryInfo(directories[i]).SetAccessControl(Acl(true));
+        }
+    }
+
+    // Used only for a caller-owned, unpublished stage after failed finalization.
+    // Restore owner writes so the importing process can remove its own stage.
+    internal static void RestoreImportStage(string value)
+    {
+        Check(value);
+        var directory = new DirectoryInfo(value);
+        var current = directory.GetAccessControl(AccessControlSections.Owner);
+        if (!User.Equals(current.GetOwner(typeof(SecurityIdentifier)))) throw new IOException("Stage owner changed.");
+        directory.SetAccessControl(Acl(false));
+        File.SetAttributes(value, File.GetAttributes(value) & ~FileAttributes.ReadOnly);
+        foreach (string child in Directory.EnumerateFileSystemEntries(value))
+        {
+            Check(child);
+            if (Directory.Exists(child)) { RestoreImportStage(child); continue; }
+            var file = new FileInfo(child);
+            if (!User.Equals(file.GetAccessControl(AccessControlSections.Owner).GetOwner(typeof(SecurityIdentifier))))
+                throw new IOException("Stage file owner changed.");
+            var acl = new FileSecurity(); acl.SetOwner(User); acl.SetAccessRuleProtection(true, false);
+            foreach (string sid in Trusted)
+                acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid), FileSystemRights.FullControl, AccessControlType.Allow));
+            file.SetAccessControl(acl);
+            File.SetAttributes(child, File.GetAttributes(child) & ~FileAttributes.ReadOnly);
         }
     }
 }
