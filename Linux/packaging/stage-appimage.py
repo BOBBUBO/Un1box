@@ -25,6 +25,21 @@ FORBIDDEN = {"device.lock.json", "nor.bin", "kboot.bin", "gid-blobs.bin", "iboot
 REQUIRED = {"usr/bin/python3", "usr/bin/lighttouch-linux", "usr/lib/lighttouch/libqemu-arm.so", "usr/share/licenses/LightTouch/SOURCE.txt"}
 
 
+def stage_desktop_sources(output):
+    launcher = output / "usr/share/lighttouch/launcher"
+    launcher.mkdir(parents=True, exist_ok=True)
+    for name in ("main.py", "model.py", "session.py", "preparation.py", "host.py", "experimental_cache.py"):
+        shutil.copyfile(ROOT.parent / "launcher" / name, launcher / name)
+    shared = output / "usr/share/lighttouch/lighttouch_desktop"
+    shared.mkdir(parents=True, exist_ok=True)
+    for source in sorted((ROOT.parents[1] / "Desktop/lighttouch_desktop").glob("*.py")):
+        shutil.copyfile(source, shared / source.name)
+    services = output / "usr/share/lighttouch/app_services"
+    services.mkdir(parents=True, exist_ok=True)
+    for source in sorted((ROOT.parent / "app_services").glob("*.py")):
+        shutil.copyfile(source, services / source.name)
+
+
 def sha(path):
     digest = hashlib.sha256()
     with Path(path).open("rb") as stream:
@@ -132,14 +147,7 @@ def stage(manifest_path, output):
         destination.chmod(0o755 if entry["destination"].startswith("usr/bin/") or entry["destination"].endswith(".so") else 0o644)
         if sha(destination) != entry["sha256"]:
             raise ValueError("Copied payload checksum mismatch")
-    launcher = output / "usr/share/lighttouch/launcher"
-    launcher.mkdir(parents=True, exist_ok=True)
-    for name in ("main.py", "model.py", "session.py", "preparation.py"):
-        shutil.copyfile(ROOT.parent / "launcher" / name, launcher / name)
-    services = output / "usr/share/lighttouch/app_services"
-    services.mkdir(parents=True, exist_ok=True)
-    for source in sorted((ROOT.parent / "app_services").glob("*.py")):
-        shutil.copyfile(source, services / source.name)
+    stage_desktop_sources(output)
     for name in ("AppRun", "lighttouch.desktop", "lighttouch.svg"):
         shutil.copyfile(ROOT / name, output / name)
     (output / "AppRun").chmod(0o755)

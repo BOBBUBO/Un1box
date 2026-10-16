@@ -297,7 +297,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                                 })
                             }
                         }
-                        selected?.let { record -> Text("Guest contacts ${record.getString("contacts")}; gyro ${if (record.getBoolean("gyro")) "deferred/unqualified (modeled)" else "deferred/unqualified (not modeled)"}; ${if (record.getBoolean("dirty")) "state dirty" else "state clean"}", style = MaterialTheme.typography.bodySmall) }
+                        selected?.let { record -> Text("Guest contacts ${record.getString("contacts")}; gyro ${if (record.getBoolean("gyro")) "deferred/unqualified (modeled)" else "deferred/unqualified (not modeled)"}", style = MaterialTheme.typography.bodySmall) }
                         Text(status, Modifier.testTag("session_status"), style = MaterialTheme.typography.titleMedium)
                         Text(detail, style = MaterialTheme.typography.bodySmall)
                         if (captureNotice.isNotEmpty()) Text(captureNotice, Modifier.semantics { liveRegion = LiveRegionMode.Polite })

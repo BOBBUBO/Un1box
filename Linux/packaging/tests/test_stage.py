@@ -1,6 +1,8 @@
 import hashlib
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,6 +14,18 @@ spec.loader.exec_module(stage)
 
 
 class PrivacyTests(unittest.TestCase):
+    def test_staged_shared_ui_imports_without_source_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "AppDir"
+            stage.stage_desktop_sources(output)
+            launcher = output / "usr/share/lighttouch/launcher"
+            code = "import sys;sys.path.insert(0,sys.argv[1]);import main;from lighttouch_desktop.launcher import Launcher;assert issubclass(main.Launcher,Launcher);assert main.LinuxHost.__module__=='host';print('relocated shared launcher import PASS')"
+            result = subprocess.run([sys.executable, "-I", "-c", code, str(launcher)], cwd=directory,
+                                    capture_output=True, text=True, check=True)
+            self.assertIn("relocated shared launcher import PASS", result.stdout)
+            shared = output / "usr/share/lighttouch/lighttouch_desktop/launcher.py"
+            self.assertEqual(shared.read_bytes(), (stage.ROOT.parents[1] / "Desktop/lighttouch_desktop/launcher.py").read_bytes())
+
     def test_host_wayland_cannot_be_shadowed_by_bundled_libraries(self):
         for soname in ("libwayland-client.so.0", "libwayland-server.so.0",
                        "libwayland-cursor.so.0", "libwayland-egl.so.1"):

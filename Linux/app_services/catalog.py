@@ -9,16 +9,79 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import tempfile
 import time
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 
 class CatalogError(ValueError):
     pass
+
+
+# AppImage OpenSSL may have Debian paths compiled in while its host is Fedora,
+# SUSE or another distribution. Trust remains supplied by the host, not bundled
+# in the app or fetched from the network.
+_HOST_CA_FILES = (
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+)
+_HOST_CA_DIRS = ("/etc/ssl/certs", "/etc/pki/tls/certs")
+
+
+def _tls_context():
+    """Verified HTTPS using explicit trust settings or the host's CA store."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    # Explicit overrides define the trust boundary. Do not silently supplement
+    # them with a different host bundle, including when an override is broken.
+    if "SSL_CERT_FILE" in os.environ or "SSL_CERT_DIR" in os.environ:
+        cafile = os.environ.get("SSL_CERT_FILE") or None
+        capath = os.environ.get("SSL_CERT_DIR") or None
+        try:
+            if not cafile and not capath:
+                raise ValueError("SSL_CERT_FILE and SSL_CERT_DIR are empty")
+            if capath and not os.path.isdir(capath):
+                raise ValueError("SSL_CERT_DIR is not a certificate directory: {}".format(capath))
+            context.load_verify_locations(cafile=cafile, capath=capath)
+        except (OSError, ValueError) as exc:
+            raise CatalogError("Could not load the configured TLS certificate authorities "
+                               "(SSL_CERT_FILE / SSL_CERT_DIR): {}".format(exc)) from exc
+        return context
+
+    context.load_default_certs(ssl.Purpose.SERVER_AUTH)
+    if context.cert_store_stats()["x509_ca"]:
+        return context
+    failures = []
+    for cafile in _HOST_CA_FILES:
+        if not os.path.isfile(cafile):
+            continue
+        try:
+            context.load_verify_locations(cafile=cafile)
+            if context.cert_store_stats()["x509_ca"]:
+                return context
+            failures.append("{} contains no CA certificates".format(cafile))
+        except OSError as exc:
+            failures.append("{}: {}".format(cafile, exc))
+    # OpenSSL loads hashed-directory certificates lazily, so an empty in-memory
+    # store does not imply failure when a standard host CA directory is present.
+    default_dir = ssl.get_default_verify_paths().capath
+    for capath in ((default_dir,) if default_dir else ()) + _HOST_CA_DIRS:
+        if os.path.isdir(capath):
+            try:
+                context.load_verify_locations(capath=capath)
+                return context
+            except OSError as exc:
+                failures.append("{}: {}".format(capath, exc))
+    detail = " ({})".format("; ".join(failures)) if failures else ""
+    raise CatalogError("No usable system TLS certificate authorities were found. "
+                       "Install your distribution's ca-certificates package or set "
+                       "SSL_CERT_FILE / SSL_CERT_DIR to its trust store.{}".format(detail))
 
 
 def _version(value):
@@ -108,7 +171,8 @@ class CatalogClient:
 
     def __init__(self, *, opener=None):
         # Injection is for offline tests; normal operation always verifies TLS.
-        self._opener = opener or build_opener(_HTTPSRedirect())
+        self._opener = opener if opener is not None else build_opener(
+            _HTTPSRedirect(), HTTPSHandler(context=_tls_context()))
 
     def _open(self, url):
         _https(url)

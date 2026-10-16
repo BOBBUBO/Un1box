@@ -23,6 +23,7 @@
 #include "display_lease.h"
 #include "frame_cache.h"
 #include "touch_mapping_result.h"
+#include "experimental_tcg_cache.h"
 
 namespace {
 std::mutex guard;
@@ -87,6 +88,7 @@ std::string debug_qmp_path;
 bool debug_qmp_armed=false;
 bool debug_touch_trace_armed=false,debug_touch_trace_closed=false,debug_touch_trace_configured=false;
 bool worker_start_consumed=false,debug_vcpu_accounting_configured=false;
+bool experimental_tcg_ir_cache_requested=false;
 #ifdef LT_ANDROID_DEBUG
 extern "C" int lighttouch_debug_qmp_snapshot(const char *,int);
 #endif
@@ -345,6 +347,10 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
         std::lock_guard<std::mutex> lock(guard);
         if(runtime || starting)return string(env,"Worker already consumed; stop and start a fresh worker");
         starting=true;worker_start_consumed=true;diagnostic.clear();qmp_requested=debug_qmp_armed;debug_qmp_armed=false;
+        // Ordinary/release starts never inherit an external cache opt-in. The
+        // explicit debug selector records only a bool until this consumed start.
+        const auto cache_reset=experimental_cache_environment(false,"","");
+        if(!cache_reset.empty()) { starting=false;diagnostic=cache_reset;return string(env,diagnostic); }
         touch_trace_requested=debug_touch_trace_armed;debug_touch_trace_closed=true;
         graphics_provider_fixed=true;
         if(!graphics_provider_failure.empty()) {
@@ -369,6 +375,13 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     if(status==LT_OK)status=lt_library_select(library,record.value,&error);
     lt_record_info selected=LT_INIT(lt_record_info);
     if(status==LT_OK)status=lt_library_selected(library,&selected,&error);
+    if(status==LT_OK && experimental_tcg_ir_cache_requested) {
+        const auto cache_error=experimental_cache_environment(true,path.value,selected.id);
+        if(!cache_error.empty()) {
+            status=LT_IO;error.code=LT_IO;
+            std::snprintf(error.message,sizeof(error.message),"%s",cache_error.c_str());
+        }
+    }
     if(status==LT_OK)status=lt_library_device_open(library,record.value,allow_dirty?1u:0u,&prepared_device,&error);
     if(status==LT_OK) {
         const std::string path=std::string(selected.state_path)+"/engine-"+std::to_string(getpid())+".log";
@@ -448,7 +461,7 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
             detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
         }
     }
-    auto arr=env->NewObjectArray(16,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(17,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
     env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));
@@ -464,7 +477,8 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     env->SetObjectArrayElement(arr,12,string(env,std::to_string(s.engine_exit)));
     env->SetObjectArrayElement(arr,13,string(env,std::to_string(display_lease.inputGeneration(display_lease.currentOwner()))));
     env->SetObjectArrayElement(arr,14,string(env,std::to_string(display_lease.currentOwner())));
-    env->SetObjectArrayElement(arr,15,string(env,debug_vcpu_accounting_configured?"1":"0"));return arr;
+    env->SetObjectArrayElement(arr,15,string(env,debug_vcpu_accounting_configured?"1":"0"));
+    env->SetObjectArrayElement(arr,16,string(env,experimental_tcg_ir_cache_requested?"1":"0"));return arr;
 }
 // Must hold guard. Routine attachment/detachment with no View-owned contacts
 // never cancels an unrelated Home/Power pulse. A real held-contact handoff uses
@@ -843,6 +857,19 @@ JNI(debugArmVcpuAccounting) jstring JNICALL Java_org_lighttouch_android_Native_d
     debug_vcpu_accounting_configured=true;return string(env,"");
 #else
     return string(env,"Debug diagnosis is unavailable in this build");
+#endif
+}
+JNI(debugSelectTcgIrCache) jstring JNICALL Java_org_lighttouch_android_Native_debugSelectTcgIrCache(JNIEnv *env,jobject,jboolean enabled) {
+#ifdef LT_ANDROID_DEBUG
+    std::lock_guard<std::mutex> lock(guard);
+    if(runtime || starting || worker_start_consumed)
+        return string(env,"Experimental cache selection requires a fresh unused worker");
+    // No environment mutation here: first start selects the actual local record.
+    experimental_tcg_ir_cache_requested=enabled==JNI_TRUE;
+    return string(env,"");
+#else
+    (void)enabled;
+    return string(env,"Experimental cache selection is unavailable in this build");
 #endif
 }
 JNI(debugArmQmp) jstring JNICALL Java_org_lighttouch_android_Native_debugArmQmp(JNIEnv *env,jobject) {

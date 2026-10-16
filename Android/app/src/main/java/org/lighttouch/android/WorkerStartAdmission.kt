@@ -9,8 +9,8 @@ internal class WorkerStartAdmission {
         consumed = true
         return true
     }
-    @Synchronized fun configureUnused(configure: () -> String): String {
-        if (consumed) return "vCPU accounting requires a fresh unused worker"
+    @Synchronized fun configureUnused(feature: String = "vCPU accounting", configure: () -> String): String {
+        if (consumed) return "$feature requires a fresh unused worker"
         return configure()
     }
 }
