@@ -11,6 +11,7 @@ import sys
 import time
 
 from exploration_common import *
+import cache_trial
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -19,7 +20,8 @@ def main():
     args = parser.parse_args()
     cfg = read(P / 'EXPLORATION-INPUTS.json')
     if not args.execute:
-        print(__import__('json').dumps({'execution': False, 'argv': cfg['argv'], 'root_grant_required': True}))
+        print(__import__('json').dumps({'execution': False, 'argv': cfg['argv'],
+              'cache': cfg.get('cacheTrial', {'mode': 'off'}), 'root_grant_required': True}))
         return
     origin = time.monotonic_ns()
     root = cgroup()
@@ -68,6 +70,11 @@ def main():
     for key in cfg['removeEnvironment']:
         env.pop(key, None)
     env.pop('XAUTHORITY', None)
+    # This selection is manifest/grant bound. Never enable by changing inherited
+    # environment behind an OFF packet or reuse another trial's writable state.
+    env = cache_trial.environment(cfg, env)
+    cache_before = cache_trial.before(cfg)
+    save(R / 'cache-before.json', cache_before)
     xvfb = frontend = None
     ffd = wfd = None
     worker = front = None
@@ -121,7 +128,8 @@ def main():
         log = (R / 'session.log').open('wb'); stderr = (R / 'stderr.log').open('wb')
         descriptors += [log, stderr]
         save(R / 'command.json', {'argv': cfg['argv'], 'environment': {key: env.get(key) for key in cfg['recordEnvironment']},
-                                  'cache': 'off', 'cgroup': str(root), 'controls': controls})
+                                  'cache': cache_before['mode'], 'cache_before': cache_before,
+                                  'cgroup': str(root), 'controls': controls})
         frontend = subprocess.Popen(cfg['argv'], env=env, stdout=log, stderr=stderr)
         ffd = os.pidfd_open(frontend.pid)
         front = process(frontend.pid)
@@ -264,12 +272,25 @@ def main():
                   'home_operator_attestation': (R / 'home-inspected.json').exists(),
                   'settings_operator_attestation': (R / 'settings-inspected.json').exists(),
                   'exact_candidate_mapping_observed': engine_mapping is not None,
-                  'cache_enabled': False, 'guest_acceptance': False, 'performance_qualified': False,
+                  'cache_enabled': cache_before['mode'] != 'off',
+                  'guest_acceptance': False, 'performance_qualified': False,
                   'unit_cgroup_retirement_independent_root_review_required': True}
         result['status'] = 'SCOPED_PASS' if (error is None and clean and retired and free and not result['dirty']
             and result['seed_unchanged'] and result['immutable_base_unchanged']
             and result['home_operator_attestation'] and result['settings_operator_attestation'] and engine_mapping is not None
             and not any(item['signal'] in [9, 15] for item in signals)) else 'FAIL'
+        try:
+            settings = read(R / 'settings-input.json') if (R / 'settings-input.json').exists() else {}
+            cache_receipt = cache_trial.finish(cfg, cache_before,
+                (R / 'stderr.log').read_text(errors='replace') if (R / 'stderr.log').exists() else '',
+                result['status'] == 'SCOPED_PASS', settings.get('native_pixel'))
+            save(R / 'cache-trial.json', cache_receipt)
+            result['cache_evidence_sha256'] = digest(R / 'cache-trial.json')
+            if cache_receipt['status'] != 'SCOPED_PASS':
+                result['status'] = 'FAIL'
+        except Exception as cache_error:
+            result['status'] = 'FAIL'
+            result['cache_error'] = str(cache_error)
         save(R / 'RESULT.json', result)
         for descriptor in [ffd, wfd]:
             if descriptor is not None:

@@ -8,13 +8,26 @@ import stat
 import subprocess
 
 from exploration_common import *
+import cache_trial
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--lock-policy', type=Path, required=True)
     parser.add_argument('--lock-reference', type=Path, help='Prior private, personally viewed native Lock capture directory')
     parser.add_argument('--model-inspected-reference', action='store_true')
+    parser.add_argument('--cache-mode', choices=['off', 'cold', 'reuse'], default='off')
+    parser.add_argument('--cache-directory', type=Path, help='Separate existing canonical private0700 directory')
+    parser.add_argument('--reuse-cache-receipt', type=Path, help='Prior actual clean cache-trial.json')
+    parser.add_argument('--reuse-cache-result', type=Path, help='Matching prior actual RESULT.json')
     args = parser.parse_args()
+    if args.cache_mode == 'off' and any((args.cache_directory, args.reuse_cache_receipt, args.reuse_cache_result)):
+        raise RuntimeError('OFF preparation must not select experimental cache inputs')
+    if args.cache_mode != 'off' and args.cache_directory is None:
+        raise RuntimeError('Explicit separate cache directory required')
+    if (args.cache_mode == 'reuse') != bool(args.reuse_cache_receipt and args.reuse_cache_result):
+        raise RuntimeError('Reuse requires both prior clean cache receipt and matching RESULT')
+    if args.cache_mode != 'reuse' and (args.reuse_cache_receipt or args.reuse_cache_result):
+        raise RuntimeError('Only reuse may select prior cache evidence')
     plan = read(P / 'PLAN.json')
     if R.exists() or (P / 'EXPLORATION-INPUTS.json').exists():
         raise RuntimeError('Preserve existing prepared exploration; no overwrite')
@@ -33,6 +46,10 @@ def main():
         if digest(entry['path']) != entry['sha256']:
             raise RuntimeError('Prepared input changed: ' + name)
         pins[name] = entry
+    if args.cache_mode == 'reuse':
+        for name, value in [('cacheReuseReceipt', args.reuse_cache_receipt), ('cacheReuseResult', args.reuse_cache_result)]:
+            path = value.resolve(strict=True)
+            pins[name] = {'path': str(path), 'sha256': digest(path), 'bytes': path.stat().st_size}
     # Dependency resolution only; loader trace does not run frontend/QEMU main.
     env = dict(os.environ, LD_LIBRARY_PATH=str(Path(pins['privateLibfdt']['path']).parent))
     env.pop('LD_PRELOAD', None)
@@ -128,6 +145,13 @@ def main():
            'limits': {'HomeSecondsFromHello': 129, 'StopSecondsFromHello': 205, 'nativeStopGraceSeconds': 35,
                       'outerSecondsFromControllerOrigin': 1200},
            'guestExecuted': False, 'sourceSeedUnchanged': True, 'isolatedStatePrepared': True}
+    cfg['cacheTrial'] = {'mode': args.cache_mode}
+    if args.cache_mode != 'off':
+        cfg['scope'] = 'ONE_EXPLICIT_EXPERIMENTAL_CACHE_CORRECTNESS_NOT_BENCHMARK'
+        cfg['cacheTrial']['directory'] = str(args.cache_directory)
+    # Read-only cache inventory at preparation; checked again after fresh Root
+    # grant consumption and immediately before the only native worker starts.
+    save(P / 'cache-preparation-before.json', cache_trial.before(cfg))
     save(P / 'EXPLORATION-INPUTS.json', cfg)
     print(__import__('json').dumps({'prepared': True, 'writableFiles': sum(v['type'] == 'file' for v in copied['entries'].values()),
           'writableBytes': sum(v.get('size', 0) for v in copied['entries'].values()),
