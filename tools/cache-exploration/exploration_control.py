@@ -80,9 +80,99 @@ def press_key(key):
     finally:
         xcall(['keyup', key], release=True)
 
+def lock_reference():
+    """Validate a pinned, previously personally viewed Lock; never label a scene."""
+    cfg = read(P / 'EXPLORATION-INPUTS.json')
+    reference = cfg.get('lockReference')
+    if not reference or reference.get('scope') != 'PERSONALLY_INSPECTED_N72_LOCK_REFERENCE':
+        raise RuntimeError('Prepared personally inspected Lock reference required')
+    original = Path(reference['captureDirectory'])
+    for name, filename in [('bmp', 'native.bmp'), ('png', 'native.png'), ('receipt', 'receipt.json')]:
+        if digest(original / filename) != reference[name + 'SHA256']:
+            raise RuntimeError('Pinned Lock reference changed: ' + name)
+    receipt = read(original / 'receipt.json')
+    if receipt['sha256'] != reference['bmpSHA256'] or not fresh(receipt, int(receipt['saved_monotonic_ns'])):
+        raise RuntimeError('Reference was not a fresh awake original capture')
+    policy = cfg['pins']['lockPolicy']
+    if digest(policy['path']) != policy['sha256'] or policy['path'] != cfg['lockPolicy']:
+        raise RuntimeError('Pinned Lock policy changed')
+    return original, reference, module(policy['path'])
+
+def home_unlock(label):
+    """One Home, immediate exact-anchor admission and slider; no model roundtrip."""
+    if re.fullmatch('[a-z0-9-]{1,54}', label) is None:
+        raise RuntimeError('Bounded private home-unlock label required')
+    original, reference, policy = lock_reference()
+    _, worker = owner()
+    hello = int(read(R / 'hello.json')['monotonic_ns'])
+    started = time.monotonic_ns()
+    deadline = min(started + 8 * SECOND, hello + 129 * SECOND)
+    if deadline - started < 4 * SECOND:
+        raise RuntimeError('Original Home129s deadline leaves insufficient bounded input time')
+    record = {'scope': 'PINNED_LOCK_CONTINUITY_INPUT_ONLY', 'reference': reference,
+              'original_capture': str(original), 'worker': worker, 'begin_ns': started,
+              'input_deadline_ns': deadline, 'home_deadline_ns': hello + 129 * SECOND,
+              'guest_acceptance': False, 'home_scene_asserted': False, 'slider_started': False}
+    current = post = None
+    try:
+        g = geometry()
+        latest = fields(next(row for row in reversed(rows(R / 'session.log')) if row.startswith('status ')))
+        now = time.monotonic_ns()
+        if int(latest['state']) != 2 or not 0 <= now - int(latest['observed_monotonic_ns']) <= SECOND:
+            raise RuntimeError('Fresh RUNNING status required before Home')
+        if now >= deadline:
+            raise RuntimeError('Bounded Home input deadline expired before input')
+        record['pre_home_status'] = latest
+        press_key('h')
+        record['home_released_ns'] = time.monotonic_ns()
+        current, receipt = capture(label + '-lock', convert=False)
+        record['current_capture'] = current.name
+        record['current_receipt'] = receipt
+        if not fresh(receipt, time.monotonic_ns()):
+            raise RuntimeError('Immediate post-Home capture not fresh/awake; no slider')
+        comparison = policy.compare((original / 'native.bmp').read_bytes(), (current / 'native.bmp').read_bytes())
+        record['comparison'] = comparison
+        save(current / 'continuity.json', record)
+        if not comparison['matched']:
+            raise RuntimeError('Exact inspected Earth/knob/lock-symbol anchors changed; no slider')
+        if (receipt['worker_pid'], receipt['worker_start']) != (worker['pid'], worker['start_ticks']):
+            raise RuntimeError('Current capture worker identity changed')
+        admission = time.monotonic_ns()
+        with capture_lock():
+            if time.monotonic_ns() >= deadline or not fresh(receipt, time.monotonic_ns()):
+                raise RuntimeError('Current Lock admission expired before slider')
+            move(.18 * 320, .90 * 480, g)
+            record['slider_started'] = True
+            try:
+                xcall(['mousedown', '1'])
+                for step in range(1, 11):
+                    if time.monotonic_ns() >= deadline or time.monotonic_ns() - admission > 3 * SECOND:
+                        raise RuntimeError('Bounded slider deadline expired')
+                    move((.18 + .074 * step) * 320, .90 * 480, g)
+                    time.sleep(.08)
+            finally:
+                xcall(['mouseup', '1'], release=True)
+                record['slider_released_ns'] = time.monotonic_ns()
+        record['ordinary_balanced_slider'] = True
+        record['geometry'] = g
+        post, _ = capture(label + '-post', convert=False)
+        record['post_capture'] = post.name
+        record['requires_personal_post_input_scene_inspection'] = True
+    except Exception as error:
+        record['error'] = str(error)
+        raise
+    finally:
+        record['ended_ns'] = time.monotonic_ns()
+        save(R / (label + '-home-unlock.json'), record)
+        # Conversion is deliberately after input. Full BMPs/receipts survive any
+        # conversion error; no converter/model latency consumes awake admission.
+        for path in (current, post):
+            if path is not None:
+                convert_bitmap(path / 'native.bmp', path / 'native.png')
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['capture', 'wake', 'unlock', 'inspect-home', 'tap-settings', 'inspect-settings', 'stop'])
+    parser.add_argument('operation', choices=['capture', 'wake', 'unlock', 'home-unlock', 'inspect-home', 'tap-settings', 'inspect-settings', 'stop'])
     parser.add_argument('--capture')
     parser.add_argument('--output')
     parser.add_argument('--x', type=int)
@@ -108,6 +198,12 @@ def main():
         if int(status['sleeping']) != 1:
             raise RuntimeError('No wake input: display is already awake')
         press_key('p'); return
+    if args.operation == 'home-unlock':
+        if not args.model_inspected:
+            raise RuntimeError('Actual personal inspection of prepared Lock reference required')
+        home_unlock(label)
+        print('Input completed; personally inspect retained post-input PNG. No Home pass asserted.')
+        return
     if not args.model_inspected or not args.capture:
         raise RuntimeError('Explicit actual image inspection and capture required')
     if args.operation == 'unlock':

@@ -12,6 +12,8 @@ from exploration_common import *
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--lock-policy', type=Path, required=True)
+    parser.add_argument('--lock-reference', type=Path, help='Prior private, personally viewed native Lock capture directory')
+    parser.add_argument('--model-inspected-reference', action='store_true')
     args = parser.parse_args()
     plan = read(P / 'PLAN.json')
     if R.exists() or (P / 'EXPLORATION-INPUTS.json').exists():
@@ -51,6 +53,23 @@ def main():
         pins['tool:' + name] = {'path': str(tool), 'sha256': digest(tool), 'bytes': tool.stat().st_size}
     lock_policy = args.lock_policy.resolve(strict=True)
     pins['lockPolicy'] = {'path': str(lock_policy), 'sha256': digest(lock_policy), 'bytes': lock_policy.stat().st_size}
+    reference = None
+    if args.lock_reference is not None:
+        if not args.model_inspected_reference:
+            raise RuntimeError('Personally view actual reference PNG before preparing it')
+        directory = args.lock_reference.resolve(strict=True)
+        reference = {'scope': 'PERSONALLY_INSPECTED_N72_LOCK_REFERENCE', 'captureDirectory': str(directory),
+                     'inspection_semantics': 'Operator personally viewed this actual PNG; matching anchors later admits input only, never a new scene pass'}
+        for name, filename in [('bmp', 'native.bmp'), ('png', 'native.png'), ('receipt', 'receipt.json')]:
+            path = directory / filename
+            entry = {'path': str(path), 'sha256': digest(path), 'bytes': path.stat().st_size}
+            pins['lockReference:' + name] = entry
+            reference[name + 'SHA256'] = entry['sha256']
+        receipt = read(directory / 'receipt.json')
+        if receipt['sha256'] != reference['bmpSHA256'] or not fresh(receipt, int(receipt['saved_monotonic_ns'])):
+            raise RuntimeError('Reference must retain its original fresh awake receipt')
+    elif args.model_inspected_reference:
+        raise RuntimeError('--model-inspected-reference requires --lock-reference')
     started = time.monotonic_ns()
     def guard():
         if available() < 6 * 1024**3 or time.monotonic_ns() - started > 120 * SECOND:
@@ -99,7 +118,7 @@ def main():
            'argv': argv, 'base': str(base), 'seed': str(seed), 'state': str(state),
            'seedInventorySHA256': before['inventorySHA256'], 'pins': pins,
            'privateDependency': str(Path(pins['privateLibfdt']['path']).parent),
-           'baseMetadata': metadata, 'lockPolicy': str(lock_policy),
+           'baseMetadata': metadata, 'lockPolicy': str(lock_policy), 'lockReference': reference,
            'removeEnvironment': ['PYTHONHOME', 'PYTHONPATH', 'LT_TCG_IR_CACHE_ENABLE', 'LT_TCG_IR_CACHE',
                                  'LD_PRELOAD', 'IT_VCPU_ACCT', 'IT_VCPU_ACCT_LOG', 'IT_USB_TCP', 'IT_AUDIO_HW',
                                  'IT_GLES_DEBUG', 'IT_I2S_TONE', 'IT_I2S_DUMP', 'ASAN_OPTIONS', 'UBSAN_OPTIONS',
