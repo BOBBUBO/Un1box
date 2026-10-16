@@ -12,7 +12,7 @@ struct HostArguments: Sendable {
             throw Failure.usage("Use run or import with explicit shared-desktop paths.")
         }
         let allowed: Set<String> = operation == "run"
-            ? ["id", "name", "base", "state", "package", "engine", "helper", "firmwarekit", "rom"]
+            ? ["id", "name", "base", "state", "package", "engine", "helper", "firmwarekit", "rom", "usbmuxd"]
             : ["source", "destination", "sha256"]
         var values: [String: String] = [:]
         var flags: Set<String> = []
@@ -30,7 +30,7 @@ struct HostArguments: Sendable {
             else { throw Failure.usage("Missing, duplicate or unsupported option: \(key)") }
             values[key] = argv[index + 1]; index += 2
         }
-        let required = allowed.subtracting(operation == "run" ? ["rom"] : [])
+        let required = allowed.subtracting(operation == "run" ? ["rom", "usbmuxd"] : [])
         guard required.isSubset(of: Set(values.keys)) else { throw Failure.usage("Required option missing.") }
         for (key, value) in values where !["id", "name", "sha256"].contains(key) {
             guard value.hasPrefix("/"), !value.split(separator: "/").contains("..") else {

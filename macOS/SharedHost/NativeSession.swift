@@ -33,6 +33,8 @@ import LightTouchSharedDesktopMac
     private var termination: DeviceTermination?
     private var qemuExit: Int32?
     private var cleanupOverdue = false
+    private var services: NativeAppServices?
+    private var finishing = false
 
     init(_ args: HostArguments) throws {
         self.args = args
@@ -153,6 +155,16 @@ import LightTouchSharedDesktopMac
             }
             self.instance = refreshed
             self.admittedStorage = try StorageBootProof.capture(recordBytes: bytes)
+            try Task.checkCancellation()
+            let servicePaths = self.instance.paths(state: self.state, logs: self.state.appendingPathComponent("logs"))
+            self.services = NativeAppServices.make(args: self.args, paths: servicePaths)
+            if let services = self.services {
+                services.start()
+                if !(await services.waitReady()) {
+                    _ = await services.retire()
+                }
+            }
+            try Task.checkCancellation()
         }) { [weak self] result in
             guard let self else { return }
             switch result {
@@ -182,9 +194,9 @@ import LightTouchSharedDesktopMac
             build: instance.firmware.split(separator: "-").last.map(String.init) ?? "",
             lock: GuestPackage.lockRecord(try DeviceLock.read(base: paths.base)), guest: instance.guest, into: offer) != nil
         else { throw HostArguments.Failure.usage("No matching supported guest-tools package for this board/build.") }
-        // Networking/app services are explicitly unavailable in this first
-        // shared Mac slice. Never inherit stale sockets or Mac fixture endpoints.
-        var config = try prepared.configuration(hardware: hardware, bootArgs: "-v", usbAddress: nil,
+        // Only this launch's admitted native USB bridge may enter BootConfig.
+        // Networking remains unavailable; never inherit fixture endpoints.
+        var config = try prepared.configuration(hardware: hardware, bootArgs: "-v", usbAddress: services?.guestAddress,
             wifi: false, guestPackage: offer.path, serial: "null",
             audio: args.flags.contains("no-audio") ? ["-audio", "driver=none"] : ["-audio", "driver=coreaudio,out.buffer-count=16"],
             netdev: nil)
@@ -193,8 +205,9 @@ import LightTouchSharedDesktopMac
     }
 
     func stop() {
-        guard !stopping, !finished else { return }
+        guard !stopping, !finished, !finishing else { return }
         stopping = true; shutdownStarted = Date(); window?.willStop()
+        services?.willStop()
         if booted {
             process.link.send(.machine(.resume))
             process.link.send(.machine(.shutdown))
@@ -207,9 +220,13 @@ import LightTouchSharedDesktopMac
     private func tick() {
         guard !finished else { return }
         window?.tick()
+        services?.tick()
         let status = process.status
         if status?.shutdownConfirmed == true, !quitAfterConfirmation {
-            if !stopping { stopping = true; shutdownStarted = Date(); window?.willStop() }
+            if !stopping {
+                stopping = true; shutdownStarted = Date(); window?.willStop()
+                services?.willStop()
+            }
             quitAfterConfirmation = true
             process.link.send(.machine(.quit)) // close only after guest confirmation
         }
@@ -236,11 +253,25 @@ import LightTouchSharedDesktopMac
     }
 
     private func finish(reaped: Bool = true) {
+        guard !finished, !finishing else { return }
+        finishing = true
+        stopping = true; timer?.invalidate(); window?.willStop()
+        services?.willStop()
+        // A helper death does not prove transport retirement. Retain this native
+        // owner until Subprocess.run has joined its exact daemon's teardown.
+        Task { @MainActor [self] in
+            let servicesClean = await services?.retire() ?? true
+            finishAfterServices(reaped: reaped, servicesClean: servicesClean)
+        }
+    }
+
+    private func finishAfterServices(reaped: Bool, servicesClean: Bool) {
         guard !finished else { return }
         finished = true; timer?.invalidate(); window?.willStop()
         let status = process.status
         var clean = booted && reaped && process.link.pid == 0 && termination == .exited(0) && qemuExit == 0
-            && status?.shutdownConfirmed == true && status?.storageFailed == false && !forced
+            && status?.shutdownConfirmed == true && status?.storageFailed == false && !forced && servicesClean
+        if !servicesClean { hostLine("LightTouch: app-services cleanup unconfirmed; state remains dirty") }
         if clean {
             do {
                 let paths = instance.paths(state: state, logs: state.appendingPathComponent("logs"))

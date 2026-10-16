@@ -148,5 +148,57 @@ print('FINAL status_available=1 state=0 confirmed=1 dirty=0 worker_reaped=1 work
         self.assertEqual(MacHost.start_services(None, self.root, "b" * 32), (None, None))
         with self.assertRaises(ValueError): MacHost.apps_window()
 
+    def test_native_revocation_disables_bridge_while_owner_stays_alive(self):
+        """Native teardown receipts must revoke clients before process exit.
+
+        This real pipe/child/socket substitute checks the receiver, not the
+        uncompiled Swift producer or actual guest protocol health.
+        """
+        worker = self.root / "owner.py"
+        worker.write_text("#!" + sys.executable + "\n" + """import json,os,sys
+value=dict(format='lighttouch-native-services',version=1,launch_id=os.environ['LIGHTTOUCH_SHARED_SERVICE_SESSION'],profile_id=sys.argv[3],owner_pid=os.getpid(),generation=1,state='ready',client_socket=os.environ['TEST_SOCKET'])
+print('SERVICES '+json.dumps(value),flush=True)
+for generation,state in ((2,'unavailable'),(3,'retired')):
+    assert sys.stdin.readline()==state+'\\n'
+    value.pop('client_socket',None)
+    value.update(generation=generation,state=state)
+    print('SERVICES '+json.dumps(value),flush=True)
+assert sys.stdin.readline()=='stop\\n'
+""")
+        worker.chmod(0o700)
+        session = MacSession()
+        session.start([str(worker), "run", "--id", "b" * 32], self.root / "revocation.log",
+                      dict(os.environ, TEST_SOCKET="UNIX:" + str(self.path)))
+        library = self.root / "mobile.dylib"; library.write_bytes(b"not loaded")
+        plist = self.root / "plist.dylib"; plist.write_bytes(b"not loaded")
+        bridge = NativeClientBridge(session, "b" * 32, library, plist)
+
+        def observed(generation):
+            deadline = time.monotonic() + 3
+            while session.services.generation < generation and time.monotonic() < deadline:
+                session.poll(); time.sleep(.005)
+            self.assertEqual(session.services.generation, generation)
+
+        try:
+            observed(1)
+            self.assertTrue(bridge.alive)
+            for generation, state in ((2, "unavailable"), (3, "retired")):
+                session.child.stdin.write((state + "\n").encode()); session.child.stdin.flush()
+                observed(generation)
+                self.assertFalse(bridge.alive)
+                with self.assertRaises(InstallError): bridge.command("info", self.root)
+                self.assertIsNone(session.child.poll(), "native owner remains alive during cleanup")
+                self.assertTrue(self.path.exists(), "receiver must never unlink the publisher's socket")
+            session.stop()
+            deadline = time.monotonic() + 3
+            while session.active and time.monotonic() < deadline:
+                session.poll(); time.sleep(.005)
+            session.poll()
+            self.assertFalse(session.active)
+            self.assertEqual(session.returncode, 0)
+            self.assertIsNone(session.final, "owner exit alone is never a clean guest shutdown")
+        finally:
+            if session.child.poll() is None: session.child.kill(); session.child.wait(timeout=1)
+
 
 if __name__ == "__main__": unittest.main()
