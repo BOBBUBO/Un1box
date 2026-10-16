@@ -376,7 +376,9 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     lt_record_info selected=LT_INIT(lt_record_info);
     if(status==LT_OK)status=lt_library_selected(library,&selected,&error);
     if(status==LT_OK && experimental_tcg_ir_cache_requested) {
-        const auto cache_error=experimental_cache_environment(true,path.value,selected.id);
+        // The existing explicit debug cache request selects fixed bounded cost
+        // counters too. Ordinary starts scrub every inherited cache opt-in.
+        const auto cache_error=experimental_cache_environment(true,path.value,selected.id,true);
         if(!cache_error.empty()) {
             status=LT_IO;error.code=LT_IO;
             std::snprintf(error.message,sizeof(error.message),"%s",cache_error.c_str());
