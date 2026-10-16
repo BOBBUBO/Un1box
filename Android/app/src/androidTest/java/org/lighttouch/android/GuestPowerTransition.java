@@ -3,6 +3,9 @@ package org.lighttouch.android;
 /** Test-only bounded native observations; pixel predicates do not prove visible Lock content. */
 final class GuestPowerTransition {
     static final long TIMEOUT_MS = 15_000;
+    static long controlDeadline(long now, long sharedDeadline) {
+        return Math.min(Math.addExact(now, 5_000), sharedDeadline);
+    }
     private final long began, baselineFrames, expectedStart;
     final long deadline;
     private final int expectedPid, expectedUid;

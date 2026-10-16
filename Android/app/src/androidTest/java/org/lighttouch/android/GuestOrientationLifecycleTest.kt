@@ -152,8 +152,8 @@ class GuestOrientationLifecycleTest {
                         sendContacts(MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), listOf(Triple(7, .45f, .5f), Triple(23, .55f, .5f)))
                         scenario.onActivity { assertArrayEquals("Both Android contacts must be held before interruption", intArrayOf(7, 23), requireNotNull(findDisplay(it.window.decorView)).inputObservations().getIntArray("androidContactIds")) }
                     }
-                    fun clickControl(text: String) {
-                        val deadline = SystemClock.elapsedRealtime() + 5_000
+                    fun clickControl(text: String, sharedDeadline: Long = Long.MAX_VALUE) {
+                        val deadline = GuestPowerTransition.controlDeadline(SystemClock.elapsedRealtime(), sharedDeadline)
                         val attempts = JSONArray()
                         val lookup = JSONObject().put("text", text).put("deadlineElapsedMs", deadline)
                             .put("nodeLimit", 2048).put("depthLimit", 64).put("attempts", attempts)
@@ -332,7 +332,7 @@ class GuestOrientationLifecycleTest {
                             if (waking) assertEquals("Wake must start with backlight off", 0L, preClick.getLong("backlightLevel"))
                             else assertTrue("Sleep must start with backlight on", preClick.getLong("backlightLevel") > 0)
                             check(SystemClock.elapsedRealtime() < gate.deadline) { "Power transition admission deadline expired" }
-                            clickControl("Power")
+                            clickControl("Power", gate.deadline)
                             while (true) {
                                 val (o, matched) = observePower("after-click")
                                 if (matched) {
