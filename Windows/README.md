@@ -56,6 +56,11 @@ committed data when publication fails. This does not boot or alter a guest.
 
 ## Logs and the first previews
 
+The next preview also preserves the host mouse cursor while interacting with
+the guest, and sends Home/Lock controls with the exact QMP `hold-time` field.
+The earlier `Parameter 'hold_time' is unexpected` response was a host command
+serialization bug; no guest data or firmware change is required.
+
 Choose **Open data folder** in the launcher. Within `devices`, each saved device
 has its own folder containing `emulator.log` (native errors and graphics
 diagnostics), `serial.log` (iOS boot output) and its writable saves. The full log
