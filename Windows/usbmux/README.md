@@ -31,6 +31,31 @@ no-preflight path publishes the QEMU device without adding another dependency
 on libimobiledevice or its installer. `conf.c` also references `CoTaskMemFree`,
 so the daemon link needs `ole32` in addition to `shell32`.
 
+`build-native.py` is the offline build entrypoint for that transport milestone.
+It checks the actual dependency build receipt and every installed provider hash,
+checks the pinned unmodified daemon source and libusbmuxd release archive, applies
+the two patches in fresh output, compiles/links the daemon and owned connector,
+and collects their PE import closure and notices. It invokes no Windows binary
+and does not acquire or build the rest of the mobile/TLS stack. Until an actual
+allocated build passes, this recipe is source-only:
+
+```sh
+python3 Windows/usbmux/build-native.py \
+  --deps-packet ../../builds/windows-native/services-mobile-deps01 \
+  --daemon-source ../../builds/linux-desktop/dependencies/usbmuxd-source \
+  --libusbmuxd-archive ../../builds/linux-desktop/bullseye-build01/mobile/sources/libusbmuxd-2.1.1.tar.bz2 \
+  --output ../../builds/windows-native/services-linked01
+```
+
+Run from this source worktree's repository root, under the integrator's exclusive
+bounded build allocation. The output directory must not already exist. This
+recipe rebuilds the eight small daemon units so changed native adapters cannot
+silently link against stale objects. The connector uses upstream configure and
+its generated configuration, with only its native adapter objects and Windows
+link libraries added. No autotools regeneration or host mobile-library fallback
+is used. The resulting `bin` directory is a transport test candidate; it does
+not enable Apps or replace a qualified desktop package.
+
 Every Windows daemon socket creation and accept explicitly uses `ltw_socket`
 or `ltw_accept`. These retain native SOCKET width until checking `INT_MAX`,
 close unrepresentable handles and disable inheritance before the existing

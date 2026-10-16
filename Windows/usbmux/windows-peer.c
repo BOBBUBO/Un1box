@@ -32,9 +32,11 @@ static DWORD tuple_owner(const struct sockaddr_in *local,
             const MIB_TCPROW_OWNER_PID *row = &table->table[i];
             if (row->dwState == MIB_TCP_STATE_ESTAB &&
                 row->dwLocalAddr == remote->sin_addr.s_addr &&
-                row->dwLocalPort == remote->sin_port &&
+                /* MIB_TCPROW_OWNER_PID stores network-order ports in the
+                 * low 16 bits; its upper 16 bits are not part of the port. */
+                (USHORT)row->dwLocalPort == remote->sin_port &&
                 row->dwRemoteAddr == local->sin_addr.s_addr &&
-                row->dwRemotePort == local->sin_port) {
+                (USHORT)row->dwRemotePort == local->sin_port) {
                 matches++; owner = row->dwOwningPid;
             }
         }
