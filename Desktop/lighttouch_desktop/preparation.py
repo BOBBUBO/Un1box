@@ -12,11 +12,13 @@ import stat
 import threading
 
 from .profiles import SetupError
+from .storage import DEFAULT_STORAGE
 
 
 class Preparation:
-    def __init__(self, source):
+    def __init__(self, source, *, storage=None):
         self.source = Path(source)
+        self.storage = storage or DEFAULT_STORAGE
         self.cancelled = threading.Event()
         self.events = queue.Queue(maxsize=4)
         self.result = None
@@ -38,7 +40,7 @@ class Preparation:
 
     def _run(self):
         try:
-            fd = os.open(str(self.source), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            fd = self.storage.open_regular(self.source)
             with os.fdopen(fd, "rb") as stream:
                 before = os.fstat(stream.fileno())
                 if not stat.S_ISREG(before.st_mode):
