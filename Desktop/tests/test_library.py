@@ -47,6 +47,9 @@ class RecordTests(unittest.TestCase):
         title = display_title("Demo", "n81ap", "8C148")
         self.assertIn("4.2.1", title)
         self.assertIn("prepared", title)
+        self.assertIn("iPod touch (4th generation)", title)
+        self.assertNotIn("n81ap", title)
+        self.assertNotIn("native checks", title)
         self.assertNotIn("qualified", title)
         self.assertIn("UNKNOWN", display_title("Demo", "n81ap", "UNKNOWN"))
 
