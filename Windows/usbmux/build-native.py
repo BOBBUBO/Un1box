@@ -136,9 +136,12 @@ def main():
          '--enable-shared', '--disable-static', '--without-inotify'], library)
     connector_objects = []
     for name in ('windows-connect.c', 'windows-peer.c'):
-        target = objects / ('connector-' + Path(name).stem + '.o')
+        target = objects / ('connector-' + Path(name).stem + '.lo')
         # No daemon compatibility macros in libusbmuxd.
-        run(common + ['-Wextra', '-Werror', '-c', HERE / name, '-o', target])
+        # MinGW libtool rejects ordinary .o additions to a shared .la. Use its
+        # generated compile mode to produce the matching .lo and .libs object.
+        run([library / 'libtool', '--tag=CC', '--mode=compile', *common,
+             '-Wextra', '-Werror', '-c', HERE / name, '-o', target], library)
         connector_objects.append(target)
     # Override LIBADD rather than regenerating autotools files or relying on
     # upstream's mixed-case -lIphlpapi, absent on case-sensitive Linux hosts.

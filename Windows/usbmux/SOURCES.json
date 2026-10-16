@@ -94,7 +94,9 @@
   "qualification": {
     "peer_connector_objects_compiled": true,
     "object_source_revision": "b36e542ef6c8c7d90de15afdb59e61d93f3bfef5",
-    "daemon_compiled": false,
+    "daemon_compiled": true,
+    "daemon_linked": true,
+    "daemon_link_source_revision": "748b53f075b46090b3fbd9765896935d40394d87",
     "native_stack_linked": false,
     "windows_executed": false,
     "shared_apps_enabled": false,

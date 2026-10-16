@@ -5,8 +5,11 @@ The peer/connector C files cross-compile to Win64 objects with GCC13 and
 also cross-compile with real pinned libplist/glue public headers (source
 95795f20, implicit-function and incompatible-pointer diagnostics treated as
 errors). Upstream Windows format/unused-variable warnings remain recorded.
-No daemon/mobile library has been linked or executed on Windows. It is not
-packaged or enabled by WindowsHost.
+An actual offline MinGW build linked the daemon from source748b53f0 against
+cross-built libplist2.7/glue1.3.2 DLL providers. That build failed when upstream
+libtool rejected ordinary connector `.o` objects; the recipe now requests its
+generated `.lo` compile mode, with a corrected build still required. Nothing
+has been executed on Windows or enabled by WindowsHost.
 The shared Apps window, catalog and IPA algorithms stay in `Desktop/app_services`.
 This directory changes only the native process/socket boundary and validates
 readiness against an already owned child. It is not a replacement installer.
