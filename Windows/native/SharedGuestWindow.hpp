@@ -77,8 +77,9 @@ class SharedGuestWindow {
                 break;
             case LT_DESKTOP_STOP: begin_stop(); break;
             case LT_DESKTOP_ROTATE:
+                // Shared SDL already rotated presentation and touch mapping.
+                // A guest orientation notification is an optional extra.
                 if (!stopping_ && controls_.rotate) controls_.rotate();
-                else if (!stopping_) error("Device rotation is unavailable in this Windows source slice.");
                 break;
             case LT_DESKTOP_SCREENSHOT:
                 if (!pixels_.empty() && frame_.serial == serial_ && serial_ && controls_.screenshot)

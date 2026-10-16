@@ -83,6 +83,13 @@ int main() {
         pending = {{LT_DESKTOP_SCREENSHOT, 0, 0, 0, 0}};
         window.tick(); assert(!window.failed() && errors == 2 && screenshots == 1);
     }
+    {
+        // Native SDL presentation does not require a guest orientation hook.
+        controls.rotate = {};
+        lt::windows::SharedGuestWindow window("host rotation only", controls);
+        pending = {{LT_DESKTOP_ROTATE, 0, 0, 0, 0}};
+        window.tick(); assert(!window.failed() && errors == 2 && rotations == 1);
+    }
     assert(cancels > 0);
     std::cout << "shared Windows adapter: coherent frame bound, multi-contact routing, buttons, pause/visibility/Stop, screenshot and fault retention PASS; synthetic host only\n";
 }
