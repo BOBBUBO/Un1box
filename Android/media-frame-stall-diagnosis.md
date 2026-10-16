@@ -77,11 +77,23 @@ Do not reuse the spent worker or mutate the protected original.
 read-only QMP evidence. Arm the fixed debug QMP endpoint on the fresh worker
 before Start. Instrumentation accepts no arbitrary QMP command or QOM path:
 it locates the single n72 LCD under `/machine/unattached`, verifies the socket
-peer's exact worker PID/UID, then requests its existing `frame-timeline`.
-It retains raw responses, timeline text and current native producer/presenter
+peer's exact worker PID/UID, then requests its existing `frame-timeline` and the two fixed read-only
+`frame-scan-counters` / `portable-frame-counters` properties. A diagnostic
+engine containing QEMU `59f4c953cd` is required; an older engine fails explicitly
+on missing properties, recording `unsupportedEngine=true` and the exact missing
+property list. QOM getter types must be strings. A separate tested allowlist
+rejects all writable commands, other properties, paths and extra arguments
+before any socket write. This is source support, not a deployed or qualified fix.
+It retains raw responses, raw counter JSON, timeline text and current native producer/presenter
 sequences, counts and times beside each native image. History deltas require
 an exact overlapping record; reset, overrun and missing history remain
-unavailable rather than measured zero. A changed scanout base is explicitly
+unavailable rather than measured zero. Counter JSON uses a fixed flat schema,
+rejects missing/unknown/duplicate fields and nested or malformed values, and
+is bounded to 4,096 characters. Unsigned 64-bit values and deltas use exact
+integers. Saturation or a decreasing counter yields an unavailable delta; a
+changed or saturated guest-reset count suppresses scan interval attribution and portable
+interval deltas. Queries occur sequentially and do not claim an atomic snapshot
+with native counters or pixels. A changed scanout base is explicitly
 not treated as changed pixels.
 
 Each QMP snapshot has one absolute 1,000 ms deadline including socket connect,
@@ -93,15 +105,17 @@ the private media-evidence directory. Full APK and actual target exercise are
 still unrun. The earlier frozen Test33 packet is unchanged and does not contain
 this later source checkpoint.
 
-The current image/status evidence cannot distinguish all actual layers. Longer
+The earlier image/status-only evidence cannot distinguish all actual layers. Longer
 visible phases can test transient coalescing, but another unchanged published
 image would leave guest scanout, dirty tracking, publication and acquisition
 indistinguishable. Add bounded counters before another diagnostic runtime if
 the objective is to locate the stall in one run, rather than repeat the same
-ambiguity. This addition is proposed separately; the test-only successor
+ambiguity. The engine addition is committed separately; the instrumentation successor
 does not contain a replacement engine or qualify a product fix.
 
-For Root's engine-ownership review, the minimal proposed production file list is:
+Engine source checkpoint `59f4c953cd` implements the following file scope:
+`136b14ea63` adapts the three existing slice harnesses for the added state.
+Neither source checkpoint is target acceptance. Production file list:
 
 * `include/hw/arm/ipod_touch_lcd.h`: per-device cumulative scan/dirty/reset counters;
 * `hw/arm/ipod_touch_lcd.c`: increment at existing scan/update boundaries and
@@ -139,8 +153,9 @@ deferred complete-paint boundary. Counters observe that boundary as it stands.
 Comparing these stages separates unchanged guest scanout, missed dirty
 notification, deferred publication and consumer acquisition. Latest-published
 screenshots alone cannot make that distinction. Engine/QMP getter source,
-semantic tests, a new pinned engine and native APK allocation would require
-separate review; no counter implementation/build/run is claimed here. No
+semantic source tests are available; a new pinned engine and native APK allocation
+require separate review. Engine counters are implemented in source only; no new
+native build or target run is claimed here. No
 rendering bypass or forced duplicate frames should manufacture progress.
 
 The new exception-preservation helper has a host-JVM contract test. Full APK
