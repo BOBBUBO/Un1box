@@ -23,4 +23,3 @@ OPTIONS:
                           system over USB), Cydia and Substrate.
   --version               Show the version.
   -h, --help              Show help information.
-
