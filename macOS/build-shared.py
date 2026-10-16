@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -57,6 +59,66 @@ def stage_runtime(runtime, target):
             destination = target / original.resolve().relative_to(runtime)
             local.unlink()
             local.symlink_to(os.path.relpath(destination, local.parent))
+
+
+def runtime_provenance(runtime):
+    """Bind an exported runtime to its provider files before native relocation."""
+    path = runtime / "RUNTIME-MANIFEST.json"
+    if not path.exists():
+        return {}, {}
+    manifest = json.loads(path.read_text())
+    if manifest.get("format") != "lighttouch-macos-python-runtime" or manifest.get("version") != 1:
+        raise ValueError("Unsupported Python runtime provenance.")
+    origins = {}
+    for name, value in manifest["files"].items():
+        local = runtime / name
+        if name.startswith("/") or any(part in ("", ".", "..") for part in name.split("/")):
+            raise ValueError("Invalid runtime provenance destination.")
+        original = Path(value["source"])
+        if local.is_symlink() or not local.is_file() or sha(local) != value["sha256"]:
+            raise ValueError("Exported runtime no longer matches its provenance: " + name)
+        if original.is_symlink() or not original.is_file() or sha(original) != value["sha256"]:
+            raise ValueError("Runtime provider no longer matches reviewed input: " + name)
+        origins[local] = original.resolve()
+    environment = {}
+    for key, value in manifest["environment"].items():
+        if key not in ("TCL_LIBRARY", "TK_LIBRARY") or value.startswith("/") or any(p in ("", ".", "..") for p in value.split("/")):
+            raise ValueError("Invalid runtime script environment.")
+        environment[key] = value
+    if set(environment) != {"TCL_LIBRARY", "TK_LIBRARY"}:
+        raise ValueError("Runtime Tcl/Tk script roots are required.")
+    expected = set(manifest["files"]) | set(manifest["links"]) | {"RUNTIME-MANIFEST.json"}
+    actual = {str(p.relative_to(runtime)) for p in runtime.rglob("*") if p.is_file() or p.is_symlink()}
+    if expected != actual:
+        raise ValueError("Exported runtime contains unmanifested/missing inputs.")
+    for name, target in manifest["links"].items():
+        if not (runtime / name).is_symlink() or os.readlink(runtime / name) != target:
+            raise ValueError("Exported runtime link differs from its provenance.")
+    return origins, environment
+
+
+def load_minimum_macos(text):
+    """Read actual deployment floors, rather than the SDK or host OS version."""
+    versions = []
+    for command in re.split(r"(?m)^Load command \d+\s*$", text)[1:]:
+        if re.search(r"(?m)^\s*cmd LC_BUILD_VERSION\s*$", command):
+            platform = re.search(r"(?m)^\s*platform (\S+)", command)
+            minimum = re.search(r"(?m)^\s*minos (\S+)", command)
+            if not platform or platform.group(1) not in ("1", "MACOS", "macos") or not minimum:
+                raise ValueError("Only native macOS Mach-O dependencies are supported.")
+            versions.append(minimum.group(1))
+        elif re.search(r"(?m)^\s*cmd LC_VERSION_MIN_MACOSX\s*$", command):
+            minimum = re.search(r"(?m)^\s*version (\S+)", command)
+            if not minimum:
+                raise ValueError("Malformed macOS minimum-version command.")
+            versions.append(minimum.group(1))
+    if not versions or any(not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", value) for value in versions):
+        raise ValueError("Every native dependency must declare a macOS deployment floor.")
+    return max(versions, key=lambda v: tuple(int(p) for p in v.split(".")))
+
+
+def minimum_macos(versions):
+    return max(versions, key=lambda v: tuple(int(p) for p in v.split(".")))
 
 
 def resolve_dependency(install, original, runtime, vendor, executable_dirs, rpaths=()):
@@ -108,7 +170,7 @@ def load_rpaths(text):
 
 def compile_commands(source, scratch):
     common = ["swift", "build", "--package-path", str(source), "--scratch-path", str(scratch),
-              "--configuration", "debug", "--jobs", "1"]
+              "--configuration", "debug", "--jobs", "1", "--disable-index-store", "-Xswiftc", "-j1"]
     return [common + ["--product", name] for name in ("LightTouchDesktopHost", "LightTouchDevice")]
 
 
@@ -129,6 +191,46 @@ def native_files(root):
                     yield path
 
 
+def stage_swift_resources(binaries, contents, runtime_contexts):
+    """Put SwiftPM resources beside the *observed* command-line main bundles.
+
+    Native tools live under Helpers, outside the app's main MacOS executable
+    directory. Reject any Foundation lookup outside Contents rather than making
+    an invalid app-root layout or relying on the original SwiftPM scratch path.
+    """
+    origins = {}
+    for bundle in sorted(Path(binaries).glob("*.bundle")):
+        if bundle.is_symlink() or not bundle.is_dir():
+            raise ValueError("Expected a real SwiftPM resource bundle.")
+        for path in bundle.rglob("*"):
+            if path.is_symlink() and bundle.resolve() not in path.resolve().parents:
+                raise ValueError("SwiftPM resource link escapes its bundle.")
+        if list(native_files(bundle)):
+            raise ValueError("SwiftPM code bundles need an explicit native dependency audit.")
+        target = contents / "Resources/SwiftPM" / bundle.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(bundle, target, symlinks=True)
+        for source in bundle.rglob("*"):
+            if source.is_file():
+                origins[str((target / source.relative_to(bundle)).relative_to(contents))] = {
+                    "path": str(source), "input_sha256": sha(source)}
+        for tool, context in runtime_contexts.items():
+            root = Path(context["bundle_url"])
+            if context.get("format") != "lighttouch-native-runtime-info" or context.get("version") != 1 or context.get("guest_started") is not False:
+                raise ValueError("Native resource diagnostic returned an invalid receipt.")
+            if root != root.resolve() or contents.resolve() not in root.resolve().parents or not root.is_dir():
+                raise ValueError("Native resource lookup must stay inside app Contents: " + str(root))
+            alias = root / bundle.name
+            if alias.is_symlink() and alias.resolve() == target.resolve():
+                continue  # Both CLI tools may use the same Foundation context.
+            if alias.exists() or alias.is_symlink():
+                raise ValueError("SwiftPM resource alias would overwrite an input.")
+            alias.symlink_to(os.path.relpath(target, alias.parent))
+            if alias.resolve() != target.resolve():
+                raise ValueError("Native SwiftPM resource alias did not relocate.")
+    return origins
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("output", "scratch", "engine", "firmwarekit", "python-runtime", "vendor-contents"):
@@ -136,7 +238,7 @@ def main():
     parser.add_argument("--engine-revision", required=True)
     args = parser.parse_args()
     if sys.platform != "darwin":
-        parser.error("Native macOS14.4+/Swift6.2/SDL2 required.")
+        parser.error("Native macOS/Swift6.2+/SDL2 required; the app floor follows all linked dependencies.")
     output, scratch = private_path(args.output), private_path(args.scratch)
     if output.exists() or output.is_symlink() or output.suffix != ".app":
         parser.error("Use an absent .app output; existing apps are never replaced.")
@@ -144,6 +246,7 @@ def main():
         parser.error("Scratch and app output must be separate directories.")
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     runtime = python_runtime(args.python_runtime)
+    runtime_origins, script_environment = runtime_provenance(runtime)
     engine, firmwarekit, vendor = args.engine.resolve(), args.firmwarekit.resolve(), args.vendor_contents.resolve()
     if not engine.is_file() or not firmwarekit.is_file():
         parser.error("Native engine and firmware admission worker are required explicit inputs.")
@@ -166,7 +269,7 @@ def main():
             common = receipt["compile_argv"][0][:-2]
             binaries = Path(subprocess.check_output(common + ["--show-bin-path"], env=environment, text=True).strip())
             contents = output / "Contents"
-            for name in ("MacOS", "Frameworks", "Resources"):
+            for name in ("MacOS", "Helpers", "Frameworks", "Resources"):
                 (contents / name).mkdir(parents=True, exist_ok=True)
             originals = {}
             def copy(original, target):
@@ -175,27 +278,37 @@ def main():
                 originals[target] = original
                 receipt["origins"][str(target.relative_to(contents))] = {"path": str(original), "input_sha256": sha(original)}
             for name in ("LightTouchDesktopHost", "LightTouchDevice"):
-                copy(binaries / name, contents / "MacOS" / name)
+                copy(binaries / name, contents / "Helpers" / name)
             copy(engine, contents / "Frameworks/libqemu-arm.dylib")
             copy(firmwarekit, contents / "MacOS/firmwarekit")
             packaged_runtime = contents / "Frameworks/Python"
             stage_runtime(runtime, packaged_runtime)
+            runtime_targets = {}
             for path in native_files(packaged_runtime):
-                originals[path] = runtime / path.relative_to(packaged_runtime)
+                unrelocated = runtime / path.relative_to(packaged_runtime)
+                original = runtime_origins.get(unrelocated, unrelocated)
+                originals[path] = original
+                if original.resolve() in runtime_targets:
+                    raise ValueError("Duplicate native runtime provider destination.")
+                runtime_targets[original.resolve()] = path
             stage_python(SOURCE, contents)
 
             # Relocate the real Mach-O dependency closure, including Python's
             # Tk extension. Reject ambiguous install names instead of silently
             # taking another installed library with the same filename.
-            executable_dirs = {binaries, firmwarekit.parent, runtime / "bin", (runtime / "bin/python3").resolve().parent}
-            pending = list(originals.items()); seen = set(); external = {}
+            python_executable = (runtime / "bin/python3").resolve()
+            provider_executable = runtime_origins.get(python_executable, python_executable)
+            executable_dirs = {binaries, firmwarekit.parent, provider_executable.parent}
+            pending = list(originals.items()); seen = set(); external = {}; minimum_versions = {}
             while pending:
                 local, original = pending.pop()
                 if local in seen:
                     continue
                 seen.add(local)
                 lines = subprocess.check_output(["otool", "-L", str(original)], text=True).splitlines()[1:]
-                rpaths = load_rpaths(subprocess.check_output(["otool", "-l", str(original)], text=True))
+                load_commands = subprocess.check_output(["otool", "-l", str(original)], text=True)
+                rpaths = load_rpaths(load_commands)
+                minimum_versions[str(local.relative_to(contents))] = load_minimum_macos(load_commands)
                 # The first -L entry of a dylib is its install ID, even if the
                 # original runtime is no longer installed at that old path.
                 ids = subprocess.run(["otool", "-D", str(original)], text=True,
@@ -206,7 +319,9 @@ def main():
                     if install in install_ids or install.startswith(("/usr/lib/", "/System/Library/")):
                         continue
                     candidate = resolve_dependency(install, original, runtime, vendor, executable_dirs, rpaths)
-                    if runtime in candidate.parents:
+                    if candidate in runtime_targets:
+                        target = runtime_targets[candidate]
+                    elif runtime in candidate.parents:
                         target = packaged_runtime / candidate.relative_to(runtime)
                     else:
                         target = contents / "Frameworks" / candidate.name
@@ -227,19 +342,35 @@ LIGHTTOUCH_CONTENTS="$(CDPATH= cd -P "$(dirname "$0")/.." && pwd)"
 unset PYTHONPATH PYTHONSTARTUP PYTHONINSPECT
 export PYTHONHOME="$LIGHTTOUCH_CONTENTS/Frameworks/Python"
 export PYTHONNOUSERSITE=1
-exec "$PYTHONHOME/bin/python3" -s "$LIGHTTOUCH_CONTENTS/Resources/launcher.py" "$@"
+export PYTHONDONTWRITEBYTECODE=1
+unset TCL_LIBRARY TK_LIBRARY TCLLIBPATH PYTHONUSERBASE PYTHONPLATLIBDIR
+''' + ''.join('export ' + key + '="$PYTHONHOME"/' + shlex.quote(value) + '\n' for key, value in script_environment.items()) + '''\
+exec "$PYTHONHOME/bin/python3" -B -s "$LIGHTTOUCH_CONTENTS/Resources/launcher.py" "$@"
 ''')
             launcher.chmod(0o755)
             info = {"CFBundleExecutable": "LightTouch", "CFBundleIdentifier": "org.lighttouch.shared-desktop",
                     "CFBundleName": "LightTouch Shared Desktop", "CFBundlePackageType": "APPL",
-                    "CFBundleVersion": "1", "CFBundleShortVersionString": "0.1", "LSMinimumSystemVersion": "14.4",
+                    "CFBundleVersion": "1", "CFBundleShortVersionString": "0.1", "LSMinimumSystemVersion": minimum_macos(minimum_versions.values()),
                     "NSHighResolutionCapable": True, "NSSupportsAutomaticGraphicsSwitching": True}
             (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+            receipt["native_minimum_macos"] = minimum_versions
+            receipt["minimum_macos"] = info["LSMinimumSystemVersion"]
+            receipt["runtime_manifest_sha256"] = sha(runtime / "RUNTIME-MANIFEST.json") if runtime_origins else None
             for binary in native_files(contents):
                 command = ["codesign", "--force", "--sign", "-"]
-                if binary == contents / "MacOS/LightTouchDevice":
+                if binary == contents / "Helpers/LightTouchDevice":
                     command += ["--entitlements", str(SOURCE / "Configuration/LightTouchDevice.entitlements")]
                 subprocess.run(command + [str(binary)], check=True)
+            runtime_contexts = {}
+            for name in ("LightTouchDesktopHost", "LightTouchDevice"):
+                executable = contents / "Helpers" / name
+                context = json.loads(subprocess.check_output([str(executable), "--runtime-info"],
+                                    text=True, timeout=10, env=environment))
+                if Path(context.get("executable_url", "")).resolve() != executable.resolve():
+                    raise ValueError("Native diagnostic executable identity mismatch.")
+                runtime_contexts[name] = context
+            receipt["native_resource_contexts"] = runtime_contexts
+            receipt["origins"].update(stage_swift_resources(binaries, contents, runtime_contexts))
             # Sign nested framework bundles after their contained Mach-O code;
             # the outer app seal must include those final bundle signatures.
             frameworks = sorted((p for p in contents.rglob("*.framework") if p.is_dir()),
@@ -248,9 +379,12 @@ exec "$PYTHONHOME/bin/python3" -s "$LIGHTTOUCH_CONTENTS/Resources/launcher.py" "
                 subprocess.run(["codesign", "--force", "--sign", "-", str(framework)], check=True)
             subprocess.run(["codesign", "--force", "--sign", "-", str(output)], check=True)
             subprocess.run(["codesign", "--verify", "--deep", "--strict", str(output)], check=True)
-            runtime_env = dict(os.environ, PYTHONHOME=str(packaged_runtime), PYTHONNOUSERSITE="1")
+            runtime_env = dict(os.environ, PYTHONHOME=str(packaged_runtime), PYTHONNOUSERSITE="1", PYTHONDONTWRITEBYTECODE="1")
             runtime_env.pop("PYTHONPATH", None)
-            subprocess.run([str(packaged_runtime / "bin/python3"), "-s", "-c",
+            for key in ("TCL_LIBRARY", "TK_LIBRARY", "TCLLIBPATH", "PYTHONUSERBASE", "PYTHONPLATLIBDIR"):
+                runtime_env.pop(key, None)
+            runtime_env.update({key: str(packaged_runtime / value) for key, value in script_environment.items()})
+            subprocess.run([str(packaged_runtime / "bin/python3"), "-B", "-s", "-c",
                             "import tkinter; import sys; print(sys.version); print(tkinter.TkVersion)"],
                            env=runtime_env, check=True)
             receipt["files"] = {str(p.relative_to(contents)): sha(p) for p in contents.rglob("*") if p.is_file()}

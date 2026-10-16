@@ -15,9 +15,9 @@ from lighttouch_desktop.macos import MacHost
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     contents = Path(__file__).resolve().parents[1]
-    parser.add_argument("--frontend", default=str(contents / "MacOS/LightTouchDesktopHost"))
+    parser.add_argument("--frontend", default=str(contents / "Helpers/LightTouchDesktopHost"))
     parser.add_argument("--engine", default=str(contents / "Frameworks/libqemu-arm.dylib"))
-    parser.add_argument("--helper", default=str(contents / "MacOS/LightTouchDevice"))
+    parser.add_argument("--helper", default=str(contents / "Helpers/LightTouchDevice"))
     parser.add_argument("--firmwarekit", default=str(contents / "MacOS/firmwarekit"))
     parser.add_argument("--data-dir", default=str(Path.home() / "Library/Application Support/LightTouch Shared Desktop"))
     args = parser.parse_args()

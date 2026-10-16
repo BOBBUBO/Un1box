@@ -13,6 +13,18 @@ import os
 signal(SIGPIPE, SIG_IGN)
 setvbuf(stdout, nil, _IOLBF, 0)
 
+// Shared desktop packaging only: inspect Foundation's actual resource lookup
+// context without parsing a launch, loading QEMU or touching device state.
+if Array(CommandLine.arguments.dropFirst()) == ["--runtime-info"] {
+    let value: [String: Any] = ["format": "lighttouch-native-runtime-info", "version": 1,
+        "bundle_url": Bundle.main.bundleURL.path,
+        "executable_url": Bundle.main.executableURL?.path ?? "",
+        "guest_started": false]
+    let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+    try FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))
+    exit(0)
+}
+
 /// The launch, read once; read from the link, boot and main threads.
 let launch: HelperLaunch = {
     do { return try HelperLaunch(arguments: Array(CommandLine.arguments.dropFirst())) } catch {
