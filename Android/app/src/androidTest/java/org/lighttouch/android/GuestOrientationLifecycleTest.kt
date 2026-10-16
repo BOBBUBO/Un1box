@@ -39,6 +39,7 @@ class GuestOrientationLifecycleTest {
         val evidence = File(context.filesDir, "orientation-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
         val result = JSONObject().put("hostChecksPassed", false).put("guestAcceptancePassed", false)
             .put("visibleGuestVerified", false).put("audiblePlaybackVerified", false)
+        result.put("powerTransitions", JSONArray())
         val observations = JSONArray()
         val events = JSONArray()
         @Suppress("DEPRECATION")
@@ -70,6 +71,11 @@ class GuestOrientationLifecycleTest {
                     assertTrue("A real guest must already be running", initial.getString("state") in listOf("running", "paused"))
                     val wire = if (arguments.getString("touchWireTrace") == "true") GuestTouchWireEvidence(context.filesDir, initial, evidence) else null
                     val workerPid = initial.getInt("pid")
+                    fun workerStartTicks(): Long {
+                        val stat = File("/proc/$workerPid/stat").readText()
+                        return stat.substring(stat.lastIndexOf(')') + 1).trim().split(Regex("\\s+"))[19].toLong()
+                    }
+                    val workerStart = workerStartTicks()
                     assertEquals(Process.myUid(), initial.getInt("uid")); assertNotEquals(Process.myPid(), workerPid)
                     result.put("workerPid", workerPid).put("appUid", Process.myUid()).put("originalRequestedOrientation", originalOrientation)
                     fun awaitState(expected: String) {
@@ -287,6 +293,64 @@ class GuestOrientationLifecycleTest {
                         retainFailureEvidence("Semantic production control unavailable: $text")
                         error("Semantic production control unavailable: $text")
                     }
+                    fun powerTransition(label: String, baselineFrames: Long, waking: Boolean): Bundle {
+                        // Include semantic control lookup/click time in this one original budget.
+                        val began = SystemClock.elapsedRealtime()
+                        val gate = GuestPowerTransition(began, workerPid, initial.getInt("uid"), workerStart, baselineFrames, waking)
+                        val transition = JSONObject().put("label", label).put("beganElapsedMs", began)
+                            .put("deadlineElapsedMs", gate.deadline).put("baselineProducedFrames", baselineFrames)
+                            .put("waking", waking).put("nativePredicateObserved", false)
+                            .put("visibleGuestVerified", false).put("samples", JSONArray())
+                        result.getJSONArray("powerTransitions").put(transition); persist()
+                        try {
+                            fun observePower(phase: String): Pair<Bundle, Boolean> {
+                                val readBegin = SystemClock.elapsedRealtime()
+                                val status = worker.status()
+                                val start = workerStartTicks()
+                                val readEnd = SystemClock.elapsedRealtime()
+                                val sample = JSONObject().put("phase", phase).put("readBeginElapsedMs", readBegin).put("readEndElapsedMs", readEnd)
+                                    .put("workerStartTicks", start).put("status", encode(status))
+                                transition.getJSONArray("samples").put(sample); persist()
+                                val o = requireNotNull(status.getBundle("observations")) { "Missing native power observations" }
+                                val required = listOf("runtimeDiagnosticsAvailable", "displaySleeping", "backlightLevel", "producedFrames",
+                                    "guestFrameSamplePixels", "guestFrameNonzeroRgbSamples", "guestFrameRgbSampleSum")
+                                check(required.all { o.containsKey(it) } && status.containsKey("nativePollSnapshotValid")) {
+                                    "Missing required native power observation keys"
+                                }
+                                val decision = SystemClock.elapsedRealtime()
+                                sample.put("decisionElapsedMs", decision)
+                                val matched = gate.observe(decision, status.getInt("pid"), status.getInt("uid"), start,
+                                        status.getString("state"), status.getString("error"), status.getBoolean("nativePollSnapshotValid"),
+                                        o.getBoolean("runtimeDiagnosticsAvailable"), o.getLong("displaySleeping"), o.getLong("backlightLevel"),
+                                        o.getLong("producedFrames"), o.getLong("guestFrameSamplePixels"),
+                                        o.getLong("guestFrameNonzeroRgbSamples"), o.getLong("guestFrameRgbSampleSum"))
+                                persist()
+                                return Pair(o, matched)
+                            }
+                            val preClick = observePower("before-click").first
+                            assertEquals("Unexpected display state before isolated Power press", if (waking) 1L else 0L, preClick.getLong("displaySleeping"))
+                            if (waking) assertEquals("Wake must start with backlight off", 0L, preClick.getLong("backlightLevel"))
+                            else assertTrue("Sleep must start with backlight on", preClick.getLong("backlightLevel") > 0)
+                            check(SystemClock.elapsedRealtime() < gate.deadline) { "Power transition admission deadline expired" }
+                            clickControl("Power")
+                            while (true) {
+                                val (o, matched) = observePower("after-click")
+                                if (matched) {
+                                    transition.put("nativePredicateObserved", true).put("observedElapsedMs", SystemClock.elapsedRealtime()); persist()
+                                    // This copied frame still requires independent human visual review.
+                                    snapshot(label)
+                                    return o
+                                }
+                                Thread.sleep(minOf(100, (gate.deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
+                            }
+                        } catch (failure: Throwable) {
+                            transition.put("failure", failure.toString()).put("failedElapsedMs", SystemClock.elapsedRealtime()); persist()
+                            // Keep a real timeout/failure frame, without extending the transition or retrying input.
+                            try { snapshot("$label-failed") }
+                            catch (captureFailure: Throwable) { transition.put("failureCaptureError", captureFailure.toString()); persist() }
+                            throw failure
+                        }
+                    }
                     fun resume() { worker.pause(false); awaitState("running"); readyDisplay(); Thread.sleep(300) }
                     fun reuseAndRelease(label: String) {
                         var before = 0L
@@ -355,8 +419,11 @@ class GuestOrientationLifecycleTest {
                         resume(); reuseAndRelease("foreground-surface-return")
                         val beforeButtons = snapshot("before-buttons")
                         clickControl("Home"); Thread.sleep(300)
-                        clickControl("Power"); Thread.sleep(500); snapshot("power-sleep")
-                        clickControl("Power"); Thread.sleep(500); snapshot("power-wake")
+                        val sleepBaseline = snapshot("before-power-sleep", false)
+                        assertEquals("Guest must be awake before the isolated sleep press", 0L, sleepBaseline.getLong("displaySleeping"))
+                        assertTrue("Guest backlight must be on before sleep", sleepBaseline.getLong("backlightLevel") > 0)
+                        val asleep = powerTransition("power-sleep", sleepBaseline.getLong("producedFrames"), false)
+                        powerTransition("power-wake", asleep.getLong("producedFrames"), true)
                         val afterButtons = snapshot("balanced-buttons")
                         val downBefore = requireNotNull(beforeButtons.getLongArray("buttonDownAdmissions")); val upBefore = requireNotNull(beforeButtons.getLongArray("buttonUpAdmissions"))
                         val downAfter = requireNotNull(afterButtons.getLongArray("buttonDownAdmissions")); val upAfter = requireNotNull(afterButtons.getLongArray("buttonUpAdmissions"))
