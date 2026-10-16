@@ -100,6 +100,19 @@ def owned_images(images, root):
     return result
 
 
+def validate_create_argv(argv, help_text):
+    """Compare emitted flags to the *actual pinned binary*, not a newer source tree."""
+    if len(argv) < 2 or argv[1] != "create":
+        raise ValueError("expected create-only argv")
+    offered = set(re.findall(r"(?<![\w-])--[a-z][a-z0-9-]*", help_text))
+    flags = argv[2::2]
+    expected = {"--entry", "--ipsw", "--out", "--seed", "--guest-tools", "--cache"}
+    if len(argv[2:]) != 12 or len(flags) != len(set(flags)) or set(flags) != expected:
+        raise ValueError("unexpected create argument contract")
+    if not set(flags) <= offered:
+        raise ValueError("pinned create help does not offer: " + str(sorted(set(flags) - offered)))
+
+
 class Supervisor:
     def __init__(self, config, limits=None):
         self.config = config
@@ -114,7 +127,10 @@ class Supervisor:
         self.last_disk_sample = -float("inf")
         self.owns_run = False
         self.root = Path(config["root"])
-        self.run = self.root / "create-supervised-01"
+        run_name = config.get("run_name", "create-supervised-01")
+        if not re.fullmatch(r"create-supervised-[0-9]{2}", run_name):
+            raise ValueError("reviewed single-use create run name required")
+        self.run = self.root / run_name
         self.result = dict(status="PREFLIGHT", original_start_monotonic=self.start,
                            original_work_deadline=self.work_end, original_total_deadline=self.end,
                            limits=self.limits, samples=[], pins={}, no_pack_or_guest_boot=True,
@@ -171,6 +187,11 @@ class Supervisor:
             self.pin(c[name], c[name + "_sha256"])
             if any(Path(c[name]).is_relative_to(p) for p in paths):
                 raise ValueError("input is inside writable preparation path")
+        actual_help = helper([c["tool"], "create", "--help"], self.work_end, timeout=5)
+        if hashlib.sha256(actual_help).hexdigest() != c["create_help_sha256"]:
+            raise ValueError("pinned CLI help digest changed")
+        validate_create_argv(self.argv(), actual_help.decode())
+        self.result["actual_create_help"] = actual_help.decode()
         if Path(c["ipsw"]).stat().st_size != 291123491 or digest(c["ipsw"], self.check, "sha1") != "34a0a489605f34d6cc6c9954edcaaf9a050deedc":
             raise ValueError("selected IPSW exact size/SHA1 mismatch")
         entry = json.loads(Path(c["entry"]).read_text())
@@ -203,7 +224,7 @@ class Supervisor:
     def argv(self):
         c = self.config
         return [c["tool"], "create", "--entry", c["entry"], "--ipsw", c["ipsw"], "--out", c["staging"],
-                "--seed", c["seed"], "--language", "en-US", "--guest-tools", c["guest_tools"], "--cache", c["cache"]]
+                "--seed", c["seed"], "--guest-tools", c["guest_tools"], "--cache", c["cache"]]
 
     def observe(self, deadline):
         table = process_table(deadline)
