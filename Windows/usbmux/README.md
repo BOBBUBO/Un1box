@@ -5,11 +5,14 @@ The peer/connector C files cross-compile to Win64 objects with GCC13 and
 also cross-compile with real pinned libplist/glue public headers (source
 95795f20, implicit-function and incompatible-pointer diagnostics treated as
 errors). Upstream Windows format/unused-variable warnings remain recorded.
-An actual offline MinGW build linked the daemon from source748b53f0 against
-cross-built libplist2.7/glue1.3.2 DLL providers. That build failed when upstream
-libtool rejected ordinary connector `.o` objects; the recipe now requests its
-generated `.lo` compile mode, with a corrected build still required. Nothing
-has been executed on Windows or enabled by WindowsHost.
+An actual offline MinGW build linked both the daemon and owned libusbmuxd from
+source95075501 against cross-built libplist2.7/glue1.3.2 DLL providers. All five
+Win64 runtime images have a closed import graph except Windows system DLLs;
+the connector's 21 exports match its public header, and nine notice files are
+retained. The original failed attempt (non-libtool connector `.o` objects) is
+preserved; the successful recipe uses generated `.lo` compile mode. Nothing
+has been executed on Windows or enabled by WindowsHost. The remaining
+libimobiledevice/TLS stack and native endpoint/services acceptance are open.
 The shared Apps window, catalog and IPA algorithms stay in `Desktop/app_services`.
 This directory changes only the native process/socket boundary and validates
 readiness against an already owned child. It is not a replacement installer.
@@ -39,15 +42,15 @@ It checks the actual dependency build receipt and every installed provider hash,
 checks the pinned unmodified daemon source and libusbmuxd release archive, applies
 the two patches in fresh output, compiles/links the daemon and owned connector,
 and collects their PE import closure and notices. It invokes no Windows binary
-and does not acquire or build the rest of the mobile/TLS stack. Until an actual
-allocated build passes, this recipe is source-only:
+and does not acquire or build the rest of the mobile/TLS stack. The allocated
+offline transport build passed with this entrypoint:
 
 ```sh
 python3 Windows/usbmux/build-native.py \
   --deps-packet ../../builds/windows-native/services-mobile-deps01 \
   --daemon-source ../../builds/linux-desktop/dependencies/usbmuxd-source \
   --libusbmuxd-archive ../../builds/linux-desktop/bullseye-build01/mobile/sources/libusbmuxd-2.1.1.tar.bz2 \
-  --output ../../builds/windows-native/services-linked01
+  --output ../../builds/windows-native/services-linked-new
 ```
 
 Run from this source worktree's repository root, under the integrator's exclusive
@@ -105,8 +108,9 @@ the child, validate ACLs, enable Apps or prove Windows endpoint behavior.
 
 ## Next required work
 
-Root must allocate a bounded MinGW build and retain compiler/PE closure/license
-evidence. Actual Windows must then verify private-folder pins/ACLs, Unicode
+The bounded MinGW transport build and compiler/PE closure/license inventory
+are complete; the remaining mobile/TLS providers still need a build. Actual
+Windows must verify private-folder pins/ACLs, Unicode
 paths, launch/readiness, foreign/malformed endpoints, blocked/NAKing/silent guest
 Stop, failed startup, two saved-device isolation and exact process retirement.
 The held child process must supply identity directly (GetProcessTimes), never

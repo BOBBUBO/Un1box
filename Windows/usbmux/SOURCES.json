@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "status": "SOURCE_ONLY_NOT_NATIVE_QUALIFIED",
+  "status": "CROSS_LINKED_NOT_WINDOWS_QUALIFIED",
   "daemon": {
     "url": "https://github.com/samhenrigold/usbmuxd",
     "revision": "5cb90897479b9021a69db9698fea071ef7b2eceb",
@@ -97,6 +97,10 @@
     "daemon_compiled": true,
     "daemon_linked": true,
     "daemon_link_source_revision": "748b53f075b46090b3fbd9765896935d40394d87",
+    "transport_linked": true,
+    "transport_link_source_revision": "9507550176d93e092b8826798050ead8ad6fe574",
+    "owned_connector_exports_verified": 21,
+    "transport_runtime_pe_images_verified": 5,
     "native_stack_linked": false,
     "windows_executed": false,
     "shared_apps_enabled": false,
