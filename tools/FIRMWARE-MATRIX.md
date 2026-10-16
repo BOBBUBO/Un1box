@@ -170,3 +170,53 @@ portable admission and each target's real boot/render/input/audio/lifecycle/
 clean-stop/fresh-worker persistence separately. Retain actual screenshots and
 measured evidence. Required multi-touch is tested where the board supports it.
 Host/synthetic/Mac reference observations never substitute for target passes.
+
+## Private input and preparation tools
+
+`firmware-input.py --config /absolute/private/input.json` acquires **one** exact
+catalog input with verified HTTPS, bounded bytes/time and complete size/SHA-1
+verification before final publication. It measures SHA-256, records each failed
+source before trying the next and retains failed partials. An existing private
+input can be supplied first. This tool never prepares or boots firmware.
+
+`firmware-prepare.py` is a deliberately narrow macOS **n72ap-5G77a create-only**
+supervisor. It is separate from the read-only catalog inventory, from packaging
+and from runtime acceptance. Its invocation requires a reviewed absolute private
+JSON config, `execution_authorized: true`, `phase: "create-only"`, an exact
+`supervisor_sha256`, and `--authorize-config-sha256` matching those exact bytes.
+The integrator owns allocation; this is not a prompt for additional user consent.
+
+The config supplies private absolute `root`, new `staging`/`cache`/`service_state`
+paths, `tool`/`ipsw`/`entry` and their `*_sha256` digests, `guest_tools`, a complete
+flat `guest_tool_sha256` manifest, `seed`, and `resident_avd_pid`. No firmware,
+decryption keys, private manifests or host-specific execution config belongs in
+Git. See the private handoff packet for an exact pinned configuration.
+
+The process refuses reused outputs and independently verifies inputs, directory
+privacy, selected recipe and fresh 32 GiB disk/8 GiB free+inactive RAM admission.
+It uses one original 600-second clock (540 work, through 585 cancellation, through 600
+kill/reap/attachment checks), a 2 GiB owned-RSS watchdog and 20 GiB pilot-allocation
+watchdog. The latter includes the already acquired input. Process observations
+run each half second; disk observations run at most once every five seconds.
+macOS watchdogs are sampled, **not hard memory/disk containment**; transient
+overshoot and short-lived detached children between samples cannot be ruled out.
+
+SIGTERM/SIGINT request cancellation without extending the clock. Firmwarekit's
+own cancellation runs first; tracked PID/start identities and escaped descendants
+are subsequently killed/reaped. Observers and image-detach commands have bounded
+deadlines and their own retired process groups. Only actual attachments whose
+image paths resolve inside the pilot root are eligible for detach. A failed
+preflight never detaches images. The resident AVD must retain its identity.
+
+Success requires exit0, the exact final done event, matching board/build/entry,
+bootrom strategy, n72-ios2 guest family and source/package provenance, complete
+NOR/GID/identity hashes, and the full NAND listing hash using upstream's sorted
+`path sha256\n` algorithm. NAND count/read-only modes and fit failures are checked.
+No second extracted base is made. Input pins are rehashed after output verification.
+`CONTENT_VERIFIED_REVIEW_REQUIRED` deliberately does **not** establish reference
+boot, target support or a clean guest shutdown. Fit details/warnings/logs and
+cleanup identities remain in the private `create-supervised-01/RECEIPT.json`.
+
+Synthetic tests exercise real owned subprocess success, original deadlines,
+escaped-child retirement, observer timeout, preservation of previous receipts,
+unrelated mount exclusion and corrupted output rejection without any firmware.
