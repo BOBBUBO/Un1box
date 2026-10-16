@@ -6,6 +6,15 @@ Cocoa and isolated Windows WinForms previews retain their reference UI. A new
 `macos-shared-arm64` development route adopts the exact shared launcher/SDL
 window through native DeviceRuntime; its native compilation and actual target
 execution remain unqualified. Reference compile success is not UI parity.
+
+The maintained desktop UI is **one Python/Tk launcher and one set of SDL
+controls**, shared by Linux, Windows and macOS. Platform support belongs in host
+adapters and packaging recipes. Do not add a second Windows layout or reproduce
+the launcher in C#: the WinForms preview is a temporary compatibility/debugging
+route. A shared Windows build must instantiate the existing `Launcher` and
+consume the shared control components. Its saved-device migration must preserve
+existing inputs and writable state. The Windows host adapter is still pending;
+the preview does not meet this requirement.
 Android retains its touch UI; APK orchestration remains a future entrypoint
 adapter rather than an advertised output of this initial desktop foundation.
 
