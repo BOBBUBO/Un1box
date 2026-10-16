@@ -215,6 +215,19 @@
         "mingw-w64-x86_64-crt",
         "mingw-w64-x86_64-libwinpthread=14.0.0.r426.g4564ee4b5"
       ]
+    },
+    {
+      "name": "mingw-w64-x86_64-libwinpthread",
+      "version": "14.0.0.r426.g4564ee4b5-2",
+      "archive": "mingw-w64-x86_64-libwinpthread-14.0.0.r426.g4564ee4b5-2-any.pkg.tar.zst",
+      "sha256": "ac791deaf730ef7aa6fa66f31ce6ec53a02c43fa85562233a981c84c93456760",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-libwinpthread-14.0.0.r426.g4564ee4b5-2-any.pkg.tar.zst",
+      "compressed_bytes": 31617,
+      "extracted_bytes": 69216,
+      "license": [
+        "spdx:MIT AND BSD-3-Clause"
+      ],
+      "dependencies": []
     }
   ]
 }
