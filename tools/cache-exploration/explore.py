@@ -25,7 +25,8 @@ def main():
     timed = image_operator.Operator(cfg)
     if not args.execute:
         print(__import__('json').dumps({'execution': False, 'argv': cfg['argv'],
-              'cache': cfg.get('cacheTrial', {'mode': 'off'}), 'root_grant_required': True}))
+              'cache': cfg.get('cacheTrial', {'mode': 'off'}),
+              'diagnostics': cfg.get('cacheDiagnostics'), 'root_grant_required': True}))
         return
     origin = time.monotonic_ns()
     root = cgroup()
