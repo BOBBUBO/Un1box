@@ -13,8 +13,10 @@
 // No caller-provided environment names, cache paths, or cache-record imports.
 inline std::string experimental_cache_environment(bool requested,
                                                  const std::string &library,
-                                                 const std::string &record) {
-    if (unsetenv("LT_TCG_IR_CACHE_ENABLE") || unsetenv("LT_TCG_IR_CACHE"))
+                                                 const std::string &record,
+                                                 bool aggregate_diagnostics = false) {
+    if (unsetenv("LT_TCG_IR_CACHE_ENABLE") || unsetenv("LT_TCG_IR_CACHE") ||
+        unsetenv("LT_TCG_IR_CACHE_DIAGNOSTICS"))
         return "Cannot clear inherited experimental cache settings";
     if (!requested) return "";
     if (library.empty() || library[0] != '/' || record.empty() || record.size() >= 64 ||
@@ -43,9 +45,11 @@ inline std::string experimental_cache_environment(bool requested,
     if (!failure.empty()) return failure;
     const auto path = library + "/tcg-ir-cache/" + record;
     if (setenv("LT_TCG_IR_CACHE", path.c_str(), 1) ||
-        setenv("LT_TCG_IR_CACHE_ENABLE", "experimental-v1", 1)) {
+        setenv("LT_TCG_IR_CACHE_ENABLE", "experimental-v1", 1) ||
+        (aggregate_diagnostics && setenv("LT_TCG_IR_CACHE_DIAGNOSTICS", "aggregate-v1", 1))) {
         unsetenv("LT_TCG_IR_CACHE_ENABLE");
         unsetenv("LT_TCG_IR_CACHE");
+        unsetenv("LT_TCG_IR_CACHE_DIAGNOSTICS");
         return "Cannot configure experimental cache environment";
     }
     return "";
