@@ -630,4 +630,3 @@ class Launcher:
         else:
             clean = self.host.clean_exit(self.session.returncode, self.session.final)
             self.message.set("Guest stopped cleanly. Ready for a fresh session." if clean else "Shutdown unconfirmed. State was retained; inspect the log before recovery.")
-
