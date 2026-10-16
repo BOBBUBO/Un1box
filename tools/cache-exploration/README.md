@@ -69,3 +69,38 @@ This wait sends no additional Home, Power or touch input and never changes the
 reference pixels, exact anchor policy, personal scene gates or original clocks.
 The subsequent actual capture must independently remain fresh/awake and use a
 post-Home source frame. Timeout or identity/state failure sends no slider.
+
+Packet04 actually reached complete Home, personally inspected, but the controller
+incorrectly required that a static Home image had been newly produced within two
+seconds. Preserve its FAIL. Home/Settings now admit a current coherent readback
+of an older static source: exact live owner/worker, coherent flag, positive frame
+sequence, positive even shared generation, ordered original source/copy/observed/
+saved times, bounded copy/receipt ages and fresh awake diagnostics. The source
+production timestamp is retained and its actual age recorded, never renewed.
+Exact inspected/current image continuity and personal scene gates still apply.
+Lock/wake admission retains its stricter new post-Home source-frame requirement.
+
+Experimental cache correctness uses a separately frozen and separately granted
+successor. Preparation defaults to `--cache-mode off`; it rejects cache inputs
+in OFF mode. An explicit `--cache-mode cold --cache-directory /canonical/private`
+requires an existing owned0700 directory outside base/seed/state, genuinely empty
+before the native worker. Do not modify a previously frozen OFF packet. Reuse
+selects the same directory and additionally supplies `--reuse-cache-receipt` for
+the prior actual `cache-trial.json` and `--reuse-cache-result` for its matching
+actual `RESULT.json`. Both files are pinned into the new source packet. They
+must describe a scoped clean retired run of the exact same engine, client,
+base identity/lock, ROM, package, clean seed and Home/Settings workload.
+
+The controller scrubs inherited cache variables before applying that explicit
+selection. It inventories native record bytes, engine/key/payload checksums,
+private inode ownership/modes, single links, native lock availability, directory
+identity and bounded record count/bytes before and after. Symlinks, unknown or
+interrupted temporary entries, changes to existing records and a still-locked
+native store fail closed without repairing or deleting evidence. Actual native
+enable telemetry must name the mapped engine digest; monotonic actual counters
+must agree with the resulting record count. Cold requires real stores; reuse
+requires real hits against the exact prior inventory. Actual personally viewed
+Home and Settings at native44,326, strict normal Stop, unchanged base/seed and
+independent retirement remain required. These are correctness checks with no
+audio. They never establish a speedup or Android qualification. Matched repeated
+timings, worker CPU and broader target acceptance remain separate follow-up work.

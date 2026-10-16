@@ -14,6 +14,60 @@ from exploration_common import *
 from exploration_control import unchanged_except_clock
 
 class Tests(unittest.TestCase):
+    def coherent_receipt(self, now):
+        return dict(sequence='12',shared_generation='4',coherent_readback='1',
+            frame_monotonic_ns=str(now-60*SECOND),copy_started_monotonic_ns=str(now-200000000),
+            copy_finished_monotonic_ns=str(now-150000000),observed_monotonic_ns=str(now-100000000),
+            saved_monotonic_ns=now-50000000,diagnostics_monotonic_ns=str(now-250000000),
+            sleeping='0',agent='1',backlight='245',frontend_pid=41,worker_pid=42,worker_start='123')
+
+    def test_coherent_static_source_uses_fresh_copy_and_diagnostics_without_redating_source(self):
+        now=100*SECOND;row=self.coherent_receipt(now);original=copy.deepcopy(row)
+        self.assertTrue(coherent_current(row,now,dict(pid=41),dict(pid=42,start_ticks='123')))
+        self.assertFalse(fresh(row,now))
+        self.assertEqual(row,original)
+
+    def test_coherent_admission_rejects_stale_incoherent_invalid_order_or_identity(self):
+        now=100*SECOND;row=self.coherent_receipt(now)
+        changes=[dict(coherent_readback='0'),dict(shared_generation='3'),dict(shared_generation='0'),
+            dict(sequence='0'),dict(sequence=str(2**64)),dict(sequence=True),
+            dict(diagnostics_monotonic_ns=str(now-2*SECOND)),dict(diagnostics_monotonic_ns=str(now)),
+            dict(copy_started_monotonic_ns=str(now-3*SECOND)),
+            dict(copy_finished_monotonic_ns=str(now-300000000)),
+            dict(observed_monotonic_ns=str(now-2*SECOND)),dict(saved_monotonic_ns=now+1),
+            dict(frame_monotonic_ns=str(now)),dict(sleeping='1'),dict(agent='0'),dict(backlight='0'),
+            dict(frontend_pid=99),dict(worker_pid=99),dict(worker_start='different')]
+        for mutation in changes:
+            with self.subTest(mutation=mutation):
+                self.assertFalse(coherent_current(dict(row,**mutation),now,dict(pid=41),dict(pid=42,start_ticks='123')))
+        for key in row:
+            with self.subTest(missing=key):
+                missing=dict(row);missing.pop(key)
+                self.assertFalse(coherent_current(missing,now,dict(pid=41),dict(pid=42,start_ticks='123')))
+
+    def test_static_home_continuity_requires_current_exact_bytes_and_live_owner(self):
+        for changed in [False,True]:
+            with self.subTest(changed=changed),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);original=root/'inspected';current=root/'current'
+                original.mkdir();current.mkdir();bitmap=self.bitmap()
+                (original/'native.bmp').write_bytes(bitmap)
+                if changed:bitmap[54+(100*320+130)*4]=1
+                (current/'native.bmp').write_bytes(bitmap)
+                now=time.monotonic_ns();old=self.coherent_receipt(now);new=self.coherent_receipt(now)
+                old['sha256']=digest(original/'native.bmp');new['sha256']=digest(current/'native.bmp')
+                save(original/'receipt.json',old);save(current/'receipt.json',new)
+                owner=(dict(frontend=dict(pid=41)),dict(pid=42,start_ticks='123'))
+                with patch.object(control,'R',root),patch.object(control,'owner',return_value=owner), \
+                     patch.object(control,'capture',return_value=(current,new)):
+                    if changed:
+                        with self.assertRaisesRegex(RuntimeError,'Inspected scene changed'):
+                            control.continuity('inspected','home','current')
+                    else:
+                        record=control.continuity('inspected','home','current')
+                        self.assertGreater(record['current_source_age_at_saved_ns'],2*SECOND)
+                        self.assertEqual(record['readback_policy'],'current-coherent-copy-awake-static-source-allowed')
+                self.assertTrue((current/'continuity.json').exists())
+
     def lock_policy_path(self):
         configured = os.environ.get('LT_CACHE_TEST_LOCK_POLICY')
         return Path(configured).resolve(strict=True) if configured else Path(__file__).resolve().parents[2] / 'Linux/scripts/lock-continuity.py'
