@@ -72,9 +72,9 @@ int ltw_peer_admit(SOCKET socket, DWORD expected_pid, ULONGLONG expected_created
     FILETIME created, exited, kernel, user;
     ULARGE_INTEGER time;
     if ((expected_pid == 0) != (expected_created == 0) ||
-        getsockname(socket, (struct sockaddr *)&local, &size) != 0 || size != sizeof(local)) return 0;
+        getsockname(socket, (struct sockaddr *)&local, &size) != 0 || size != (int)sizeof(local)) return 0;
     size = sizeof(remote);
-    if (getpeername(socket, (struct sockaddr *)&remote, &size) != 0 || size != sizeof(remote) ||
+    if (getpeername(socket, (struct sockaddr *)&remote, &size) != 0 || size != (int)sizeof(remote) ||
         local.sin_family != AF_INET || remote.sin_family != AF_INET ||
         local.sin_addr.s_addr != htonl(INADDR_LOOPBACK) ||
         remote.sin_addr.s_addr != htonl(INADDR_LOOPBACK)) return 0;
