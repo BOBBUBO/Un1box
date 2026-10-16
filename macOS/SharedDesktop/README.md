@@ -77,6 +77,11 @@ Host screenshots copy the existing IOSurface into isolated state/screenshots.
 recipe. It requires native Swift6.2+, SDL2, engine/helper inputs and a separately
 supplied self-contained Python/Tk runtime; it relocates native dependencies and
 ad-hoc signs the development bundle. It copies no bases, guest tools or state.
+An exported committed tree can replace a Git checkout only with both
+`--source-manifest` and its reviewed `--source-manifest-sha256`. The recipe checks
+the complete file set, content hashes, modes and contained symlinks before and
+after packaging. This allows an exact source overlay at the original package
+path and reuse of the original Swift scratch, without inventing Git provenance.
 The minimum macOS version is the highest deployment floor read from **every
 actual packaged Mach-O dependency**. An installed SDL2 compatibility library
 backed by SDL3 may require macOS26; building the host with an older deployment
@@ -86,7 +91,9 @@ target does not remove that dependency requirement.
 named Python framework, matching `_tkinter` extension and Tcl/Tk script roots.
 It includes the interpreter, framework binary and stdlib; it excludes external
 site-packages, test suites, ensurepip and bytecode. Escaping links and special
-files are refused. `export` requires that reviewed manifest's SHA256, rechecks
+files are refused. The chosen Homebrew route uses a separately supplied Tk
+extension; a Python.org provider can already include it, but the explicit and
+stdlib copies must match. `export` requires that reviewed manifest's SHA256, rechecks
 all source hashes and creates an absent private output directory. This is a
 curated runtime export, not permission to redistribute an installed provider:
 matching license/source-notice auditing remains required. Example planning

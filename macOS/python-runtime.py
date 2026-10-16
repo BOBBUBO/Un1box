@@ -80,7 +80,15 @@ def plan_runtime(prefix, version, tkinter, tcl, tk):
     add(prefix / "Python", "Python")
     stdlib = "lib/python" + version
     tree(prefix / stdlib, stdlib, frozenset(("site-packages", "test", "tests", "ensurepip")))
-    add(tkinter, stdlib + "/lib-dynload/" + tkinter.name)
+    tkinter_target = stdlib + "/lib-dynload/" + tkinter.name
+    if tkinter_target in entries:
+        # Python.org providers can already contain this extension. A second
+        # explicit matching input is harmless; differing bytes are not a valid
+        # runtime combination. Keep the explicitly selected provider context.
+        existing = entries.pop(tkinter_target)
+        if existing["sha256"] != sha(tkinter) or existing["bytes"] != tkinter.stat().st_size:
+            raise ValueError("Explicit Tk extension conflicts with the stdlib provider.")
+    add(tkinter, tkinter_target)
     tree(tcl, "lib/" + tcl.name)
     tree(tk, "lib/" + tk.name)
     if not any(p.startswith(stdlib + "/encodings/") for p in entries) or stdlib + "/tkinter/__init__.py" not in entries:
