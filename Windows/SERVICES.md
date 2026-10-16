@@ -5,6 +5,45 @@ Legacy Store search, local IPA installation and installation persistence remain
 required for desktop parity. Merely bundling `Desktop/app_services` does not
 qualify them. This plan does not enable transport or claim Windows execution.
 
+## Current executable milestone
+
+The QEMU-only daemon and owned libusbmuxd connector actually cross-linked at
+95075501; five Win64 images have a complete import closure and the connector's
+21 exports match its public header. Windows execution is still unqualified.
+The remaining required library is libimobiledevice1.4.0. Its verified source
+archive and audited Windows OpenSSL3.6.5 headers/import libraries/DLLs already
+exist locally; no new download or TLS rebuild is needed for the baseline.
+
+`Windows/usbmux/build-mobile.py` builds only that service library using these
+providers. Upstream's libtatsu/curl requirement belongs to the unbuilt
+`ideviceimagemounter` tool; the recipe explicitly guards that configure check,
+builds only `common` and `src`, and disables optional wireless pairing. It does
+not fabricate package metadata or include a second IPA installer. This is a
+source-only recipe pending an allocated compiler run:
+
+```sh
+python3 Windows/usbmux/build-mobile.py \
+  --archive ../../builds/linux-desktop/bullseye-build01/mobile/sources/libimobiledevice-1.4.0.tar.bz2 \
+  --transport ../../builds/windows-native/services-linked02 \
+  --mobile-deps ../../builds/windows-native/services-mobile-deps01 \
+  --tls-prefix ../../builds/windows-native/dependencies01/sysroot/mingw64 \
+  --output ../../builds/windows-native/services-mobile01
+```
+
+Run from the Windows source worktree root. The output must be fresh. A proposed
+finite allocation is 1GiB RAM/no swap/one CPU/128 tasks/180 seconds, with 8GiB
+available RAM floor, then PE export/import inspection. No target execution or
+guest is part of this build. OpenSSL provider support for the SSLv3 needed by
+iPhoneOS1 is unqualified; do not infer all-firmware service compatibility.
+
+The product integration then needs four coordinated changes: a Windows owned
+daemon adapter using the existing `usbmux/session.py` receipt model and private
+Windows storage; an explicit admitted endpoint from that owner to the native
+headless worker after its inherited environment scrub; common Mobile library
+loading and allocator fixes; and a Windows endpoint admission hook in the
+common service helper. Keep catalog/IPA preparation/upload/install/verification
+algorithms in `Desktop/app_services`. Do not enable Apps from linker evidence.
+
 ## Keep one app-services implementation
 
 `Desktop/app_services` remains responsible for catalog/search, IPA validation,
@@ -56,17 +95,15 @@ or malformed endpoint configuration before loading it. A Windows adapter must
 always supply the exact admitted session endpoint and must never select the
 physical/system fallback.
 
-Bare localhost is not an owner-only channel. Before enabling services, select
-and verify a Windows endpoint boundary. The concrete candidate is two
-exclusive loopback listeners with a fresh per-session authentication preface
-on both the libusbmuxd client and QEMU TUSB connections. Retain existing
-protocol payloads after authentication; keep the extension opt-in so current
-POSIX sockets retain their existing protocol. Generate the secret in private
-state, pass it through the owned process environment or protected handles,
-and exclude it from command lines, logs, receipts and public artifacts.
-Unauthenticated clients must time out without blocking guest progress.
-This requires narrow corresponding daemon/libusbmuxd/QEMU connection changes;
-it is a proposal, not an implemented transport guarantee.
+Bare localhost is not an owner-only channel. The built candidate checks native
+reverse established TCP owner rows, holds the peer process handle and compares
+its SID to the current user before protocol bytes. The connector additionally
+requires the exact daemon PID and creation FILETIME. Both listeners bind
+exclusive ephemeral loopback ports. See `usbmux/README.md`; this supersedes the
+earlier authentication-preface proposal. Actual Windows admission, race and
+foreign-user qualification is still required. Same-user processes share the
+trust boundary of an owner-only POSIX socket; launch tokens are identity tags,
+not secrets or an authentication protocol.
 
 Publish endpoint availability only after exclusive bind, owned-child PID and
 creation identity checks, and readiness. Bind the receipt to launch token,
@@ -82,9 +119,9 @@ pairing, logs and temporary IPA data.
 1. Add the narrow native daemon OS adapter and exact dependency/source/license
    manifest. Preserve the existing TUSB/usbmux state machines. Prepare one
    bounded cross-build packet; compilation requires a separate Root allocation.
-2. Add authenticated endpoint admission, failure/cancellation tests and shared
-   allocator/loader/storage hooks with the desktop owner. Test partial and
-   wrong authentication, foreign/missing endpoints, timeouts, stale receipts,
+2. Qualify owned endpoint admission, failure/cancellation behavior and shared
+   allocator/loader/storage hooks with the desktop owner. Test partial guest
+   transfers, foreign/missing endpoints, timeouts, stale receipts,
    simultaneous saved devices and confirmed process retirement.
 3. Stage the new dependencies with a complete PE closure and provenance;
    synthetic tests and Linux cross-compilation remain host evidence only.
