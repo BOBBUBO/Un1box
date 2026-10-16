@@ -89,7 +89,7 @@ public static class BootRecipe
         }
         if (!second && !string.IsNullOrEmpty(device.RomPath))
             throw new InvalidDataException("n81ap boots prepared kboot.bin; clear the separate SecureROM selection.");
-        var args = new List<string> { "-M", machine, "-display", "sdl,gl=off", "-audio", "driver=sdl", "-no-shutdown" };
+        var args = new List<string> { "-M", machine, "-display", "sdl,gl=off,show-cursor=on", "-audio", "driver=sdl", "-no-shutdown" };
         if (second) args.AddRange(["-m", "128M"]);
         if (first) args.AddRange(["-drive", $"if=pflash,format=raw,file={Escape(nor)}"]);
         if (board.UsbKeyboard) args.AddRange(["-device", "usb-kbd,bus=usb-bus.0,max-power=20"]);

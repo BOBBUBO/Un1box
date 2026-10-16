@@ -53,6 +53,7 @@ try
     var n72 = Fixture("n72ap", "7E18", "base72"); var n81 = Fixture("n81ap", "8C148", "base81");
     string state72 = Path.Combine(rootPath, "state72"), state81 = Path.Combine(rootPath, "state81");
     var recipe = BootRecipe.Create(n72, state72, validateOnly: true);
+    Check(recipe[recipe.IndexOf("-display") + 1] == "sdl,gl=off,show-cursor=on", "keep host mouse cursor visible while interacting with guest");
     Check(recipe[1].Contains("bootrom=") && recipe[1].Contains("direct-iboot="), "n72 prepared boot recipe");
     Check(!Directory.Exists(state72), "validation does not mutate writable state");
     var later = BootRecipe.Create(n81, state81);
