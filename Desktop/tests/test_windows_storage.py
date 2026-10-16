@@ -22,7 +22,8 @@ class PathPolicyTests(unittest.TestCase):
     def test_reject_streams_aliases_and_reserved_devices(self):
         for value in [r"C:\base\nor.bin:stream", r"C:\base\..\other", r"C:\base\.\nor.bin",
                       "C:\\base\\trailing.", "C:\\base\\trailing ", r"C:\base\con", r"C:\base\AUX.bin",
-                      r"C:\base\lpt9.txt", "C:\\base\\bad\nname", "C:\\base\\?wild"]:
+                      r"C:\base\lpt9.txt", r"C:\base\COM¹", r"C:\base\CONIN$", r"C:\base\con .txt",
+                      "C:\\base\\bad\nname", "C:\\base\\?wild"]:
             with self.subTest(value=value), self.assertRaises(ValueError): checked_path(value)
 
     def test_non_reserved_prefix_is_ordinary_filename(self):
