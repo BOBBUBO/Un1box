@@ -59,14 +59,14 @@ try
     Check(later[1].Contains("kboot=") && !later[1].Contains("bootrom="), "n81 prepared kboot without separate ROM");
     Check(later[1].Contains("nand-overlay=") && later[1].Contains("nor-rw="), "n81 writable NAND and NOR isolated");
     Reject(() => BootRecipe.Create(n81 with { RomPath = n72.RomPath }, state81), "reject unrelated n81 ROM");
-    Check(File.ReadAllBytes(Path.Combine(n81.BasePath, "nor.bin")).SequenceEqual([0, 1, 2, 3]), "base NOR unchanged");
+    Check(File.ReadAllBytes(Path.Combine(n81.BasePath, "nor.bin")).SequenceEqual(new byte[] { 0, 1, 2, 3 }), "base NOR unchanged");
     string other = Path.Combine(rootPath, "other81"); Directory.CreateDirectory(Path.Combine(other, "nand"));
     foreach (string file in new[] { "device.lock.json", "nor.bin", "kboot.bin" }) File.Copy(Path.Combine(n81.BasePath, file), Path.Combine(other, file));
     Reject(() => BootRecipe.Create(n81 with { BasePath = other }, state81), "reject same-metadata different base sharing state");
     Check(BootRecipe.Escape("C:\\a,b") == "C:\\a,,b", "escape QEMU option commas");
     string archive = MakeArchive("valid.itbase", ("device.lock.json", "{}"u8.ToArray()), ("nand/data", new byte[] { 0, 1, 2, 255 }));
     string extracted = Path.Combine(rootPath, "extracted"); PreparedArchive.Extract(archive, extracted);
-    Check(File.ReadAllBytes(Path.Combine(extracted, "nand/data")).SequenceEqual([0, 1, 2, 255]), "stream prepared archive exactly");
+    Check(File.ReadAllBytes(Path.Combine(extracted, "nand/data")).SequenceEqual(new byte[] { 0, 1, 2, 255 }), "stream prepared archive exactly");
     foreach (string bad in new[] { "../escape", "C:/escape", "NUL.txt", "COM¹.txt", "nand\\bad", "file:stream", "trailing." })
     {
         string broken = MakeArchive("bad.itbase", ("device.lock.json", []), (bad, [1]));

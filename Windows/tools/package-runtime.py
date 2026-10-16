@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 
-SYSTEM = set('advapi32 avrt bcrypt bcryptprimitives cabinet cfgmgr32 comctl32 comdlg32 crypt32 d3d9 d3d11 dbghelp dnsapi dwmapi dxgi gdi32 hid imm32 iphlpapi kernel32 kernelbase mpr msvcrt mswsock ncrypt normaliz ole32 oleaut32 powrprof psapi rpcrt4 secur32 setupapi shell32 shlwapi user32 userenv ucrtbase usp10 version winhttp wininet winmm winspool wintrust ws2_32 wtsapi32'.split())
+SYSTEM = set('advapi32 avrt bcrypt bcryptprimitives cabinet cfgmgr32 comctl32 comdlg32 crypt32 d3d9 d3d11 dbghelp dnsapi dwmapi dxgi gdi32 hid imm32 iphlpapi kernel32 kernelbase mpr msvcrt mswsock ncrypt normaliz ole32 oleaut32 opengl32 powrprof psapi rpcrt4 secur32 setupapi shell32 shlwapi user32 userenv ucrtbase usp10 version winhttp wininet winmm winspool wintrust ws2_32 wtsapi32'.split())
 
 
 def imports(path):
