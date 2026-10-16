@@ -5,6 +5,72 @@ import Testing
 
 /// usbmuxd that dies is started again on the sockets the emulator dials, a few times; given up, a new boot starts it.
 struct USBMuxTests {
+    /// A shared host never adopts a stale PID file and never removes endpoints
+    /// owned by its publisher. Joining the task is the process-retirement proof.
+    @Test func managedStopJoinsOwnedChildAndPreservesForeignState() async throws {
+        try await withScratchDirectory { directory in
+            let daemon = directory.appendingPathComponent("usbmuxd")
+            try "#!/bin/sh\nexec /bin/sleep 60\n".write(to: daemon, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: daemon.path)
+            let paths = managedPaths(directory)
+            try FileManager.default.createDirectory(at: paths.work, withIntermediateDirectories: true)
+            let unrelated = Process()
+            unrelated.executableURL = URL(fileURLWithPath: "/bin/sleep")
+            unrelated.arguments = ["60"]
+            try unrelated.run()
+            defer { unrelated.terminate(); unrelated.waitUntilExit() }
+            let stale = "\(unrelated.processIdentifier)\n"
+            try stale.write(to: paths.usbmuxPID, atomically: true, encoding: .utf8)
+            let client = directory.appendingPathComponent("client")
+            let guest = directory.appendingPathComponent("guest")
+            for path in [client, guest] {
+                try "publisher-owned sentinel".write(to: path, atomically: true, encoding: .utf8)
+            }
+            let mux = USBMux(binary: daemon.path, restartOnExit: false)
+            let endpoint = USBMux.Session(clientSocket: "UNIX:" + client.path, guestAddress: guest.path)
+            #expect(mux.startManaged(paths: paths, session: endpoint) != nil)
+            await eventually("owned child started") { mux.childIsRunning }
+            let pid = try #require(mux.processIdentifier)
+            // Legacy synchronous callers must not discard a managed task.
+            mux.stop()
+            let first = Task { await mux.stopAndWait() }
+            let second = Task { await mux.stopAndWait() }
+            await first.value; await second.value
+            #expect(mux.processIdentifier == nil && !mux.childIsRunning && mux.session == nil)
+            #expect(StorageLocations.daemonIdentity(pid) == nil, "the exact child has been reaped")
+            #expect(unrelated.isRunning, "a stale PID file grants no signalling authority")
+            #expect(try String(contentsOf: paths.usbmuxPID, encoding: .utf8) == stale)
+            for path in [client, guest] {
+                #expect(try String(contentsOf: path, encoding: .utf8) == "publisher-owned sentinel")
+            }
+        }
+    }
+
+    @Test func managedUnexpectedExitNeverRestarts() async throws {
+        try await withScratchDirectory { directory in
+            let daemon = directory.appendingPathComponent("usbmuxd")
+            let starts = directory.appendingPathComponent("starts")
+            try "#!/bin/sh\necho started >> '\(starts.path)'\n".write(to: daemon, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: daemon.path)
+            var unavailable = false
+            let mux = USBMux(binary: daemon.path, restartOnExit: false) { unavailable = true }
+            let endpoint = USBMux.Session(clientSocket: "UNIX:" + directory.appendingPathComponent("c.sock").path,
+                                          guestAddress: directory.appendingPathComponent("g.sock").path)
+            #expect(mux.startManaged(paths: managedPaths(directory), session: endpoint) != nil)
+            await eventually("unexpected child exit revoked session") { unavailable }
+            mux.ensureRunning()
+            await mux.stopAndWait()
+            #expect(try String(contentsOf: starts, encoding: .utf8) == "started\n")
+            #expect(mux.session == nil && mux.processIdentifier == nil)
+        }
+    }
+
+    private func managedPaths(_ directory: URL) -> DeviceInstance.Paths {
+        DeviceInstance.Paths(directory: directory, base: directory, overlay: directory, writableNOR: nil,
+            snapshot: directory.appendingPathComponent("snapshot"), usbmuxConf: directory.appendingPathComponent("conf"),
+            work: directory.appendingPathComponent("work"), logs: directory.appendingPathComponent("logs"))
+    }
+
     /// State audit A-11: an unexpected daemon death left app management off until Force Stop then Start.
     @Test func aDaemonThatDiesStartsAgainOnItsSockets() async throws {
         try await withScratchDirectory { directory in

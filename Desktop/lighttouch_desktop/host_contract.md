@@ -90,10 +90,26 @@ Malformed/stale/mismatched receipts invalidate the endpoint. NativeClientBridge
 uses the existing finite app_services.helper installer/info commands and never
 starts/stops a daemon, unlinks a socket or loads mobile libraries in the launcher.
 
-This is a consumer source contract, not Mac guest app-services acceptance. The
-current SharedHost NativeSession disables usbAddress and owns no USBMux daemon;
-DeviceRuntime owns the guest helper only. A future native implementation must
-own and confirm USBMux stop/reap before claiming a clean FINAL, publish receipts,
-and package exact mobile/plist dependencies. MacHost still returns unavailable
-and Apps stays disabled. The source contract does not enable guest networking or
-qualify real LegacyStore/IPA installation.
+SharedHost now has an optional native publisher, enabled only by an explicit
+`run --usbmuxd /canonical/executable` plus the fresh launch token. Missing or
+invalid service inputs publish unavailable and do not prevent ordinary guest
+boot. After stopped firmware admission, it starts the existing USBMux transport
+once with fresh private endpoints, waits at most five seconds for the live child
+and both owner-only socket nodes, then supplies only that guest endpoint to
+BootConfig. A ready receipt means endpoint admission; it does not establish
+guest pairing, protocol health, app installation or launch.
+
+Managed USBMux neither adopts stale PID files nor restarts automatically, and
+does not unlink publisher-owned endpoints. NativeSession revokes clients before
+Stop, awaits the exact daemon task's TERM/five-second/KILL/reap teardown after
+helper retirement, and removes only previously observed matching socket inodes
+in its original private folder. Unknown/replaced files remain; unsuccessful
+cleanup keeps the native dirty marker and forbids a clean FINAL. Concurrent
+retirement calls join the same task. DeviceRuntime remains the guest helper's
+sole owner.
+
+Publisher source and consumer tests do not qualify native compilation or guest
+app services. MacHost still returns unavailable and Apps stays disabled until
+the native build, packaged daemon/mobile/plist closure and actual guest
+LegacyStore/local IPA installation and launch are verified. This source slice
+does not enable guest networking.

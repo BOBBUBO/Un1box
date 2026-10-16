@@ -18,16 +18,25 @@ import System
 /// Observable: `session` is whether app management has a daemon (the controller's canManageApps).
 @MainActor @Observable public final class USBMux {
     /// `binary`: another daemon (tests); nil, the bundled one.
-    public init(session: Session? = nil, binary: String? = nil, onUnexpectedExit: (() -> Void)? = nil) {
+    public init(session: Session? = nil, binary: String? = nil, restartOnExit: Bool = true, onUnexpectedExit: (() -> Void)? = nil) {
         self.session = session
         self.binaryOverride = binary
+        self.restartOnExit = restartOnExit
         self.onUnexpectedExit = onUnexpectedExit
     }
     private let binaryOverride: String?
+    private let restartOnExit: Bool
+    private var retirement: Task<Void, Never>?
+    private var externallyManagedEndpoints = false
 
     public struct Session: Sendable {
         public let clientSocket: String  // USBMUXD_SOCKET_ADDRESS for host tools: "UNIX:<path>"
         public let guestAddress: String  // usb-tcp-addr the VM dials out to: a socket path
+
+        public init(clientSocket: String, guestAddress: String) {
+            self.clientSocket = clientSocket
+            self.guestAddress = guestAddress
+        }
 
         /// Fresh socket paths under the per-user temporary directory (a Unix socket path stays under 104 bytes).
         public static func make() -> (session: Session, client: String) {
@@ -40,6 +49,12 @@ import System
     public private(set) var session: Session?
     private var daemonTask: Task<Void, Never>?
     private var daemonPID: pid_t?
+    public var processIdentifier: pid_t? { daemonPID }
+    public var childIsRunning: Bool {
+        guard let pid = daemonPID, let identity = StorageLocations.daemonIdentity(pid),
+            identity.parent == getpid(), identity.uid == geteuid() else { return false }
+        return Self.isRunning(pid)
+    }
 
     /// Called on the main actor if the daemon exits without us stopping it —
     /// the health signal that flips `canManageApps` off and tells the UI USB
@@ -110,6 +125,19 @@ import System
     /// devices' daemons never collide.
     @discardableResult
     public func start(paths: DeviceInstance.Paths) -> Session? {
+        start(paths: paths, supplied: nil, reapPrevious: true)
+    }
+
+    /// Explicit shared-host owner: fresh private endpoints supplied by that
+    /// owner, no stale PID-file adoption/signalling. Await stopAndWait before
+    /// releasing the native owner or reporting a clean terminal receipt.
+    @discardableResult
+    public func startManaged(paths: DeviceInstance.Paths, session: Session) -> Session? {
+        start(paths: paths, supplied: session, reapPrevious: false)
+    }
+
+    private func start(paths: DeviceInstance.Paths, supplied: Session?, reapPrevious: Bool) -> Session? {
+        guard daemonTask == nil, retirement == nil else { return nil }
         let binary = binaryOverride ?? Self.binary
         guard FileManager.default.isExecutableFile(atPath: binary) else {
             logEvent("usbmux: no binary at \(binary); app management disabled")
@@ -127,7 +155,8 @@ import System
             )
             return nil
         }
-        pidFile = paths.usbmuxPID.path
+        externallyManagedEndpoints = supplied != nil
+        pidFile = reapPrevious ? paths.usbmuxPID.path : nil
         // A daemon from a previous run survives anything that skips stop() —
         // Xcode's stop button is a SIGKILL — and orphans accumulate one per
         // dev cycle. The pid file names the only process this may kill, and
@@ -135,7 +164,7 @@ import System
         // else's process.
         reapStaleDaemon(pidFile)
 
-        let session = Session.make().session
+        let session = supplied ?? Session.make().session
         restarts = 0
         launch(session, paths: paths)
         return session
@@ -144,7 +173,7 @@ import System
     /// A boot begins (Restart, Power On): a daemon that was given up on starts again on the sockets the emulator
     /// dials (state audit A-11).
     public func ensureRunning() {
-        guard session == nil, let launched else { return }
+        guard restartOnExit, retirement == nil, session == nil, let launched else { return }
         logEvent("usbmux: starting the daemon again for the new boot")
         restarts = 0
         launch(launched.session, paths: launched.paths)
@@ -154,7 +183,7 @@ import System
         let clientSocket = String(session.clientSocket.dropFirst("UNIX:".count))
         let guestAddress = session.guestAddress
         // A dead daemon leaves its socket files behind.
-        session.paths.forEach { unlink($0) }
+        if !externallyManagedEndpoints { session.paths.forEach { unlink($0) } }
         self.session = session
         launched = (session, paths)
 
@@ -184,6 +213,8 @@ import System
                     capture?.flush()
                     try? fallback?.close()
                 }
+                var options = PlatformOptions()
+                options.teardownSequence = [.send(signal: .terminate, allowedDurationToNextStep: .seconds(5))]
                 _ = try await run(
                     .path(FilePath(binary)),
                     arguments: [
@@ -197,6 +228,7 @@ import System
                         // device restored from a snapshot.
                         "USBMUXD_QEMU_DELAY": "0",
                     ]),
+                    platformOptions: options,
                     input: .none,
                     output: .fileDescriptor(log, closeAfterSpawningProcess: false),
                     error: .fileDescriptor(log, closeAfterSpawningProcess: false)
@@ -242,7 +274,7 @@ import System
     private func daemonDidDie() {
         guard let session, let launched else { return }  // already torn down by stop()
         daemonPID = nil
-        if restarts < Self.restartLimit {
+        if restartOnExit && restarts < Self.restartLimit {
             restarts += 1
             logEvent("usbmux: daemon exited unexpectedly; starting it again (\(restarts) of \(Self.restartLimit))")
             launch(session, paths: launched.paths)
@@ -295,7 +327,37 @@ import System
         return pid
     }
 
+    /// Cancellation joins Subprocess.run's TERM/5s/KILL/reap teardown before
+    /// returning. Shared hosts must use this path; synchronous stop() alone
+    /// cannot establish process retirement. Concurrent callers join one task.
+    public func stopAndWait() async {
+        if let retirement { await retirement.value; return }
+        let pending = daemonTask
+        let endpoints = session ?? launched?.session
+        let oldPIDFile = pidFile
+        let removeEndpoints = !externallyManagedEndpoints
+        session = nil; launched = nil
+        pending?.cancel()
+        let joined = Task { @MainActor in
+            await pending?.value
+            if removeEndpoints { endpoints?.paths.forEach { unlink($0) } }
+            if let oldPIDFile { try? FileManager.default.removeItem(atPath: oldPIDFile) }
+        }
+        retirement = joined
+        await joined.value
+        daemonPID = nil; daemonTask = nil; pidFile = nil
+        retirement = nil
+    }
+
     public func stop() {
+        if externallyManagedEndpoints {
+            // Shared-host callers must subsequently await stopAndWait(). Keep
+            // the exact task until it is joined; never signal a possibly reused
+            // pid or remove sockets belonging to the explicit endpoint owner.
+            daemonTask?.cancel()
+            session = nil
+            return
+        }
         // Kill synchronously: app termination won't wait for the async teardown
         // the task cancellation would otherwise run. Only ever our own child.
         if let pid = daemonPID { kill(pid, SIGTERM) }
