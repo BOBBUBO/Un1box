@@ -108,6 +108,83 @@ int main() {
     std::string source = input.string(), destination = (root / "base").string(), expected = sha(read(input));
     lt_import_config config{sizeof(config), 1, source.c_str(), destination.c_str(), expected.c_str(), 0, nullptr, nullptr};
     lt_error error{sizeof(error), 1, 0, {}};
+    // A caller-written stage publishes by rename, with no recopy. Failed or
+    // cancelled finalization leaves it for the caller, including frozen modes.
+    auto make_stage = [&] {
+        const auto stage = root / ".lt-import-caller";
+        fs::create_directory(stage);
+        fs::permissions(stage, fs::perms::owner_all);
+        for (const auto &file : entries) {
+            fs::create_directories((stage / file.first).parent_path());
+            put(stage / file.first, file.second);
+            fs::permissions(stage / file.first, fs::perms::owner_read | fs::perms::owner_write);
+        }
+        fs::permissions(stage / "nand", fs::perms::owner_all);
+        return stage;
+    };
+    std::string stage_path = make_stage().string();
+    lt_finalize_import_config finalize{sizeof(finalize), 1, stage_path.c_str(), destination.c_str()};
+    struct stat staged_inode {}, published_inode {};
+    assert(stat((fs::path(stage_path) / "nand/allzero").c_str(), &staged_inode) == 0);
+    Observation finalized;
+    const auto finalized_status = lt_finalize_import_observed(&finalize, Observation::notify, &finalized, &error);
+    if (finalized_status != LT_OK)
+        std::cerr << error.message << "\n";
+    assert(finalized_status == LT_OK);
+    assert((finalized.phases == std::vector<std::string>{"verifying"}));
+    assert(!fs::exists(stage_path) && fs::exists(destination));
+    assert(stat((fs::path(destination) / "nand/allzero").c_str(), &published_inode) == 0);
+    assert(staged_inode.st_dev == published_inode.st_dev && staged_inode.st_ino == published_inode.st_ino);
+    assert((fs::status(destination).permissions() & fs::perms::owner_write) == fs::perms::none);
+    discard(destination);
+    for (bool frozen : {false, true}) {
+        make_stage();
+        Observation cancel;
+        if (frozen)
+            cancel.cancel_after_immutable = root;
+        else {
+            cancel.cancel = "verifying";
+            cancel.after_progress = true;
+        }
+        assert(lt_finalize_import_observed(&finalize, Observation::notify, &cancel, &error) == LT_CANCELLED);
+        assert(!fs::exists(destination) && read(fs::path(stage_path) / "nand/allzero") == nand.at("allzero"));
+        discard(stage_path);
+    }
+    make_stage();
+    fs::create_directory(destination);
+    put(fs::path(destination) / "keep", "existing destination");
+    assert(lt_finalize_import(&finalize, &error) == LT_INVALID);
+    assert(read(fs::path(destination) / "keep") == "existing destination" && fs::exists(stage_path));
+    discard(destination);
+    discard(stage_path);
+    make_stage();
+    put(fs::path(stage_path) / "nand/mixed", "tampered");
+    assert(lt_finalize_import(&finalize, &error) == LT_INVALID);
+    assert(fs::exists(stage_path) && !fs::exists(destination));
+    discard(stage_path);
+    for (bool hardlink : {false, true}) {
+        make_stage();
+        const auto external = root / "outside";
+        put(external, "external data");
+        if (hardlink)
+            fs::create_hard_link(external, fs::path(stage_path) / "alias");
+        else
+            fs::create_symlink(external, fs::path(stage_path) / "alias");
+        assert(lt_finalize_import(&finalize, &error) == LT_INVALID);
+        assert((fs::status(external).permissions() & fs::perms::owner_write) != fs::perms::none);
+        assert(fs::exists(stage_path) && !fs::exists(destination));
+        discard(stage_path);
+        fs::remove(external);
+    }
+    make_stage();
+    fs::create_directory(root / "other");
+    std::string other_destination = (root / "other/base").string();
+    finalize.destination = other_destination.c_str();
+    assert(lt_finalize_import(&finalize, &error) == LT_INVALID && fs::exists(stage_path));
+    finalize.destination = destination.c_str();
+    fs::permissions(stage_path, fs::perms::group_read, fs::perm_options::add);
+    assert(lt_finalize_import(&finalize, &error) == LT_INVALID && fs::exists(stage_path));
+    discard(stage_path);
     Observation observed;
     assert(lt_import_archive_observed(&config, Observation::notify, &observed, &error) == LT_OK);
     assert((observed.phases == std::vector<std::string>{"hashing", "extracting", "verifying"}));

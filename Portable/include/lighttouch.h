@@ -87,6 +87,19 @@ lt_status lt_import_directory(const lt_import_config *, lt_error *);
 typedef int (*lt_import_phase_fn)(void *, const char *phase, uint64_t done, uint64_t total);
 lt_status lt_import_archive_observed(const lt_import_config *, lt_import_phase_fn, void *, lt_error *);
 lt_status lt_import_directory_observed(const lt_import_config *, lt_import_phase_fn, void *, lt_error *);
+/* Validate/freeze and atomically publish an already-written private sibling
+ * stage without copying it. Stage must be an owned 0700 directory; descendants
+ * must be owned regular single-link files/directories with no external writers.
+ * Failure/cancellation before publication retains the stage for caller cleanup;
+ * permissions may already be frozen. Publication consumes the stage path. A
+ * subsequent parent-sync error can return failure with destination published.
+ * Concurrent mutation of stage during the call is forbidden. */
+typedef struct {
+    uint32_t size, version;
+    const char *stage, *destination;
+} lt_finalize_import_config;
+lt_status lt_finalize_import(const lt_finalize_import_config *, lt_error *);
+lt_status lt_finalize_import_observed(const lt_finalize_import_config *, lt_import_phase_fn, void *, lt_error *);
 lt_status lt_sha256_file(const char *path, char hex[65], lt_error *);
 /* Device handle holds an exclusive flock lease until close. Base must be separate
  * from state. State is pinned to base lock checksum. Dirty state is never erased:

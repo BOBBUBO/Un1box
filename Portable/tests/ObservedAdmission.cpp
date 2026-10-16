@@ -55,13 +55,13 @@ static void word(std::string &bytes, size_t offset, uint32_t value) {
 }
 static void packed_contracts(const fs::path &root) {
     // Two records, a hole, and the largest valid record index. This fixture
-    // follows the engine's little-endian ITNAND01 layout, with tiny dimensions.
-    std::string valid(24 + 3 * 4 + 2 * 4160, '\0');
+    // follows the common importer's full-address-space ITNAND01 layout.
+    std::string valid(24 + 4 * 524288 * 4 + 2 * 4160, '\0');
     valid.replace(0, 8, "ITNAND01");
     word(valid, 8, 4096);
     word(valid, 12, 64);
-    word(valid, 16, 1);
-    word(valid, 20, 3);
+    word(valid, 16, 4);
+    word(valid, 20, 524288);
     word(valid, 24, 1);
     word(valid, 32, 2);
     struct Case {
@@ -75,7 +75,9 @@ static void packed_contracts(const fs::path &root) {
                             {"overflow-dimensions", valid}, {"short-index", valid.substr(0, 35)},
                             {"short-record", valid.substr(0, valid.size() - 1)}, {"slot-outside-file", valid},
                             {"wrong-page-count", valid}, {"bad-checksum", valid}, {"n81-packed", valid},
-                            {"unknown-format", valid}, {"ambiguous-listing", valid}, {"missing-source", valid}};
+                            {"unknown-format", valid}, {"ambiguous-listing", valid}, {"missing-source", valid},
+                            {"duplicate-slot", valid}, {"unreferenced-record", valid},
+                            {"empty-records", valid.substr(0, 24 + 4 * 524288 * 4)}};
     cases[1].bytes[0] = '!'; cases[1].expected = "magic";
     cases[2].expected = "header";
     word(cases[3].bytes, 8, 2048); cases[3].expected = "page geometry";
@@ -95,6 +97,9 @@ static void packed_contracts(const fs::path &root) {
     cases[16].format = "other"; cases[16].expected = "only for n72";
     cases[17].mixed_listing = true; cases[17].expected = "integrity record";
     cases[18].missing_source = true; cases[18].expected = "source_listing_sha256";
+    word(cases[19].bytes, 32, 1); cases[19].expected = "duplicate";
+    word(cases[20].bytes, 32, 0); cases[20].expected = "unreferenced";
+    word(cases[21].bytes, 24, 0); word(cases[21].bytes, 32, 0); cases[21].pages = 0;
     for (const auto &fixture : cases) {
         const fs::path base = root / fixture.name / "base", state = base.parent_path() / "state";
         put(base / "nand", fixture.bytes);
@@ -132,7 +137,7 @@ static void packed_contracts(const fs::path &root) {
         }
         assert(result == LT_OK && device);
         // Structural index checks do not inflate the asset hashing progress.
-        observation.complete(valid.size() + 3 + 3 + 4);
+        observation.complete(fixture.bytes.size() + 3 + 3 + 4);
         const auto rom = root / "rom";
         put(rom, "synthetic ROM");
         const std::string rom_path = rom.string();
