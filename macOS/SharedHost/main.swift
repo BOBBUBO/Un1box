@@ -4,6 +4,18 @@ import Foundation
 signal(SIGPIPE, SIG_IGN)
 setvbuf(stdout, nil, _IOLBF, 0)
 
+// Asset-free packaging diagnostic. It runs before native session admission,
+// engine loading, windows, storage leases or guest/helper creation.
+if Array(CommandLine.arguments.dropFirst()) == ["--runtime-info"] {
+    let value: [String: Any] = ["format": "lighttouch-native-runtime-info", "version": 1,
+        "bundle_url": Bundle.main.bundleURL.path,
+        "executable_url": Bundle.main.executableURL?.path ?? "",
+        "guest_started": false]
+    let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+    try FileHandle.standardOutput.write(contentsOf: data + Data("\n".utf8))
+    exit(0)
+}
+
 do {
     let arguments = try HostArguments(Array(CommandLine.arguments.dropFirst()))
     if arguments.operation == "run" {
