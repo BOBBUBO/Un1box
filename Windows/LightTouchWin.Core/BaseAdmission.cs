@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Buffers.Binary;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -48,7 +49,20 @@ public static class BaseAdmission
                 throw new InvalidDataException("Prepared base requires authoritative " + name + " integrity.");
             _ = Digest(record, listing ? "listing_sha256" : "sha256");
         }
-        Require("nand", "nand", true); Require("nor", "nor.bin");
+        var nandRecord = outputs.GetProperty("nand");
+        bool packedNand = nandRecord.TryGetProperty("format", out var nandFormat) && nandFormat.GetString() == "ITNAND01";
+        long packedPages = 0;
+        if (packedNand)
+        {
+            if (root.GetProperty("board").GetString() != "n72ap" || nandRecord.TryGetProperty("listing_sha256", out _) ||
+                !nandRecord.TryGetProperty("pages", out var pages) || !pages.TryGetInt64(out packedPages) ||
+                packedPages is < 0 or > 2_097_152)
+                throw new InvalidDataException("Unsupported packed NAND integrity record.");
+            if (Digest(nandRecord, "source_listing_sha256") != nandRecord.GetProperty("source_listing_sha256").GetString() ||
+                Digest(nandRecord, "sha256") != nandRecord.GetProperty("sha256").GetString())
+                throw new InvalidDataException("Packed NAND integrity digests must use lowercase SHA-256.");
+        }
+        Require("nand", "nand", !packedNand); Require("nor", "nor.bin");
         if (root.GetProperty("board").GetString() == "n72ap")
         {
             Require("gid_blobs", "gid-blobs.bin");
@@ -120,6 +134,11 @@ public static class BaseAdmission
                     {
                         using var source = Open(path); using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                         if (source.Length != size) throw new InvalidDataException("Prepared file changed size: " + path);
+                        if (packedNand && path == Path.Combine(directory, "nand"))
+                        {
+                            VerifyPackedNand(source, packedPages);
+                            source.Position = 0;
+                        }
                         long count = 0; int n;
                         while ((n = source.Read(buffer, 0, buffer.Length)) != 0)
                         {
@@ -149,5 +168,40 @@ public static class BaseAdmission
                 throw new InvalidDataException("NAND listing checksum or page count differs.");
         }
         progress?.Invoke(done, total);
+    }
+
+    internal static void VerifyPackedNand(Stream source, long pages)
+    {
+        const int slots = 4 * 524288, recordSize = 4096 + 64;
+        const long recordsOffset = 24L + slots * 4L;
+        if (pages is < 0 or > slots || source.Length != recordsOffset + pages * recordSize)
+            throw new InvalidDataException("Packed NAND is truncated or its record count differs.");
+        Span<byte> header = stackalloc byte[24]; source.ReadExactly(header);
+        if (!header[..8].SequenceEqual("ITNAND01"u8) ||
+            BinaryPrimitives.ReadUInt32LittleEndian(header[8..]) != 4096 ||
+            BinaryPrimitives.ReadUInt32LittleEndian(header[12..]) != 64 ||
+            BinaryPrimitives.ReadUInt32LittleEndian(header[16..]) != 4 ||
+            BinaryPrimitives.ReadUInt32LittleEndian(header[20..]) != 524288)
+            throw new InvalidDataException("Unsupported packed NAND geometry.");
+        byte[] index = new byte[64 * 1024];
+        byte[] seen = new byte[(pages + 7) / 8];
+        long referenced = 0;
+        for (int remaining = slots * 4; remaining > 0; remaining -= index.Length)
+        {
+            source.ReadExactly(index);
+            for (int offset = 0; offset < index.Length; offset += 4)
+            {
+                uint record = BinaryPrimitives.ReadUInt32LittleEndian(index.AsSpan(offset, 4));
+                if (record > pages)
+                    throw new InvalidDataException("Packed NAND index points outside its records.");
+                if (record == 0) continue;
+                int bit = (int)record - 1;
+                if ((seen[bit / 8] & (1 << (bit % 8))) != 0)
+                    throw new InvalidDataException("Packed NAND index repeats a record.");
+                seen[bit / 8] |= (byte)(1 << (bit % 8));
+                ++referenced;
+            }
+        }
+        if (referenced != pages) throw new InvalidDataException("Packed NAND has unreachable records.");
     }
 }

@@ -8,12 +8,12 @@ struct HostArguments: Sendable {
     enum Failure: Error { case usage(String) }
 
     init(_ argv: [String]) throws {
-        guard let operation = argv.first, ["run", "import"].contains(operation) else {
-            throw Failure.usage("Use run or import with explicit shared-desktop paths.")
+        guard let operation = argv.first, ["run", "import", "finalize-import"].contains(operation) else {
+            throw Failure.usage("Use run, import or finalize-import with explicit shared-desktop paths.")
         }
         let allowed: Set<String> = operation == "run"
             ? ["id", "name", "base", "state", "package", "engine", "helper", "firmwarekit", "rom", "usbmuxd"]
-            : ["source", "destination", "sha256"]
+            : operation == "finalize-import" ? ["stage", "destination"] : ["source", "destination", "sha256"]
         var values: [String: String] = [:]
         var flags: Set<String> = []
         var index = 1
@@ -39,7 +39,7 @@ struct HostArguments: Sendable {
         }
         self.operation = operation; self.values = values; self.flags = flags
     }
-    func url(_ key: String) -> URL { URL(fileURLWithPath: values[key]!) }
+    nonisolated func url(_ key: String) -> URL { URL(fileURLWithPath: values[key]!) }
 }
 
 /// One bounded input line over the launcher's private inherited pipe. EOF asks

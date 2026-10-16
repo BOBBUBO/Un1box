@@ -28,7 +28,21 @@ public static class BootRecipe
             return p;
         }
         var nand = Path.GetFullPath(Path.Combine(device.BasePath, "nand"));
-        if (!Directory.Exists(nand)) throw new DirectoryNotFoundException($"Prepared NAND directory not found: {nand}");
+        if (!Directory.Exists(nand))
+        {
+            if (!second || !root.TryGetProperty("outputs", out var outputs) ||
+                !outputs.TryGetProperty("nand", out var record) ||
+                !record.TryGetProperty("format", out var format) || format.GetString() != "ITNAND01" ||
+                record.GetProperty("path").GetString() != "nand" || record.TryGetProperty("listing_sha256", out _) ||
+                !record.TryGetProperty("sha256", out var digest) || digest.GetString() is not { Length: 64 } sha ||
+                sha.Any(c => !char.IsAsciiHexDigit(c) || char.IsUpper(c)) ||
+                !record.TryGetProperty("source_listing_sha256", out var provenance) || provenance.GetString() is not { Length: 64 } listing ||
+                listing.Any(c => !char.IsAsciiHexDigit(c) || char.IsUpper(c)) || !File.Exists(nand) ||
+                (File.GetAttributes(nand) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException($"Prepared NAND is not a supported directory or n72 packed image: {nand}");
+            using var packed = File.OpenRead(nand);
+            BaseAdmission.VerifyPackedNand(packed, record.GetProperty("pages").GetInt64());
+        }
         var norSource = FileAt("nor.bin");
         var nor = Path.Combine(Path.GetFullPath(state), "nor.bin");
         var overlay = Path.Combine(Path.GetFullPath(state), "overlay");

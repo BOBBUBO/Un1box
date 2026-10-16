@@ -80,3 +80,66 @@ nonisolated func importArchive(_ args: HostArguments) throws {
     published = true
     hostLine("import 100%")
 }
+
+/// Finalize only the import worker's private, unpublished sibling stage.
+/// Cleanup belongs to the caller; this operation never re-extracts or copies it.
+nonisolated func finalizeImport(_ args: HostArguments) throws {
+    let fm = FileManager.default
+    let stage = args.url("stage"), destination = args.url("destination")
+    let parent = stage.deletingLastPathComponent()
+    guard stage.standardizedFileURL != destination.standardizedFileURL,
+        parent.standardizedFileURL == destination.deletingLastPathComponent().standardizedFileURL
+    else { throw HostArguments.Failure.usage("Stage and destination must be distinct siblings.") }
+    for path in [parent, stage] {
+        var info = stat()
+        guard lstat(path.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
+            info.st_uid == getuid(), info.st_mode & 0o077 == 0,
+            StoragePathAuthority.canonicalPath(path) == path.standardizedFileURL.path
+        else { throw HostArguments.Failure.usage("Import requires private owned directories without links.") }
+    }
+    var target = stat()
+    guard lstat(destination.path, &target) != 0, errno == ENOENT else { throw POSIXError(.EEXIST) }
+    try Task.checkCancellation()
+    hostLine("import phase=verifying percent=0 done=0 total=1")
+    try PreparedBase.verifySharedImport(stage)
+    hostLine("import phase=verifying percent=100 done=1 total=1")
+    var protecting = false, published = false
+    defer {
+        // Frozen staged permissions must not prevent the caller's cancellation
+        // cleanup. Completed destinations are never changed on this path.
+        if protecting && !published {
+            _ = chmod(stage.path, 0o700)
+            if let walk = fm.enumerator(atPath: stage.path) {
+                while let name = walk.nextObject() as? String {
+                    let path = stage.appendingPathComponent(name)
+                    var info = stat()
+                    if lstat(path.path, &info) == 0, info.st_uid == getuid(),
+                        [S_IFDIR, S_IFREG].contains(info.st_mode & S_IFMT) {
+                        _ = chmod(path.path, info.st_mode | mode_t(0o200))
+                    }
+                }
+            }
+        }
+    }
+    protecting = true
+    hostLine("import phase=protecting percent=0 done=0 total=1")
+    guard let walk = fm.enumerator(atPath: stage.path) else { throw POSIXError(.EIO) }
+    while let name = walk.nextObject() as? String {
+        try Task.checkCancellation()
+        let path = stage.appendingPathComponent(name)
+        var info = stat()
+        guard lstat(path.path, &info) == 0, info.st_uid == getuid(),
+            [S_IFDIR, S_IFREG].contains(info.st_mode & S_IFMT),
+            info.st_mode & S_IFMT != S_IFREG || info.st_nlink == 1,
+            chmod(path.path, info.st_mode & ~mode_t(0o222)) == 0
+        else { throw POSIXError(.EIO) }
+    }
+    guard chmod(stage.path, 0o500) == 0 else { throw POSIXError(.EIO) }
+    hostLine("import phase=protecting percent=100 done=1 total=1")
+    try Task.checkCancellation()
+    guard renamex_np(stage.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    published = true
+    hostLine("import phase=publishing percent=100 done=1 total=1")
+}

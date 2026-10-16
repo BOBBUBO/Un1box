@@ -60,6 +60,66 @@ static async Task<int> MainWindows(string[] arguments)
             lastPhase = phase; importProgressClock.Restart();
         }
     }
+    if (arguments[0] == "finalize-import")
+    {
+        if (options.Keys.Any(k => k is not ("--stage" or "--destination" or "--validation-cache")))
+            throw new ArgumentException("Unknown finalize-import option.");
+        string stage = PrivateWindows.Full(Need("--stage")), destination = PrivateWindows.Full(Need("--destination"));
+        string parent = Path.GetDirectoryName(destination) ?? throw new IOException("Choose an import container.");
+        if (!string.Equals(Path.GetDirectoryName(stage), parent, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(stage, destination, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Import stage and destination must be distinct siblings.");
+        PrivateWindows.Ensure(parent);
+        var pins = PrivateWindows.Pin(parent, false);
+        using var cancellation = new CancellationTokenSource();
+        _ = Task.Run(async () => {
+            try
+            {
+                while (true)
+                {
+                    string? line = await Console.In.ReadLineAsync();
+                    if (line is null or "stop") { cancellation.Cancel(); return; }
+                }
+            }
+            catch (IOException) { cancellation.Cancel(); }
+        });
+        bool protecting = false, published = false;
+        try
+        {
+            if (Directory.Exists(destination) || File.Exists(destination))
+                throw new IOException("Import destination already exists; existing data was retained.");
+            if (!Directory.Exists(stage)) throw new IOException("Import stage does not exist.");
+            PrivateWindows.Ensure(stage);
+            PrivateWindows.StateTree(stage);
+            cancellation.Token.ThrowIfCancellationRequested();
+            BaseAdmission.Verify(stage, (a, b) => {
+                if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+                cancellation.Token.ThrowIfCancellationRequested(); Progress("verifying", a, b);
+            }, path => {
+                if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+                cancellation.Token.ThrowIfCancellationRequested(); PrivateWindows.Check(path);
+            },
+                PrivateWindows.Read, maxParallelism: 4);
+            Progress("protecting", 0, 1);
+            protecting = true;
+            PrivateWindows.Freeze(stage, maxParallelism: 4, cancellation.Token.ThrowIfCancellationRequested);
+            Progress("protecting", 1, 1);
+            cancellation.Token.ThrowIfCancellationRequested();
+            // No replace flag: another completed destination is never overwritten.
+            if (!PrivateWindows.MoveFileEx(stage, destination, 8))
+                throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(),
+                    "Base publication failed; caller-owned stage retained at " + stage);
+            published = true;
+            RememberValidation(destination);
+            Progress("publishing", 1, 1);
+            return 0;
+        }
+        finally
+        {
+            try { if (protecting && !published && Directory.Exists(stage)) PrivateWindows.RestoreImportStage(stage); }
+            finally { foreach (var pin in pins) pin.Dispose(); }
+        }
+    }
     if (arguments[0] == "import")
     {
         if (options.Keys.Any(k => k is not ("--source" or "--destination" or "--sha256" or "--validation-cache"))) throw new ArgumentException("Unknown import option.");
