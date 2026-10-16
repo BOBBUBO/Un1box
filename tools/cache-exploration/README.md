@@ -6,7 +6,7 @@ firmware download/preparation route. Cache defaults off. Actual Home/Settings
 inspection and a fresh exact-packet Root grant are required; no frame counter
 or image heuristic creates a scene pass. Preserve each failed packet/run.
 
-Deploy the six Python helper sources alongside the privately supplied `PLAN.json`
+Deploy the eight production Python helper sources alongside the privately supplied `PLAN.json`
 and artifact/receipt paths. Run `prepare-exploration.py --lock-policy` with the
 existing audited `Linux/scripts/lock-continuity.py`. Preparation inventories
 the existing immutable base, copies only small writable state using independent
@@ -133,6 +133,83 @@ fresh worker from another clone of the original clean seed. Its native hit count
 must increase: an enabled setting or surviving cache files do not prove replay.
 Deploy and pin `matched_trial.py` with the other helper modules. Existing frozen
 packets and their failed evidence remain unchanged.
+
+## Self-contained image-bound operator
+
+The explicit `--image-bound-operator` preparation option uses the fixed v2
+schedule with prior personally viewed `--home-reference` and
+`--settings-reference` capture directories and the explicit
+`--model-inspected-scene-references` flag. Root must inspect the reference PNGs
+before preparation: complete Home with the Settings icon at44,326 and complete
+Settings showing Wi-Fi qemu-ios. Preparation binds their BMP/PNG/receipt bytes;
+these references are part of the cache workload identity. The ordinary manual
+route retains its personal inspection requirements and is unchanged.
+
+The operator runs within the existing finite controller, without model/tool
+roundtrips. It sends one guarded Home/slider at HELLO+50..51s, polls actual
+coherent awake captures for exact Home-reference equality through95s, and sends
+the single Settings tap at105..106s only after a new exact continuity check.
+It polls for exact Settings-reference equality through120s. Only clock RGB
+pixels129,1..190,19 may differ; alpha, Wi-Fi, rows and all other pixels remain
+protected. Wrong images receive no scene admission. Failed input attempts are
+consumed, with no retries. BMP/PNG/receipt/comparison files survive failures.
+Readiness120..135s, Stop180s, original ceilings and native shutdown30s remain.
+
+`home-admitted.json` and `settings-admitted.json` explicitly record
+`model_inspected:false` and `scene_qualified:false`. They never create
+`*-inspected.json` files or personal inspection timestamps. Automatic admission
+only authorizes the prescribed input. A complete clean runtime yields
+`AWAITING_ROOT_REVIEW`, including its provisional cache receipt, with process
+exit0; this is not a qualified run. Independent Root review must personally view
+the exact PNGs named by the admission records, verify full Home and Settings
+with Wi-Fi qemu-ios, and independently check the retired unit/processes.
+
+After actual viewing and retirement, run the deployed helper:
+
+```sh
+python3 /absolute/private/packet/postrun_review.py \
+  --model-inspected-home --model-inspected-settings --wifi-name qemu-ios
+```
+
+It rechecks original source and retained scene bindings, original readiness and
+input schedule, strict clean Stop, no disposal, free state lease, original
+frontend/worker/controller retirement and absent original cgroup. It writes
+separate `ROOT-SCENE-REVIEW.json`, `cache-trial-qualified.json` and
+`QUALIFIED-RESULT.json`, preserving the raw pending result/receipts/images.
+An existing or interrupted review is not overwritten. REUSE must pin these
+separate qualified producer files; provisional or modified derivatives fail.
+The original personal-input attestation flags stay false even after review.
+
+Next finite sequence: one new independently allocated OFF packet, then one
+COLD packet only if OFF qualifies, then a fresh-worker REUSE packet only after
+the actual clean COLD cache and separate Root review exist. Use identical
+source/engine/frontend/reference/asset/seed/workload identities, fresh independent
+writable clones, the exact unchanged COLD cache for REUSE, and native hits>0.
+Stop at the first failed correctness/shutdown/network/image/resource predicate;
+do not repeat the failed manual-deadline trials. No enabled run is authorized
+by this source or by successful host contracts.
+
+## Realistic performance scope
+
+The current experimental cache skips eligible A32 ARM1176 frontend decoding.
+TCG still optimizes the IR and emits fresh host native code in each worker.
+It stores at most4096records/32MiB and can fill during boot. Every new record
+currently performs file fsync plus directory fsync on the vCPU path; COLD can
+therefore add substantial storage latency, especially on Android. The capacity
+guard avoids impossible save work after saturation but does not enlarge coverage.
+There is no basis yet for a dramatic speedup claim or Android delivery claim.
+
+First qualify the same fixed engine's OFF/COLD/REUSE guest correctness and
+shutdown. Then measure actual eligible hits/(hits+misses), records/bytes and
+when capacity fills, first-lit wall/CPU time, and fresh-worker CPU deltas from
+resources.jsonl with command.json's actual clock tick frequency. First lit is
+not full Home; image capture/inspection timing provides bounded observations,
+not exact scene-load latency. Separately allocated representative profiling
+must establish how much CPU time frontend translation consumes versus IR
+optimization/native emission, execution, graphics and I/O, and how much COLD
+time fsync/store work consumes. Report absolute overhead and sample boundaries;
+one warm run is preliminary, not a replicated performance qualification.
+Keep cache OFF/unqualified until actual target benefit and acceptance exist.
 
 The v2 schedule wakes/unlocks20seconds earlier to leave45seconds for actual
 Home capture and operator inspection. The failed v1 OFF07 missed its original

@@ -57,6 +57,8 @@ def identity(cfg):
             'workload': 'n72-320x480-balanced-home-guarded-slider-settings44,326-noaudio-v1'}
     if 'matchedDiagnostic' in cfg:
         result['matchedDiagnostic'] = cfg['matchedDiagnostic']
+    if 'imageBoundOperator' in cfg:
+        result['imageBoundOperator'] = cfg['imageBoundOperator']
     return result
 
 
@@ -146,6 +148,9 @@ def before(cfg):
             raise RuntimeError('Reuse producer receipt changed')
         prior = read(receipt_pin['path'])
         producer = read(result_pin['path'])
+        if 'imageBoundOperator' in cfg:
+            from postrun_review import validate_qualification
+            validate_qualification(cfg, producer, result_pin['path'], receipt_pin['path'])
         schedule = cfg.get('matchedDiagnostic')
         prior_schedule = producer.get('matched_diagnostic') or {}
         if schedule and (prior_schedule.get('mode') != schedule['mode']
