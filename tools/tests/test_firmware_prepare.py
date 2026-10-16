@@ -76,6 +76,28 @@ class FirmwarePrepareTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "run name"):
                 module.Supervisor(dict(config, run_name="../escape"))
 
+    def test_actual_pinned_help_refused_before_writable_preparation_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            help_text = (Path(__file__).parent / "fixtures/firmwarekit-0.2.0-create-help.txt").read_bytes()
+            tool = root / "tool"
+            entry = root / "entry.json"
+            ipsw = root / "input.ipsw"
+            for p in (tool, entry, ipsw):
+                p.write_bytes(b"synthetic input")
+            config = dict(self.config(root), execution_authorized=True, phase="create-only",
+                 tool=str(tool), entry=str(entry), ipsw=str(ipsw), seed="test",
+                 staging=str(root / "prepared"), cache=str(root / "cache"),
+                 service_state=str(root / "service"), guest_tools=str(root / "guest"),
+                 create_help_sha256="0"*64)
+            for name in ("tool", "entry", "ipsw"):
+                config[name + "_sha256"] = hashlib.sha256(Path(config[name]).read_bytes()).hexdigest()
+            instance = module.Supervisor(config)
+            with patch.object(module.sys, "platform", "darwin"), patch.object(module, "helper", return_value=help_text):
+                with self.assertRaisesRegex(ValueError, "help digest changed"):
+                    instance.preflight()
+            self.assertFalse(any(Path(config[name]).exists() for name in ("staging", "cache", "service_state")))
+
     def test_original_deadline_kills_owned_escaped_child_and_retains_logs(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(module, "mounted_images", return_value={"images": []}):
             root = Path(tmp)
