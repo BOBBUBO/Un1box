@@ -60,3 +60,27 @@ presentation boundaries. The counters alone do not prove guest pixels changed,
 UIKit consumed input, audible playback, or sustained acceptance. Keep all
 original overlap predicates and deadlines; a failed pilot stays failed. A
 30-second diagnostic does not complete the required 20-minute session.
+
+`verify-diagnostic-output.py` provides independent read-only output checks.
+Its `engine` mode consumes the exact approved native plan, requires a complete
+terminal receipt, and rechecks the frozen ELF ABI/exports/dependencies/SONAME,
+16 KiB alignment, API and source bindings, C++ runtime, complete notice inventory
+and complete sourcekit inventory/modes. It does not relink or execute the engine.
+Its `apk` mode checks every original unrelated payload and replacement against
+the repack receipt, requires the independently verified engine hash, checks the
+original signing certificate and V2 signature, then verifies all APK native
+alignment and packaged ANGLE identities through `check-apk.py`.
+
+```sh
+python3 Android/scripts/verify-diagnostic-output.py --output native-review.json \
+  engine --plan NATIVE-BUILD-PLAN.json --plan-sha256 APPROVED_NATIVE_PLAN_SHA256
+python3 Android/scripts/verify-diagnostic-output.py --output apk-review.json \
+  apk --original ORIGINAL_MAIN.apk --signed diagnostic-signed.apk \
+  --receipt diagnostic-repack.json --engine-sha256 VERIFIED_ENGINE_SHA256 \
+  --apksigner SDK_BUILD_TOOLS/apksigner --zipalign SDK_BUILD_TOOLS/zipalign \
+  --certificate-sha256 ORIGINAL_CERTIFICATE_SHA256
+```
+
+A successful artifact check records that target execution remains unverified.
+Strict guest correctness, concurrency, clean Stop and persistence evidence
+remain separate requirements.
