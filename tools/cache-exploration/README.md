@@ -255,3 +255,22 @@ different guest operation. Zero native cache hits exclude replay as the
 executed path but do not exclude key/hash/capture/store overhead during COLD.
 Retain those distinctions when selecting a separately reviewed diagnostic
 packet; never reuse an unqualified failed producer or extend its old clock.
+
+For a newly prepared matched image diagnostic,
+`--retain-scene-failure-until-stop` selects the explicit
+`retain-scene-failure-stop180-v1` policy. The selection joins cache workload
+identity. A missing Home at95s or Settings at120s remains a failed original
+deadline and creates an exclusive immutable `scene-failure.json`. No later
+dependent input or admission attempt is allowed. The controller continues only
+passive resource/status logging until the original180s ordinary Stop; a clean
+halt cannot turn the failed scene into acceptance or a reusable producer.
+
+The existing owner/resource/display/log/outer-deadline guards remain active.
+Only typed missing-scene deadline errors can be retained. Input, identity,
+capture coherence, stale data, changed evidence and resource errors still
+escape immediately to the existing ordinary Stop path. Failure/evidence
+rewrites, late scene admission and a changed HELLO also stop immediately.
+Without the explicit policy, a scene failure still stops immediately. This
+policy cannot be applied retrospectively to COLD22 or other retained attempts.
+`test_fixed_stop.py` uses fake clocks and intercepted input/ownership checks;
+its results are controller contracts, not a target guest or performance pass.

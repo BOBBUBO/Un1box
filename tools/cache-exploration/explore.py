@@ -15,6 +15,19 @@ import cache_trial
 import matched_trial
 import image_operator
 
+
+def diagnostic_step(timed, matched, root, hello, now, log_rows):
+    """Latch only typed scene deadlines; all safety/identity errors still escape."""
+    if matched.scene_failure is None:
+        try:
+            timed.tick(root, hello, now)
+        except matched_trial.SceneDeadlineFailure as error:
+            matched.latch_scene_failure(root, hello, time.monotonic_ns(), error)
+    if matched.scene_failure is not None:
+        owner()  # Passive waiting cannot bypass the existing live-owner guard.
+    return matched.observe(root, hello, time.monotonic_ns(), log_rows)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute', action='store_true')
@@ -26,7 +39,8 @@ def main():
     if not args.execute:
         print(__import__('json').dumps({'execution': False, 'argv': cfg['argv'],
               'cache': cfg.get('cacheTrial', {'mode': 'off'}),
-              'diagnostics': cfg.get('cacheDiagnostics'), 'root_grant_required': True}))
+              'diagnostics': cfg.get('cacheDiagnostics'),
+              'scene_failure_policy': cfg.get('sceneFailurePolicy'), 'root_grant_required': True}))
         return
     origin = time.monotonic_ns()
     root = cgroup()
@@ -206,15 +220,19 @@ def main():
                 if hello is None and (now - origin >= 900 * SECOND or now - last_progress >= 30 * SECOND):
                     error = 'admission/no-progress deadline'; stop(error)
                 home_receipt = 'home-admitted.json' if timed.active else 'home-inspected.json'
-                if hello is not None and now - hello >= 129 * SECOND and not (R / home_receipt).exists():
+                if (matched.scene_failure is None and hello is not None and
+                        now - hello >= 129 * SECOND and not (R / home_receipt).exists()):
                     error = 'original Home129s deadline'; stop(error)
                 if hello is not None and now - hello >= 205 * SECOND:
                     stop('original Stop205s')
                 if now - origin >= 1150 * SECOND:
                     error = 'original outer retirement reserve'; stop(error)
                 if stop_clock is None and worker and (R / 'window.json').exists():
-                    timed.tick(R, hello, now)
-                scheduled_stop = matched.observe(R, hello, time.monotonic_ns(), complete)
+                    scheduled_stop = diagnostic_step(timed, matched, R, hello, now, complete)
+                else:
+                    scheduled_stop = matched.observe(R, hello, time.monotonic_ns(), complete)
+                if matched.scene_failure is not None:
+                    error = error or matched.scene_failure['error']
                 if scheduled_stop:
                     stop(scheduled_stop)
                 if not matched.active and (R / 'settings-inspected.json').exists():
@@ -284,6 +302,7 @@ def main():
                   'home_operator_attestation': (R / 'home-inspected.json').exists(),
                   'settings_operator_attestation': (R / 'settings-inspected.json').exists(),
                   'automatic_image_admission': timed.active,
+                  'retained_scene_failure': matched.scene_failure,
                   'home_image_admitted': (R / 'home-admitted.json').exists(),
                   'settings_image_admitted': (R / 'settings-admitted.json').exists(),
                   'exact_candidate_mapping_observed': engine_mapping is not None,

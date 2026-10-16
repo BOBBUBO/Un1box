@@ -2,6 +2,21 @@
 from exploration_common import SECOND, fields, read, save, digest
 
 MODE = 'n72-shutdown-50-105-180-v2'
+SCENE_FAILURE_POLICY = 'retain-scene-failure-stop180-v1'
+EVIDENCE = ('matched-home-unlock-input.json', 'home-admitted.json',
+            'settings-input.json', 'settings-admitted.json')
+
+
+class SceneDeadlineFailure(RuntimeError):
+    """Only a missing original scene deadline; never resource/owner/input errors."""
+    def __init__(self, scene):
+        if scene not in ('home', 'settings'):
+            raise ValueError('Explicit Home or Settings deadline required')
+        self.scene = scene
+        self.deadline_seconds = 95 if scene == 'home' else 120
+        super().__init__('Original %s image admission deadline%ds expired%s' % (
+            scene.capitalize(), self.deadline_seconds,
+            '; no Settings input' if scene == 'home' else ''))
 
 
 def enabled(cfg):
@@ -52,6 +67,47 @@ class Tracker:
         self.seen = {}
         self.statuses = {}
         self.ready = False
+        policy = cfg.get('sceneFailurePolicy')
+        self.retain_scene_failure = policy is not None
+        if self.retain_scene_failure and (policy != SCENE_FAILURE_POLICY or
+                not self.active or not self.image_bound):
+            raise RuntimeError('Exact scene failure policy requires matched image operator')
+        self.scene_failure = None
+        self.failure_digest = None
+
+    def latch_scene_failure(self, root, hello, now, error):
+        if not self.retain_scene_failure:
+            raise error
+        if (type(error) is not SceneDeadlineFailure or hello is None or
+                now < hello + error.deadline_seconds * SECOND or
+                now >= hello + 180 * SECOND or self.scene_failure is not None):
+            raise RuntimeError('Only one original scene deadline can be retained')
+        if self.hello is not None and hello != self.hello:
+            raise RuntimeError('Matched diagnostic HELLO changed')
+        self.hello = hello
+        evidence = {name: digest(root / name) if (root / name).exists() else None
+                    for name in EVIDENCE}
+        record = {'policy': SCENE_FAILURE_POLICY, 'status': 'FAIL',
+                  'scene': error.scene, 'error': str(error), 'hello_ns': hello,
+                  'original_deadline_ns': hello + error.deadline_seconds * SECOND,
+                  'observed_monotonic_ns': now, 'ordinary_stop_ns': hello + 180 * SECOND,
+                  'dependent_input_suppressed': True, 'evidence': evidence,
+                  'guest_acceptance': False, 'never_reset': True}
+        # Never overwrite an earlier failure, including one left by another run.
+        import json
+        with (root / 'scene-failure.json').open('x') as stream:
+            json.dump(record, stream, indent=2)
+            stream.write('\n')
+        self.scene_failure = record
+        self.failure_digest = digest(root / 'scene-failure.json')
+
+    def verify_latched_failure(self, root):
+        if digest(root / 'scene-failure.json') != self.failure_digest:
+            raise RuntimeError('Original scene failure evidence changed')
+        for name, expected in self.scene_failure['evidence'].items():
+            actual = digest(root / name) if (root / name).exists() else None
+            if actual != expected:
+                raise RuntimeError('Scene evidence changed after retained failure')
 
     def observe(self, root, hello, now, log_rows):
         if not self.active or hello is None:
@@ -60,6 +116,9 @@ class Tracker:
             raise RuntimeError('Matched diagnostic HELLO changed')
         self.hello = hello
         age = now - hello
+        if self.scene_failure is not None:
+            self.verify_latched_failure(root)
+            return 'matched scheduled Stop180s' if age >= 180 * SECOND else None
         # Capture each admitted scene/input receipt once; reject later rewrites.
         for filename, deadline in [('matched-home-unlock-input.json', 51),
                                    ('home-admitted.json' if self.image_bound else 'home-inspected.json', 95),
@@ -114,6 +173,16 @@ class Tracker:
     def finish(self, root, hello, stop_clock):
         if not self.active:
             return None
+        if self.scene_failure is not None:
+            self.verify_latched_failure(root)
+            if (hello != self.hello or stop_clock is None or
+                    not hello + 180 * SECOND <= stop_clock <= hello + 181 * SECOND):
+                raise RuntimeError('Failed scene lacks original scheduled Stop180s')
+            return {'mode': MODE, 'status': 'SCENE_FAILED_SCHEDULE_COMPLETED',
+                    'hello_ns': hello, 'stop_ns': stop_clock,
+                    'scene_failure_sha256': self.failure_digest,
+                    'guest_acceptance': False, 'performance_qualified': False,
+                    'causality_established': False}
         if (not self.ready or hello != self.hello or stop_clock is None
                 or not hello + 180 * SECOND <= stop_clock <= hello + 181 * SECOND):
             raise RuntimeError('Matched trial lacks readiness or original scheduled Stop')
