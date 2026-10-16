@@ -119,8 +119,11 @@ class GuestOrientationLifecycleTest {
                         observations.put(item); persist()
                         if (screenshot) {
                             val path = File(context.filesDir, "screenshots/${evidence.name}/$label.png")
-                            assertEquals("Actual frame screenshot", "", worker.screenshot(path.absolutePath))
-                            item.put("screenshot", path.absolutePath); persist()
+                            item.put("captureBeginElapsedMs", SystemClock.elapsedRealtime()); persist()
+                            val captureError = worker.screenshot(path.absolutePath)
+                            item.put("captureEndElapsedMs", SystemClock.elapsedRealtime()).put("captureError", captureError)
+                                .put("screenshot", path.absolutePath); persist()
+                            assertEquals("Actual frame screenshot", "", captureError)
                         }
                         return requireNotNull(status.getBundle("observations"))
                     }
