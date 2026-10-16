@@ -6,12 +6,116 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import shutil
+import contextlib
 import exploration_common as common
+import exploration_control as control
 
 from exploration_common import *
 from exploration_control import unchanged_except_clock
 
 class Tests(unittest.TestCase):
+    def lock_policy_path(self):
+        configured = os.environ.get('LT_CACHE_TEST_LOCK_POLICY')
+        return Path(configured).resolve(strict=True) if configured else Path(__file__).resolve().parents[2] / 'Linux/scripts/lock-continuity.py'
+
+    def test_pinned_reference_from_prior_worker_retains_original_awake_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); original = root / 'original'; original.mkdir()
+            (original / 'native.bmp').write_bytes(b'original bytes')
+            (original / 'native.png').write_bytes(b'personally viewed PNG')
+            old = 3 * SECOND
+            save(original / 'receipt.json', dict(sha256=digest(original / 'native.bmp'), saved_monotonic_ns=old,
+                 sleeping='0', agent='1', backlight='255', frame_monotonic_ns=str(old), diagnostics_monotonic_ns=str(old)))
+            policy = self.lock_policy_path()
+            reference = dict(scope='PERSONALLY_INSPECTED_N72_LOCK_REFERENCE', captureDirectory=str(original))
+            for name, filename in [('bmp','native.bmp'), ('png','native.png'), ('receipt','receipt.json')]:
+                reference[name+'SHA256'] = digest(original / filename)
+            cfg = dict(lockReference=reference, lockPolicy=str(policy),
+                       pins=dict(lockPolicy=dict(path=str(policy), sha256=digest(policy))))
+            save(root / 'EXPLORATION-INPUTS.json', cfg)
+            with patch.object(control, 'P', root):
+                self.assertEqual(control.lock_reference()[0], original)
+                (original / 'native.bmp').write_bytes(b'changed bytes')
+                with self.assertRaisesRegex(RuntimeError, 'Pinned Lock reference changed'):
+                    control.lock_reference()
+
+    @contextlib.contextmanager
+    def home_input_fixture(self, change=None, receipt_change=None, move_failure=False):
+        # Synthetic actual-format BMP exercises the real exact-anchor comparer;
+        # all UI calls are intercepted. These are controller contracts, no guest.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); original = root / 'reference'; original.mkdir()
+            bitmap = self.bitmap()
+            struct.pack_into('<I', bitmap, 10, 54)
+            struct.pack_into('<IiiHHI', bitmap, 14, 40, 320, -480, 1, 32, 0)
+            (original / 'native.bmp').write_bytes(bitmap)
+            current_bitmap = bytearray(bitmap)
+            if change: change(current_bitmap)
+            worker = dict(pid=42, start_ticks='123')
+            now = time.monotonic_ns()
+            save(root / 'hello.json', dict(monotonic_ns=now - SECOND))
+            (root / 'session.log').write_text('status state=2 sleeping=1 observed_monotonic_ns=%d\n' % now)
+            policy = control.module(self.lock_policy_path())
+            events=[]
+            def xcall(args, release=False):
+                events.append((args, release)); return '', 0, 0
+            count=0
+            def capture(label, convert=True):
+                output=root/label;output.mkdir()
+                (output/'native.bmp').write_bytes(current_bitmap)
+                instant=time.monotonic_ns()
+                receipt=dict(worker_pid=42,worker_start='123',sleeping='0',agent='1',backlight='255',
+                    frame_monotonic_ns=str(instant),diagnostics_monotonic_ns=str(instant))
+                receipt.update(receipt_change or {})
+                save(output/'receipt.json',receipt)
+                return output,receipt
+            def move(x,y,g):
+                nonlocal count
+                count += 1
+                if move_failure and count==3: raise RuntimeError('intercepted input failure')
+            with contextlib.ExitStack() as stack:
+                patches=[patch.object(control,'R',root), patch.object(control,'lock_reference',return_value=(original,{},policy)),
+                    patch.object(control,'owner',return_value=({},worker)),patch.object(control,'geometry',return_value={}),
+                    patch.object(control,'capture',side_effect=capture),patch.object(control,'capture_lock',side_effect=contextlib.nullcontext),
+                    patch.object(control,'xcall',side_effect=xcall),patch.object(control,'move',side_effect=move),
+                    patch.object(control,'convert_bitmap'),patch.object(control.time,'sleep')]
+                for item in patches:stack.enter_context(item)
+                yield root,events
+
+    def test_atomic_home_lock_slider_retains_both_captures_without_home_attestation(self):
+        with self.home_input_fixture() as (root,events):
+            control.home_unlock('synthetic')
+            self.assertEqual(events[:2], [(['keydown','h'],False),(['keyup','h'],True)])
+            self.assertEqual(events[2:], [(['mousedown','1'],False),(['mouseup','1'],True)])
+            result=read(root/'synthetic-home-unlock.json')
+            self.assertTrue(result['comparison']['matched'])
+            self.assertTrue(result['ordinary_balanced_slider'])
+            self.assertFalse(result['home_scene_asserted'])
+            self.assertFalse(result['guest_acceptance'])
+            self.assertFalse((root/'home-inspected.json').exists())
+            self.assertTrue((root/'synthetic-lock/native.bmp').exists())
+            self.assertTrue((root/'synthetic-post/native.bmp').exists())
+
+    def test_atomic_home_refuses_changed_anchor_sleep_and_worker_identity(self):
+        def changed_earth(bitmap):bitmap[54+(150*320+150)*4]=1
+        for change,receipt in [(changed_earth,None),(None,dict(sleeping='1')),(None,dict(worker_start='different'))]:
+            with self.subTest(change=change,receipt=receipt),self.home_input_fixture(change,receipt) as (root,events):
+                with self.assertRaises(RuntimeError):control.home_unlock('rejected')
+                self.assertEqual(events,[(['keydown','h'],False),(['keyup','h'],True)])
+                result=read(root/'rejected-home-unlock.json')
+                self.assertFalse(result['slider_started'])
+                self.assertIn('error',result)
+                self.assertTrue((root/'rejected-lock/native.bmp').exists())
+
+    def test_atomic_home_releases_slider_after_midgesture_failure(self):
+        with self.home_input_fixture(move_failure=True) as (root,events):
+            with self.assertRaisesRegex(RuntimeError,'intercepted input failure'):control.home_unlock('interrupted')
+            self.assertEqual(events[-1],(['mouseup','1'],True))
+            result=read(root/'interrupted-home-unlock.json')
+            self.assertTrue(result['slider_started'])
+            self.assertIn('slider_released_ns',result)
+            self.assertFalse(result['guest_acceptance'])
+
     def test_actual_converter_with_restricted_path_and_shadowed_basename(self):
         executable = os.environ.get('LT_CACHE_TEST_FFMPEG') or shutil.which('ffmpeg')
         self.assertTrue(executable, 'Provide real ffmpeg with LT_CACHE_TEST_FFMPEG when not in PATH')
