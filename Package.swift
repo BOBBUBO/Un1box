@@ -22,6 +22,9 @@ let package = Package(
         .executable(name: "LightTouch", targets: ["LightTouch"]),
         .executable(name: "LightTouchDevice", targets: ["LightTouchDevice"]),
         .executable(name: "LightTouchServices", targets: ["LightTouchServices"]),
+        // Incremental shared SDL adapter; Cocoa remains the reference until
+        // native shared launcher/admission/packaging acceptance is complete.
+        .library(name: "LightTouchSharedDesktopMac", targets: ["LightTouchSharedDesktopMac"]),
     ],
     dependencies: [
         .package(path: "Packages/HostRuntime"),
@@ -33,6 +36,13 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
     ],
     targets: [
+        .systemLibrary(name: "CDesktopSDL", path: "Desktop/SDL2", pkgConfig: "sdl2",
+                       providers: [.brew(["sdl2"])]),
+        .target(name: "CDesktopWindow", dependencies: ["CDesktopSDL"], path: "Desktop/native",
+                publicHeadersPath: "include", cxxSettings: [.unsafeFlags(["-std=c++17"])]),
+        .target(name: "LightTouchSharedDesktopMac",
+                dependencies: ["CDesktopWindow", .product(name: "DeviceRuntime", package: "DeviceRuntime")],
+                path: "macOS/SharedDesktop"),
         .executableTarget(
             name: "LightTouch",
             dependencies: [
