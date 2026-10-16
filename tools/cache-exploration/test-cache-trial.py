@@ -66,7 +66,8 @@ class CacheTrialTests(unittest.TestCase):
         cfg = dict(self.cfg)
         cfg.pop('cacheTrial')
         self.assertEqual(trial.environment(cfg, {'LT_TCG_IR_CACHE_ENABLE': 'experimental-v1',
-            'LT_TCG_IR_CACHE': '/attacker', 'OTHER': 'retained'}), {'OTHER': 'retained'})
+            'LT_TCG_IR_CACHE': '/attacker', 'LT_TCG_IR_CACHE_DIAGNOSTICS': 'aggregate-v1',
+            'OTHER': 'retained'}), {'OTHER': 'retained'})
         self.assertEqual(trial.before(cfg), {'mode': 'off'})
         cfg['cacheTrial'] = {'mode': 'off', 'directory': str(self.directory)}
         with self.assertRaisesRegex(RuntimeError, 'OFF'):
@@ -87,6 +88,51 @@ class CacheTrialTests(unittest.TestCase):
         self.cfg['cacheTrial']['directory'] = str(link)
         with self.assertRaisesRegex(RuntimeError, 'canonical'):
             trial.selection(self.cfg)
+
+    def test_diagnostics_require_explicit_selection_and_remain_off_in_off_trial(self):
+        inherited = {'LT_TCG_IR_CACHE_DIAGNOSTICS': 'aggregate-v1'}
+        self.assertNotIn('LT_TCG_IR_CACHE_DIAGNOSTICS', trial.environment(self.cfg, inherited))
+        self.cfg['cacheDiagnostics'] = {'mode': 'aggregate-v1'}
+        self.assertEqual(trial.environment(self.cfg, {})['LT_TCG_IR_CACHE_DIAGNOSTICS'], 'aggregate-v1')
+        self.assertEqual(trial.identity(self.cfg)['cacheDiagnostics'], {'mode': 'aggregate-v1'})
+        self.cfg['cacheTrial'] = {'mode': 'off'}
+        self.assertEqual(trial.environment(self.cfg, inherited), {})
+        self.cfg['cacheDiagnostics'] = {'mode': 'other'}
+        with self.assertRaisesRegex(RuntimeError, 'aggregate-v1'): trial.environment(self.cfg, {})
+
+    def diagnostic_line(self, changes=None):
+        metrics = dict.fromkeys(trial.DIAGNOSTIC_KEYS, 0)
+        metrics.update(version=1, arm_attempts=41, a32_attempts=20, thumb_attempts=21,
+                       key_eligible=31, key_rejected=10, records=1, put_success=1,
+                       put_calls=1, put_us=5000, file_fsync_us=3000, directory_fsync_us=1000,
+                       key_us=100, capture_us=200, elapsed_us=10000)
+        metrics.update(changes or {})
+        return ('LightTouch TCG IR cache diagnostics: ' + ' '.join('%s=%d' % x for x in sorted(metrics.items()))
+                + '; aggregate wall time, not guest CPU\n')
+
+    def test_diagnostic_costs_do_not_double_count_nested_fsync_or_claim_speed(self):
+        self.cfg['cacheDiagnostics'] = {'mode': 'aggregate-v1'}
+        initial = trial.before(self.cfg); self.record()
+        receipt = trial.finish(self.cfg, initial, self.log() + self.diagnostic_line(), True, [44, 326])
+        diag = receipt['diagnostics']
+        self.assertEqual(diag['phase_wall_us'], 5300)
+        self.assertEqual(diag['fsync_wall_us_within_put'], 4000)
+        self.assertEqual(diag['all_translation_hit_fraction'], 0)
+        self.assertFalse(diag['performance_qualified'])
+
+    def test_missing_reset_or_inconsistent_diagnostic_evidence_rejected(self):
+        initial = trial.before(self.cfg); self.record()
+        line = self.diagnostic_line()
+        with self.assertRaisesRegex(RuntimeError, 'Unselected'):
+            trial.finish(self.cfg, initial, self.log() + line, True, [44, 326])
+        self.cfg['cacheDiagnostics'] = {'mode': 'aggregate-v1'}
+        for suffix in ['', self.diagnostic_line({'records': 2}),
+                       self.diagnostic_line({'arm_attempts': 30}),
+                       self.diagnostic_line({'put_success': 2}),
+                       self.diagnostic_line({'elapsed_us': 20000}) + line,
+                       line.replace('version=1', 'version=1 version=1')]:
+            with self.subTest(suffix=suffix), self.assertRaises(RuntimeError):
+                trial.finish(self.cfg, initial, self.log() + suffix, True, [44, 326])
 
     def test_cache_bytes_producer_and_checksum_are_verified(self):
         entry = self.record()

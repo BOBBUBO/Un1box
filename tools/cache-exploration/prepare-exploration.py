@@ -19,6 +19,8 @@ def main():
     parser.add_argument('--model-inspected-reference', action='store_true')
     parser.add_argument('--cache-mode', choices=['off', 'cold', 'reuse'], default='off')
     parser.add_argument('--cache-directory', type=Path, help='Separate existing canonical private0700 directory')
+    parser.add_argument('--cache-diagnostics', choices=['aggregate-v1'],
+                        help='Explicit bounded wall-cost/coverage counters on selected cache; OFF stays disabled')
     parser.add_argument('--reuse-cache-receipt', type=Path, help='Prior actual clean cache-trial.json')
     parser.add_argument('--reuse-cache-result', type=Path, help='Matching prior actual RESULT.json')
     parser.add_argument('--matched-shutdown-diagnostic', action='store_true')
@@ -150,16 +152,18 @@ def main():
            'seedInventorySHA256': before['inventorySHA256'], 'pins': pins,
            'privateDependency': str(Path(pins['privateLibfdt']['path']).parent),
            'baseMetadata': metadata, 'lockPolicy': str(lock_policy), 'lockReference': reference,
-           'removeEnvironment': ['PYTHONHOME', 'PYTHONPATH', 'LT_TCG_IR_CACHE_ENABLE', 'LT_TCG_IR_CACHE',
+           'removeEnvironment': ['PYTHONHOME', 'PYTHONPATH', 'LT_TCG_IR_CACHE_ENABLE', 'LT_TCG_IR_CACHE', 'LT_TCG_IR_CACHE_DIAGNOSTICS',
                                  'LD_PRELOAD', 'IT_VCPU_ACCT', 'IT_VCPU_ACCT_LOG', 'IT_USB_TCP', 'IT_AUDIO_HW',
                                  'IT_GLES_DEBUG', 'IT_I2S_TONE', 'IT_I2S_DUMP', 'ASAN_OPTIONS', 'UBSAN_OPTIONS',
                                  'SDL_AUDIODRIVER', 'SDL_RENDER_DRIVER', 'LIBGL_ALWAYS_SOFTWARE'],
            'recordEnvironment': ['DISPLAY', 'LD_BIND_NOW', 'LD_LIBRARY_PATH', 'SDL_VIDEODRIVER',
-                                 'EGL_PLATFORM', 'IT_SHUTDOWN_DIAG', 'LT_TCG_IR_CACHE_ENABLE', 'LT_TCG_IR_CACHE'],
+                                 'EGL_PLATFORM', 'IT_SHUTDOWN_DIAG', 'LT_TCG_IR_CACHE_ENABLE', 'LT_TCG_IR_CACHE', 'LT_TCG_IR_CACHE_DIAGNOSTICS'],
            'limits': {'HomeSecondsFromHello': 129, 'StopSecondsFromHello': 205, 'nativeStopGraceSeconds': 35,
                       'outerSecondsFromControllerOrigin': 1200},
            'guestExecuted': False, 'sourceSeedUnchanged': True, 'isolatedStatePrepared': True}
     cfg['cacheTrial'] = {'mode': args.cache_mode}
+    if args.cache_diagnostics:
+        cfg['cacheDiagnostics'] = {'mode': args.cache_diagnostics}
     if args.matched_shutdown_diagnostic:
         cfg['matchedDiagnostic'] = {'mode': matched_trial.MODE}
     if args.image_bound_operator:

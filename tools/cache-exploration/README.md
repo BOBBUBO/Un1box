@@ -229,6 +229,17 @@ later Stop-generated display changes as a successful Home wake. Test this
 offline helper with `python3 -m unittest discover -s tools/cache-exploration
 -p test_wake_diagnosis.py -v`.
 
+New measured packets can explicitly prepare with
+`--cache-diagnostics aggregate-v1`. The selection joins the workload identity,
+so a reuse packet cannot silently change instrumentation from its producer.
+Inherited diagnostic environment variables are scrubbed; OFF emits no cache
+telemetry. Enabled receipts require the engine's complete monotonic aggregate
+metrics and cross-check final translation/store counts. Reported phase times
+are measured wall costs. File and directory fsync times are a nested breakdown
+of `put_us` and must not be added to it again. Translation attempts are not
+dynamic instructions, guest CPU usage or a speedup measurement. Existing
+Home/Settings/Stop and independent scene-review gates still apply.
+
 A failed original window alone does not distinguish slow guest wake, missed
 keyboard delivery, frontend scheduling or engine input handling. A recorded
 xdotool key pair establishes host command dispatch, not SDL consumption or

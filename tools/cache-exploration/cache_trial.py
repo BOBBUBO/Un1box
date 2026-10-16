@@ -17,6 +17,20 @@ MAX_BYTES = 32 * 1024**2
 MAX_RECORD = 104 + 128 * 1024
 SUMMARY = re.compile(r'^LightTouch TCG IR cache: hits=(\d+) misses=(\d+) rejected=(\d+) stored=(\d+); frontend IR only, fresh native code$', re.M)
 ENABLED = re.compile(r'^LightTouch TCG IR cache: experimental enabled, mapped-image-sha256=([0-9a-f]{64}); 32MiB/4096 records maximum$', re.M)
+DIAGNOSTICS = re.compile(r'^LightTouch TCG IR cache diagnostics: (.+); aggregate wall time, not guest CPU$', re.M)
+DIAGNOSTIC_KEYS = set(('version arm_attempts a32_attempts thumb_attempts a64_attempts '
+    'key_eligible key_rejected save_preflight_skips save_key_changed capture_rejected '
+    'validation_rejected store_failed key_us lookup_us load_decode_us replay_us capture_us '
+    'encode_us save_validate_us put_us records bytes elapsed_us capacity_observed first_capacity_us '
+    'put_calls put_success file_fsync_calls file_fsync_errors file_fsync_us '
+    'directory_fsync_calls directory_fsync_errors directory_fsync_us').split())
+
+
+def diagnostic_selection(cfg):
+    value = cfg.get('cacheDiagnostics')
+    if value is not None and value != {'mode': 'aggregate-v1'}:
+        raise RuntimeError('Exact explicit aggregate-v1 diagnostics required')
+    return value is not None
 
 
 def selection(cfg):
@@ -43,10 +57,14 @@ def environment(cfg, env):
     result = dict(env)
     result.pop('LT_TCG_IR_CACHE_ENABLE', None)
     result.pop('LT_TCG_IR_CACHE', None)
+    result.pop('LT_TCG_IR_CACHE_DIAGNOSTICS', None)
     chosen = selection(cfg)
+    diagnostics = diagnostic_selection(cfg)
     if chosen['mode'] != 'off':
         result['LT_TCG_IR_CACHE_ENABLE'] = 'experimental-v1'
         result['LT_TCG_IR_CACHE'] = chosen['directory']
+        if diagnostics:
+            result['LT_TCG_IR_CACHE_DIAGNOSTICS'] = 'aggregate-v1'
     return result
 
 
@@ -59,7 +77,47 @@ def identity(cfg):
         result['matchedDiagnostic'] = cfg['matchedDiagnostic']
     if 'imageBoundOperator' in cfg:
         result['imageBoundOperator'] = cfg['imageBoundOperator']
+    if diagnostic_selection(cfg):
+        result['cacheDiagnostics'] = cfg['cacheDiagnostics']
     return result
+
+
+def diagnostic_report(cfg, stderr, native_final, records):
+    """Disjoint phase wall costs; fsync is a nested breakdown of put_us."""
+    raw = DIAGNOSTICS.findall(stderr)
+    wanted = diagnostic_selection(cfg) and selection(cfg)['mode'] != 'off'
+    if not wanted:
+        if raw:
+            raise RuntimeError('Unselected native cache diagnostics appeared')
+        return None
+    if not raw:
+        raise RuntimeError('Selected native cache diagnostics missing')
+    samples = []
+    for line in raw:
+        pairs = [item.split('=') for item in line.split()]
+        if any(len(pair) != 2 or not re.fullmatch(r'[0-9]+', pair[1]) for pair in pairs):
+            raise RuntimeError('Malformed native diagnostic metrics')
+        sample = {key: int(value) for key, value in pairs}
+        if len(sample) != len(pairs) or set(sample) != DIAGNOSTIC_KEYS or sample['version'] != 1:
+            raise RuntimeError('Unknown or duplicate native diagnostic metrics')
+        if samples and any(sample[k] < samples[-1][k] for k in sample):
+            raise RuntimeError('Native diagnostic counters reset inside one worker')
+        samples.append(sample)
+    final = samples[-1]
+    if (final['records'] != records or final['put_success'] != native_final['stored']
+            or final['arm_attempts'] != sum(final[k] for k in ['a32_attempts', 'thumb_attempts', 'a64_attempts'])
+            or final['arm_attempts'] != final['key_eligible'] + final['key_rejected']
+            or final['key_eligible'] != sum(native_final[k] for k in ['hits', 'misses', 'rejected'])):
+        raise RuntimeError('Native diagnostics disagree with final cache counters')
+    def ratio(a, b): return a / b if b else None
+    return {'mode': 'aggregate-v1', 'samples': samples, 'final': final,
+            'eligible_hit_fraction': ratio(native_final['hits'], final['key_eligible']),
+            'all_translation_hit_fraction': ratio(native_final['hits'], final['arm_attempts']),
+            'phase_wall_us': sum(final[k] for k in ['key_us', 'lookup_us', 'load_decode_us',
+                'replay_us', 'capture_us', 'encode_us', 'save_validate_us', 'put_us']),
+            'fsync_wall_us_within_put': final['file_fsync_us'] + final['directory_fsync_us'],
+            'timing_semantics': 'aggregate measured wall time; fsync is nested in put_us; not guest CPU or a speedup',
+            'performance_qualified': False}
 
 
 def snapshot(directory, producer):
@@ -173,6 +231,7 @@ def before(cfg):
 def finish(cfg, initial, stderr, strict_session, settings_pixel):
     chosen = selection(cfg)
     if chosen['mode'] == 'off':
+        diagnostic_report(cfg, stderr, None, 0)
         if ENABLED.search(stderr) or SUMMARY.search(stderr):
             raise RuntimeError('OFF trial unexpectedly emitted native cache telemetry')
         return {'mode': 'off', 'status': 'SCOPED_PASS' if strict_session else 'FAIL'}
@@ -188,6 +247,7 @@ def finish(cfg, initial, stderr, strict_session, settings_pixel):
         if any(later[key] < earlier[key] for key in earlier):
             raise RuntimeError('Native cache counters reset inside one worker')
     last = samples[-1]
+    diagnostics = diagnostic_report(cfg, stderr, last, after['records'])
     if (not after['records'] or not after['lock_present']
             or last['stored'] != after['records'] - initial['records']
             or chosen['mode'] == 'cold' and not last['stored']
@@ -197,8 +257,11 @@ def finish(cfg, initial, stderr, strict_session, settings_pixel):
     if any(after['entries'].get(name) != entry for name, entry in initial['entries'].items()):
         raise RuntimeError('Prior cache records were altered or removed')
     passed = strict_session and settings_pixel == [44, 326]
-    return {'scope': 'EXPERIMENTAL_CACHE_HOME_SETTINGS_CORRECTNESS_NOT_PERFORMANCE',
+    receipt = {'scope': 'EXPERIMENTAL_CACHE_HOME_SETTINGS_CORRECTNESS_NOT_PERFORMANCE',
             'mode': chosen['mode'], 'identity': identity(cfg), 'before': initial, 'after': after,
             'native_samples': samples, 'native_final': last, 'strict_session': strict_session,
             'settings_native_pixel': settings_pixel, 'performance_qualified': False,
             'status': 'SCOPED_PASS' if passed else 'FAIL'}
+    if diagnostics is not None:
+        receipt['diagnostics'] = diagnostics
+    return receipt
