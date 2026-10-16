@@ -184,4 +184,3 @@ class Profiles:
         if not re.fullmatch("[a-f0-9]{32}", identity):
             raise SetupError("Invalid launcher device identity.")
         return str(self.directory / "devices" / identity / "state")
-
