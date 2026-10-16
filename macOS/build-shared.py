@@ -126,22 +126,31 @@ def runtime_provenance(runtime):
 
 
 def load_minimum_macos(text):
-    """Read actual deployment floors, rather than the SDK or host OS version."""
+    """Select native macOS floors, including macOS/Catalyst zippered dylibs.
+
+    Apple's Swift compatibility runtimes can declare platform1 and platform6
+    in one Mach-O image. Catalyst's floor is for its alternate loader context;
+    it does not change the native macOS floor. Catalyst alone is not admitted.
+    """
     versions = []
     for command in re.split(r"(?m)^Load command \d+\s*$", text)[1:]:
         if re.search(r"(?m)^\s*cmd LC_BUILD_VERSION\s*$", command):
             platform = re.search(r"(?m)^\s*platform (\S+)", command)
             minimum = re.search(r"(?m)^\s*minos (\S+)", command)
-            if not platform or platform.group(1) not in ("1", "MACOS", "macos") or not minimum:
-                raise ValueError("Only native macOS Mach-O dependencies are supported.")
-            versions.append(minimum.group(1))
+            if not platform or not minimum or not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", minimum.group(1)):
+                raise ValueError("Malformed native Mach-O minimum-version command.")
+            platform = platform.group(1).lower()
+            if platform in ("1", "macos"):
+                versions.append(minimum.group(1))
+            elif platform not in ("6", "maccatalyst"):
+                raise ValueError("Only native macOS or macOS/Catalyst zippered dependencies are supported.")
         elif re.search(r"(?m)^\s*cmd LC_VERSION_MIN_MACOSX\s*$", command):
             minimum = re.search(r"(?m)^\s*version (\S+)", command)
             if not minimum:
                 raise ValueError("Malformed macOS minimum-version command.")
             versions.append(minimum.group(1))
     if not versions or any(not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", value) for value in versions):
-        raise ValueError("Every native dependency must declare a macOS deployment floor.")
+        raise ValueError("Every native dependency must declare a native macOS deployment floor.")
     return max(versions, key=lambda v: tuple(int(p) for p in v.split(".")))
 
 

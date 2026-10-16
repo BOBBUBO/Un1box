@@ -20,6 +20,20 @@ runtime_spec.loader.exec_module(runtime)
 
 
 class PackagingTests(unittest.TestCase):
+    def test_actual_swift_span_zippered_library_uses_native_macos_floor(self):
+        actual = (SOURCE / "Desktop/tests/fixtures/libswiftCompatibilitySpan-otool-l.txt").read_text()
+        self.assertIn("platform 1", actual)
+        self.assertIn("platform 6", actual)
+        self.assertEqual(build.load_minimum_macos(actual), "11.0")
+        # The platform6 context alone cannot qualify a native macOS library.
+        catalyst = "Load command 0\n cmd LC_BUILD_VERSION\n platform 6\n minos 14.0\n"
+        with self.assertRaises(ValueError): build.load_minimum_macos(catalyst)
+        native = "Load command 0\n cmd LC_BUILD_VERSION\n platform 1\n minos 11.0\n"
+        for platform in ("2", "7", "999"):
+            with self.subTest(platform=platform), self.assertRaises(ValueError):
+                build.load_minimum_macos(native + catalyst.replace("platform 6", "platform " + platform))
+        with self.assertRaises(ValueError): build.load_minimum_macos(native + catalyst.replace("minos 14.0", "minos invalid"))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
