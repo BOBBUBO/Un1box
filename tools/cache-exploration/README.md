@@ -109,7 +109,7 @@ timings, worker CPU and broader target acceptance remain separate follow-up work
 Packet preparation can explicitly select `--matched-shutdown-diagnostic` for an
 OFF, fresh COLD or qualified REUSE trial. Ordinary exploration retains its immediate Stop after
 Settings inspection. The opt-in mode binds the fixed schedule to packet inputs:
-one Home/guarded slider at original HELLO+70..71s, actual Home inspection by95s,
+one Home/guarded slider at original HELLO+50..51s, actual Home inspection by95s,
 one Settings input at105..106s at44,326, actual Settings inspection by120s, observed
 readiness120..135s, and ordinary Stop at180s. Original Home129s/Stop205s ceilings
 and native30s shutdown deadline remain unchanged. Missing a window fails the
@@ -133,3 +133,10 @@ fresh worker from another clone of the original clean seed. Its native hit count
 must increase: an enabled setting or surviving cache files do not prove replay.
 Deploy and pin `matched_trial.py` with the other helper modules. Existing frozen
 packets and their failed evidence remain unchanged.
+
+The v2 schedule wakes/unlocks20seconds earlier to leave45seconds for actual
+Home capture and operator inspection. The failed v1 OFF07 missed its original
+95second inspection deadline and remains failed. Frozen v1 packets are not
+modified or resumed; every v2 arm uses a new packet and original clean seed.
+Settings, readiness and Stop times, clean shutdown and reuse requirements stay
+unchanged. The schedule remains a diagnostic, not a speed benchmark.

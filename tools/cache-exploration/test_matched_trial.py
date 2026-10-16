@@ -14,7 +14,7 @@ class Tests(unittest.TestCase):
         return {'cacheTrial': {'mode': 'cold'}, 'matchedDiagnostic': {'mode': matched.MODE}}
 
     def scenes(self, root):
-        matched.input_claim(True, root, self.hello, 'home-unlock', self.hello + 70 * SECOND)
+        matched.input_claim(True, root, self.hello, 'home-unlock', self.hello + 50 * SECOND)
         save(root / 'home-inspected.json', {'model_inspected': True})
         save(root / 'settings-input.json', {'input_begin_ns': self.hello + 105 * SECOND})
         save(root / 'settings-inspected.json', {'observed_wifi_name': 'qemu-ios'})
@@ -43,13 +43,13 @@ class Tests(unittest.TestCase):
     def test_inputs_have_original_clock_window_exact_pixel_and_one_attempt(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for now in [self.hello + 70 * SECOND - 1, self.hello + 71 * SECOND + 1]:
+            for now in [self.hello + 50 * SECOND - 1, self.hello + 51 * SECOND + 1, self.hello + 70 * SECOND]:
                 with self.assertRaises(RuntimeError):
                     matched.input_claim(True, root, self.hello, 'home-unlock', now)
             self.assertEqual(list(root.iterdir()), [])
-            matched.input_claim(True, root, self.hello, 'home-unlock', self.hello + 70 * SECOND)
+            matched.input_claim(True, root, self.hello, 'home-unlock', self.hello + 50 * SECOND)
             with self.assertRaises(FileExistsError):
-                matched.input_claim(True, root, self.hello, 'home-unlock', self.hello + 70 * SECOND)
+                matched.input_claim(True, root, self.hello, 'home-unlock', self.hello + 50 * SECOND)
             with self.assertRaises(RuntimeError):
                 matched.input_claim(True, root, self.hello, 'tap-settings', self.hello + 105 * SECOND, [1, 2])
             self.assertFalse((root / 'matched-tap-settings-input.json').exists())
