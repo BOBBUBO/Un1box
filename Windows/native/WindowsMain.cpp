@@ -3,6 +3,7 @@
 // executable is an internal worker, not another launcher or asset importer.
 #define SDL_MAIN_HANDLED
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 #include <shellapi.h>
 #include <io.h>
@@ -198,11 +199,22 @@ static int run(int argc, char **argv) {
         lt_windows_engine_initialize(engine_argc, engine_args.data());
         lt_windows_engine_start();
         ControlPipe input;
+        bool frontend_failed = false;
         while (lt_windows_engine_running()) {
-            input.poll(); window.tick(); SDL_Delay(8);
+            // Never unwind the lease while initialized engine threads live.
+            // UI errors request cooperative Stop and keep pumping its pipe.
+            try {
+                input.poll();
+                if (!frontend_failed) window.tick();
+            } catch (const std::exception &failure) {
+                frontend_failed = true;
+                error(failure.what());
+                lt_windows_engine_stop();
+            }
+            SDL_Delay(8);
         }
         const int engine_exit = lt_windows_engine_join();
-        const bool clean = engine_exit == 0 && !window.failed() && lease.mark_clean();
+        const bool clean = engine_exit == 0 && !frontend_failed && !window.failed() && lease.mark_clean();
         // Internal engine proof is separate from the sole full session FINAL.
         std::printf("FINAL status_available=1 state=0 confirmed=%d dirty=%d worker_reaped=1 worker_exit=%d worker_disposal_requested=0 frontend_return=%d\n",
                     engine_exit == 0, !clean, engine_exit, clean ? 0 : 3);
