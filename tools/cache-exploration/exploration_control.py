@@ -98,8 +98,38 @@ def lock_reference():
         raise RuntimeError('Pinned Lock policy changed')
     return original, reference, module(policy['path'])
 
+def wait_awake_frame(home_begin, deadline, worker, record):
+    """Poll current-owner telemetry, reserving capture/slider time; no extra input."""
+    wait_begin = time.monotonic_ns()
+    wait_deadline = min(wait_begin + 2500000000, deadline - 4 * SECOND)
+    record['awake_wait_begin_ns'] = wait_begin
+    record['awake_wait_deadline_ns'] = wait_deadline
+    record['awake_wait_observations'] = []
+    try:
+        while time.monotonic_ns() < wait_deadline:
+            _, current_worker = owner()
+            if (current_worker['pid'], current_worker['start_ticks']) != (worker['pid'], worker['start_ticks']):
+                raise RuntimeError('Worker identity changed during bounded awake wait')
+            status = fields(next(row for row in reversed(rows(R / 'session.log')) if row.startswith('status ')))
+            now = time.monotonic_ns()
+            observation = {'poll_ns': now, 'status': status}
+            record['awake_wait_observations'].append(observation)
+            if int(status['state']) != 2:
+                raise RuntimeError('Guest left RUNNING during bounded awake wait')
+            source = int(status.get('frame_monotonic_ns', '0'))
+            observed = int(status['observed_monotonic_ns'])
+            if (int(status['sleeping']) == 0 and int(status['backlight']) > 0 and int(status['agent']) == 1
+                    and home_begin <= source <= now and 0 <= now - source <= 2 * SECOND
+                    and home_begin <= observed <= now and 0 <= now - observed <= SECOND):
+                record['awake_wait_admitted_status'] = status
+                return status
+            time.sleep(.05)
+        raise RuntimeError('Bounded post-Home awake/new-frame wait expired; no capture or slider')
+    finally:
+        record['awake_wait_end_ns'] = time.monotonic_ns()
+
 def home_unlock(label):
-    """One Home, immediate exact-anchor admission and slider; no model roundtrip."""
+    """One Home, bounded awake/frame wait, exact anchors and guarded slider."""
     if re.fullmatch('[a-z0-9-]{1,54}', label) is None:
         raise RuntimeError('Bounded private home-unlock label required')
     original, reference, policy = lock_reference()
@@ -123,13 +153,17 @@ def home_unlock(label):
         if now >= deadline:
             raise RuntimeError('Bounded Home input deadline expired before input')
         record['pre_home_status'] = latest
+        record['home_input_begin_ns'] = time.monotonic_ns()
         press_key('h')
         record['home_released_ns'] = time.monotonic_ns()
+        wait_awake_frame(record['home_input_begin_ns'], deadline, worker, record)
         current, receipt = capture(label + '-lock', convert=False)
         record['current_capture'] = current.name
         record['current_receipt'] = receipt
         if not fresh(receipt, time.monotonic_ns()):
             raise RuntimeError('Immediate post-Home capture not fresh/awake; no slider')
+        if int(receipt['frame_monotonic_ns']) < record['home_input_begin_ns']:
+            raise RuntimeError('Post-Home capture still uses a pre-Home source frame; no slider')
         comparison = policy.compare((original / 'native.bmp').read_bytes(), (current / 'native.bmp').read_bytes())
         record['comparison'] = comparison
         save(current / 'continuity.json', record)
