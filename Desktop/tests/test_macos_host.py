@@ -46,7 +46,9 @@ class HostTests(unittest.TestCase):
     def test_native_record_is_read_only_and_foreign_native_or_linux_state_is_rejected(self):
         mapping = managed_record(self.profile)
         record = Path(mapping["record"]); record.parent.mkdir(parents=True)
-        value = {"format": 1, "id": mapping["native_id"], "board": "n81ap", "base": {"path": str(self.base)}}
+        value = {"format": 1, "id": mapping["native_id"], "board": "n81ap", "firmware": "n81ap-8C148",
+                 "storage": {"key": mapping["base_identity"][:16]},
+                 "base": {"kind": "prepared", "path": str(self.base)}}
         record.write_bytes(plistlib.dumps(value))
         original = record.read_bytes()
         self.assertEqual(managed_record(self.profile)["native_id"], mapping["native_id"])
@@ -64,6 +66,27 @@ class HostTests(unittest.TestCase):
         alias = self.root / "alias"; alias.symlink_to(state, target_is_directory=True)
         with self.assertRaises(ValueError):
             managed_record(dict(self.profile, state=str(alias)))
+
+    def test_changed_build_or_storage_binding_refuses_without_mutating_either_device(self):
+        first = managed_record(self.profile)
+        second_profile = dict(self.profile, id="b" * 32, state=str(self.root / "second-state"))
+        second = managed_record(second_profile)
+        for mapping in (first, second):
+            record = Path(mapping["record"]); record.parent.mkdir(parents=True)
+            record.write_bytes(plistlib.dumps({"format": 1, "id": mapping["native_id"], "board": "n81ap",
+                "firmware": "n81ap-8C148", "base": {"kind": "prepared", "path": str(self.base)},
+                "storage": {"key": mapping["base_identity"][:16]}}))
+            (record.parent / "saved-overlay").write_bytes(b"existing device save")
+        other_before = {str(p): p.read_bytes() for p in Path(second["record"]).parent.iterdir()}
+        record = Path(first["record"]); original = plistlib.loads(record.read_bytes())
+        for field, value in (("firmware", "n81ap-9B206"), ("storage", {"key": "foreign"}), ("format", True)):
+            changed = dict(original); changed[field] = value; record.write_bytes(plistlib.dumps(changed))
+            before = record.read_bytes()
+            with self.assertRaisesRegex(SetupError, "another native device"):
+                managed_record(self.profile)
+            self.assertEqual(record.read_bytes(), before)
+            self.assertEqual((record.parent / "saved-overlay").read_bytes(), b"existing device save")
+            self.assertEqual({str(p): p.read_bytes() for p in Path(second["record"]).parent.iterdir()}, other_before)
 
     def test_literal_command_has_managed_admission_inputs_and_no_arbitrary_qemu_configuration(self):
         command = MacHost.guest_command(self.args, self.profile, False)

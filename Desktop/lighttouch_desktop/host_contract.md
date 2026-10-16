@@ -86,7 +86,9 @@ owner exit. Receipt version1 has exactly `format=lighttouch-native-services`,
 owned host, increasing integer `generation`, and `state=ready|unavailable|retired`.
 Only ready includes `client_socket=UNIX:/absolute/private/client.sock`. Canonical
 socket and parent must be owner-only and their device/inodes remain pinned.
-Malformed/stale/mismatched receipts invalidate the endpoint. NativeClientBridge
+Malformed/stale/mismatched receipts invalidate the endpoint. MacSession retains
+the concrete rejection once per repeated error in application.log and copied
+diagnostics; an optional log append failure cannot block guest polling. NativeClientBridge
 uses the existing finite app_services.helper installer/info commands and never
 starts/stops a daemon, unlinks a socket or loads mobile libraries in the launcher.
 

@@ -57,7 +57,7 @@ struct NativeServicesReceipt: Encodable {
             // Optional app management never weakens guest admission or turns a
             // missing/bad packaged service input into a successful endpoint.
             publish(launch: launch, profile: profile, generation: 1, state: "unavailable", socket: nil)
-            hostLine("LightTouch: explicit app-services inputs unavailable; guest USB management disabled")
+            hostLine("LightTouch: explicit app-services inputs unavailable: \(String(reflecting: error)); bridge=\(String(reflecting: binary)); guest USB management disabled")
             return nil
         }
     }
@@ -99,14 +99,17 @@ struct NativeServicesReceipt: Encodable {
         endpoint = USBMux.Session(clientSocket: "UNIX:" + directory.appendingPathComponent("c.sock").path,
                                   guestAddress: directory.appendingPathComponent("g.sock").path)
         mux = USBMux(binary: binary.path, restartOnExit: false)
-        mux.onUnexpectedExit = { [weak self] in self?.unavailable() }
+        mux.onUnexpectedExit = { [weak self] in
+            guard let self else { return }
+            self.unavailable("Owned USB bridge exited; daemon log: \(self.paths.logs.appendingPathComponent("usbmuxd.log").path)")
+        }
     }
 
     func start() {
         guard !started, !stopping, !retired else { return }
         started = true
         guard mux.startManaged(paths: paths, session: endpoint) != nil else {
-            unavailable(); return
+            unavailable("The optional USB bridge did not start; daemon log: \(paths.logs.appendingPathComponent("usbmuxd.log").path)"); return
         }
     }
 
@@ -122,7 +125,7 @@ struct NativeServicesReceipt: Encodable {
             do { try await Task.sleep(for: .milliseconds(25)); try Task.checkCancellation() }
             catch { unavailable(); return false }
         }
-        unavailable(); return false
+        unavailable("Private USB endpoints were not ready within five seconds; directory: \(directory.path); daemon log: \(paths.logs.appendingPathComponent("usbmuxd.log").path)"); return false
     }
 
     var guestAddress: String? { ready && !stopping ? endpoint.guestAddress : nil }
@@ -159,7 +162,7 @@ struct NativeServicesReceipt: Encodable {
     }
 
     func tick() {
-        if ready && !inspectReady() { unavailable() }
+        if ready && !inspectReady() { unavailable("Owned USB bridge or private socket identity changed; directory: \(directory.path)") }
     }
 
     /// Revoke the client before ordinary guest Stop. The transport stays owned
@@ -168,7 +171,8 @@ struct NativeServicesReceipt: Encodable {
         stopping = true; unavailable()
     }
 
-    private func unavailable() {
+    private func unavailable(_ reason: String? = nil) {
+        if let reason { hostLine("LightTouch: app-services unavailable: \(reason)") }
         ready = false; emit("unavailable")
     }
 

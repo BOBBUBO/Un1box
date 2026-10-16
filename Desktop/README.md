@@ -72,8 +72,9 @@ checks exercise library initialization before the bundle can pass packaging.
 Shared Mac development uses the same saved-profile schema but a separate default
 library (`~/Library/Application Support/LightTouch Shared Desktop`), explicit
 native admission, isolated writable state, matching guest packages and fresh
-helpers. Mac guest app services/IPA, networking and process counters are not yet
-implemented. The Linux service path stays available. See
+helpers. Mac Apps remains disabled: the optional native USB bridge publisher exists,
+but packaged providers and real guest LegacyStore/IPA qualification are pending.
+Networking and process counters remain unavailable. The Linux service path stays available. See
 `macOS/SharedDesktop/README.md` for ownership and remaining target checks.
 
 Small asset-free tests:
