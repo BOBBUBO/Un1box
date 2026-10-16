@@ -39,8 +39,14 @@ static async Task<int> MainWindows(string[] arguments)
             Console.Error.WriteLine("[import-stage] " + stage);
             // Reuse the established streamed archive algorithm. The held source
             // denies mutation/delete; the isolated parent excludes other users.
-            PreparedArchive.Extract(source, stage, new InlineProgress(value => Progress("extracting", (long)(value * 100), 100)));
-            BaseAdmission.Verify(stage, (a, b) => Progress("verifying", a, b), PrivateWindows.Check, PrivateWindows.Read);
+            PreparedArchive.Extract(source, stage, new InlineProgress(value => {
+                if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The shared Windows helper requires Windows.");
+                Progress("extracting", (long)(value * 100), 100);
+            }));
+            BaseAdmission.Verify(stage, (a, b) => {
+                if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The shared Windows helper requires Windows.");
+                Progress("verifying", a, b);
+            }, PrivateWindows.Check, PrivateWindows.Read);
             PrivateWindows.Freeze(stage);
             if (!PrivateWindows.MoveFileEx(stage, destination, 8)) throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(), "Base publication failed; isolated import stage retained at " + stage);
             Console.WriteLine("import phase=verifying percent=100 done=1 total=1");
@@ -72,6 +78,9 @@ static async Task<int> MainWindows(string[] arguments)
         catch (InvalidOperationException) { }
     }
     _ = Task.Run(async () => {
+        // Delegate execution is a separate platform-analysis boundary from the
+        // guarded entrypoint; retain an explicit runtime guard here as well.
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The shared Windows helper requires Windows.");
         try
         {
             while (true)
