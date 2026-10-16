@@ -136,6 +136,7 @@ class Launcher:
                   justify="left", style="Muted.TLabel").pack(fill="x", pady=(8, 0))
         self.widgets.append(self.devices)
         self.button(sidebar, "+ Add iOS device", self.new).pack(fill="x", pady=(12, 0))
+        self.button(sidebar, "New from selected", self.new_instance).pack(fill="x", pady=(8, 0))
         content = ttk.Frame(body)
         content.pack(side="left", fill="both", expand=True)
         # Pack the footer first so it retains space when the window is short.
@@ -336,6 +337,17 @@ class Launcher:
         self.devices.selection_clear(0, "end")
         self.message.set("Choose the iOS system file in step 1.")
         self.detail.set("For iOS 3.1.3: n72ap-7E18.itbase, armv6.itpack, bootrom.bin.")
+
+    def new_instance(self):
+        if self.session.active or self.preparation:
+            return
+        try:
+            self.store.new_instance(self.current)
+            self._list()
+            self.message.set("New device saved. Ready to start iOS.")
+            self.detail.set("Uses the same iOS system with fresh saved data. Your original device stays unchanged.")
+        except (ValueError, OSError, RuntimeError) as error:
+            self.error(error)
 
     def profile(self):
         if not self.current:

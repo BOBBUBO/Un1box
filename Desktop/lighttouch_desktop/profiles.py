@@ -200,6 +200,22 @@ class Profiles:
     def persist(self):
         save_json(self.file, {"version": 1, "selected": self.selected, "devices": self.devices}, storage=self.storage)
 
+    def new_instance(self, source_id):
+        source = next((device for device in self.devices if device["id"] == source_id), None)
+        if source is None:
+            raise SetupError("Select a saved device first.")
+        identity = uuid.uuid4().hex
+        names = {device["name"] for device in self.devices}
+        number = 2
+        while source["name"] + " " + str(number) in names:
+            number += 1
+        profile = dict(source, id=identity, name=source["name"] + " " + str(number),
+                       state=self.new_state(identity))
+        # Save only the configuration. Native Start creates fresh writable data;
+        # neither the immutable system nor the source device's state is copied.
+        self.save(profile)
+        return profile
+
     def new_state(self, identity):
         if not re.fullmatch("[a-f0-9]{32}", identity):
             raise SetupError("Invalid launcher device identity.")

@@ -99,6 +99,26 @@ class SharedStorageTests(unittest.TestCase):
         self.assertIn(("open", str(path)), ops.calls)
         self.assertEqual(path.read_bytes(), raw)
 
+    def test_new_device_reuses_assets_but_never_copies_or_shares_saved_state(self):
+        original = self.profile()
+        state = Path(original["state"]); state.mkdir()
+        note = state / "user-note"; note.write_bytes(b"Keep my existing iOS data")
+        store = profiles.Profiles(self.root / "library")
+        store.save(original)
+        first = store.new_instance(original["id"])
+        second = store.new_instance(original["id"])
+        self.assertEqual((first["name"], second["name"]), ("Shared 2", "Shared 3"))
+        self.assertEqual(len({original["id"], first["id"], second["id"]}), 3)
+        self.assertEqual(len({original["state"], first["state"], second["state"]}), 3)
+        for device in (first, second):
+            self.assertEqual(device["base"], original["base"])
+            self.assertEqual(device["guest_package"], original["guest_package"])
+            self.assertFalse(Path(device["state"]).exists())
+        self.assertEqual(note.read_bytes(), b"Keep my existing iOS data")
+        reloaded = profiles.Profiles(store.directory)
+        self.assertEqual(reloaded.devices, [original, first, second])
+        self.assertEqual(reloaded.selected, second["id"])
+
     def test_missing_windows_backend_fails_closed_before_a_posix_open(self):
         with mock.patch.object(storage, "os", SimpleNamespace(name="nt")):
             with self.assertRaisesRegex(OSError, "Windows host"):
