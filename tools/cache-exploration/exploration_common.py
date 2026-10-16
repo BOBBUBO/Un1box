@@ -236,6 +236,39 @@ def fresh(receipt, now):
             and 0 <= now - int(receipt['frame_monotonic_ns']) <= 2 * SECOND
             and 0 <= now - int(receipt['diagnostics_monotonic_ns']) <= SECOND)
 
+def coherent_current(receipt, now, frontend, worker):
+    """Current readback/diagnostics may describe a legitimately static source.
+
+    Source production time remains unchanged and ordered, without pretending a
+    static image was newly rendered. This does not recognize a guest scene.
+    """
+    try:
+        keys = ['sequence', 'shared_generation', 'frame_monotonic_ns',
+                'copy_started_monotonic_ns', 'copy_finished_monotonic_ns',
+                'observed_monotonic_ns', 'saved_monotonic_ns', 'diagnostics_monotonic_ns']
+        values = {}
+        for key in keys:
+            value = receipt[key]
+            if isinstance(value, bool) or not re.fullmatch('[0-9]+', str(value)):
+                return False
+            values[key] = int(value)
+            if not 0 < values[key] < 2**64:
+                return False
+        source, begin, end, observed, saved, diagnostics = [values[key] for key in keys[2:]]
+        generation = values['shared_generation']
+        return (str(receipt['coherent_readback']) == '1' and generation % 2 == 0
+                and source <= begin <= end <= observed <= saved <= now
+                and end - begin <= SECOND and now - begin <= 2 * SECOND
+                and now - observed <= SECOND and now - saved <= SECOND
+                and diagnostics <= begin and 0 <= now - diagnostics <= SECOND
+                and int(receipt['sleeping']) == 0 and int(receipt['agent']) == 1
+                and 0 < int(receipt['backlight']) <= 255
+                and receipt['frontend_pid'] == frontend['pid']
+                and receipt['worker_pid'] == worker['pid']
+                and str(receipt['worker_start']) == worker['start_ticks'])
+    except (KeyError, TypeError, ValueError):
+        return False
+
 def viewport(width, height):
     # Exact ui15 ControlBarLayout:88 logical pixels below guest, rotation0.
     scale = min(width / 320, max(0, height - 88) / 480)
