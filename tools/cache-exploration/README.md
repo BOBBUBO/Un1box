@@ -51,7 +51,7 @@ It never substitutes that old worker identity for the current live owner.
 
 In a separately granted successor, `exploration_control.py home-unlock
 --model-inspected --output lock-unlock01` performs one balanced Home, immediate
-current-worker capture, fresh awake diagnostics and exact Earth/slider-knob/lock-
+bounded current-worker awake/frame wait, capture, fresh awake diagnostics and exact Earth/slider-knob/lock-
 symbol comparison, followed by one balanced slider. Input is bounded by eight
 seconds and the unchanged original Home129s deadline. Conversion happens after
 input; full captures, exact region receipts and failed admissions are retained.
@@ -59,3 +59,13 @@ No external model/tool roundtrip occurs inside the awake admission. Personally
 inspect the retained post-input PNG before any Home attestation or Settings tap;
 anchor matching never recognizes Home or creates guest acceptance. No cache
 correctness or speed claim follows from these controller contracts.
+
+After balanced Home the helper polls telemetry for at most2.5seconds, reserving
+four seconds before the existing input/Home129s deadline for capture and slider.
+It requires a fresh awake RUNNING status and a source frame produced since that
+Home input began, including frames produced during the balanced key pulse. It
+rechecks current worker identity on each poll and retains every observation.
+This wait sends no additional Home, Power or touch input and never changes the
+reference pixels, exact anchor policy, personal scene gates or original clocks.
+The subsequent actual capture must independently remain fresh/awake and use a
+post-Home source frame. Timeout or identity/state failure sends no slider.

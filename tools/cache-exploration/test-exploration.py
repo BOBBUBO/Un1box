@@ -58,6 +58,9 @@ class Tests(unittest.TestCase):
             policy = control.module(self.lock_policy_path())
             events=[]
             def xcall(args, release=False):
+                if args==['keyup','h']:
+                    instant=time.monotonic_ns()
+                    (root/'session.log').write_text('status state=2 sleeping=0 backlight=255 agent=1 observed_monotonic_ns=%d frame_monotonic_ns=%d\n' % (instant,instant))
                 events.append((args, release)); return '', 0, 0
             count=0
             def capture(label, convert=True):
@@ -115,6 +118,49 @@ class Tests(unittest.TestCase):
             self.assertTrue(result['slider_started'])
             self.assertIn('slider_released_ns',result)
             self.assertFalse(result['guest_acceptance'])
+
+    def test_awake_wait_allows_delayed_wake_without_additional_home_or_image_guess(self):
+        instant=[10*SECOND]
+        home_begin=instant[0]
+        worker=dict(pid=42,start_ticks='123')
+        def status(_):
+            awake=instant[0]-home_begin >= 300000000
+            frame=home_begin+200000000 if awake else home_begin-SECOND
+            return ['status state=2 sleeping=%d backlight=%d agent=1 observed_monotonic_ns=%d frame_monotonic_ns=%d' %
+                    (0 if awake else 1,255 if awake else 0,instant[0],frame)]
+        def pause(seconds):instant[0]+=round(seconds*SECOND)
+        record={}
+        with patch.object(control.time,'monotonic_ns',side_effect=lambda:instant[0]),patch.object(control.time,'sleep',side_effect=pause), \
+             patch.object(control,'owner',return_value=({},worker)),patch.object(control,'rows',side_effect=status), \
+             patch.object(control,'xcall') as input_call,patch.object(control,'capture') as capture_call:
+            admitted=control.wait_awake_frame(home_begin,home_begin+8*SECOND,worker,record)
+            self.assertEqual(instant[0]-home_begin,300000000)
+            self.assertEqual(admitted['sleeping'],'0')
+            self.assertGreater(len(record['awake_wait_observations']),1)
+            input_call.assert_not_called();capture_call.assert_not_called()
+
+    def test_awake_wait_rejects_stale_frame_and_reserves_original_deadline(self):
+        for remaining in [8*SECOND,5*SECOND]:
+            with self.subTest(remaining=remaining):
+                instant=[10*SECOND];begin=instant[0];worker=dict(pid=42,start_ticks='123');record={}
+                def pause(seconds):instant[0]+=round(seconds*SECOND)
+                def status(_):return ['status state=2 sleeping=0 backlight=255 agent=1 observed_monotonic_ns=%d frame_monotonic_ns=%d' % (instant[0],begin-1)]
+                with patch.object(control.time,'monotonic_ns',side_effect=lambda:instant[0]),patch.object(control.time,'sleep',side_effect=pause), \
+                     patch.object(control,'owner',return_value=({},worker)),patch.object(control,'rows',side_effect=status),patch.object(control,'xcall') as inputs:
+                    with self.assertRaisesRegex(RuntimeError,'awake/new-frame wait expired'):
+                        control.wait_awake_frame(begin,begin+remaining,worker,record)
+                    self.assertEqual(instant[0],min(begin+2500000000,begin+remaining-4*SECOND))
+                    inputs.assert_not_called()
+
+    def test_awake_wait_rejects_current_worker_change_and_nonrunning_guest(self):
+        now=time.monotonic_ns();worker=dict(pid=42,start_ticks='123')
+        for current,state in [(dict(pid=42,start_ticks='other'),2),(worker,4)]:
+            with self.subTest(current=current,state=state), \
+                 patch.object(control,'owner',return_value=({},current)), \
+                 patch.object(control,'rows',return_value=['status state=%d observed_monotonic_ns=%d' % (state,now)]):
+                record={}
+                with self.assertRaises(RuntimeError):control.wait_awake_frame(now,now+8*SECOND,worker,record)
+                self.assertIn('awake_wait_end_ns',record)
 
     def test_actual_converter_with_restricted_path_and_shadowed_basename(self):
         executable = os.environ.get('LT_CACHE_TEST_FFMPEG') or shutil.which('ffmpeg')
