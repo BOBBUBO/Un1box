@@ -270,6 +270,7 @@ private struct CaptureBannerThumbnail: View {
     }
 }
 
+#if !LIGHTTOUCH_CLT_BUILD
 #Preview("Saved Capture") {
     let state = CaptureBannerState()
     let _ = {
@@ -285,6 +286,8 @@ private struct CaptureBannerThumbnail: View {
         .background { Image("gradient").resizable().scaledToFill() }
         .clipped()
 }
+
+#endif
 
 /// DeviceKit uses regular, non-interactive SwiftUI glass; the button style handles interaction.
 private struct CaptureGlassSurface<S: Shape>: ViewModifier {
