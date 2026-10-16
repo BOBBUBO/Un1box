@@ -22,8 +22,6 @@ def main():
     parser.add_argument('--reuse-cache-result', type=Path, help='Matching prior actual RESULT.json')
     parser.add_argument('--matched-shutdown-diagnostic', action='store_true')
     args = parser.parse_args()
-    if args.matched_shutdown_diagnostic and args.cache_mode == 'reuse':
-        raise RuntimeError('Matched shutdown diagnosis supports OFF/COLD only')
     if args.cache_mode == 'off' and any((args.cache_directory, args.reuse_cache_receipt, args.reuse_cache_result)):
         raise RuntimeError('OFF preparation must not select experimental cache inputs')
     if args.cache_mode != 'off' and args.cache_directory is None:

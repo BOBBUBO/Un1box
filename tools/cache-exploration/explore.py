@@ -131,6 +131,7 @@ def main():
         descriptors += [log, stderr]
         save(R / 'command.json', {'argv': cfg['argv'], 'environment': {key: env.get(key) for key in cfg['recordEnvironment']},
                                   'cache': cache_before['mode'], 'cache_before': cache_before,
+                                  'clock_ticks_per_second': os.sysconf('SC_CLK_TCK'),
                                   'cgroup': str(root), 'controls': controls})
         frontend = subprocess.Popen(cfg['argv'], env=env, stdout=log, stderr=stderr)
         ffd = os.pidfd_open(frontend.pid)

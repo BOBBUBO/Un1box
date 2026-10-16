@@ -8,8 +8,8 @@ def enabled(cfg):
     if 'matchedDiagnostic' not in cfg:
         return False
     value = cfg['matchedDiagnostic']
-    if value != {'mode': MODE} or cfg.get('cacheTrial', {}).get('mode') not in ('off', 'cold'):
-        raise RuntimeError('Exact matched diagnostic mode with OFF/COLD required')
+    if value != {'mode': MODE} or cfg.get('cacheTrial', {}).get('mode') not in ('off', 'cold', 'reuse'):
+        raise RuntimeError('Exact matched diagnostic mode with OFF/COLD/REUSE required')
     return True
 
 

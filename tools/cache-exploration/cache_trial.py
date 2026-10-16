@@ -146,6 +146,11 @@ def before(cfg):
             raise RuntimeError('Reuse producer receipt changed')
         prior = read(receipt_pin['path'])
         producer = read(result_pin['path'])
+        schedule = cfg.get('matchedDiagnostic')
+        prior_schedule = producer.get('matched_diagnostic') or {}
+        if schedule and (prior_schedule.get('mode') != schedule['mode']
+                         or prior_schedule.get('status') != 'DIAGNOSTIC_SCHEDULE_COMPLETED'):
+            raise RuntimeError('Reuse requires the actual completed matching producer schedule')
         if (prior.get('status') != 'SCOPED_PASS' or prior.get('mode') not in ('cold', 'reuse')
                 or prior.get('identity') != identity(cfg)
                 or producer.get('status') != 'SCOPED_PASS' or producer.get('cache_enabled') is not True
