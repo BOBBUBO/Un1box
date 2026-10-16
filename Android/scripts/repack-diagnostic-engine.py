@@ -38,7 +38,10 @@ def cpp_runtime_proof(packaged, runtime, strip_tool=None):
     if expected == original:
         return {'kind': 'EXACT_BYTES', 'runtimeSha256': original}
     require(strip_tool is not None, 'C++ runtime changed; explicit exact stripping proof required')
-    tool = Path(strip_tool).resolve(strict=True)
+    # LLVM dispatches strip vs objcopy from argv[0]; retain the strip symlink
+    # name while hashing the actual followed executable bytes.
+    tool = Path(strip_tool).absolute()
+    require(tool.is_file(), 'Stripping tool missing')
     tool_hash = sha(tool)
     with tempfile.TemporaryDirectory() as temporary:
         stripped = Path(temporary) / 'libc++_shared.so'

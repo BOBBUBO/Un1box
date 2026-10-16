@@ -115,8 +115,10 @@ class RepackTests(unittest.TestCase):
     def test_exact_stripping_proof_preserves_original_cpp_payload(self):
         self.entries['lib/arm64-v8a/libc++_shared.so'] = b'packaged-stripped-cpp'
         self.write_base()
-        tool = self.root / 'strip-tool'; tool.write_bytes(b'pinned tool fixture')
+        backing = self.root / 'llvm-objcopy'; backing.write_bytes(b'pinned tool fixture')
+        tool = self.root / 'llvm-strip'; tool.symlink_to(backing.name)
         def strip(argv, **kwargs):
+            self.assertEqual(argv[0], str(tool))
             self.assertEqual(argv[1:3], ['--strip-unneeded', '-o'])
             Path(argv[3]).write_bytes(b'packaged-stripped-cpp')
         with patch.object(REPACK.subprocess, 'run', side_effect=strip):
