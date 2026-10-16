@@ -70,6 +70,11 @@ def stage(source, output, python_runtime, helper, worker, native_runtime, servic
              '--frontend "%~dp0runtime\\helper\\LightTouchWin.Headless.exe" '
              '--worker "%~dp0runtime\\native\\lighttouch-windows-worker.exe"'+services_argument+'\r\n')
     (output/'LightTouch.cmd').write_bytes(batch.encode('utf-8'))
+    if services_runtime is not None:
+        # Explicit diagnostic route. Same profiles/state and native worker;
+        # Apps remains unavailable instead of silently claiming service parity.
+        (output/'LightTouch-without-app-bridge.cmd').write_bytes(
+            batch.replace(services_argument, '').encode('utf-8'))
     (output/'README.txt').write_text('Shared Tk library/import UI and maintained SDL guest controls. Use LightTouch.cmd; configurations and writable data default to %LOCALAPPDATA%\\LightTouch\\SharedWindows. Prepared firmware/guest tools are supplied separately. When staged with --services-runtime, Install apps opens the shared Legacy Store search/download and local IPA installer. Guest app-service acceptance on physical Windows remains pending; host checks do not prove guest installation. Interrupted sessions offer Boot recovered state directly, preserving saved data. Imports use bounded memory batches and parallel writes/checks. The older C# preview library is never automatically migrated.\n', encoding='utf-8')
     records = [{'file':str(p.relative_to(output)).replace('\\','/'), 'bytes':p.stat().st_size, 'sha256':sha(p)} for p in sorted(output.rglob('*')) if p.is_file()]
     result = {'status':'STAGED_ONLY', 'ui':'maintained shared Tk and SDL', 'files':records,

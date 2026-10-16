@@ -11,6 +11,7 @@
 #include <SDL.h>
 #include "SharedGuestWindow.hpp"
 #include "engine.h"
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -20,6 +21,43 @@
 
 namespace fs = std::filesystem;
 namespace {
+std::atomic<const char *> startup_phase{"entry"};
+void phase(const char *value) {
+    startup_phase.store(value, std::memory_order_relaxed);
+    std::fprintf(stderr, "[windows-startup] phase=%s\n", value);
+    std::fflush(stderr);
+}
+void fault_location(const void *address) {
+    HMODULE module = nullptr;
+    wchar_t name[MAX_PATH] = {};
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          reinterpret_cast<LPCWSTR>(address), &module)) {
+        GetModuleFileNameW(module, name, MAX_PATH);
+        std::fprintf(stderr, "[windows-crash] address=%p module=%ls base=%p offset=0x%llx\n",
+                     address, name, module,
+                     static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(address) -
+                                                     reinterpret_cast<uintptr_t>(module)));
+    } else {
+        std::fprintf(stderr, "[windows-crash] address=%p module=unknown\n", address);
+    }
+}
+LONG WINAPI native_crash(EXCEPTION_POINTERS *failure) {
+    const auto *record = failure->ExceptionRecord;
+    std::fprintf(stderr, "[windows-crash] phase=%s exception=0x%08lx\n",
+                 startup_phase.load(std::memory_order_relaxed), record->ExceptionCode);
+    fault_location(record->ExceptionAddress);
+    if ((record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
+         record->ExceptionCode == EXCEPTION_IN_PAGE_ERROR) && record->NumberParameters >= 2) {
+        std::fprintf(stderr, "[windows-crash] operation=%llu accessed=%p\n",
+                     static_cast<unsigned long long>(record->ExceptionInformation[0]),
+                     reinterpret_cast<void *>(record->ExceptionInformation[1]));
+    }
+    std::fflush(stderr);
+    // Preserve normal Windows crash handling and the dirty-state marker.
+    // A native fault never becomes a clean guest shutdown receipt.
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 std::wstring wide(const std::string &text) {
     const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.c_str(), -1, nullptr, 0);
     if (!count) throw std::runtime_error("Invalid UTF-8 Windows path.");
@@ -184,6 +222,7 @@ static int run(int argc, char **argv) {
             if (std::string(argv[index]) == "-no-shutdown") no_shutdown = true;
         }
         if (!display_none || !no_shutdown) throw std::runtime_error("Worker requires -display none and -no-shutdown.");
+        phase("state-lease");
         StateLease lease(state, recover);
         lt::windows::Controls controls;
         controls.pause = [](bool pause) { return lt_windows_engine_pause(pause); };
@@ -193,11 +232,15 @@ static int run(int argc, char **argv) {
         // Actual main thread owns QEMU init/constructor registration and SDL.
         // Fail graphics creation BEFORE initializing an engine with live threads.
         SDL_SetMainReady();
+        phase("display-create");
         lt::windows::SharedGuestWindow window(title.c_str(), std::move(controls));
         const int engine_argc = static_cast<int>(engine_args.size());
         engine_args.push_back(nullptr);
+        phase("engine-initialize");
         lt_windows_engine_initialize(engine_argc, engine_args.data());
+        phase("engine-start");
         lt_windows_engine_start();
+        phase("event-loop");
         ControlPipe input;
         bool frontend_failed = false;
         while (lt_windows_engine_running()) {
@@ -230,6 +273,9 @@ static int run(int argc, char **argv) {
 // the native command line ourselves so QEMU and the shared UTF-8 ABI receive
 // exact non-ASCII device/package/state names on every Windows locale.
 int main() {
+    setvbuf(stderr, nullptr, _IONBF, 0);
+    SetUnhandledExceptionFilter(native_crash);
+    phase("command-line");
     int argc = 0;
     wchar_t **arguments = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!arguments) { error("Cannot read the native Windows command line."); return 3; }

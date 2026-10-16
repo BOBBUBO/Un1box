@@ -70,6 +70,10 @@ assert 'Desktop/app_services' not in app_services.__file__
         for name in names: (services/name).write_bytes(b'synthetic native service')
         stage.stage(SOURCE, self.output, self.runtime, self.helper, self.worker, self.native, services)
         self.assertIn('--services-runtime "%~dp0runtime\\services"', (self.output/'LightTouch.cmd').read_text())
+        diagnostic = (self.output/'LightTouch-without-app-bridge.cmd').read_text()
+        self.assertNotIn('--services-runtime', diagnostic)
+        self.assertEqual(diagnostic, (self.output/'LightTouch.cmd').read_text().replace(
+            ' --services-runtime "%~dp0runtime\\services"', ''))
         for name in names:
             self.assertEqual((self.output/'runtime/services'/name).read_bytes(), (services/name).read_bytes())
 

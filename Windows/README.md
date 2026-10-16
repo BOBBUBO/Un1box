@@ -184,3 +184,18 @@ licensing and upstream notices remain applicable. The engine adapters were
 reviewed against our newer06640a3 source rather than applying its entire old
 engine patch. MSYS2 dependencies are isolated MSVCRT `mingw64` packages; this
 cross recipe does not mix in the reference's UCRT64 installation.
+
+## Native startup diagnosis
+
+The r4 Apps-enabled candidate has a reported Windows native access violation
+(`0xC0000005`) before boot. It is unresolved; reimporting the system is not
+indicated. Preserve the existing saved device and use **Boot recovered state**
+after a failed session. New workers log `[windows-startup]` phases and an
+unhandled `[windows-crash]` exception address, module and offset in the normal
+session diagnostics. A native exception always leaves shutdown unconfirmed.
+
+Packages with app services also include `LightTouch-without-app-bridge.cmd`.
+This explicit diagnostic launcher opens the same saved configurations with Apps
+unavailable. Close LightTouch before switching launchers. If ordinary startup
+fails but this route starts, retain both session logs to isolate the bridge
+path. It is a diagnostic comparison, not verified Legacy Store support.
