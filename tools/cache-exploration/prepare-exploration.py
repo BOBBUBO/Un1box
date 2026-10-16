@@ -10,6 +10,7 @@ import subprocess
 from exploration_common import *
 import cache_trial
 import matched_trial
+import image_operator
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -21,7 +22,18 @@ def main():
     parser.add_argument('--reuse-cache-receipt', type=Path, help='Prior actual clean cache-trial.json')
     parser.add_argument('--reuse-cache-result', type=Path, help='Matching prior actual RESULT.json')
     parser.add_argument('--matched-shutdown-diagnostic', action='store_true')
+    parser.add_argument('--image-bound-operator', action='store_true')
+    parser.add_argument('--home-reference', type=Path)
+    parser.add_argument('--settings-reference', type=Path)
+    parser.add_argument('--model-inspected-scene-references', action='store_true',
+                        help='Root personally viewed these prior Home and full Settings/qemu-ios PNGs before preparation')
     args = parser.parse_args()
+    if args.image_bound_operator:
+        if not (args.matched_shutdown_diagnostic and args.home_reference and args.settings_reference
+                and args.model_inspected_scene_references):
+            raise RuntimeError('Image-bound operator requires explicit prior inspected references and matched schedule')
+    elif args.home_reference or args.settings_reference or args.model_inspected_scene_references:
+        raise RuntimeError('Scene references require explicit image-bound operator')
     if args.cache_mode == 'off' and any((args.cache_directory, args.reuse_cache_receipt, args.reuse_cache_result)):
         raise RuntimeError('OFF preparation must not select experimental cache inputs')
     if args.cache_mode != 'off' and args.cache_directory is None:
@@ -150,6 +162,11 @@ def main():
     cfg['cacheTrial'] = {'mode': args.cache_mode}
     if args.matched_shutdown_diagnostic:
         cfg['matchedDiagnostic'] = {'mode': matched_trial.MODE}
+    if args.image_bound_operator:
+        cfg['imageBoundOperator'] = {'mode': image_operator.MODE, 'references': {
+            'home': image_operator.prepare_reference(args.home_reference),
+            'settings': image_operator.prepare_reference(args.settings_reference)}}
+        image_operator.enabled(cfg)
     if args.cache_mode != 'off':
         cfg['scope'] = 'ONE_EXPLICIT_EXPERIMENTAL_CACHE_CORRECTNESS_NOT_BENCHMARK'
         cfg['cacheTrial']['directory'] = str(args.cache_directory)

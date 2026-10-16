@@ -47,6 +47,7 @@ def attest(active, scene, record, hello, now, wifi_name=None):
 class Tracker:
     def __init__(self, cfg):
         self.active = enabled(cfg)
+        self.image_bound = 'imageBoundOperator' in cfg
         self.hello = None
         self.seen = {}
         self.statuses = {}
@@ -61,14 +62,20 @@ class Tracker:
         age = now - hello
         # Capture each admitted scene/input receipt once; reject later rewrites.
         for filename, deadline in [('matched-home-unlock-input.json', 51),
-                                   ('home-inspected.json', 95),
+                                   ('home-admitted.json' if self.image_bound else 'home-inspected.json', 95),
                                    ('settings-input.json', 106),
-                                   ('settings-inspected.json', 120)]:
+                                   ('settings-admitted.json' if self.image_bound else 'settings-inspected.json', 120)]:
             path = root / filename
             if filename in self.seen and digest(path) != self.seen[filename]:
                 raise RuntimeError('Matched diagnostic evidence changed')
             if age >= deadline * SECOND and filename not in self.seen:
                 value = read(path)
+                if self.image_bound and filename in ('home-admitted.json', 'settings-admitted.json'):
+                    from image_operator import validate_admission
+                    value = validate_admission(root, filename.split('-')[0])
+                    if (value['hello_ns'] != hello or
+                            not hello <= value['admitted_monotonic_ns'] <= hello + deadline * SECOND):
+                        raise RuntimeError('Automatic admission missed original scene window')
                 if filename == 'matched-home-unlock-input.json' and (
                         value.get('hello_ns') != hello or not hello + 50 * SECOND <= value['observed_monotonic_ns'] <= hello + 51 * SECOND):
                     raise RuntimeError('Actual Home input missed schedule')
@@ -112,7 +119,8 @@ class Tracker:
             raise RuntimeError('Matched trial lacks readiness or original scheduled Stop')
         if any(digest(root / name) != expected for name, expected in self.seen.items()):
             raise RuntimeError('Matched diagnostic evidence changed after admission')
-        return {'mode': MODE, 'status': 'DIAGNOSTIC_SCHEDULE_COMPLETED',
+        return {'mode': MODE, 'status': ('INPUT_SCHEDULE_COMPLETED_AWAITING_ROOT_REVIEW' if self.image_bound
+                                        else 'DIAGNOSTIC_SCHEDULE_COMPLETED'),
                 'hello_ns': hello, 'stop_ns': stop_clock, 'evidence': self.seen,
                 'readiness_sha256': digest(root / 'matched-readiness.json'),
                 'performance_qualified': False, 'causality_established': False}

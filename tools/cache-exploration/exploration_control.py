@@ -28,7 +28,7 @@ def unchanged_except_clock(first, second):
             return False
     return True
 
-def continuity(source, scene, label):
+def continuity(source, scene, label, inspected=True):
     started, worker = owner()
     original = R / source
     if original.parent != R or not (original / 'receipt.json').is_file():
@@ -41,8 +41,8 @@ def continuity(source, scene, label):
                 coherent_current(receipt, now, started['frontend'], worker))
     if not admitted(old, int(old['saved_monotonic_ns'])):
         raise RuntimeError('Original inspected capture was not awake/fresh')
-    inspected = time.monotonic_ns()
-    if inspected - int(old['saved_monotonic_ns']) > 60 * SECOND:
+    inspected_at = time.monotonic_ns()
+    if inspected_at - int(old['saved_monotonic_ns']) > 60 * SECOND:
         raise RuntimeError('Original image too old for current scene admission')
     current, receipt = capture(label, convert=False)
     if not admitted(receipt, time.monotonic_ns()):
@@ -58,14 +58,17 @@ def continuity(source, scene, label):
     else:
         matched = unchanged_except_clock((original / 'native.bmp').read_bytes(), (current / 'native.bmp').read_bytes())
         comparison = {'policy': 'exact-except-status-clock-RGB-all-alpha-protected', 'matched': matched}
-    record = {'scene': scene, 'model_inspected': True, 'inspected_monotonic_ns': inspected,
-              'inspection_semantics': 'Caller explicitly states actual view_image inspection completed before this command; recorded now, no backdating',
+    record = {'scene': scene, 'model_inspected': bool(inspected),
+              'inspection_semantics': ('Caller explicitly states actual view_image inspection completed before this command; recorded now, no backdating'
+                                       if inspected else 'Automatic exact image continuity only; personal post-run review required'),
               'original_capture': source, 'current_capture': current.name, 'comparison': comparison,
               'same_worker': same, 'original_sha256': old['sha256'], 'current_sha256': receipt['sha256'],
               'readback_policy': 'new-source-and-awake' if scene == 'lock' else 'current-coherent-copy-awake-static-source-allowed',
               'original_source_age_at_saved_ns': int(old['saved_monotonic_ns']) - int(old['frame_monotonic_ns']),
               'current_source_age_at_saved_ns': int(receipt['saved_monotonic_ns']) - int(receipt['frame_monotonic_ns']),
               'verification_monotonic_ns': time.monotonic_ns()}
+    if inspected:
+        record['inspected_monotonic_ns'] = inspected_at
     save(current / 'continuity.json', record)
     if not same or not matched:
         raise RuntimeError('Inspected scene changed; retained captures require fresh actual inspection')
