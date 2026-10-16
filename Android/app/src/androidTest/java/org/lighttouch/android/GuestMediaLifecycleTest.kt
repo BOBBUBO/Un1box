@@ -40,6 +40,9 @@ class GuestMediaLifecycleTest {
             require(keyboard != null && requireConcurrentWindows)
             require(arguments.getString("mediaSeconds", "30") == "30")
         }
+        val captureFrameTimeline = arguments.getString("captureFrameTimeline") == "true"
+        require(arguments.getString("captureFrameTimeline") in listOf(null, "true"))
+        if (captureFrameTimeline) require(visibleKeyboardPhases)
         keyboard?.let { plan ->
             require(plan.getInt("schema") == 1 && plan.getBoolean("scratchNoteApproved") && plan.getBoolean("preservesExistingTestNote"))
             require(plan.getString("scratchNoteIdentity").length in 1..120)
@@ -76,6 +79,7 @@ class GuestMediaLifecycleTest {
             .put("guestAcceptancePassed", false).put("heldAudioFocusRequested", heldFocus)
             .put("concurrentWindowsRequired", requireConcurrentWindows)
             .put("visibleKeyboardPhases", visibleKeyboardPhases)
+            .put("frameTimelineRequested", captureFrameTimeline)
             .put("visibleKeyboardPhaseMs", if (visibleKeyboardPhases) 1_500 else JSONObject.NULL)
             .put("keyboardWorkloadBinding", keyboard ?: JSONObject.NULL)
         val samples = JSONArray()
@@ -106,6 +110,7 @@ class GuestMediaLifecycleTest {
                     val worker = binding.get()
                     val initial = worker.status()
                     val pid = initial.getInt("pid"); val uid = initial.getInt("uid")
+                    var frameTimeline: FrameTimelineProbe? = null
                     var viewAvailable = true
                     fun snapshot(label: String): Bundle {
                         val begin = SystemClock.elapsedRealtimeNanos()
@@ -140,6 +145,12 @@ class GuestMediaLifecycleTest {
                             .put("before", encode(before)).put("after", encode(worker.status())).put("atomicFrameBindingClaimed", false))
                         File(evidence, "events.json").writeText(events.toString(2))
                         assertEquals("Actual guest frame capture", "", error)
+                        frameTimeline?.let { probe ->
+                            val diagnostic = probe.capture(label, worker.status())
+                            events.put(JSONObject().put("frameTimeline", diagnostic))
+                            File(evidence, "events.json").writeText(events.toString(2))
+                            assertTrue("Required read-only frame timeline diagnostic: $diagnostic", diagnostic.getBoolean("pass"))
+                        }
                     }
                     var downTime = SystemClock.uptimeMillis()
                     fun touch(action: Int, ids: IntArray) {
@@ -275,6 +286,7 @@ class GuestMediaLifecycleTest {
                         require(initialKeyboardOwner > 0 && initialKeyboardGeneration > 0)
                         keyboardGuard(requireNotNull(keyboardInitial))
                         scenario.onActivity { keyboardView(it, requireNotNull(keyboardInitial)) }
+                        if (captureFrameTimeline) frameTimeline = FrameTimelineProbe(context.filesDir, evidence, pid, uid)
                         checkKeyboardImage("keyboard-reviewed-start")
                     }
                     val before = snapshot("measurement-start")
