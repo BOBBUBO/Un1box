@@ -13,9 +13,10 @@ Extract the complete Windows preview ZIP to a writable local folder, then run
 self-contained publish; no administrator installation is intended.
 
 If replacing the first preview after a `nor-rw must be a private copy` error,
-close the launcher and extract the updated ZIP into a new folder. Reopen the
-same prepared base and tools; saves stay in the existing application data
-folder. No base reimport or save deletion is needed. The engine now uses actual
+close the launcher and extract the updated ZIP into a new folder. Start the
+launcher and select your existing saved device in the list; its selected inputs
+and saves remain in the application data folder. No base reimport or save
+deletion is needed. The engine now uses actual
 Windows file identifiers: the old CRT inode check could mistake a separate NOR
 copy for the base. Same-file and hardlink protection remains enabled.
 
