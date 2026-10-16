@@ -77,6 +77,8 @@ def identity(cfg):
         result['matchedDiagnostic'] = cfg['matchedDiagnostic']
     if 'imageBoundOperator' in cfg:
         result['imageBoundOperator'] = cfg['imageBoundOperator']
+    if 'sceneFailurePolicy' in cfg:
+        result['sceneFailurePolicy'] = cfg['sceneFailurePolicy']
     if diagnostic_selection(cfg):
         result['cacheDiagnostics'] = cfg['cacheDiagnostics']
     return result

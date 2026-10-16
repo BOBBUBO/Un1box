@@ -152,9 +152,9 @@ class Operator:
         if not self.home_sent:
             return
         if age >= 95 * SECOND and not (root / 'home-admitted.json').is_file():
-            raise RuntimeError('Original Home image admission deadline95s expired; no Settings input')
+            raise control.matched_trial.SceneDeadlineFailure('home')
         if age >= 120 * SECOND and not (root / 'settings-admitted.json').is_file():
-            raise RuntimeError('Original Settings image admission deadline120s expired')
+            raise control.matched_trial.SceneDeadlineFailure('settings')
         if 55 * SECOND <= age < 95 * SECOND and not (root / 'home-admitted.json').exists() and now >= self.next_poll:
             self.admit(root, 'home', hello)
             self.next_poll = time.monotonic_ns() + SECOND
