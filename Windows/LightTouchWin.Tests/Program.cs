@@ -69,11 +69,26 @@ try
     Check(recipe[recipe.IndexOf("-display") + 1] == "sdl,gl=off,show-cursor=on", "keep host mouse cursor visible while interacting with guest");
     Check(recipe[1].Contains("bootrom=") && recipe[1].Contains("direct-iboot="), "n72 prepared boot recipe");
     Check(!Directory.Exists(state72), "validation does not mutate writable state");
+    string baseNor81 = Path.Combine(n81.BasePath, "nor.bin");
+    File.SetAttributes(baseNor81, File.GetAttributes(baseNor81) | FileAttributes.ReadOnly);
     var later = BootRecipe.Create(n81, state81);
     Check(later[1].Contains("kboot=") && !later[1].Contains("bootrom="), "n81 prepared kboot without separate ROM");
     Check(later[1].Contains("nand-overlay=") && later[1].Contains("nor-rw="), "n81 writable NAND and NOR isolated");
     Reject(() => BootRecipe.Create(n81 with { RomPath = n72.RomPath }, state81), "reject unrelated n81 ROM");
     Check(File.ReadAllBytes(Path.Combine(n81.BasePath, "nor.bin")).SequenceEqual(new byte[] { 0, 1, 2, 3 }), "base NOR unchanged");
+    string writableNor81 = Path.Combine(state81, "nor.bin");
+    Check((File.GetAttributes(writableNor81) & FileAttributes.ReadOnly) == 0,
+          "writable NOR does not inherit immutable source attributes");
+    File.WriteAllBytes(writableNor81, [9, 8, 7, 6]);
+    BootRecipe.Create(n81, state81);
+    Check(File.ReadAllBytes(writableNor81).SequenceEqual(new byte[] { 9, 8, 7, 6 }),
+          "same-device restart retains modified NOR");
+    string secondState81 = Path.Combine(rootPath, "second-state81");
+    BootRecipe.Create(n81 with { Id = Guid.NewGuid().ToString("N") }, secondState81);
+    Check(File.ReadAllBytes(Path.Combine(secondState81, "nor.bin")).SequenceEqual(new byte[] { 0, 1, 2, 3 }) &&
+          File.ReadAllBytes(baseNor81).SequenceEqual(new byte[] { 0, 1, 2, 3 }),
+          "second device receives original NOR without sharing or changing first state");
+    File.SetAttributes(baseNor81, File.GetAttributes(baseNor81) & ~FileAttributes.ReadOnly);
     string other = Path.Combine(rootPath, "other81"); Directory.CreateDirectory(Path.Combine(other, "nand"));
     foreach (string file in new[] { "device.lock.json", "nor.bin", "kboot.bin" }) File.Copy(Path.Combine(n81.BasePath, file), Path.Combine(other, file));
     Reject(() => BootRecipe.Create(n81 with { BasePath = other }, state81), "reject same-metadata different base sharing state");

@@ -115,10 +115,27 @@ public static class BootRecipe
             Directory.CreateDirectory(overlay);
             if (!File.Exists(nor))
             {
-                var temporary = nor + ".tmp";
-                File.Copy(norSource, temporary, true);
-                File.SetAttributes(temporary, FileAttributes.Normal);
-                File.Move(temporary, nor);
+                // CopyFile can propagate an immutable base file's Windows
+                // permissions. Create an independent file under the private
+                // state directory so it inherits writable state permissions.
+                var temporary = nor + ".tmp-" + Guid.NewGuid().ToString("N");
+                bool created = false;
+                try
+                {
+                    using (var input = new FileStream(norSource, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        created = true;
+                        input.CopyTo(output);
+                        output.Flush(true);
+                    }
+                    File.Move(temporary, nor);
+                }
+                catch
+                {
+                    if (created) File.Delete(temporary);
+                    throw;
+                }
             }
         }
         if (!validateOnly && guestPackage != null)
