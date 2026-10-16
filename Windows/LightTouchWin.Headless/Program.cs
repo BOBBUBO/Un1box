@@ -126,6 +126,16 @@ static async Task<int> MainWindows(string[] arguments)
         start.ArgumentList.Add("--"); foreach (string value in engine) start.ArgumentList.Add(value);
         start.Environment["SDL_AUDIODRIVER"] = "wasapi"; start.Environment["IT_TVOUT_READY"] = "1";
         foreach (string key in new[] { "LT_TCG_IR_CACHE_ENABLE", "LT_TCG_IR_CACHE", "LTM_QEMU_DYLIB" }) start.Environment.Remove(key);
+        // Guest app services are unavailable in this shared preview. A shell or
+        // another saved device must not silently attach this guest to its USB
+        // bridge. Windows environment names are case-insensitive; retain that
+        // rule even if this source is exercised with an explicit mapping.
+        foreach (string key in start.Environment.Keys.ToArray())
+            if (key.Equals("IT_USB_TCP", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("USBMUXD_SOCKET_ADDRESS", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("USBMUXD_QEMU_ADDR", StringComparison.OrdinalIgnoreCase) ||
+                key.StartsWith("LTW_USBMUX_", StringComparison.OrdinalIgnoreCase) ||
+                key.StartsWith("LTW_SESSION_", StringComparison.OrdinalIgnoreCase)) start.Environment.Remove(key);
         if (Volatile.Read(ref stopRequested) != 0) throw new OperationCanceledException("Start was cancelled before guest boot; state was retained.");
         child = Process.Start(start) ?? throw new IOException("Cannot start the maintained Windows guest window.");
         if (Volatile.Read(ref stopRequested) != 0) await Stop();
