@@ -36,13 +36,13 @@ def checked_path(value):
     raw = value.replace("/", "\\")
     drive, tail = ntpath.splitdrive(raw)
     parts = tail.split("\\")
-    reserved = {"CON", "PRN", "AUX", "NUL", *("COM"+str(i) for i in range(1, 10)), *("LPT"+str(i) for i in range(1, 10))}
+    reserved = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", *("COM"+i for i in "0123456789¹²³"), *("LPT"+i for i in "0123456789¹²³")}
     for part in parts:
         if not part:
             continue
         if part in (".", "..") or part.endswith((" ", ".")) or any(c in part for c in ':<>"|?*') or any(ord(c) < 32 for c in part):
             raise ValueError("Windows paths cannot contain traversal, alternate streams or ambiguous names.")
-        if part.split(".", 1)[0].upper() in reserved:
+        if part.split(".", 1)[0].rstrip(" ").upper() in reserved:
             raise ValueError("Windows reserved device names cannot be used as files.")
     if not drive:
         raise ValueError("Choose an absolute Windows path.")
