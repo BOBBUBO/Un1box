@@ -126,7 +126,8 @@ import IOSurface
                 link.send(.machine(paused ? .pause : .resume))
             case Int32(LT_DESKTOP_ROTATE.rawValue):
                 guard booted, !stopping else { continue }
-                // Upstream rotates the emulated device; no gyro qualification.
+                // SDL owns host video/touch rotation. Also notify the emulated
+                // device through the upstream API; no gyro qualification.
                 link.send(.rotate(clockwise: true))
             case Int32(LT_DESKTOP_SCREENSHOT.rawValue):
                 if let frame = link.frontSurface() { screenshotRequested(frame.surface) }

@@ -12,6 +12,7 @@ struct LTDesktopWindow {
     SDL_Renderer *renderer = nullptr;
     SDL_Texture *texture = nullptr;
     int guest_width = 0, guest_height = 0;
+    int display_rotation = 0;
     bool enabled = false, stopping = false, paused = false;
     lt::WindowControls controls;
     using Owner = lt::WindowControls::Owner;
@@ -42,7 +43,12 @@ struct LTDesktopWindow {
         if (action == A::pause || action == A::rotate || action == A::stop)
             cancel();
         if (action == A::pause) emit(LT_DESKTOP_PAUSE);
-        if (action == A::rotate) emit(LT_DESKTOP_ROTATE);
+        if (action == A::rotate) {
+            display_rotation = (display_rotation + 90) % 360;
+            // Presentation is owned here. The semantic event lets a platform
+            // additionally notify guest orientation without controlling video.
+            emit(LT_DESKTOP_ROTATE);
+        }
         if (action == A::screenshot) emit(LT_DESKTOP_SCREENSHOT);
         if (action == A::stop) {
             enabled = false;
@@ -51,12 +57,18 @@ struct LTDesktopWindow {
         }
     }
     bool position(double px, double py, double &x, double &y) const {
-        const auto view = layout().guest(guest_width, guest_height, 0);
+        const auto view = layout().guest(guest_width, guest_height, display_rotation);
         if (view.width <= 0 || view.height <= 0 || px < view.left || py < view.top ||
             px >= view.left + view.width || py >= view.top + view.height)
             return false;
-        x = (px - view.left) / view.width;
-        y = (py - view.top) / view.height;
+        const double u = (px - view.left) / view.width, v = (py - view.top) / view.height;
+        // Inverse of SDL's clockwise presentation, in native guest coordinates.
+        switch (display_rotation) {
+        case 90: x = v; y = 1 - u; break;
+        case 180: x = 1 - u; y = 1 - v; break;
+        case 270: x = 1 - v; y = u; break;
+        default: x = u; y = v; break;
+        }
         return true;
     }
     void pointer(Owner owner, int phase, double px, double py) {
@@ -190,9 +202,14 @@ extern "C" int lt_desktop_window_present(LTDesktopWindow *window, int paused, in
     SDL_SetRenderDrawColor(window->renderer, 12, 14, 18, 255);
     if (SDL_RenderClear(window->renderer) != 0) return -1;
     if (window->texture) {
-        const auto view = layout.guest(window->guest_width, window->guest_height, 0);
-        const SDL_FRect destination{float(view.left), float(view.top), float(view.width), float(view.height)};
-        if (SDL_RenderCopyF(window->renderer, window->texture, nullptr, &destination) != 0) return -1;
+        const auto view = layout.guest(window->guest_width, window->guest_height, window->display_rotation);
+        // SDL rotates about the destination centre, so this rectangle keeps the
+        // unrotated dimensions while the viewport fits their rotated bounds.
+        const double width = window->guest_width * view.scale, height = window->guest_height * view.scale;
+        const SDL_FRect destination{float((layout.width - width) / 2), float((layout.top() - height) / 2),
+                                   float(width), float(height)};
+        if (SDL_RenderCopyExF(window->renderer, window->texture, nullptr, &destination,
+                              window->display_rotation, nullptr, SDL_FLIP_NONE) != 0) return -1;
     }
     lt::draw_control_bar(window->renderer, layout, window->controls, paused != 0, stopping != 0);
     SDL_RenderPresent(window->renderer);

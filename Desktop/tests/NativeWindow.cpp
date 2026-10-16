@@ -3,10 +3,12 @@
 #include "../native/Window.cpp"
 #include <cassert>
 #include <cmath>
+#include <array>
 #include <iostream>
 #include <vector>
 
-int main() {
+int main(int argc, char **argv) {
+    assert(argc <= 2); // Optional private directory for synthetic render evidence.
     assert(SDL_setenv("SDL_VIDEODRIVER", "dummy", 1) == 0);
     assert(SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS) == 0);
     LTDesktopWindow window;
@@ -114,6 +116,80 @@ int main() {
     window.pointer({1, 100}, 1, right, y);
     assert(take().empty()); // Contact cannot be re-created without a fresh down.
 
+    // Exercise the actual Rotate button and production present/input functions.
+    // A software target is injected only for deterministic host pixel readback;
+    // production create below must continue rejecting software-only renderers.
+    auto *surface = SDL_CreateRGBSurfaceWithFormat(0, 480, 800, 32, SDL_PIXELFORMAT_ARGB8888);
+    assert(surface);
+    window.renderer = SDL_CreateSoftwareRenderer(surface);
+    assert(window.renderer);
+    const std::array<uint8_t, 24> bgra{
+        0,0,255,0, 0,255,0,0, 255,0,0,0, 0,255,255,0, 255,255,0,0, 255,0,255,0};
+    assert(lt_desktop_window_frame(&window, bgra.data(), 2, 3, 8) == 0);
+    assert(take().empty());
+    const std::array<std::array<uint8_t,3>,6> colors{{
+        {255,0,0}, {0,255,0}, {0,0,255}, {255,255,0}, {0,255,255}, {255,0,255}}};
+    std::vector<uint8_t> pixels(480 * 800 * 4);
+    auto verify_rotation = [&](int rotation, bool touches) {
+        assert(window.display_rotation == rotation);
+        assert(lt_desktop_window_present(&window, !touches, 0) == 0);
+        assert(SDL_RenderReadPixels(window.renderer, nullptr, SDL_PIXELFORMAT_RGBA32, pixels.data(), 480 * 4) == 0);
+        const auto rotated = window.layout().guest(2, 3, rotation);
+        for (int i = 0; i < 6; ++i) {
+            const double gx = (i % 2 + .5) / 2, gy = (i / 2 + .5) / 3;
+            double u = gx, v = gy;
+            if (rotation == 90) { u = 1 - gy; v = gx; }
+            if (rotation == 180) { u = 1 - gx; v = 1 - gy; }
+            if (rotation == 270) { u = gy; v = 1 - gx; }
+            const double px = rotated.left + u * rotated.width, py = rotated.top + v * rotated.height;
+            const auto *pixel = pixels.data() + (int(py) * 480 + int(px)) * 4;
+            assert(pixel[0] == colors[i][0] && pixel[1] == colors[i][1] && pixel[2] == colors[i][2] && pixel[3] == 255);
+            if (touches) {
+                window.pointer({1, 700}, 0, px, py);
+                window.pointer({1, 700}, 2, px, py);
+                const auto contacts = take();
+                assert(contacts.size() == 2 && contacts[0].phase == 0 && contacts[1].phase == 2);
+                assert(std::abs(contacts[0].x - gx) < 1e-8 && std::abs(contacts[0].y - gy) < 1e-8);
+            }
+        }
+        // Rotation never maps letterboxing/the fixed toolbar into guest input.
+        window.pointer({1, 701}, 0, 0, 0);
+        window.pointer({1, 701}, 2, 0, 0);
+        assert(take().empty());
+        if (argc == 2) {
+            const std::string path = std::string(argv[1]) + "/rotation-" + std::to_string(rotation) + ".bmp";
+            assert(SDL_SaveBMP(surface, path.c_str()) == 0);
+        }
+    };
+    verify_rotation(0, true);
+    // Cancel both guest contacts and a hardware hold BEFORE rotating coordinates.
+    window.pointer({1, 800}, 0, left, y);
+    window.pointer({1, 801}, 0, right, y);
+    key(SDLK_h, true); take();
+    const auto rotate = window.layout().rect(5);
+    const double rx = rotate.x + rotate.w / 2, ry = rotate.y + rotate.h / 2;
+    window.pointer({0, 0}, 0, rx, ry);
+    window.pointer({0, 0}, 2, rx, ry);
+    events = take();
+    assert(events.size() == 4 && events[0].kind == LT_DESKTOP_BUTTON && events[0].phase == 0);
+    assert(events[1].kind == LT_DESKTOP_TOUCH && events[1].phase == 2);
+    assert(events[2].kind == LT_DESKTOP_TOUCH && events[2].phase == 2);
+    assert(events.back().kind == LT_DESKTOP_ROTATE && window.contacts.empty());
+    key(SDLK_h, false); assert(take().empty());
+    verify_rotation(90, true);
+    for (int angle : {180, 270, 0}) {
+        // Both toolbar click and keyboard shortcut share this presentation path.
+        key(SDLK_r, true); key(SDLK_r, false);
+        events = take(); assert(events.size() == 1 && events[0].kind == LT_DESKTOP_ROTATE);
+        verify_rotation(angle, true);
+    }
+    // An unchanged/paused guest frame must still visibly rotate immediately.
+    lt_desktop_window_paused(&window, 1);
+    key(SDLK_r, true); key(SDLK_r, false);
+    events = take(); assert(events.size() == 1 && events[0].kind == LT_DESKTOP_ROTATE);
+    verify_rotation(90, false);
+    lt_desktop_window_paused(&window, 0);
+
     key(SDLK_ESCAPE, true); key(SDLK_ESCAPE, false);
     events = take(); assert(events.size() == 1 && events[0].kind == LT_DESKTOP_STOP);
     assert(!window.enabled && window.stopping);
@@ -125,10 +201,13 @@ int main() {
     key(SDLK_h, true); assert(take().empty());
     assert(lt_desktop_window_frame(&window, nullptr, 320, 480, 1280) == -1);
     assert(lt_desktop_window_poll(nullptr, nullptr) == -1);
+    SDL_DestroyTexture(window.texture);
+    SDL_DestroyRenderer(window.renderer);
+    SDL_FreeSurface(surface);
     SDL_DestroyWindow(window.window);
     SDL_QuitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
     assert(!lt_desktop_window_create("requires hardware", 480, 800));
     assert(!active_window);
     assert(std::string(lt_desktop_window_error()).find("hardware") != std::string::npos);
-    std::cout << "native shared adapter ownership/multitouch/cancel/stop/hardware refusal PASS; synthetic host only\n";
+    std::cout << "native shared adapter ownership/multitouch/cancel/quarter-turn pixels+input/stop/hardware refusal PASS; synthetic host only\n";
 }
