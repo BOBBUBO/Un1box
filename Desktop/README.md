@@ -17,10 +17,20 @@ consume the shared control components. Its saved-device migration must preserve
 existing inputs and writable state. The Windows host adapter and prebuilt staging recipe now use that shared UI;
 the user has confirmed shared Windows guest boot/render/audio, clean shutdown
 and startup status. Bundled guest-service providers now connect the shared Apps
-window to Legacy Store and local IPA installation; guest installation verification
-remains pending. Interrupted saved devices offer a direct, one-shot **Boot
-recovered state** action. Windows import uses bounded memory batches and parallel
-disk verification; target speedup remains unmeasured.
+window to Legacy Store and local IPA installation; the user has confirmed Windows
+Legacy Store guest installation. Interrupted saved devices offer a direct,
+one-shot **Boot recovered state** action.
+
+All three desktop launchers use the same streaming `.itbase` importer. It
+decompresses in bounded memory and writes n72 NAND directly into one indexed
+read-only `ITNAND01` file; it does not extract individual NAND page files. n81
+retains its few large NAND files. The importer verifies the source archive and
+original asset manifest, then the platform helper verifies the resulting files
+and publishes that same staged directory without copying NAND again. Writable
+NOR and NAND overlays stay in each saved device's separate data folder. This is
+an alpha format change: reimport existing devices; no migration is provided.
+One real n72 streaming import measured 4.6 seconds on Linux; this is not a
+Windows/macOS speed measurement or a complete setup-time claim.
 Android retains its touch UI; APK orchestration remains a future entrypoint
 adapter rather than an advertised output of this initial desktop foundation.
 

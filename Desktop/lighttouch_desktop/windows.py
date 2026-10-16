@@ -103,15 +103,10 @@ class WindowsHost:
         return command
 
     def import_command(self, args, source, destination, sha256):
-        regular(source, "prepared base archive", storage=self.storage)
-        if not re.fullmatch("[a-fA-F0-9]{64}", sha256):
-            raise SetupError("The selected archive requires its calculated SHA-256.")
-        destination = Path(destination).absolute()
-        if destination.exists() or destination.is_symlink():
-            raise SetupError("Import destination already exists. Choose a new folder.")
-        disjoint(source, destination)
-        return self._helper(args) + ["import", "--source", absolute(source),
-                                    "--destination", str(destination), "--sha256", sha256.lower()] + self._validation_cache(args)
+        from .import_cli import import_command
+        cache = self._validation_cache(args)
+        return import_command("windows", self._helper(args)[0], source, destination, sha256,
+                              storage=self.storage, validation_cache=cache[1] if cache else None)
 
     def start_services(self, args, directory, identity):
         from .windows_services import WindowsBridge

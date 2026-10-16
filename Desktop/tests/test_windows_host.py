@@ -56,11 +56,13 @@ class HostTests(unittest.TestCase):
             self.args.worker.unlink()
             with self.assertRaises(windows.SetupError): self.host.guest_command(self.args, self.profile, False)
 
-    def test_import_uses_calculated_digest_and_native_helper(self):
+    def test_import_uses_common_streamer_with_native_finalizer(self):
         source = self.root/'selected.itbase'; source.write_bytes(b'synthetic')
         destination = self.root/'new base'
         argv = self.host.import_command(self.args, str(source), destination, 'A'*64)
-        self.assertEqual(argv[:2], [str(self.args.frontend), 'import'])
+        self.assertEqual(argv[:2], [sys.executable, '-I'])
+        self.assertEqual(argv[argv.index('--platform')+1], 'windows')
+        self.assertEqual(argv[argv.index('--frontend')+1], str(self.args.frontend))
         self.assertEqual(argv[-2:], ['--sha256', 'a'*64])
         with self.assertRaises(windows.SetupError): self.host.import_command(self.args, str(source), destination, '')
         destination.mkdir()

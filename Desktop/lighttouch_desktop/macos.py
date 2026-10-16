@@ -165,15 +165,8 @@ class MacHost:
 
     @classmethod
     def import_command(cls, args, source, destination, sha256):
-        regular(source, "prepared base archive")
-        if not re.fullmatch("[a-fA-F0-9]{64}", sha256):
-            raise SetupError("The prepared archive needs its calculated SHA-256.")
-        destination = Path(destination).absolute()
-        if destination.exists() or destination.is_symlink():
-            raise SetupError("Import destination already exists. Choose a new folder.")
-        disjoint(source, destination)
-        return cls._runner(args) + ["import", "--source", absolute(source), "--destination", str(destination),
-                                   "--sha256", sha256.lower()]
+        from .import_cli import import_command
+        return import_command("macos", cls._runner(args)[0], source, destination, sha256)
 
     @staticmethod
     def start_services(args, directory, identity):

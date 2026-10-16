@@ -26,17 +26,5 @@ def start_command(frontend, engine, profile, allow_dirty=False):
 
 
 def import_command(frontend, source, destination, expected_sha256):
-    source, destination = Path(source).absolute(), Path(destination).absolute()
-    if destination.exists():
-        raise SetupError("Import destination already exists. Choose a new folder.")
-    disjoint(source, destination)
-    if not source.exists() or source.is_symlink():
-        raise SetupError("Choose a prepared-base archive or extracted folder.")
-    command = [str(frontend), "--import", str(source), "--base", str(destination)]
-    if source.is_file():
-        if not re.fullmatch("[A-Fa-f0-9]{64}", expected_sha256):
-            raise SetupError("Enter the verified archive's 64-character SHA-256.")
-        command += ["--sha256", expected_sha256.lower()]
-    elif not source.is_dir():
-        raise SetupError("Choose a regular prepared-base archive or folder.")
-    return command
+    from lighttouch_desktop.import_cli import import_command as shared_import
+    return shared_import("linux", frontend, source, destination, expected_sha256)
