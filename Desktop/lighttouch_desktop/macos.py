@@ -37,8 +37,11 @@ def managed_record(profile):
             raise SetupError("Native device record exceeds 1 MiB.")
         try:
             value = plistlib.loads(record.read_bytes())
-            same = (value.get("format") == 1 and value.get("id") == native_id and
+            same = (type(value.get("format")) is int and value["format"] == 1 and value.get("id") == native_id and
                     value.get("board") == info["board"] and
+                    value.get("firmware") == info["board"] + "-" + info["build"] and
+                    value.get("storage", {}).get("key") == info["base_identity"][:16] and
+                    value["base"].get("kind") == "prepared" and
                     Path(value["base"]["path"]).resolve() == Path(profile["base"]).resolve())
         except (ValueError, TypeError, KeyError, AttributeError, plistlib.InvalidFileException) as error:
             raise SetupError("Native device record is invalid. Its files were retained.") from error
@@ -61,6 +64,7 @@ class MacSession(ManagedSession):
     def __init__(self, application_log=None, **kwargs):
         super().__init__(application_log, label="LightTouch shared macOS launcher", **kwargs)
         self.services = NativeServicesState()
+        self._service_error = None
 
     def start(self, command, log_path, env=None):
         if self.active:
@@ -74,6 +78,7 @@ class MacSession(ManagedSession):
                 profile = command[index + 1]
         launch = uuid.uuid4().hex if profile else None
         self.services.reset(launch, profile)
+        self._service_error = None
         if launch:
             environment[SESSION_ENV] = launch
         try:
@@ -85,7 +90,17 @@ class MacSession(ManagedSession):
     def poll(self):
         lines = super().poll()
         for line in lines:
-            self.services.observe(line, self.child.pid if self.child else None)
+            accepted = self.services.observe(line, self.child.pid if self.child else None)
+            if accepted:
+                self._service_error = None
+            elif line.startswith("SERVICES ") and self.services.error != self._service_error:
+                self._service_error = self.services.error
+                try:
+                    self.record_error("native app services", self.services.error)
+                except OSError:
+                    # record_error already retained the diagnostic in memory.
+                    # A failed optional log append cannot block guest polling.
+                    pass
         if self.stopping or self.child is None or self.child.poll() is not None:
             self.services.invalidate()
         return lines

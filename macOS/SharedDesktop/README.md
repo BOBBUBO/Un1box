@@ -140,7 +140,22 @@ separately qualified route implements it.
 
 Packaging also includes the maintained `Desktop/app_services` catalog, IPA and
 Tk Apps sources. Staging and importing those modules does not enable Mac app
-services. A future native adapter must use the private client endpoint owned by
-DeviceRuntime, with one daemon owner and the existing Stop lifecycle; it must
-not start a competing Python bridge. LegacyStore and IPA installation still
-require actual Mac guest qualification.
+services. The native SharedHost now owns an optional USBMux publisher; DeviceRuntime owns
+the separate guest helper. The Python adapter consumes the native private client
+endpoint and must not start a competing daemon. Apps stays disabled until explicit
+bundled daemon/mobile/plist providers and actual guest services are qualified.
+Missing or invalid optional inputs and readiness/identity failures remain in the
+native session log; rejected receipt details are also recorded in application.log
+and Copy diagnostics. The daemon has its own per-device logs/usbmuxd.log. Retain
+those private logs when reporting an app-services failure. A ready endpoint alone
+is no pairing, protocol or installation pass.
+
+Each saved configuration retains its own ID and state root. Several configurations
+may share one immutable prepared base, but must never share writable state. The
+adapter checks existing native record ID, board/build, prepared-base kind/path
+and storage generation before Start; authoritative native admission rechecks
+these bindings and writable paths under the lease. Selecting another device
+does not convert, erase or migrate either device. A state mismatch retains all
+files and asks for the matching saved configuration. Installed Cocoa library
+state remains separate. LegacyStore and IPA installation still require actual
+Mac guest qualification.

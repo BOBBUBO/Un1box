@@ -144,6 +144,36 @@ print('FINAL status_available=1 state=0 confirmed=1 dirty=0 worker_reaped=1 work
         finally:
             if session.child.poll() is None: session.child.kill(); session.child.wait(timeout=1)
 
+    def test_invalid_native_receipt_is_durable_and_duplicate_error_is_bounded(self):
+        worker = self.root / "invalid-owner.py"
+        worker.write_text("#!" + sys.executable + "\n" + """import sys
+print('SERVICES []', flush=True)
+print('SERVICES []', flush=True)
+assert sys.stdin.readline()=='stop\\n'
+""")
+        worker.chmod(0o700)
+        session = MacSession(self.root / "application.log")
+        session.start([str(worker), "run", "--id", "b" * 32], self.root / "invalid-native.log")
+        try:
+            deadline = time.monotonic() + 3
+            while len(session.tail) < 2 and time.monotonic() < deadline:
+                session.poll(); time.sleep(.005)
+            self.assertEqual(list(session.tail), ["SERVICES []", "SERVICES []"])
+            self.assertIsNone(session.services.endpoint)
+            self.assertIsNone(session.child.poll(), "optional service error must not stop the owner")
+            log = (self.root / "application.log").read_text()
+            self.assertEqual(log.count("APPLICATION_ERROR"), 1)
+            self.assertIn("native app services", log)
+            self.assertIn("receipt must be an object", log)
+            self.assertIn("receipt must be an object", session.diagnostic_report())
+            session.stop()
+            while session.active and time.monotonic() < deadline:
+                session.poll(); time.sleep(.005)
+            session.poll(); self.assertFalse(session.active)
+            self.assertIsNone(session.final)
+        finally:
+            if session.child.poll() is None: session.child.kill(); session.child.wait(timeout=1)
+
     def test_default_mac_apps_stays_unavailable_without_native_publisher(self):
         self.assertEqual(MacHost.start_services(None, self.root, "b" * 32), (None, None))
         with self.assertRaises(ValueError): MacHost.apps_window()
