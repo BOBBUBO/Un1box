@@ -69,3 +69,13 @@ This wait sends no additional Home, Power or touch input and never changes the
 reference pixels, exact anchor policy, personal scene gates or original clocks.
 The subsequent actual capture must independently remain fresh/awake and use a
 post-Home source frame. Timeout or identity/state failure sends no slider.
+
+Packet04 actually reached complete Home, personally inspected, but the controller
+incorrectly required that a static Home image had been newly produced within two
+seconds. Preserve its FAIL. Home/Settings now admit a current coherent readback
+of an older static source: exact live owner/worker, coherent flag, positive frame
+sequence, positive even shared generation, ordered original source/copy/observed/
+saved times, bounded copy/receipt ages and fresh awake diagnostics. The source
+production timestamp is retained and its actual age recorded, never renewed.
+Exact inspected/current image continuity and personal scene gates still apply.
+Lock/wake admission retains its stricter new post-Home source-frame requirement.
