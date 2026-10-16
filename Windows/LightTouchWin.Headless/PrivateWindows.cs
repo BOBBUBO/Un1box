@@ -15,6 +15,11 @@ internal static class PrivateWindows
     private static readonly SecurityIdentifier User = WindowsIdentity.GetCurrent().User
         ?? throw new IOException("Cannot identify the current Windows user.");
     private static readonly HashSet<string> Trusted = [User.Value, "S-1-5-18", "S-1-5-32-544"];
+    // Python 3.13 mkdir(mode=0700) grants OWNER RIGHTS, not a literal user SID.
+    // Call only after checking that the object is owned by the current user.
+    private const string OwnerRights = "S-1-3-4";
+    private static bool TrustedPrincipal(string sid) => Trusted.Contains(sid) || sid == OwnerRights;
+    private static bool OwnerPrincipal(string sid) => sid == User.Value || sid == OwnerRights;
     [StructLayout(LayoutKind.Sequential)] private struct FileInfoNative
     {
         public uint Attributes; public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
@@ -52,8 +57,8 @@ internal static class PrivateWindows
             throw new IOException("Folder must be private, protected and owned by this user: " + directory.FullName);
         foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
         {
-            if (!Trusted.Contains(rule.IdentityReference.Value)) throw new IOException("Folder grants access outside this user, SYSTEM and Administrators: " + directory.FullName);
-            if (immutable && rule.AccessControlType == AccessControlType.Allow && rule.IdentityReference.Value == User.Value &&
+            if (!TrustedPrincipal(rule.IdentityReference.Value)) throw new IOException("Folder grants access outside this user, SYSTEM and Administrators: " + directory.FullName);
+            if (immutable && rule.AccessControlType == AccessControlType.Allow && OwnerPrincipal(rule.IdentityReference.Value) &&
                 (rule.FileSystemRights & (FileSystemRights.Write | FileSystemRights.DeleteSubdirectoriesAndFiles | FileSystemRights.Delete)) != 0)
                 throw new IOException("Prepared base is writable. Import a private immutable copy: " + directory.FullName);
         }
@@ -67,8 +72,8 @@ internal static class PrivateWindows
             throw new IOException("Prepared asset requires protected, owned read-only permissions: " + path);
         foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
         {
-            if (!Trusted.Contains(rule.IdentityReference.Value)) throw new IOException("Prepared asset grants external access: " + path);
-            if (rule.AccessControlType == AccessControlType.Allow && rule.IdentityReference.Value == User.Value &&
+            if (!TrustedPrincipal(rule.IdentityReference.Value)) throw new IOException("Prepared asset grants external access: " + path);
+            if (rule.AccessControlType == AccessControlType.Allow && OwnerPrincipal(rule.IdentityReference.Value) &&
                 (rule.FileSystemRights & (FileSystemRights.Write | FileSystemRights.Delete)) != 0)
                 throw new IOException("Prepared asset is writable: " + path);
         }
@@ -134,7 +139,7 @@ internal static class PrivateWindows
                 : new FileInfo(child).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
             if (!User.Equals(acl.GetOwner(typeof(SecurityIdentifier)))) throw new IOException("State ownership differs: " + child);
             foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
-                if (!Trusted.Contains(rule.IdentityReference.Value)) throw new IOException("State permissions grant external access: " + child);
+                if (!TrustedPrincipal(rule.IdentityReference.Value)) throw new IOException("State permissions grant external access: " + child);
             if (Directory.Exists(child)) StateTree(child);
             else if (Path.GetFileName(child) != "running.lock") { using var file = Read(child); }
         }

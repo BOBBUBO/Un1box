@@ -18,6 +18,11 @@ be preserved. Windows services have cross-linked providers but still need shared
 loader/allocator/owned-endpoint wiring and actual Windows guest validation.
 Mac shared host compilation and packaging do not establish guest/Apps parity.
 
+The final Windows update also recognizes Python 3.13's private OWNER RIGHTS
+ACL only after verifying current-user ownership. Earlier packages wrongly
+rejected their own `SharedWindows/bases` folder. Update the whole Windows ZIP;
+do not delete bases/saves or change folder permissions to work around this.
+
 The QEMU fork consolidates Windows WGL/storage/worker support, desktop EGL
 initialization diagnostics and the persistent symbolic-IR experiment. The cache
 remains **disabled and unqualified** on Linux and Android; no cross-session guest

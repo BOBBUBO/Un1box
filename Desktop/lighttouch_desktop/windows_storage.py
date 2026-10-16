@@ -18,6 +18,9 @@ from .storage import StorageOps
 # Trusted principals may administer this local user independently of the app.
 SYSTEM_SID = "S-1-5-18"
 ADMINISTRATORS_SID = "S-1-5-32-544"
+# Python 3.13 mkdir(mode=0700) uses OWNER RIGHTS instead of a literal user SID.
+# This principal is safe here only because private_acl first verifies ownership.
+OWNER_RIGHTS_SID = "S-1-3-4"
 FILE_ATTRIBUTE_DIRECTORY = 0x10
 FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 SE_DACL_PROTECTED = 0x1000
@@ -57,12 +60,12 @@ def private_acl(owner, control, entries, user_sid):
     """
     if owner != user_sid or not control & SE_DACL_PROTECTED or not entries:
         return False
-    trusted = {user_sid, SYSTEM_SID, ADMINISTRATORS_SID}
+    trusted = {user_sid, SYSTEM_SID, ADMINISTRATORS_SID, OWNER_RIGHTS_SID}
     # 0=ACCESS_ALLOWED_ACE; 1=ACCESS_DENIED_ACE. Preserve deny entries, but do
     # not attempt to interpret compound/callback/object ACE representations.
     if any(kind not in (0, 1) or sid not in trusted for kind, sid in entries):
         return False
-    return any(kind == 0 and sid == user_sid for kind, sid in entries)
+    return any(kind == 0 and sid in (user_sid, OWNER_RIGHTS_SID) for kind, sid in entries)
 
 
 class _FileInfo(ctypes.Structure):

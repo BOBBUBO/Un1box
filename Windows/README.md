@@ -1,5 +1,15 @@
 # Windows x86_64 compile preview
 
+The maintained Windows package now uses the shared Python/Tk launcher and SDL
+guest controls; run `LightTouch.cmd`. See [Desktop/README.md](../Desktop/README.md).
+The native WinForms preview instructions below are retained for reference.
+
+If an older shared package reports "Folder grants access outside this user,
+SYSTEM and Administrators" for `SharedWindows/bases`, update the entire ZIP
+into a fresh folder. The updated Python storage adapter and native helper
+recognize the OWNER RIGHTS entry created by Python 3.13 after checking actual
+ownership. Existing bases and saves are retained; no manual ACL changes needed.
+
 This is a separate, experimental Windows frontend around the current iOS QEMU
 engine. It is not a Windows acceptance pass. Use Windows10/11 x86_64 with a real
 hardware OpenGL2.1 compatibility driver. No software GPU provider is bundled.

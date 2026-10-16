@@ -6,10 +6,36 @@ import tempfile
 import queue
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lighttouch_desktop.launcher import Launcher, tk
 from lighttouch_desktop.library import display_title
+
+
+class ImportDirectoryTests(unittest.TestCase):
+    def test_import_uses_host_private_directory_before_preparing_archive(self):
+        ui = object.__new__(Launcher)
+        ui.vars = {"guest_package": SimpleNamespace(get=lambda: "armv7.itpack")}
+        ui.selected_source = "n81ap.itbase"
+        parent = Path.home() / "LightTouch import regression"
+        ui.install_parent = SimpleNamespace(get=lambda: str(parent))
+        ui.store = SimpleNamespace(storage=Mock())
+        ui.host, ui.message, ui.detail = Mock(), Mock(), Mock()
+        ui.set_busy, ui.error, ui.progress = Mock(), Mock(), {}
+        with patch.object(Path, "mkdir", side_effect=AssertionError("must use host storage")):
+            ui.import_base()
+        ui.store.storage.ensure_directory.assert_called_once_with(parent)
+        ui.host.prepare.assert_called_once_with("n81ap.itbase")
+        ui.host.prepare.return_value.start.assert_called_once_with()
+        self.assertEqual(Path(ui.pending_import).parent, parent)
+        ui.error.assert_not_called()
+
+        ui.host.reset_mock()
+        ui.store.storage.ensure_directory.side_effect = OSError("not owned by this user")
+        ui.import_base()
+        ui.error.assert_called_once()
+        ui.host.prepare.assert_not_called()
 
 
 @unittest.skipUnless(os.environ.get("DISPLAY"), "requires an isolated X11 display")

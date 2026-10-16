@@ -2,7 +2,7 @@
 import os
 import unittest
 from lighttouch_desktop.windows_storage import (checked_path, private_acl, WindowsStorage,
-                                               SYSTEM_SID, ADMINISTRATORS_SID, _FileInfo)
+                                               SYSTEM_SID, ADMINISTRATORS_SID, OWNER_RIGHTS_SID, _FileInfo)
 
 USER = "S-1-5-21-1-2-3-1001"
 OTHER = "S-1-5-21-1-2-3-1002"
@@ -34,6 +34,15 @@ class PrivateAclTests(unittest.TestCase):
     def test_exact_user_system_administrators(self):
         self.assertTrue(private_acl(USER, 0x1000, [(0, USER), (0, SYSTEM_SID), (0, ADMINISTRATORS_SID)], USER))
         self.assertTrue(private_acl(USER, 0x1000, [(0, USER)], USER))
+
+    def test_python313_private_mkdir_owner_rights(self):
+        # CPython 3.13: D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)
+        entries = [(0, SYSTEM_SID), (0, ADMINISTRATORS_SID), (0, OWNER_RIGHTS_SID)]
+        self.assertTrue(private_acl(USER, 0x1000, entries, USER))
+        self.assertFalse(private_acl(OTHER, 0x1000, entries, USER))
+        self.assertFalse(private_acl(USER, 0, entries, USER))
+        self.assertFalse(private_acl(USER, 0x1000, entries + [(0, OTHER)], USER))
+        self.assertFalse(private_acl(USER, 0x1000, [(1, OWNER_RIGHTS_SID), (0, SYSTEM_SID)], USER))
 
     def test_wrong_owner_inherited_or_null_acl(self):
         self.assertFalse(private_acl(OTHER, 0x1000, [(0, USER)], USER))

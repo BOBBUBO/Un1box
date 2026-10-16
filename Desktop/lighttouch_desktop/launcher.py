@@ -405,7 +405,7 @@ class Launcher:
             return
         try:
             parent = Path(self.install_parent.get()).expanduser().absolute()
-            parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.store.storage.ensure_directory(parent)
             self.pending_import = str(parent / ("system-" + uuid.uuid4().hex))
         except OSError as error:
             self.error(error)
