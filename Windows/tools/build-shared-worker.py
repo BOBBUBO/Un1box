@@ -61,7 +61,10 @@ def main():
             subprocess.run(argv, cwd=cache, stdout=stream, stderr=subprocess.STDOUT, check=True)
     objects = []
     for source, cpp in sources:
-        argv = list(template)
+        # The cached SDL standalone engine used -Dmain=SDL_main. This worker
+        # owns true main itself and calls SDL_SetMainReady; retaining the macro
+        # silently renames its entrypoint despite SDL_MAIN_HANDLED.
+        argv = [value for value in template if value != '-Dmain=SDL_main']
         original_source = original[0]['file']
         if argv.count(original_source) != 1:
             raise RuntimeError('Cached C command has unexpected source spelling.')
