@@ -6,6 +6,7 @@ import struct
 import time
 
 from exploration_common import *
+import matched_trial
 
 def module(path):
     spec = importlib.util.spec_from_file_location('lock_continuity', path)
@@ -138,7 +139,7 @@ def wait_awake_frame(home_begin, deadline, worker, record):
     finally:
         record['awake_wait_end_ns'] = time.monotonic_ns()
 
-def home_unlock(label):
+def home_unlock(label, matched=False):
     """One Home, bounded awake/frame wait, exact anchors and guarded slider."""
     if re.fullmatch('[a-z0-9-]{1,54}', label) is None:
         raise RuntimeError('Bounded private home-unlock label required')
@@ -164,6 +165,7 @@ def home_unlock(label):
             raise RuntimeError('Bounded Home input deadline expired before input')
         record['pre_home_status'] = latest
         record['home_input_begin_ns'] = time.monotonic_ns()
+        matched_trial.input_claim(matched, R, hello, 'home-unlock', record['home_input_begin_ns'])
         press_key('h')
         record['home_released_ns'] = time.monotonic_ns()
         wait_awake_frame(record['home_input_begin_ns'], deadline, worker, record)
@@ -222,8 +224,12 @@ def main():
     parser.add_argument('--x', type=int)
     parser.add_argument('--y', type=int)
     parser.add_argument('--model-inspected', action='store_true')
+    parser.add_argument('--wifi-name', help='Personally viewed Settings Wi-Fi row; required by matched diagnostic')
     args = parser.parse_args()
     owner()
+    matched = matched_trial.enabled(read(P / 'EXPLORATION-INPUTS.json'))
+    if matched and args.operation in ('wake', 'unlock'):
+        raise RuntimeError('Matched diagnostic allows only one scheduled Home/slider input')
     if args.operation == 'stop':
         save(R / 'operator-stop.json', {'requested_monotonic_ns': time.monotonic_ns()}); return
     label = args.output or ('operator-%d' % time.monotonic_ns())
@@ -245,7 +251,7 @@ def main():
     if args.operation == 'home-unlock':
         if not args.model_inspected:
             raise RuntimeError('Actual personal inspection of prepared Lock reference required')
-        home_unlock(label)
+        home_unlock(label, matched)
         print('Input completed; personally inspect retained post-input PNG. No Home pass asserted.')
         return
     if not args.model_inspected or not args.capture:
@@ -270,6 +276,7 @@ def main():
         if time.monotonic_ns() - hello >= 129 * SECOND:
             raise RuntimeError('Original Home129s deadline missed')
         record['geometry'] = geometry()
+        matched_trial.attest(matched, 'home', record, hello, time.monotonic_ns())
         save(R / 'home-inspected.json', record)
         print('Actual Home inspection retained; use inspected native Settings icon pixel coordinates.')
     elif args.operation == 'tap-settings':
@@ -285,6 +292,7 @@ def main():
         with capture_lock():
             move(args.x, args.y, g)
             record['input_begin_ns'] = time.monotonic_ns()
+            matched_trial.input_claim(matched, R, hello, 'tap-settings', record['input_begin_ns'], [args.x, args.y])
             try:
                 xcall(['mousedown', '1']); time.sleep(.15)
             finally:
@@ -297,8 +305,11 @@ def main():
         record = continuity(args.capture, 'settings', label)
         record['geometry'] = geometry()
         record['explicit_operator_scene'] = 'Full Settings list including complete rows'
+        matched_trial.attest(matched, 'settings', record, hello, time.monotonic_ns(), args.wifi_name)
         save(R / 'settings-inspected.json', record)
-        print('Actual Settings inspection retained; controller will request ordinary Stop.')
+        print('Actual Settings inspection retained; ' +
+              ('matched controller keeps the original scheduled Stop180s.' if matched else
+               'controller will request ordinary Stop.'))
 
 if __name__ == '__main__':
     main()

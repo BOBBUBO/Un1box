@@ -104,3 +104,28 @@ Home and Settings at native44,326, strict normal Stop, unchanged base/seed and
 independent retirement remain required. These are correctness checks with no
 audio. They never establish a speedup or Android qualification. Matched repeated
 timings, worker CPU and broader target acceptance remain separate follow-up work.
+# Matched shutdown diagnostic
+
+Packet preparation can explicitly select `--matched-shutdown-diagnostic` for an
+OFF or fresh COLD trial. Ordinary exploration retains its immediate Stop after
+Settings inspection. The opt-in mode binds the fixed schedule to packet inputs:
+one Home/guarded slider at original HELLO+70..71s, actual Home inspection by95s,
+one Settings input at105..106s at44,326, actual Settings inspection by120s, observed
+readiness120..135s, and ordinary Stop at180s. Original Home129s/Stop205s ceilings
+and native30s shutdown deadline remain unchanged. Missing a window fails the
+diagnostic and requests ordinary Stop; no second input or clock reset is allowed.
+
+The Settings inspection command additionally requires
+`--wifi-name qemu-ios`, reported from the personally viewed actual image. A
+different observed network is an unmatched diagnostic, not a networking pass.
+Readiness checks only the exposed RUNNING/agent/awake/shutdown-phase status and
+retains every status in its fixed window. It does not establish equality of every
+guest service or pre-shutdown storage activity, which that telemetry cannot show.
+The shutdown dispatch still must record its actual storage/agent decision.
+
+Schedule receipts preserve the existing strict clean-shutdown/retirement gates.
+They establish neither cache speedup nor cause of an earlier shutdown failure.
+Each OFF/COLD arm needs its own clean writable seed clone; COLD starts with an
+empty isolated cache. A failed dirty trial never supplies a clean REUSE receipt.
+Deploy and pin `matched_trial.py` with the other helper modules. Existing frozen
+packets and their failed evidence remain unchanged.

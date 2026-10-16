@@ -51,10 +51,13 @@ def environment(cfg, env):
 
 
 def identity(cfg):
-    return {'pins': {key: cfg['pins'][key]['sha256'] for key in
+    result = {'pins': {key: cfg['pins'][key]['sha256'] for key in
             ('engine', 'frontend', 'rom', 'package', 'baseLock', 'baseIdentity')},
             'seedInventorySHA256': cfg['seedInventorySHA256'],
             'workload': 'n72-320x480-balanced-home-guarded-slider-settings44,326-noaudio-v1'}
+    if 'matchedDiagnostic' in cfg:
+        result['matchedDiagnostic'] = cfg['matchedDiagnostic']
+    return result
 
 
 def snapshot(directory, producer):
