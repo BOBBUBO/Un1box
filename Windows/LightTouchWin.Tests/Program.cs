@@ -108,6 +108,9 @@ try
         await session.StopAsync(TimeSpan.FromSeconds(2));
         Check(!session.IsRunning && session.ShutdownConfirmed, "confirmed guest shutdown and successful native exit " + mode);
         Check(!File.Exists(Path.Combine(state, "shutdown-unconfirmed.json")), "clean marker only after confirmed native exit " + mode);
+        await session.DisposeAsync();
+        using var unlocked = new FileStream(Path.Combine(state, "running.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        Check(unlocked.CanWrite, "state lock released after native exit " + mode);
     }
     Console.WriteLine($"PASS {passed} focused assertions; host contracts only, no Windows/iOS acceptance claim.");
 }

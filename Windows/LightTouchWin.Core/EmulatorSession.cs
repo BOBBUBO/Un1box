@@ -155,9 +155,15 @@ public sealed class EmulatorSession : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (IsRunning) throw new InvalidOperationException("Shut down iOS before closing the session. A live guest will not be force-terminated.");
-        if (reader != null) await reader;
-        if (errors != null) await errors;
-        process?.Dispose(); process = null;
-        deviceLock?.Dispose(); deviceLock = null;
+        try
+        {
+            if (reader != null) await reader;
+            if (errors != null) await errors;
+        }
+        finally
+        {
+            process?.Dispose(); process = null;
+            deviceLock?.Dispose(); deviceLock = null;
+        }
     }
 }
