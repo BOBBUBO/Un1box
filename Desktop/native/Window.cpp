@@ -2,6 +2,7 @@
 #define SDL_MAIN_HANDLED
 #include "../ui/ControlBar.hpp"
 #include "../ui/Presentation.hpp"
+#include "../ui/Cursor.hpp"
 #include <deque>
 #include <map>
 #include <new>
@@ -95,6 +96,7 @@ struct LTDesktopWindow {
         }
     }
     void dispatch(const SDL_Event &event) {
+        lt::desktop_cursor_event(window, event);
         if (event.type == SDL_QUIT || (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE)) {
             if (!stopping) activate(lt::WindowAction::stop);
             return;
@@ -155,6 +157,7 @@ extern "C" LTDesktopWindow *lt_desktop_window_create(const char *title, int widt
         return nullptr;
     }
     SDL_SetWindowMinimumSize(result->window, 320, 180);
+    lt::desktop_cursor(result->window);
     return result;
 }
 extern "C" const char *lt_desktop_window_error() { return SDL_GetError(); }

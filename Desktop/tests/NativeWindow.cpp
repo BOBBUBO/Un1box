@@ -23,6 +23,20 @@ int main() {
         event.key.keysym.sym = code;
         window.dispatch(event);
     };
+    // A previous SDL client may have hidden the pointer. Absolute guest touch
+    // never needs relative mouse mode or an invisible host cursor, including
+    // while paused or stopping. Test the actual window event path.
+    SDL_Event enter{}; enter.type = SDL_WINDOWEVENT;
+    for (auto reason : {SDL_WINDOWEVENT_ENTER, SDL_WINDOWEVENT_FOCUS_GAINED}) {
+        SDL_ShowCursor(SDL_DISABLE);
+        assert(SDL_ShowCursor(SDL_QUERY) == SDL_DISABLE);
+        enter.window.event = reason;
+        window.dispatch(enter);
+        assert(SDL_ShowCursor(SDL_QUERY) == SDL_ENABLE);
+        assert(SDL_GetRelativeMouseMode() == SDL_FALSE);
+        assert(SDL_GetCursor() == SDL_GetDefaultCursor());
+        assert(take().empty()); // Visibility must not inject guest input.
+    }
     const auto home = window.layout().rect(0);
     const double hx = home.x + home.w / 2, hy = home.y + home.h / 2;
     window.pointer({0, 0}, 0, hx, hy);
@@ -78,6 +92,9 @@ int main() {
     for (int i = 0; i < 10; ++i) assert(events[i].kind == LT_DESKTOP_TOUCH && events[i].phase == 2);
     assert(events.back().kind == LT_DESKTOP_PAUSE && window.contacts.empty());
     lt_desktop_window_paused(&window, 1);
+    SDL_ShowCursor(SDL_DISABLE);
+    window.dispatch(enter);
+    assert(SDL_ShowCursor(SDL_QUERY) == SDL_ENABLE);
     window.pointer({1, 9}, 0, left, y);
     key(SDLK_h, true); key(SDLK_h, false);
     assert(take().empty() && window.contacts.empty());
@@ -100,6 +117,9 @@ int main() {
     key(SDLK_ESCAPE, true); key(SDLK_ESCAPE, false);
     events = take(); assert(events.size() == 1 && events[0].kind == LT_DESKTOP_STOP);
     assert(!window.enabled && window.stopping);
+    SDL_ShowCursor(SDL_DISABLE);
+    window.dispatch(enter);
+    assert(SDL_ShowCursor(SDL_QUERY) == SDL_ENABLE && take().empty());
     lt_desktop_window_enabled(&window, 1);
     assert(!window.enabled); // Closing does not silently restart a session.
     key(SDLK_h, true); assert(take().empty());

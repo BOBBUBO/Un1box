@@ -5,6 +5,7 @@
 #include "ControlDelivery.hpp"
 #include "Presentation.hpp"
 #include "ControlBar.hpp"
+#include "../Desktop/ui/Cursor.hpp"
 #include "ReplayQueue.hpp"
 #include "Admission.hpp"
 #include "ContactOwnership.hpp"
@@ -908,6 +909,7 @@ static int frontend(const Options &o, int argc, char **argv) {
                                   SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
         require(window, SDL_GetError());
         SDL_SetWindowMinimumSize(window, 320, 240);
+        lt::desktop_cursor(window);
         renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
         if (!renderer)
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
@@ -1425,6 +1427,7 @@ static int frontend(const Options &o, int argc, char **argv) {
         }
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            lt::desktop_cursor_event(window, event);
             if (window) {
                 int w = 0, h = 0;
                 SDL_GetWindowSize(window, &w, &h);

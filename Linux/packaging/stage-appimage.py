@@ -28,7 +28,7 @@ REQUIRED = {"usr/bin/python3", "usr/bin/lighttouch-linux", "usr/lib/lighttouch/l
 def stage_desktop_sources(output):
     launcher = output / "usr/share/lighttouch/launcher"
     launcher.mkdir(parents=True, exist_ok=True)
-    for name in ("main.py", "model.py", "session.py", "preparation.py", "host.py"):
+    for name in ("main.py", "model.py", "session.py", "preparation.py", "host.py", "experimental_cache.py"):
         shutil.copyfile(ROOT.parent / "launcher" / name, launcher / name)
     shared = output / "usr/share/lighttouch/lighttouch_desktop"
     shared.mkdir(parents=True, exist_ok=True)

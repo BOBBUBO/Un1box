@@ -5,6 +5,7 @@ import sys
 from model import FORMAT, VERSION, Profiles, inspect_base, load_profile, save_json, start_command, import_command, validate, display_title
 from session import Session, clean_exit
 from preparation import Preparation
+from experimental_cache import worker_environment
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app_services.bridge import Bridge
@@ -39,10 +40,10 @@ class LinuxHost:
     def start_services(args, directory, identity):
         paths = (args.usbmuxd, args.imobile_library, args.plist_library)
         if not all(Path(path).is_file() for path in paths):
-            return None, None
+            return None, worker_environment(directory, {"id": identity}, False)
         bridge = Bridge(*paths, directory / "devices" / identity / "pairing", directory / "service-logs")
         try:
-            return bridge, bridge.start()
+            return bridge, worker_environment(directory, {"id": identity}, False, bridge.start())
         except Exception:
             bridge.close()
             raise
