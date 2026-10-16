@@ -217,3 +217,23 @@ Home capture and operator inspection. The failed v1 OFF07 missed its original
 modified or resumed; every v2 arm uses a new packet and original clean seed.
 Settings, readiness and Stop times, clean shutdown and reuse requirements stay
 unchanged. The schedule remains a diagnostic, not a speed benchmark.
+
+## Retained wake failure diagnosis
+
+`python3 tools/cache-exploration/wake_diagnosis.py /private/packet/exploration01`
+reads and hashes the original Home attempt, telemetry, input-command log, result
+and cache counters. It emits JSON to stdout and writes nothing to the run. No
+guest, display, input, retry or cache access is started. The recorded 2.5-second
+awake window remains authoritative; the tool does not renew it or reinterpret
+later Stop-generated display changes as a successful Home wake. Test this
+offline helper with `python3 -m unittest discover -s tools/cache-exploration
+-p test_wake_diagnosis.py -v`.
+
+A failed original window alone does not distinguish slow guest wake, missed
+keyboard delivery, frontend scheduling or engine input handling. A recorded
+xdotool key pair establishes host command dispatch, not SDL consumption or
+guest IRQ handling. A lit frame after shutdown dispatch is contaminated by a
+different guest operation. Zero native cache hits exclude replay as the
+executed path but do not exclude key/hash/capture/store overhead during COLD.
+Retain those distinctions when selecting a separately reviewed diagnostic
+packet; never reuse an unqualified failed producer or extend its old clock.
