@@ -32,6 +32,32 @@ class UITests(unittest.TestCase):
             self.window.after_cancel(callback)
         self.window.destroy()
 
+    def test_shared_launcher_switches_named_configs_without_reselecting_assets(self):
+        from lighttouch_desktop.launcher import Launcher as SharedLauncher
+        self.assertIsInstance(self.ui, SharedLauncher)
+        base = self.root / "shared system"
+        base.mkdir()
+        (base / "device.lock.json").write_text(json.dumps(dict(format=1, board="n81ap", build="8C148", boot_strategy="kboot")))
+        base.chmod(0o500)
+        self.addCleanup(lambda: base.chmod(0o700))
+        first = dict(self.ui.profile(), name="First iPod", base=str(base), guest_package="/matching/armv7.itpack")
+        second = dict(first, id="b" * 32, name="Second iPod", state=str(self.root / "second state"))
+        self.ui.store.save(first)
+        self.ui.store.save(second)
+        self.ui._list()
+        self.assertIn("4.2.1", self.ui.devices.get(0))
+        self.assertIn("First iPod", self.ui.devices.get(0))
+        with patch.object(main.filedialog, "askopenfilename", side_effect=AssertionError("unexpected picker")):
+            for index, expected in [(0, first), (1, second), (0, first)]:
+                self.ui.devices.selection_clear(0, "end")
+                self.ui.devices.selection_set(index)
+                self.ui.select()
+                self.assertEqual(self.ui.current, expected["id"])
+                self.assertEqual(self.ui.vars["state"].get(), expected["state"])
+                self.assertEqual(self.ui.vars["guest_package"].get(), expected["guest_package"])
+        self.assertFalse(Path(first["state"]).exists())
+        self.assertFalse(Path(second["state"]).exists())
+
     def test_async_catalog_error_is_displayed_saved_and_copied(self):
         from app_services.window import AppsWindow
         from app_services.catalog import Target

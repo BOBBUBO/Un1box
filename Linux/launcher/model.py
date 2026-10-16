@@ -6,6 +6,12 @@ from pathlib import Path
 import re
 import tempfile
 import uuid
+import sys
+
+# Source checkout and staged packages import the same shared domain module.
+_shared = Path(__file__).resolve().parents[2] / "Desktop"
+sys.path.insert(0, str(_shared if _shared.is_dir() else Path(__file__).resolve().parents[1]))
+from lighttouch_desktop.library import RecordError, check_collection, check_update, display_title
 
 FORMAT = "lighttouch-linux-profile"
 VERSION = 1
@@ -158,13 +164,16 @@ class Profiles:
                 raise SetupError("Unsupported launcher library. Your files have been retained.")
             self.devices = value["devices"]
             self.selected = value.get("selected", "")
-            for device in self.devices:
-                if not isinstance(device, dict) or not re.fullmatch("[a-f0-9]{32}", device.get("id", "")):
-                    raise SetupError("Invalid launcher device identity. Your files have been retained.")
+            try:
+                check_collection(self.devices, self.selected, lambda value: Path(absolute(value)).resolve())
+            except RecordError as error:
+                raise SetupError(str(error)) from error
 
     def save(self, profile):
-        if not re.fullmatch("[a-f0-9]{32}", profile.get("id", "")):
-            raise SetupError("Invalid launcher device identity.")
+        try:
+            check_update(profile, self.devices, lambda value: Path(absolute(value)).resolve())
+        except RecordError as error:
+            raise SetupError(str(error)) from error
         self.devices = [p for p in self.devices if p["id"] != profile["id"]] + [dict(profile)]
         self.selected = profile["id"]
         self.persist()
