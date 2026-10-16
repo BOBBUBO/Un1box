@@ -1,0 +1,172 @@
+# Selected firmware inventory
+
+Prepare the **six upstream entries marked `available` first**, then the explicit
+release representatives below to cover each iOS major. This is a selected
+collection, not a bulk sweep of experimental/beta/untested entries. Upstream's
+README says most experimental builds boot and pass its checks but have less use
+than stable; untested separately means not run through its pipeline. Preserve
+those labels. Neither upstream claim establishes acceptance for our products.
+
+| Device | Board/build | iOS | Stock IPSW bytes | Prepared route |
+| --- | --- | --- | ---: | --- |
+| iPod touch 2G | n72ap-5G77a | 2.2 | 291,123,491 | SecureROM → NOR LLB → iBoot; NAND/NOR/GID |
+| iPod touch 2G | n72ap-5H11a | 2.2.1 | 291,140,244 | SecureROM → NOR LLB → iBoot; NAND/NOR/GID |
+| iPod touch 2G | n72ap-7E18 | 3.1.3 | 263,275,211 | direct iBoot; NAND/NOR/GID |
+| iPad | k48ap-7B367 | 3.2 | 478,959,325 | default prepared iBoot; NAND/NOR/GID |
+| iPad | k48ap-7B500 | 3.2.2 | 479,001,595 | default prepared iBoot; NAND/NOR/GID |
+| iPad | k48ap-8C148 | 4.2.1 | 578,084,840 | default prepared iBoot; NAND/NOR/GID |
+
+All six also require synthetic identity, the preparation lock, a matching guest
+package and isolated writable state. N72 uses `bootrom_240_4`, including when
+entering iBoot directly. K48's default iBoot path uses prepared iBoot/NOR/GID
+files; do not request an unrelated hardware ROM. The actual lock and recipe are
+the authority for a specific prepared artifact.
+
+The six stable stock IPSWs total 2,381,584,706 bytes. Their reuse/preparation/target
+qualification is tracked separately. N72 2.2/2.2.1 have **zero catalog estimates**;
+this means unknown, not zero disk/time. Do not admit a preparation using those
+zero estimates. Reuse the existing verified n72-7E18 baseline and n81-8C148 base
+for the representative 4.x row;
+no redundant preparation/export of that base is needed.
+Gyro remains deferred/unqualified.
+
+The second track has one explicitly selected release per iOS major; two overlap
+with the stable cohort. The union contains eleven unique configurations.
+
+| Major | Representative release | Upstream label | Existing asset |
+| --- | --- | --- | --- |
+| 1 | n45ap-4A102 / 1.1.4 | experimental | not located in scoped inventory |
+| 2 | n72ap-5H11a / 2.2.1 | available | not located in scoped inventory |
+| 3 | n72ap-7E18 / 3.1.3 | available | verified baseline reused |
+| 4 | n81ap-8C148 / 4.2.1 | experimental | verified kboot base reused |
+| 5 | n81ap-9B206 / 5.1.1 | experimental | not located in scoped inventory |
+| 6 | n81ap-10B500 / 6.1.6 | experimental | not located in scoped inventory |
+| 7 | n90ap-11D257 / 7.1.2 | experimental | not located in scoped inventory |
+
+The website's original iPhone/iPod1 beta2/3 columns need qualification: current
+upstream commit 7bf6684b marks those 34 IMG3 routes coming soon and refuses their
+preparation; the S5L8900 recipes implement 1.x only. They are not selected here.
+N81 uses kboot/NAND/writable NOR/overlay and armv7.itpack, without a separate
+hardware ROM. N45 uses iBoot/NOR/NAND, bootrom_s5l8900 and armv6.itpack. N90 uses
+its own kboot/NAND/NOR/configuration plus armv7.itpack. Never substitute one
+board's boot assets for another's.
+
+## Programmatic preparation without GUI automation
+
+Upstream ships `firmwarekit create`, `fetch`, `unwrap`, `pack-base` and
+`unpack-base`. Their CLI runs over SSH. A GUI-driven macOS Codex agent is not
+required. Recipes can use the native helper's supervised one-shot emulated boots
+for keybag creation or sealing without opening the app UI. Those are actual guest
+processes and must be admitted/serialized separately. Preparation also uses
+macOS disk-image/filesystem adapters; compiling Swift elsewhere does not port
+those adapters. Existing release ARMv6/ARMv7 guest packages can be reused without
+acquiring historical SDKs or rebuilding guest tools.
+
+N72 2.x preparation currently has neither data-protection keybag nor seal boots.
+It is therefore the proposed smallest missing stable-build pilot. K48 selected
+builds can require seal and, for 4.2.1, keybag boots. No pilot was executed by this
+inventory work.
+
+## Read-only inventory tool
+
+`tools/firmware-matrix.py` emits JSON to stdout. It never downloads, prepares,
+mounts, boots, extracts or writes a configuration. Redirect results outside Git.
+
+```sh
+python3 tools/firmware-matrix.py enumerate \
+  --catalog LightTouchMac/Resources/firmware-catalog.json \
+  --guest-pack /private/guest-tools/armv6.itpack \
+  --guest-pack /private/guest-tools/armv7.itpack > /private/selected-matrix.json
+
+python3 tools/firmware-matrix.py inspect-index /private/n72ap-7E18.itbase \
+  > /private/base-index.json
+
+python3 tools/firmware-matrix.py plan \
+  --catalog /private/pinned-catalog.json --id n72ap-5G77a \
+  --ipsw /private/iPod2,1_2.2_5G77a_Restore.ipsw \
+  --root /private/new-preparation-run \
+  --firmwarekit '/Applications/Light Touch.app/Contents/MacOS/firmwarekit' \
+  --guest-tools /private/guest-tools > /private/preparation-plan.json
+```
+
+`enumerate` defaults to `stable_first_and_representative_releases`, with six
+stable rows first and then five additional representative rows. Use
+`enumerate --stable-only` for the six-entry first cohort. `plan` refuses entries
+outside the stable cohort and explicit representative whitelist.
+Explicit `enumerate --all-catalog` retains a **historical read-only**
+inventory for explaining upstream gaps; it does not expand preparation scope.
+The checked upstream catalog at `18393c20` has SHA-256
+`85df0d7e8b025688bd353f2abe6ed95f9c8fa4cd3b531c4ab2f033a196670c63`.
+The installed Mac catalog hash is
+`d83227ee3aa4ea509dfa09b0f68e8830b03312fcceeb18f60e85281501fdeed1`;
+both select the same eleven IDs, including the six stable rows. Keep exact revision/catalog hashes in receipts.
+
+The index command reads only the `.itbase` index and does not establish payload
+integrity. Guest-package enumeration validates the complete bounded zlib stream
+and reports manifest declarations plus the package hash. Internal payload
+hash/ABI validation remains separate. Each selected entry matches exactly one
+family in the inspected release packages. The stable cohort uses `n72-ios2`,
+`n72-ios3`, `k48-ios3` or `k48-ios4`; representatives additionally use `n45-ios1`,
+`k48-ios5`, `k48-ios6` and `k48-ios7`. Manifest declarations do not prove runtime behavior.
+
+## Projection for the shared UI
+
+`entries[]` contains `device`, `board`, `product_type`, `version`, `build`,
+`prerelease`, `prerelease_number`, source size/hash, recipe/clock, boot contract,
+and matching guest family/version/serial/package SHA-256. Preserve null beta
+fields for releases. All eleven selected configurations are release builds. `cohort` distinguishes
+stable from representative entries, and `representative_major` identifies the
+1–7 coverage rows.
+
+`immutable_base.reference`, `.sha256` and `.lock_sha256` start null. Optional
+`--prepared-lock /actual/base/device.lock.json` attaches the actual base-directory
+reference and observed lock digest with status `lock_metadata_only`; the base
+content hash stays null. `prepared_guest_package` contains the lock-declared
+family/version/serial/package hash. This is metadata observation, not payload
+verification. Preparation and per-platform runtime acceptance remain
+`not_assessed`; never overwrite independent existing acceptance with that default.
+A metadata copy of a lock is not the base directory: pass its actual base path.
+
+This projection is **not another persisted configuration schema**. The existing
+native record maps admitted base bytes to `base_sha256`/`base_path`, instance name
+to `display_name`, and an exclusive state directory to `state_path`. ROM/guest
+references map to `bootrom_path`/`guest_package_path`. Linux's existing v1 profile
+uses `name`, `base`, `state`, `bootrom` and `guest_package`. Keep its record ID
+stable; launching selects a saved record without repeating file selection.
+
+Several instances may select one immutable artifact, but must each have their
+own synthetic identity, writable NOR/overlay, package verdict state, pairing data
+and regenerated endpoints. Current native import still copies the base per
+record; physical sharing/dedup remains separate native work. Do not claim this
+tool implements it or create writable hardlinks between instances.
+
+## Artifacts, storage and provenance
+
+An `.itbase` packages prepared boot/NAND/identity/lock contents. An `.itpack`
+contains guest loader/package families. Both use `ITPACK01`, but they are distinct
+inputs. The Mac bundle's `guest.aar` is an Apple Archive, not an Android AAR.
+
+Keep stock inputs content-addressed by catalog SHA-1, with independently measured
+size/SHA-256/source receipt. Retain verified decrypt-cache manifests. Pin the
+preparer/helper/engine/source/catalog, guest-package hash/family, options, fit
+checks/warnings and output file/listing hashes. Prepared bases must be read-only;
+state/endpoints are per instance. Never identify a prepared base using only the
+stock IPSW hash. Different tools/options/identities can produce different bases.
+Keep firmware, ROMs, guest packages and private receipts/captures outside Git and
+public uploads. Store only distributable source/tooling in Git.
+
+## Remaining portable routes and qualification
+
+`Linux/launcher/model.py` and `Portable/src/Storage.cpp` currently admit n72/n81
+only. `Portable/firmware/src/firmware.cpp` prepares only n72ap-7E18. Thus the selected k48/n45/n90
+routes still need typed portable boot/storage/identity/package admission and
+appropriate host adapters. N81 later-major packages and services also require
+version-specific validation, beyond the existing 4.2.1 reference. Collecting a base does not implement
+those routes. Native macOS uses broader upstream recipes, but compilation alone
+is not guest acceptance. Do not simply remove validators to claim new support.
+
+Track source supplied/hash-verified, prepared/fit-checked, Mac reference boot,
+portable admission and each target's real boot/render/input/audio/lifecycle/
+clean-stop/fresh-worker persistence separately. Retain actual screenshots and
+measured evidence. Required multi-touch is tested where the board supports it.
+Host/synthetic/Mac reference observations never substitute for target passes.
