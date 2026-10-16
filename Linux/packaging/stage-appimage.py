@@ -36,7 +36,7 @@ def stage_desktop_sources(output):
         shutil.copyfile(source, shared / source.name)
     services = output / "usr/share/lighttouch/app_services"
     services.mkdir(parents=True, exist_ok=True)
-    for source in sorted((ROOT.parent / "app_services").glob("*.py")):
+    for source in sorted((ROOT.parents[1] / "Desktop/app_services").glob("*.py")):
         shutil.copyfile(source, services / source.name)
 
 

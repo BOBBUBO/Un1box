@@ -52,7 +52,7 @@ def plan_runtime(prefix, version, tkinter, tcl, tk):
         entries[destination] = {"source": str(source), "bytes": info.st_size,
                                 "sha256": sha(source), "mode": stat.S_IMODE(info.st_mode) & 0o755}
 
-    def tree(root, destination, excluded=frozenset()):
+    def tree(root, destination, excluded=frozenset(), root_excluded=frozenset()):
         # Explicit roots only. Resolve contained links into separately hashed
         # regular files so no provider/Cellar symlink survives relocation.
         seen = set()
@@ -64,6 +64,12 @@ def plan_runtime(prefix, version, tkinter, tcl, tk):
                 raise ValueError("Cyclic runtime input directory: " + str(directory))
             seen.add(identity)
             for path in sorted(directory.iterdir()):
+                # CPython's top-level Darwin build configuration contains
+                # development-only static library links outside the stdlib.
+                # Exclude this exact provider directory before resolving it;
+                # retain the ordinary escape rejection everywhere else.
+                if directory == root and path.name in root_excluded:
+                    continue
                 if path.name in excluded or path.name == "__pycache__" or path.suffix in (".pyc", ".pyo"):
                     continue
                 resolved = path.resolve(strict=True)
@@ -79,7 +85,8 @@ def plan_runtime(prefix, version, tkinter, tcl, tk):
     add(prefix / "bin" / ("python" + version), "bin/python" + version)
     add(prefix / "Python", "Python")
     stdlib = "lib/python" + version
-    tree(prefix / stdlib, stdlib, frozenset(("site-packages", "test", "tests", "ensurepip")))
+    tree(prefix / stdlib, stdlib, frozenset(("site-packages", "test", "tests", "ensurepip")),
+         frozenset(("config-" + version + "-darwin",)))
     tkinter_target = stdlib + "/lib-dynload/" + tkinter.name
     if tkinter_target in entries:
         # Python.org providers can already contain this extension. A second
@@ -97,7 +104,8 @@ def plan_runtime(prefix, version, tkinter, tcl, tk):
             "native_relocation_required": True, "redistribution_license_audit_required": True,
             "files": entries, "links": {"bin/python3": "python" + version},
             "environment": {"TCL_LIBRARY": "lib/" + tcl.name, "TK_LIBRARY": "lib/" + tk.name},
-            "excluded": ["external site-packages", "test suites", "ensurepip", "bytecode", "unrelated provider files"]}
+            "excluded": ["external site-packages", "test suites", "ensurepip", "bytecode",
+                         stdlib + "/config-" + version + "-darwin", "unrelated provider files"]}
 
 
 def validate_manifest(manifest):

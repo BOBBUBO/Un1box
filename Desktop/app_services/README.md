@@ -1,4 +1,4 @@
-# Linux app services
+# Shared desktop app services
 
 `catalog.py` ports the catalog protocol and copy validation from
 `Packages/LightTouchCore/Sources/LightTouchCore/Features/CatalogClient.swift`,
@@ -77,7 +77,7 @@ Expected paths below the AppDir `usr` directory (or pass launcher overrides
   `5cb90897479b9021a69db9698fea071ef7b2eceb`, QEMU-only `usb-qemu.c` backend.
 * `lib/lighttouch/libimobiledevice-1.0.so.6` (1.4.0) and its closure.
 * `lib/lighttouch/libplist-2.0.so.4` (2.7.0) and its closure.
-* `Linux/app_services/` alongside `Linux/launcher/`.
+* `Desktop/app_services/` staged as `app_services/` alongside the shared launcher.
 
 Dependency sources/hashes are in `build-support/dependencies.json`: glue 1.3.2,
 libusbmuxd 2.1.1, libtatsu 1.0.5, and the existing pinned crypto inputs/patches.
@@ -99,3 +99,15 @@ strict terminal shutdown still need target qualification. No supplied IPA was
 found during this implementation; no arbitrary payload was acquired for a test.
 The small typed guest-agent API is not an IPA upload transport. A downloaded file
 is not an installed app.
+
+## Shared desktop source
+
+Catalog HTTPS, copy/target checks, IPA validation, bounded service jobs,
+installation protocol and the Tk Apps window live only in
+`Desktop/app_services/`. Linux's historical package is an import shim; release
+staging copies the shared implementation directly, without source-checkout
+paths. Linux's proven POSIX transport is retained. Windows still needs native
+private endpoint/library/process adapters and macOS needs its matching bridge
+packaged and connected. Merely staging these modules does not qualify either
+platform or enable an unavailable service. Do not fork catalog/IPA/UI logic to
+implement those host adapters.

@@ -134,6 +134,22 @@ assert 'Linux/launcher' not in __import__('sys').path
             runtime.export_runtime(plan, output)
         self.assertFalse(output.exists())
 
+    def test_curated_runtime_excludes_only_top_level_cpython_darwin_development_config(self):
+        prefix, extension, tcl, tk = self.provider()
+        stdlib = prefix / "lib/python3.13"
+        development = stdlib / "config-3.13-darwin"
+        development.mkdir()
+        (development / "libpython3.13.a").symlink_to(prefix / "Python")
+        nested = stdlib / "package/config-3.13-darwin"
+        nested.mkdir(parents=True)
+        (nested / "__init__.py").write_text("a runtime package with a similar name")
+        plan = runtime.plan_runtime(prefix, "3.13", extension, tcl, tk)
+        self.assertFalse(any(name.startswith("lib/python3.13/config-3.13-darwin/") for name in plan["files"]))
+        self.assertIn("lib/python3.13/package/config-3.13-darwin/__init__.py", plan["files"])
+        (stdlib / "unrelated-outside.a").symlink_to(prefix / "Python")
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            runtime.plan_runtime(prefix, "3.13", extension, tcl, tk)
+
     def test_runtime_rejects_unmanifested_files_and_external_script_links(self):
         prefix, extension, tcl, tk = self.provider()
         plan = runtime.plan_runtime(prefix, "3.13", extension, tcl, tk)
