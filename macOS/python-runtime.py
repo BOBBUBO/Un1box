@@ -82,7 +82,17 @@ def plan_runtime(prefix, version, tkinter, tcl, tk):
             seen.remove(identity)
         visit(root, destination)
 
-    add(prefix / "bin" / ("python" + version), "bin/python" + version)
+    # Framework installs use a small bin/pythonX.Y launcher that posix_spawns
+    # Resources/Python.app's real interpreter. Export the interpreter itself,
+    # rather than a stub whose original framework layout is no longer present.
+    interpreter = prefix / "Resources/Python.app/Contents/MacOS/Python"
+    if interpreter.exists() or interpreter.is_symlink():
+        interpreter = interpreter.resolve(strict=True)
+        if prefix not in interpreter.parents:
+            raise ValueError("Framework interpreter escapes the explicit Python prefix.")
+    else:
+        interpreter = prefix / "bin" / ("python" + version)
+    add(interpreter, "bin/python" + version)
     add(prefix / "Python", "Python")
     stdlib = "lib/python" + version
     tree(prefix / stdlib, stdlib, frozenset(("site-packages", "test", "tests", "ensurepip")),

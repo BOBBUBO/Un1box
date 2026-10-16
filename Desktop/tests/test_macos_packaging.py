@@ -190,6 +190,26 @@ assert Path(window.__file__).resolve().parent == Path.cwd() / 'app_services'
             runtime.export_runtime(plan, output)
         self.assertFalse(output.exists())
 
+    def test_framework_runtime_exports_real_interpreter_instead_of_spawn_stub(self):
+        prefix, extension, tcl, tk = self.provider()
+        interpreter = prefix / "Resources/Python.app/Contents/MacOS/Python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_bytes(b"real framework interpreter")
+        interpreter.chmod(0o755)
+        plan = runtime.plan_runtime(prefix, "3.13", extension, tcl, tk)
+        self.assertEqual(plan["files"]["bin/python3.13"]["source"], str(interpreter))
+        output = self.root / "runtime-real-interpreter"
+        runtime.export_runtime(plan, output)
+        self.assertEqual((output / "bin/python3").read_bytes(), interpreter.read_bytes())
+        self.assertEqual((prefix / "bin/python3.13").read_text(),
+                         "pinned public runtime input bin/python3.13")
+        interpreter.unlink()
+        outside = self.root / "external-interpreter"
+        outside.write_bytes(b"unreviewed external interpreter")
+        interpreter.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            runtime.plan_runtime(prefix, "3.13", extension, tcl, tk)
+
     def test_curated_runtime_excludes_only_top_level_cpython_darwin_development_config(self):
         prefix, extension, tcl, tk = self.provider()
         stdlib = prefix / "lib/python3.13"
