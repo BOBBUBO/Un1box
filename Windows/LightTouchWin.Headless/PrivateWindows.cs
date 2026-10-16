@@ -183,15 +183,19 @@ internal static class PrivateWindows
         }
         try
         {
-            Parallel.ForEach(Partitioner.Create(Files(), EnumerablePartitionerOptions.NoBuffering),
-                new ParallelOptions { MaxDegreeOfParallelism = maxParallelism }, path => {
-                    Check(path);
-                    // Protected read-only file DACL, not merely decorative READONLY.
-                    var acl = new FileSecurity(); acl.SetOwner(User); acl.SetAccessRuleProtection(true, false);
-                    foreach (string sid in Trusted) acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
-                        sid == User.Value ? FileSystemRights.ReadAndExecute : FileSystemRights.FullControl, AccessControlType.Allow));
-                    File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
-                    new FileInfo(path).SetAccessControl(acl);
+            // Amortize scheduling; each file still receives its own protected DACL.
+            Parallel.ForEach(Partitioner.Create(Files().Chunk(64), EnumerablePartitionerOptions.NoBuffering),
+                new ParallelOptions { MaxDegreeOfParallelism = maxParallelism }, batch => {
+                    foreach (string path in batch)
+                    {
+                        Check(path);
+                        // Protected read-only file DACL, not merely decorative READONLY.
+                        var acl = new FileSecurity(); acl.SetOwner(User); acl.SetAccessRuleProtection(true, false);
+                        foreach (string sid in Trusted) acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
+                            sid == User.Value ? FileSystemRights.ReadAndExecute : FileSystemRights.FullControl, AccessControlType.Allow));
+                        File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
+                        new FileInfo(path).SetAccessControl(acl);
+                    }
                 });
         }
         catch (AggregateException error) { ExceptionDispatchInfo.Capture(error.Flatten().InnerExceptions[0]).Throw(); throw; }

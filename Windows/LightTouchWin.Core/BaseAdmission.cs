@@ -105,21 +105,34 @@ public static class BaseAdmission
         var progressLock = new object();
         try
         {
-            Parallel.ForEach(sizes, new ParallelOptions { MaxDegreeOfParallelism = maxParallelism },
-                () => new byte[1024 * 1024], (item, _, buffer) => {
-                    var (path, size) = item;
-                    using var source = Open(path); using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                    if (source.Length != size) throw new InvalidDataException("Prepared file changed size: " + path);
-                    long count = 0; int n;
-                    while ((n = source.Read(buffer, 0, buffer.Length)) != 0)
+            // Schedule bounded groups of NAND pages, while still opening and
+            // hashing every on-disk file through the supplied security boundary.
+            Parallel.ForEach(Partitioner.Create(sizes.Chunk(64), EnumerablePartitionerOptions.NoBuffering),
+                new ParallelOptions { MaxDegreeOfParallelism = maxParallelism },
+                () => new byte[1024 * 1024], (batch, _, buffer) => {
+                    long pending = 0;
+                    void Report()
                     {
-                        count = checked(count + n);
-                        if (count > size) throw new InvalidDataException("Prepared file grew: " + path);
-                        hash.AppendData(buffer, 0, n);
-                        lock (progressLock) { done += n; progress?.Invoke(done, total); }
+                        lock (progressLock) { done += pending; progress?.Invoke(done, total); }
+                        pending = 0;
                     }
-                    if (count != size) throw new InvalidDataException("Prepared file truncated: " + path);
-                    hashes[path] = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+                    foreach (var (path, size) in batch)
+                    {
+                        using var source = Open(path); using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                        if (source.Length != size) throw new InvalidDataException("Prepared file changed size: " + path);
+                        long count = 0; int n;
+                        while ((n = source.Read(buffer, 0, buffer.Length)) != 0)
+                        {
+                            count = checked(count + n);
+                            if (count > size) throw new InvalidDataException("Prepared file grew: " + path);
+                            hash.AppendData(buffer, 0, n);
+                            pending += n;
+                            if (pending >= buffer.Length) Report();
+                        }
+                        if (count != size) throw new InvalidDataException("Prepared file truncated: " + path);
+                        hashes[path] = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+                    }
+                    if (pending != 0) Report();
                     return buffer;
                 }, _ => { });
         }
