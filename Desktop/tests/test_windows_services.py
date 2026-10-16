@@ -10,12 +10,32 @@ import unittest
 from unittest.mock import Mock, patch
 
 from lighttouch_desktop.windows_services import WindowsBridge, ServiceError
-from lighttouch_desktop.windows import WindowsSession
+from lighttouch_desktop.windows import WindowsSession, WindowsHost
 from lighttouch_desktop.storage import StorageOps
 from app_services.bridge import ServiceJob
 
 
 class ServicesTests(unittest.TestCase):
+    def test_apps_enabled_launch_preserves_windows_runtime_environment(self):
+        host = WindowsHost(storage=StorageOps())
+        session = host.create_session(None)
+        owned = {'IT_USB_TCP':'127.0.0.1:50102', 'LTW_USBMUX_PID':'123', 'LTW_USBMUX_CREATED':'456'}
+        bridge = SimpleNamespace(start=lambda: owned, service_environment=lambda: owned)
+        system = {'SystemRoot':r'C:\Windows', 'PATH':r'C:\Windows\System32',
+                  'TEMP':r'C:\Users\Blake\Temp', 'USERPROFILE':r'C:\Users\Blake',
+                  'USBMUXD_SOCKET_ADDRESS':'foreign'}
+        with patch.dict(os.environ, system, clear=True), \
+             patch('lighttouch_desktop.windows_services.WindowsBridge', return_value=bridge), \
+             patch('lighttouch_desktop.windows.ManagedSession.start') as launch:
+            _, environment = host.start_services(SimpleNamespace(services_runtime='runtime'), 'data', 'a'*32)
+            session.start(['host.exe', 'run'], 'guest.log', environment)
+            command, _, inherited = launch.call_args.args
+            for key in ('SystemRoot', 'PATH', 'TEMP', 'USERPROFILE'):
+                self.assertEqual(inherited[key], system[key])
+            self.assertNotIn('USBMUXD_SOCKET_ADDRESS', inherited)
+            self.assertNotIn('IT_USB_TCP', inherited)
+            self.assertEqual(command[command.index('--usb-endpoint')+1], owned['IT_USB_TCP'])
+
     def test_real_child_readiness_commands_and_cooperative_retirement(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); runtime = root / 'runtime'; runtime.mkdir()

@@ -126,7 +126,11 @@ class WindowsHost:
             bridge.close()
             raise
         self.session.bridge = bridge
-        return bridge, environment
+        # ManagedSession accepts a complete environment, whereas the bridge
+        # returns only its owned endpoint variables. Preserve SystemRoot, PATH,
+        # TEMP and the rest of the Windows runtime/driver environment. The
+        # session removes ambient endpoints before injecting explicit args.
+        return bridge, dict(os.environ, **environment)
 
     @staticmethod
     def apps_window(*args, **kwargs):
