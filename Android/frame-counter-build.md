@@ -90,3 +90,10 @@ If the original APK contains a stripped C++ runtime, pass the pinned NDK
 runtime bytes exactly using `--strip-unneeded`; a different result still fails.
 The original C++ payload remains unchanged. The receipt records the tool and
 input/output hashes, alongside the original unstripped runtime's notices.
+
+Use explicit diagnostic signing flags `--v1-signing-enabled false
+--v2-signing-enabled true --v3-signing-enabled false --v4-signing-enabled false`.
+This keeps the exact ZIP payload closure and lets the independent check require
+a verified V2 signature with the original debug certificate. V1 adds JAR members;
+default V3 verification can otherwise leave the V2 verification result false.
+These flags apply to this diagnostic recipe.
