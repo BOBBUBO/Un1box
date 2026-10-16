@@ -10,6 +10,14 @@ into a fresh folder. The updated Python storage adapter and native helper
 recognize the OWNER RIGHTS entry created by Python 3.13 after checking actual
 ownership. Existing bases and saves are retained; no manual ACL changes needed.
 
+Prepared-system import streams the ordered zlib payload through bounded memory
+buffers with up to four file writers. Large assets stream in 1 MiB chunks;
+NAND pages stay separate files. Verification reads and read-only permission
+updates also use up to four workers. Publication waits for every worker and all
+integrity checks. The logs include `[import-timing]` lines for hashing,
+extraction, verification, permissions and publication. Actual Windows speedup
+depends on filesystem/scanner behavior and remains to be measured on hardware.
+
 This is a separate, experimental Windows frontend around the current iOS QEMU
 engine. It is not a Windows acceptance pass. Use Windows10/11 x86_64 with a real
 hardware OpenGL2.1 compatibility driver. No software GPU provider is bundled.

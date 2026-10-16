@@ -1,6 +1,8 @@
 using Microsoft.Win32.SafeHandles;
 using LightTouchWin.Core;
 using System.ComponentModel;
+using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
@@ -153,24 +155,43 @@ internal static class PrivateWindows
         { handle.Dispose(); throw new IOException("Asset must be a regular independent file: " + path); }
         return new FileStream(handle, FileAccess.Read);
     }
-    internal static void Freeze(string value)
+    internal static void Freeze(string value, int maxParallelism = 4)
     {
+        if (maxParallelism is < 1 or > 8) throw new ArgumentOutOfRangeException(nameof(maxParallelism));
         Check(value);
-        foreach (string path in Directory.EnumerateFileSystemEntries(value))
+        var directories = new List<string>();
+        IEnumerable<string> Files()
         {
-            Check(path);
-            if (Directory.Exists(path)) Freeze(path);
-            else
+            var pending = new Stack<string>(); pending.Push(value);
+            while (pending.TryPop(out var directory))
             {
-                // Protected read-only file DACL, not merely decorative READONLY.
-                var acl = new FileSecurity(); acl.SetOwner(User); acl.SetAccessRuleProtection(true, false);
-                foreach (string sid in Trusted) acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
-                    sid == User.Value ? FileSystemRights.ReadAndExecute : FileSystemRights.FullControl, AccessControlType.Allow));
-                File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
-                new FileInfo(path).SetAccessControl(acl);
+                Check(directory); directories.Add(directory);
+                foreach (string path in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    if (Directory.Exists(path)) { Check(path); pending.Push(path); }
+                    else yield return path;
+                }
             }
         }
-        File.SetAttributes(value, File.GetAttributes(value) | FileAttributes.ReadOnly);
-        new DirectoryInfo(value).SetAccessControl(Acl(true));
+        try
+        {
+            Parallel.ForEach(Partitioner.Create(Files(), EnumerablePartitionerOptions.NoBuffering),
+                new ParallelOptions { MaxDegreeOfParallelism = maxParallelism }, path => {
+                    Check(path);
+                    // Protected read-only file DACL, not merely decorative READONLY.
+                    var acl = new FileSecurity(); acl.SetOwner(User); acl.SetAccessRuleProtection(true, false);
+                    foreach (string sid in Trusted) acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),
+                        sid == User.Value ? FileSystemRights.ReadAndExecute : FileSystemRights.FullControl, AccessControlType.Allow));
+                    File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
+                    new FileInfo(path).SetAccessControl(acl);
+                });
+        }
+        catch (AggregateException error) { ExceptionDispatchInfo.Capture(error.Flatten().InnerExceptions[0]).Throw(); throw; }
+        // All file writes/ACL updates are complete before restricting parents.
+        for (int i = directories.Count - 1; i >= 0; --i)
+        {
+            File.SetAttributes(directories[i], File.GetAttributes(directories[i]) | FileAttributes.ReadOnly);
+            new DirectoryInfo(directories[i]).SetAccessControl(Acl(true));
+        }
     }
 }

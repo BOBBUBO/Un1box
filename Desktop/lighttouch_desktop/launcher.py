@@ -550,10 +550,10 @@ class Launcher:
         lines = self.session.poll()
         if self.session.active and self.job == "import":
             for line in lines:
-                stage = re.fullmatch(r"import phase=(hashing|extracting|verifying) percent=(\d+) done=(\d+) total=(\d+)", line)
+                stage = re.fullmatch(r"import phase=(hashing|extracting|verifying|protecting) percent=(\d+) done=(\d+) total=(\d+)", line)
                 if stage:
                     phase, percent, done, total = stage.groups()
-                    labels = {"hashing": "Checking system archive", "extracting": "Unpacking iOS system", "verifying": "Checking unpacked system"}
+                    labels = {"hashing": "Checking system archive", "extracting": "Unpacking iOS system", "verifying": "Checking unpacked system", "protecting": "Protecting imported system"}
                     self.progress["value"] = min(100, int(percent))
                     self.message.set("%s: %s%%" % (labels[phase], percent))
                     self.import_bytes = (int(done), int(total))

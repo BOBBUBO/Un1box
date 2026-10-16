@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.Json;
 using LightTouchWin.Core;
 
+if (args.Contains("--import-only")) { ImportTests.Run(); return; }
+
 // Actual separate-process QMP fixture, no firmware or emulator runtime claim.
 if (args.Contains("-qmp"))
 {

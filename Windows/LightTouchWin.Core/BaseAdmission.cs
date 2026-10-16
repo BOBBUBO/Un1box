@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -10,8 +12,10 @@ namespace LightTouchWin.Core;
 public static class BaseAdmission
 {
     public static void Verify(string directory, Action<long, long>? progress = null,
-                              Action<string>? checkPath = null, Func<string, Stream>? openRead = null)
+                              Action<string>? checkPath = null, Func<string, Stream>? openRead = null,
+                              int maxParallelism = 1)
     {
+        if (maxParallelism is < 1 or > 8) throw new ArgumentOutOfRangeException(nameof(maxParallelism));
         directory = Path.GetFullPath(directory);
         void Check(string path)
         {
@@ -97,23 +101,29 @@ public static class BaseAdmission
         long total = 0, done = 0;
         foreach (long size in sizes.Values) total = checked(total + size);
         progress?.Invoke(0, total);
-        var hashes = new Dictionary<string, string>(StringComparer.Ordinal);
-        byte[] buffer = new byte[1024 * 1024];
-        foreach (var (path, size) in sizes)
+        var hashes = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+        var progressLock = new object();
+        try
         {
-            using var source = Open(path); using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            if (source.Length != size) throw new InvalidDataException("Prepared file changed size: " + path);
-            long count = 0;
-            int n;
-            while ((n = source.Read(buffer, 0, buffer.Length)) != 0)
-            {
-                count = checked(count + n);
-                if (count > size) throw new InvalidDataException("Prepared file grew: " + path);
-                hash.AppendData(buffer, 0, n); done += n; progress?.Invoke(done, total);
-            }
-            if (count != size) throw new InvalidDataException("Prepared file truncated: " + path);
-            hashes[path] = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+            Parallel.ForEach(sizes, new ParallelOptions { MaxDegreeOfParallelism = maxParallelism },
+                () => new byte[1024 * 1024], (item, _, buffer) => {
+                    var (path, size) = item;
+                    using var source = Open(path); using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                    if (source.Length != size) throw new InvalidDataException("Prepared file changed size: " + path);
+                    long count = 0; int n;
+                    while ((n = source.Read(buffer, 0, buffer.Length)) != 0)
+                    {
+                        count = checked(count + n);
+                        if (count > size) throw new InvalidDataException("Prepared file grew: " + path);
+                        hash.AppendData(buffer, 0, n);
+                        lock (progressLock) { done += n; progress?.Invoke(done, total); }
+                    }
+                    if (count != size) throw new InvalidDataException("Prepared file truncated: " + path);
+                    hashes[path] = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+                    return buffer;
+                }, _ => { });
         }
+        catch (AggregateException error) { ExceptionDispatchInfo.Capture(error.Flatten().InnerExceptions[0]).Throw(); throw; }
         foreach (var check in checks)
             if (hashes[check.Path] != check.Digest) throw new InvalidDataException("Prepared output checksum differs: " + check.Path);
         foreach (var listing in listings)

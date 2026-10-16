@@ -17,7 +17,15 @@ static async Task<int> MainWindows(string[] arguments)
         if (i + 1 >= arguments.Length || !arguments[i].StartsWith("--") || !options.TryAdd(arguments[i], arguments[i + 1]))
             throw new ArgumentException("Malformed or duplicate helper option.");
     string Need(string name) => options.TryGetValue(name, out string? value) && value.Length > 0 ? value : throw new ArgumentException("Missing " + name);
-    void Progress(string phase, long done, long total) => Console.WriteLine($"import phase={phase} percent={(total > 0 ? done * 100 / total : 0)} done={done} total={total}");
+    var importProgressClock = Stopwatch.StartNew(); string lastPhase = "";
+    void Progress(string phase, long done, long total)
+    {
+        if (phase != lastPhase || done == total || importProgressClock.ElapsedMilliseconds >= 100)
+        {
+            Console.WriteLine($"import phase={phase} percent={(total > 0 ? done * 100 / total : 0)} done={done} total={total}");
+            lastPhase = phase; importProgressClock.Restart();
+        }
+    }
     if (arguments[0] == "import")
     {
         if (options.Keys.Any(k => k is not ("--source" or "--destination" or "--sha256"))) throw new ArgumentException("Unknown import option.");
@@ -32,9 +40,17 @@ static async Task<int> MainWindows(string[] arguments)
             if (Directory.Exists(destination) || File.Exists(destination)) throw new IOException("Import destination already exists; existing data was retained.");
             using var input = PrivateWindows.Read(source);
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            const int importWorkers = 4;
+            var phaseClock = Stopwatch.StartNew();
+            void Timing(string phase)
+            {
+                Console.Error.WriteLine(FormattableString.Invariant($"[import-timing] phase={phase} seconds={phaseClock.Elapsed.TotalSeconds:F3} workers={importWorkers}"));
+                phaseClock.Restart();
+            }
             byte[] buffer = new byte[1024 * 1024]; long done = 0; int n;
             while ((n = input.Read(buffer, 0, buffer.Length)) != 0) { hash.AppendData(buffer, 0, n); done += n; Progress("hashing", done, input.Length); }
             if (!Convert.ToHexString(hash.GetHashAndReset()).Equals(expected, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Archive SHA-256 differs; no base was imported.");
+            Timing("hashing");
             string stage = Path.Combine(parent, ".lighttouch-import-" + Guid.NewGuid().ToString("N"));
             Console.Error.WriteLine("[import-stage] " + stage);
             // Reuse the established streamed archive algorithm. The held source
@@ -42,13 +58,19 @@ static async Task<int> MainWindows(string[] arguments)
             PreparedArchive.Extract(source, stage, new InlineProgress(value => {
                 if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The shared Windows helper requires Windows.");
                 Progress("extracting", (long)(value * 100), 100);
-            }));
+            }), maxParallelism: importWorkers);
+            Timing("extracting");
             BaseAdmission.Verify(stage, (a, b) => {
                 if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("The shared Windows helper requires Windows.");
                 Progress("verifying", a, b);
-            }, PrivateWindows.Check, PrivateWindows.Read);
-            PrivateWindows.Freeze(stage);
+            }, PrivateWindows.Check, PrivateWindows.Read, maxParallelism: importWorkers);
+            Timing("verifying");
+            Progress("protecting", 0, 1);
+            PrivateWindows.Freeze(stage, maxParallelism: importWorkers);
+            Progress("protecting", 1, 1);
+            Timing("protecting");
             if (!PrivateWindows.MoveFileEx(stage, destination, 8)) throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastWin32Error(), "Base publication failed; isolated import stage retained at " + stage);
+            Timing("publishing");
             Console.WriteLine("import phase=verifying percent=100 done=1 total=1");
             return 0;
         }

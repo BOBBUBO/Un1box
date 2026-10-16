@@ -23,6 +23,11 @@ ACL only after verifying current-user ownership. Earlier packages wrongly
 rejected their own `SharedWindows/bases` folder. Update the whole Windows ZIP;
 do not delete bases/saves or change folder permissions to work around this.
 
+The subsequent Windows import refinement overlaps ordered decompression with
+four bounded file writers, then parallelizes verification reads and per-file
+read-only ACL updates. Phase timings are logged. Focused import tests pass on
+Linux; this establishes correctness checks, not a measured Windows speedup.
+
 The QEMU fork consolidates Windows WGL/storage/worker support, desktop EGL
 initialization diagnostics and the persistent symbolic-IR experiment. The cache
 remains **disabled and unqualified** on Linux and Android; no cross-session guest
