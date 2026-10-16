@@ -25,7 +25,7 @@ recipe does not rebuild those dependencies. Sparkle 2.10.0 is the official
 prebuilt SwiftPM XCFramework, pinned by the root `Package.resolved`.
 
 ```sh
-brew install ninja meson jq pkgconf glib pixman libslirp openssl@3 libimobiledevice
+brew install ninja meson jq pkgconf glib pixman libslirp openssl@3 libimobiledevice ffmpeg dtc
 export PATH="/opt/homebrew/bin:$PATH"
 python3 macOS/build-engine.py \
   --qemu-source /absolute/path/to/qemu-ios \
@@ -77,8 +77,6 @@ clang -std=gnu11 -Wall -Wextra -Werror \
   -I /absolute/path/to/qemu-ios/contrib/ios-app macOS/tests/EngineAbi.c \
   -o /absolute/private/engine-abi
 /absolute/private/engine-abi "/absolute/private/LightTouch Native Test.app/Contents/Frameworks/libqemu-arm.dylib"
-swift test --package-path Packages/DeviceRuntime \
-  --scratch-path /absolute/private/device-runtime-tests --jobs 2
 ```
 
 The CGL check requires an accelerated legacy context, a 320x480 packed D24S8
@@ -87,3 +85,25 @@ not production guest rendering evidence. Engine ABI discovery opens the actual
 shared library eagerly and lists its boards without entering `qemu_ios_main`.
 Use two build jobs and a measured memory/time supervisor on shared machines;
 keep existing emulators and guest state untouched.
+
+`DeviceLinkSmoke.swift` checks 256 concurrent pre-start requests against the
+actual compiled DeviceRuntime archive: exactly one closed-link reply per request
+on the specified queue, and no helper or guest process:
+
+```sh
+swift build --package-path Packages/DeviceRuntime \
+  --scratch-path /absolute/private/device-runtime-build --jobs 2
+mac_bin=$(swift build --package-path Packages/DeviceRuntime \
+  --scratch-path /absolute/private/device-runtime-build --show-bin-path)
+swiftc -I "$mac_bin/Modules" -I Packages/DeviceRuntime/Sources/LTMLinkC \
+  macOS/tests/DeviceLinkSmoke.swift "$mac_bin/libDeviceRuntime.a" \
+  -framework Foundation -framework Security -framework IOSurface \
+  -o /absolute/private/device-link-smoke
+/absolute/private/device-link-smoke
+```
+
+The existing Swift Testing suite needs a toolchain that provides the `Testing`
+module, typically full Xcode. On this Command Line Tools installation,
+`swift test --package-path Packages/DeviceRuntime` compiled the library but
+failed to compile the test target with `no such module 'Testing'`; no IPC-suite
+pass is claimed. The standalone checks above do not replace that suite.
