@@ -128,7 +128,7 @@ This transitional preview has controls in the launcher. Home/Power/volume and
 other controls within the guest display window require the shared desktop
 adapter still being developed; they are not provided by this hotfix.
 
-## Scope and limitations
+## Historical WinForms preview scope and limitations
 
 Only the existing n72ap and n81ap prepared routes are exposed. Stock IPSW
 preparation, Legacy Store/IPA services, modern networking, rich settings,
@@ -137,8 +137,9 @@ Windows preview. No Apple firmware/ROM, prepared NAND or proprietary guest
 package is included. Supply your own legitimately obtained compatible inputs.
 Gyro is deferred and unqualified. Windows multitouch, hardware graphics output,
 audible audio, lifecycle, clean restart and guest persistence remain unqualified
-until measured on an actual Windows host. Wine is not installed on the build
-machine; PE compilation/import inspection is not target execution evidence.
+until measured on an actual Windows host. Wine/PE compilation/import inspection
+is not target execution evidence. The maintained shared package described above
+supersedes these historical preview feature limits.
 
 The WGL guest executor uses the existing compatibility OpenGL path, including
 synchronous completion for Apple fence operations. This preserves conservative

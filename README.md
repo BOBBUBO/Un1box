@@ -74,8 +74,9 @@ host QEMU worker and host memory, not CPU/RAM use inside iOS. Gyroscope support
 is deferred and unqualified.
 
 Legacy Store search/download and local IPA installation share desktop service
-code. Linux has the working service route; Windows/macOS provider integration
-and actual guest service acceptance are unfinished.
+code. Linux has the working service route. Windows now bundles and connects its
+native providers; actual guest installation verification remains pending. macOS
+provider integration and guest service acceptance remain unfinished.
 
 ## Building and contributing
 

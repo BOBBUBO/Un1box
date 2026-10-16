@@ -15,7 +15,12 @@ the launcher in C#: the WinForms preview is a temporary compatibility/debugging
 route. A shared Windows build must instantiate the existing `Launcher` and
 consume the shared control components. Its saved-device migration must preserve
 existing inputs and writable state. The Windows host adapter and prebuilt staging recipe now use that shared UI;
-actual shared Windows guest execution and service parity remain unqualified.
+the user has confirmed shared Windows guest boot/render/audio, clean shutdown
+and startup status. Bundled guest-service providers now connect the shared Apps
+window to Legacy Store and local IPA installation; guest installation verification
+remains pending. Interrupted saved devices offer a direct, one-shot **Boot
+recovered state** action. Windows import uses bounded memory batches and parallel
+disk verification; target speedup remains unmeasured.
 Android retains its touch UI; APK orchestration remains a future entrypoint
 adapter rather than an advertised output of this initial desktop foundation.
 
