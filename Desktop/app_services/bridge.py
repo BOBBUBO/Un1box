@@ -174,7 +174,8 @@ class ServiceJob:
             self.log = os.fdopen(os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "wb")
         try:
             self.child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                          stderr=subprocess.STDOUT, env=env, close_fds=True, start_new_session=True)
+                                          stderr=subprocess.STDOUT, env=env, close_fds=True, start_new_session=True,
+                                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except BaseException:
             if self.log:
                 self.log.close()

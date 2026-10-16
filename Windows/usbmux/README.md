@@ -1,4 +1,12 @@
-# Windows guest-service OS adapter (source checkpoint)
+# Windows guest-service OS adapter
+
+The shared Windows product now uses `Desktop/lighttouch_desktop/windows_services.py`
+to own the foreground daemon, bind readiness to its retained Popen process handle,
+pin private pairing/log folders and retire the child. `--services-runtime` staging
+collects the existing mobile/TLS DLLs with the daemon. Shared Apps operations use
+the bundled owned connector and the same catalog/IPA code as Linux. The earlier
+source checkpoints below describe provider history; actual Windows guest
+installation and adversarial endpoint qualification remain pending.
 
 The peer/connector C files cross-compile to Win64 objects with GCC13 and
 `-Wall -Wextra -Werror` (source b36e542e). All eight daemon C translation units

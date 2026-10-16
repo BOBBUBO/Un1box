@@ -35,7 +35,7 @@ class WindowsSession(ManagedSession):
         if bridge is not None and len(command) > 1 and command[1] == "run":
             service = bridge.service_environment()
             command = list(command) + ["--usb-endpoint", service["IT_USB_TCP"],
-                       "--usb-pid", service["LTW_USBMUX_PID"], "--usb-created", service["LTW_USBMUX_CREATED"]
+                       "--usb-pid", service["LTW_USBMUX_PID"], "--usb-created", service["LTW_USBMUX_CREATED"]]
         super().start(command, log_path, environment)
 
 

@@ -64,5 +64,14 @@ assert 'Desktop/app_services' not in app_services.__file__
         with self.assertRaisesRegex(ValueError,'complete Windows Python/Tk'): self.run_stage()
         self.assertFalse(self.output.exists())
 
+    def test_services_runtime_is_separate_and_launches_the_shared_apps_adapter(self):
+        services = self.root/'services'; services.mkdir()
+        names = ('lighttouch-usbmuxd.exe','libimobiledevice-1.0.dll','libplist-2.0.dll','libusbmuxd-2.0.dll')
+        for name in names: (services/name).write_bytes(b'synthetic native service')
+        stage.stage(SOURCE, self.output, self.runtime, self.helper, self.worker, self.native, services)
+        self.assertIn('--services-runtime "%~dp0runtime\\services"', (self.output/'LightTouch.cmd').read_text())
+        for name in names:
+            self.assertEqual((self.output/'runtime/services'/name).read_bytes(), (services/name).read_bytes())
+
 
 if __name__ == '__main__': unittest.main()

@@ -18,7 +18,7 @@ platform; builds are previews, not a fully qualified cross-platform release.
 | --- | --- | --- |
 | Android | APK; ARM64 and x86_64, Android 10+ | Real guest boot, graphics, input and audio exercised on Poco and Pixel hardware. Complete lifecycle, concurrent media and 4/16 KiB compatibility acceptance is ongoing. |
 | Linux | x86_64 AppImage | Guest boot, input, accelerated graphics and audio exercised, including a Radeon desktop. Local IPA installation works; Legacy Store HTTPS trust/logging fixes are included. |
-| Windows | x86_64 ZIP | Shared desktop UI preview available. Earlier native preview boot/audio/controls were user-tested; the shared package and Apps services still need Windows qualification. |
+| Windows | x86_64 ZIP | Shared UI boot/render/audio, shutdown and startup status user-tested. Legacy Store/local IPA services are now wired into the shared Apps window; guest installation verification remains pending. |
 | macOS | Apple Silicon app ZIP | Shared desktop UI and native host compile/package successfully. Shared guest execution and Apps services remain unqualified. Current packaged dependencies require macOS 26. |
 
 Intel macOS and 32-bit Android hosts are not qualified. Virtual devices supplement

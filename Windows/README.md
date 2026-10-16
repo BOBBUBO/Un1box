@@ -10,10 +10,11 @@ into a fresh folder. The updated Python storage adapter and native helper
 recognize the OWNER RIGHTS entry created by Python 3.13 after checking actual
 ownership. Existing bases and saves are retained; no manual ACL changes needed.
 
-Prepared-system import streams the ordered zlib payload through bounded memory
-buffers with up to four file writers. Large assets stream in 1 MiB chunks;
+Prepared-system import inflates the ordered zlib payload into bounded batches
+of up to 1 MiB/128 files with four writers. Large assets stream in 1 MiB chunks;
 NAND pages stay separate files. Verification reads and read-only permission
-updates also use up to four workers. Publication waits for every worker and all
+updates schedule groups of 64 files across four workers. All files still get
+independent on-disk hashes and permission checks. Publication waits for every worker and all
 integrity checks. The logs include `[import-timing]` lines for hashing,
 extraction, verification, permissions and publication. Actual Windows speedup
 depends on filesystem/scanner behavior and remains to be measured on hardware.
@@ -35,8 +36,19 @@ shutdown slider, lets the worker finish cleanup and release the device; clean
 completion still requires its complete terminal receipt. Storage failures keep
 state unconfirmed. Copied diagnostics include up to three preceding setup or
 session logs, so `[import-timing]` results remain available after starting iOS.
-**Install apps remains unavailable in this Windows preview:** its guest-service
-transport has not been connected. This is separate from import/startup status.
+Packages staged with the native services runtime now connect **Install apps**
+to the shared Legacy Store search/download and local IPA installer. Each saved
+device owns a foreground QEMU-only bridge and private pairing state. No system
+usbmux daemon or physical iPhone is selected. The bundled connector verifies
+the loopback peer's process identity and user before sending protocol data.
+Mobile DLLs load from the explicit bundled directory and release buffers using
+their owning allocator. Windows guest installation still requires target
+confirmation; source/host checks and cross-compilation are not that pass.
+
+If Start finds an interrupted session, click **Boot recovered state** in the
+main window. It cold boots using the existing saved data, applies to that start
+only, and does not clear shutdown markers or bypass unrelated validation errors.
+The r3 shutdown and stale-startup UI fixes were confirmed by the user.
 
 This is a separate, experimental Windows frontend around the current iOS QEMU
 engine. It is not a Windows acceptance pass. Use Windows10/11 x86_64 with a real

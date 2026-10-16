@@ -1,9 +1,8 @@
-"""Windows-only daemon receipt binding; not wired into the shared product yet.
+"""Owned Windows guest bridge and readiness bound to its held process handle.
 
-The native parent must own the child handle and private ACL-pinned directories.
-It supplies a handle-based live identity callback and actually reaps the child.
-This module never launches/signals a PID, probes a port or infers ownership from
-an untrusted receipt. Host tests do not qualify the native endpoint boundary.
+Each saved device gets its own QEMU-only daemon and private pairing state.
+The native connector checks TCP peer ownership before sending protocol bytes.
+Host or Wine tests do not establish physical Windows guest acceptance.
 """
 from dataclasses import dataclass
 import json
@@ -207,7 +206,8 @@ class WindowsBridge:
             if key.upper().startswith("LTW_") or key.upper() in ("IT_USB_TCP", "USBMUXD_SOCKET_ADDRESS", "USBMUXD_QEMU_ADDR"):
                 environment.pop(key)
         environment.update(LTW_SESSION_PROFILE=self.identity, LTW_SESSION_TOKEN=token, LTW_SESSION_GENERATION="1")
-        self.log = self.storage.open_log(logs / ("usbmux-" + token + ".log"), exclusive=True)
+        self.log_path = logs / ("usbmux-" + token + ".log")
+        self.log = self.storage.open_log(self.log_path, exclusive=True)
         try:
             self.child = subprocess.Popen([str(self.runtime / "lighttouch-usbmuxd.exe"), str(pairing)],
                                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
@@ -226,7 +226,7 @@ class WindowsBridge:
                 except queue.Empty:
                     if self.child.poll() is not None:
                         break
-            raise InstallError("Guest app-service startup failed. See " + str(self.log.name))
+            raise InstallError("Guest app-service startup failed. See " + str(self.log_path))
         except BaseException:
             self.close()
             raise
@@ -254,7 +254,9 @@ class WindowsBridge:
             raise InstallError("Choose a supported guest app operation and IPA.")
         env = self.service_environment()
         self.storage.ensure_directory(scratch)
-        command = [sys.executable, "-m", "app_services.helper", action,
+        # The launcher uses pythonw; helpers need working protocol stdout.
+        interpreter = Path(sys.executable).with_name("python.exe")
+        command = [str(interpreter) if interpreter.is_file() else sys.executable, "-m", "app_services.helper", action,
                    "--socket", env["USBMUXD_SOCKET_ADDRESS"], "--daemon-pid", env["LTW_USBMUX_PID"],
                    "--daemon-created", env["LTW_USBMUX_CREATED"],
                    "--library", str(self.runtime / "libimobiledevice-1.0.dll"),
@@ -283,7 +285,10 @@ class WindowsBridge:
                         # process if its cooperative control failed.
                         self.child.kill(); self.child.wait(timeout=3)
                 self.output_done.wait(timeout=3)
-                self.child.stdin.close()
+                try:
+                    self.child.stdin.close()
+                except OSError:
+                    pass
                 clean = self.session and self.session.finish(exit_code=self.child.returncode,
                     retirement_line=self.retirement, reaped=True, output_closed=self.output_done.is_set())
                 if not clean and self.log:
