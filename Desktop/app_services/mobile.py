@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import sys
 import threading
 import time
 
@@ -21,10 +22,28 @@ CALLBACK = C.CFUNCTYPE(None, P, P, P)
 
 class Mobile:
     def __init__(self, library, plist_library):
-        self.plist = C.CDLL(str(Path(plist_library).resolve()), mode=C.RTLD_GLOBAL)
-        self.lib = C.CDLL(str(Path(library).resolve()))
-        self.libc = C.CDLL(None)
+        library, plist_library = Path(library).resolve(), Path(plist_library).resolve()
+        self._dll_directories = []
+        if sys.platform == "win32":
+            # Keep the handles alive for dependencies loaded later by either DLL.
+            for directory in dict.fromkeys((library.parent, plist_library.parent)):
+                self._dll_directories.append(os.add_dll_directory(str(directory)))
+            self.plist = C.CDLL(str(plist_library))
+        else:
+            self.plist = C.CDLL(str(plist_library), mode=C.RTLD_GLOBAL)
+        self.lib = C.CDLL(str(library))
+        # The bundled MinGW libimobiledevice imports strdup/free from msvcrt.dll.
+        # Python's runtime (or CDLL(None)) does not own its AFC string buffers.
+        self.libc = C.CDLL("msvcrt.dll" if sys.platform == "win32" else None)
         self.libc.free.argtypes = [P]
+        self.libc.free.restype = None
+        if sys.platform == "win32":
+            self._plist_mem_free = self.plist.plist_mem_free
+        else:
+            # Older POSIX libplist versions share libc but lack plist_mem_free.
+            self._plist_mem_free = getattr(self.plist, "plist_mem_free", self.libc.free)
+        self._plist_mem_free.argtypes = [P]
+        self._plist_mem_free.restype = None
         specs = {
             "idevice_new": [PP, C.c_char_p], "idevice_free": [P],
             "lockdownd_client_new_with_handshake": [P, PP, C.c_char_p],
@@ -75,12 +94,12 @@ class Mobile:
         self.plist.plist_to_xml(value, C.byref(xml), C.byref(length))
         if not xml or length.value > 16 * 1024**2:
             if xml:
-                self.libc.free(xml)
+                self._plist_mem_free(xml)
             raise InstallError("The guest returned invalid service metadata.")
         try:
             return plistlib.loads(C.string_at(xml, length.value))
         finally:
-            self.libc.free(xml)
+            self._plist_mem_free(xml)
 
     def encode(self, value):
         xml = plistlib.dumps(value)
