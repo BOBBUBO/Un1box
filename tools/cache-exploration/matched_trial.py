@@ -4,7 +4,8 @@ from exploration_common import SECOND, fields, read, save, digest
 MODE = 'n72-shutdown-50-105-180-v2'
 SCENE_FAILURE_POLICY = 'retain-scene-failure-stop180-v1'
 EVIDENCE = ('matched-home-unlock-input.json', 'home-admitted.json',
-            'settings-input.json', 'settings-admitted.json')
+            'matched-tap-settings-input.json', 'settings-input.json',
+            'settings-admitted.json')
 
 
 class SceneDeadlineFailure(RuntimeError):
@@ -85,6 +86,10 @@ class Tracker:
         if self.hello is not None and hello != self.hello:
             raise RuntimeError('Matched diagnostic HELLO changed')
         self.hello = hello
+        # A scene failure cannot adopt rewritten already-admitted evidence as
+        # its new baseline and thereby hide an identity/integrity failure.
+        if any(digest(root / name) != expected for name, expected in self.seen.items()):
+            raise RuntimeError('Matched diagnostic evidence changed before scene failure')
         evidence = {name: digest(root / name) if (root / name).exists() else None
                     for name in EVIDENCE}
         record = {'policy': SCENE_FAILURE_POLICY, 'status': 'FAIL',

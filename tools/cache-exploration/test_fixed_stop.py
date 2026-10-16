@@ -120,6 +120,16 @@ class Tests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     matched_trial.Tracker(invalid)
 
+    def test_scene_failure_cannot_adopt_already_rewritten_evidence(self):
+        with runtime_fixture() as (_, root, cfg, result):
+            hello = result['first_hello_monotonic_ns']
+            _, tracker, timed = self.setup_failure(root, cfg, hello, 'home')
+            save(root / 'matched-home-unlock-input.json', {'rewritten_before_failure': True})
+            with self.assertRaisesRegex(RuntimeError, 'changed before scene failure'):
+                self.step(timed, tracker, root, hello, 95)
+            self.assertIsNone(tracker.scene_failure)
+            self.assertFalse((root / 'scene-failure.json').exists())
+
     def test_failure_cannot_be_retimed_overwritten_or_finished_with_early_stop(self):
         with runtime_fixture() as (_, root, cfg, result):
             hello = result['first_hello_monotonic_ns']
