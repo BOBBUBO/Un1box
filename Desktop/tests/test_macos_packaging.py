@@ -1,11 +1,14 @@
 """Asset-free shared bundle staging and Mach-O path resolution contracts."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+import shutil
+import stat
 
 SOURCE = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("macos_shared_build", SOURCE / "macOS/build-shared.py")
@@ -149,6 +152,38 @@ assert 'Linux/launcher' not in __import__('sys').path
         plan["files"]["bin/python3/extra"] = dict(plan["files"]["Python"])
         with self.assertRaisesRegex(ValueError, "descends"):
             runtime.validate_manifest(plan)
+
+    def test_python_org_provider_can_already_include_the_explicit_matching_tk_extension(self):
+        prefix, extension, tcl, tk = self.provider()
+        included = prefix / "lib/python3.13/lib-dynload" / extension.name
+        included.parent.mkdir(); shutil.copyfile(extension, included)
+        plan = runtime.plan_runtime(prefix, "3.13", included, tcl, tk)
+        self.assertEqual(plan["files"]["lib/python3.13/lib-dynload/" + extension.name]["source"], str(included))
+
+    def test_differing_explicit_tk_extension_cannot_replace_a_stdlib_extension(self):
+        prefix, extension, tcl, tk = self.provider()
+        included = prefix / "lib/python3.13/lib-dynload" / extension.name
+        included.parent.mkdir(); included.write_text("a different Tk build")
+        with self.assertRaisesRegex(ValueError, "conflicts"):
+            runtime.plan_runtime(prefix, "3.13", extension, tcl, tk)
+
+    def test_source_export_admission_needs_exact_tree_hashes_and_contained_links_without_git(self):
+        source = self.root / "source-export"; source.mkdir()
+        code = source / "code.py"; code.write_text("public source\n")
+        (source / "alias.py").symlink_to("code.py")
+        manifest = self.root / "SOURCE-MANIFEST.json"
+        manifest.write_text(json.dumps({"revision": "a" * 40, "files": {
+            "code.py": {"kind": "file", "sha256": build.sha(code), "size": code.stat().st_size,
+                        "mode": stat.S_IMODE(code.stat().st_mode)},
+            "alias.py": {"kind": "symlink", "target": "code.py"}}}))
+        self.assertEqual(build.exported_source_revision(source, manifest, build.sha(manifest)), "a" * 40)
+        code.write_text("changed source\n")
+        with self.assertRaisesRegex(ValueError, "input differs"):
+            build.exported_source_revision(source, manifest, build.sha(manifest))
+        code.write_text("public source\n")
+        (source / "unreviewed.py").write_text("extra")
+        with self.assertRaisesRegex(ValueError, "file set"):
+            build.exported_source_revision(source, manifest, build.sha(manifest))
 
     def test_minimum_macos_uses_all_actual_deployment_floors_not_sdk_versions(self):
         old = "Load command 1\n cmd LC_VERSION_MIN_MACOSX\n version 14.4\n sdk 26.0\n"

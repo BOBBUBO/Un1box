@@ -13,6 +13,7 @@ from pathlib import Path
 import plistlib
 import re
 import shlex
+import stat
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,33 @@ def private_path(path, source=SOURCE):
     if canonical == source or source in canonical.parents or canonical in source.parents:
         raise ValueError("Outputs and scratch must be outside the source checkout.")
     return value
+
+
+def exported_source_revision(source, manifest_path, expected_hash):
+    """Admit a committed source export without manufacturing a Git checkout."""
+    if sha(manifest_path) != expected_hash:
+        raise ValueError("Exported source manifest differs from the reviewed hash.")
+    manifest = json.loads(Path(manifest_path).read_text())
+    revision = manifest.get("revision", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", revision) or not isinstance(manifest.get("files"), dict):
+        raise ValueError("Expected a complete committed source manifest.")
+    source = Path(source).resolve(strict=True)
+    actual = {str(path.relative_to(source)) for path in source.rglob("*") if not path.is_dir() or path.is_symlink()}
+    if actual != set(manifest["files"]):
+        raise ValueError("Source export file set differs from its committed manifest.")
+    for name, value in manifest["files"].items():
+        if name.startswith("/") or any(part in ("", ".", "..") for part in name.split("/")):
+            raise ValueError("Invalid source manifest destination.")
+        path = source / name
+        if value["kind"] == "symlink":
+            if not path.is_symlink() or str(path.readlink()) != value["target"] or source not in path.resolve(strict=True).parents:
+                raise ValueError("Source export symlink changed or escaped.")
+        elif value["kind"] == "file":
+            if path.resolve(strict=True) != path or not stat.S_ISREG(path.lstat().st_mode) or sha(path) != value["sha256"] or path.stat().st_size != value["size"] or stat.S_IMODE(path.stat().st_mode) != value["mode"]:
+                raise ValueError("Source export input differs from its committed manifest: " + name)
+        else:
+            raise ValueError("Unsupported source export entry kind.")
+    return revision
 
 
 def python_runtime(root):
@@ -236,6 +264,8 @@ def main():
     for name in ("output", "scratch", "engine", "firmwarekit", "python-runtime", "vendor-contents"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--engine-revision", required=True)
+    parser.add_argument("--source-manifest", type=Path)
+    parser.add_argument("--source-manifest-sha256")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("Native macOS/Swift6.2+/SDL2 required; the app floor follows all linked dependencies.")
@@ -251,11 +281,17 @@ def main():
     if not engine.is_file() or not firmwarekit.is_file():
         parser.error("Native engine and firmware admission worker are required explicit inputs.")
     subprocess.run(["pkg-config", "--exists", "sdl2"], check=True)
-    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SOURCE, text=True).strip()
-    if subprocess.check_output(["git", "status", "--porcelain"], cwd=SOURCE, text=True):
-        parser.error("Commit the exact source before a recorded shared build.")
+    if bool(args.source_manifest) != bool(args.source_manifest_sha256):
+        parser.error("Exported source admission requires both manifest and reviewed SHA256.")
+    if args.source_manifest:
+        revision = exported_source_revision(SOURCE, args.source_manifest, args.source_manifest_sha256)
+    else:
+        revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=SOURCE, text=True).strip()
+        if subprocess.check_output(["git", "status", "--porcelain"], cwd=SOURCE, text=True):
+            parser.error("Commit the exact source before a recorded shared build.")
     receipt = {"schema": 1, "status": "RUNNING", "source_revision": revision,
                "engine_revision": args.engine_revision, "shared_ui": True, "guest_acceptance": False,
+               "source_manifest_sha256": args.source_manifest_sha256,
                "compile_argv": compile_commands(SOURCE, scratch), "origins": {},
                "limitations": ["development/ad-hoc signing", "shared Mac target execution unqualified",
                                "guest app services and native process metrics not implemented"]}
@@ -388,6 +424,8 @@ exec "$PYTHONHOME/bin/python3" -B -s "$LIGHTTOUCH_CONTENTS/Resources/launcher.py
                             "import tkinter; import sys; print(sys.version); print(tkinter.TkVersion)"],
                            env=runtime_env, check=True)
             receipt["files"] = {str(p.relative_to(contents)): sha(p) for p in contents.rglob("*") if p.is_file()}
+            if args.source_manifest:
+                exported_source_revision(SOURCE, args.source_manifest, args.source_manifest_sha256)
             receipt["status"] = "PASS"
         except BaseException as error:
             receipt.update(status="FAIL", failure=str(error))
