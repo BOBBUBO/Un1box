@@ -97,6 +97,8 @@
     "daemon_compiled": false,
     "native_stack_linked": false,
     "windows_executed": false,
-    "shared_apps_enabled": false
+    "shared_apps_enabled": false,
+    "daemon_objects_compiled": true,
+    "daemon_object_source_revision": "95795f20a85db777279ebd20852df88052e3daad"
   }
 }
