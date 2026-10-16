@@ -15,6 +15,7 @@ from .profiles import (FORMAT, VERSION, Profiles, SetupError, absolute, display_
 from .profiles import read_json
 from .preparation import Preparation
 from .session import ManagedSession, strict_clean_exit
+from .macos_services import NativeServicesState, SESSION_ENV
 
 
 def managed_record(profile):
@@ -52,9 +53,46 @@ clean_exit = strict_clean_exit
 
 
 class MacSession(ManagedSession):
-    """Mac label over the common desktop process/receipt implementation."""
+    """Native owner lifecycle plus a client-only app-services receipt consumer.
+
+    A consumer does not enable Apps: the native publisher, owned USBMux daemon
+    and packaged mobile libraries still need implementation and qualification.
+    """
     def __init__(self, application_log=None, **kwargs):
         super().__init__(application_log, label="LightTouch shared macOS launcher", **kwargs)
+        self.services = NativeServicesState()
+
+    def start(self, command, log_path, env=None):
+        if self.active:
+            raise RuntimeError("Stop the current device before starting another session.")
+        environment = dict(os.environ if env is None else env)
+        environment.pop(SESSION_ENV, None)
+        profile = None
+        if len(command) > 1 and command[1] == "run" and command.count("--id") == 1:
+            index = command.index("--id")
+            if index + 1 < len(command) and re.fullmatch("[a-f0-9]{32}", command[index + 1]):
+                profile = command[index + 1]
+        launch = uuid.uuid4().hex if profile else None
+        self.services.reset(launch, profile)
+        if launch:
+            environment[SESSION_ENV] = launch
+        try:
+            super().start(command, log_path, environment)
+        except BaseException:
+            self.services.reset(None, None)
+            raise
+
+    def poll(self):
+        lines = super().poll()
+        for line in lines:
+            self.services.observe(line, self.child.pid if self.child else None)
+        if self.stopping or self.child is None or self.child.poll() is not None:
+            self.services.invalidate()
+        return lines
+
+    def stop(self):
+        self.services.invalidate()
+        return super().stop()
 
 
 class MacHost:

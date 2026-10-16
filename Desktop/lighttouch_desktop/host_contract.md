@@ -44,7 +44,7 @@ Windows implementation is pending; no fallback launches WinForms/Cocoa.
 
 The shared `ManagedSession` in `session.py` owns fresh subprocesses, bounded
 output queues, stdin Stop, reader retirement and strict terminal receipt
-parsing. `MacSession` is a label-only subclass. Windows adapters can construct
+parsing. `MacSession` adds a native services receipt consumer; Apps remains unavailable until its native producer and ownership are implemented. Windows adapters can construct
 `ManagedSession(application_log, storage=ops, label=...)`; an optional
 `open_log(path, *, exclusive)` callback returns an owned binary file. It must
 create a new log exclusively for Start, and securely append for application
@@ -76,3 +76,24 @@ Windows backend owns reparse-point/container admission and durable publication
 implementation. These host-contract tests do not qualify actual Windows APIs
 or guest execution. Failed library publication retains the prior in-memory
 selection as well as the prior library when replacement has not occurred.
+
+MacSession additionally consumes (but does not produce or enable) a proposed
+`SERVICES ` JSON line for a native-owned private Unix client endpoint. On each
+native `run --id <32hex>` Start it passes a fresh 32hex launch token as
+`LIGHTTOUCH_SHARED_SERVICE_SESSION`; it invalidates clients before Stop and on
+owner exit. Receipt version1 has exactly `format=lighttouch-native-services`,
+`version=1`, `launch_id`, `profile_id`, integer `owner_pid` matching the actual
+owned host, increasing integer `generation`, and `state=ready|unavailable|retired`.
+Only ready includes `client_socket=UNIX:/absolute/private/client.sock`. Canonical
+socket and parent must be owner-only and their device/inodes remain pinned.
+Malformed/stale/mismatched receipts invalidate the endpoint. NativeClientBridge
+uses the existing finite app_services.helper installer/info commands and never
+starts/stops a daemon, unlinks a socket or loads mobile libraries in the launcher.
+
+This is a consumer source contract, not Mac guest app-services acceptance. The
+current SharedHost NativeSession disables usbAddress and owns no USBMux daemon;
+DeviceRuntime owns the guest helper only. A future native implementation must
+own and confirm USBMux stop/reap before claiming a clean FINAL, publish receipts,
+and package exact mobile/plist dependencies. MacHost still returns unavailable
+and Apps stays disabled. The source contract does not enable guest networking or
+qualify real LegacyStore/IPA installation.
