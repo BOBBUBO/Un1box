@@ -43,9 +43,12 @@ publication is intended to retain complete paints. Suppression therefore
 remains a hypothesis; it does not explain away 27 seconds of stalled counters
 or justify aggregating wider intervals into a pass.
 
-## Proposed visible-phase pilot (not implemented or authorized to run)
+## Visible-phase pilot source (not compiled or authorized to run)
 
-Keep a 30-second pilot, the same reviewed scratch Note/worker/image binding,
+Set `keyboardVisiblePhases=true` for a 30-second pilot. The opt-in requires the
+reviewed keyboard binding and `requireConcurrentMediaWindows=true`; longer
+diagnostic runs and arbitrary phase durations are rejected. Keep the same
+reviewed scratch Note/worker/image binding,
 balanced 60 ms DOWN/UP events, absolute cutoffs, and the existing required
 input + produced frame + presented frame + nonzero pull/write + playback
 overlap within each declared block. Keep lifecycle and strict clean Stop.
@@ -56,23 +59,53 @@ Do not reuse the spent worker or mutate the protected original.
 2. Capture native pixels and status **before** compensation, including input,
    serial/frame and audio deltas. Recheck the same worker, Surface, keyboard
    anchors and no held contacts. Retain each phase's raw times and images.
-   Visual review must establish the expected added Q before using a later
-   compensation step; counter progress alone does not establish Note content.
-3. Only on the verified scene, send balanced backspace, wait another fixed
+   Every capture rechecks the reviewed keyboard anchors. The receipt explicitly
+   leaves expected text visually unverified until the images are inspected;
+   counter progress alone does not establish Note content.
+3. On the unchanged bound keyboard scene, send balanced backspace, wait another fixed
    1,500 ms, and capture the restored Note. Do not catch up missed phases or
    extend the original cutoff. A changed/unverified scene fails and stops;
-   no guessed extra backspace is allowed.
+   no extra compensating backspace is allowed. Reserve nine seconds before
+   starting a pair, retain the original three-second no-input tail, and reject
+   any visible phase/capture crossing that tail.
 4. Record the original overlap predicate on the same phase samples. A visible
    phase does not relax the requirement or qualify sustained 20-minute media.
 
-If the published images still stagnate, an engine diagnostic successor should
-record bounded counters at LCD scan/dirty-update, `ios_capture` attempts,
-identical suppression, published serial, and portable acquisition. Record the
-latched scanout/base and GLES generation at those boundaries. Comparing these
-stages distinguishes unchanged guest scanout, missed dirty notification,
-deferred publication, and consumer acquisition. A latest-published screenshot
-alone cannot make that distinction. No product rendering bypass or forced
-duplicate frames should be used to manufacture frame progress.
+## Additional engine diagnosis needed for a precise stall attribution
+
+The current image/status evidence cannot distinguish all actual layers. Longer
+visible phases can test transient coalescing, but another unchanged published
+image would leave guest scanout, dirty tracking, publication and acquisition
+indistinguishable. Add bounded counters before another diagnostic runtime if
+the objective is to locate the stall in one run, rather than repeat the same
+ambiguity. This addition is proposed separately; the test-only packet below
+does not contain a replacement engine or qualify a product fix.
+
+The smallest proposed engine addition is one read-only QOM property on the
+existing LCD object, returning a fixed-size snapshot with:
+
+* LCD scan attempts, dirty updates, last latched scanout base and GLES generation;
+* `ios_capture` attempts, identical-pixel suppressions and published serial;
+* portable frame-copy calls, NO_FRAME returns, successful copies and last
+  successfully copied serial.
+
+The existing read-only `frame-timeline` LCD property supplies vblank/latched-base
+history already; reuse it instead of inventing another frame scheduler. The
+new getter must read LCD state under the BQL and publication/copy state under
+the existing frame lock, respecting the existing BQL-to-frame-lock order.
+Keep the counters fixed in size and lifetime, with no per-frame logging,
+dynamic history, forced invalidation, or publication side effect. A fixed QMP
+request from instrumentation can collect the property at start, visible
+phases and failure; the existing debug QMP endpoint must be armed on the fresh
+worker before Start. The current fixed JNI QMP snapshot does not request these
+properties, so it cannot supply these counters unchanged.
+
+Comparing these stages separates unchanged guest scanout, missed dirty
+notification, deferred publication and consumer acquisition. Latest-published
+screenshots alone cannot make that distinction. Engine/QMP getter source,
+semantic tests, a new pinned engine and native APK allocation would require
+separate review; no counter implementation/build/run is claimed here. No
+rendering bypass or forced duplicate frames should manufacture progress.
 
 The new exception-preservation helper has a host-JVM contract test. Full APK
 compilation and actual target exercise remain pending separate allocation.

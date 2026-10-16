@@ -32,6 +32,14 @@ class GuestMediaLifecycleTest {
         val requireConcurrentWindows = arguments.getString("requireConcurrentMediaWindows") == "true"
         // A single prereviewed JSON binding; absent means the old passive test.
         val keyboard = arguments.getString("keyboardWorkloadBinding")?.let { JSONObject(it) }
+        // Diagnostic successor: retain each typed/erased state before the next
+        // action. This never forces a frame or changes the overlap predicate.
+        val visibleKeyboardPhases = arguments.getString("keyboardVisiblePhases") == "true"
+        require(arguments.getString("keyboardVisiblePhases") in listOf(null, "true"))
+        if (visibleKeyboardPhases) {
+            require(keyboard != null && requireConcurrentWindows)
+            require(arguments.getString("mediaSeconds", "30") == "30")
+        }
         keyboard?.let { plan ->
             require(plan.getInt("schema") == 1 && plan.getBoolean("scratchNoteApproved") && plan.getBoolean("preservesExistingTestNote"))
             require(plan.getString("scratchNoteIdentity").length in 1..120)
@@ -67,6 +75,8 @@ class GuestMediaLifecycleTest {
         val result = JSONObject().put("pass", false).put("audiblePlaybackVerified", false).put("visibleGuestVerified", false)
             .put("guestAcceptancePassed", false).put("heldAudioFocusRequested", heldFocus)
             .put("concurrentWindowsRequired", requireConcurrentWindows)
+            .put("visibleKeyboardPhases", visibleKeyboardPhases)
+            .put("visibleKeyboardPhaseMs", if (visibleKeyboardPhases) 1_500 else JSONObject.NULL)
             .put("keyboardWorkloadBinding", keyboard ?: JSONObject.NULL)
         val samples = JSONArray()
         val intervals = JSONArray(); val events = JSONArray()
@@ -275,25 +285,12 @@ class GuestMediaLifecycleTest {
                     var nextKeyboardImage = nextKeyboardPair + 30_000
                     var keyboardPairs = 0
                     var previous = before; var blockStart = SystemClock.elapsedRealtime(); var qualifyingInBlock = 0; var totalQualifying = 0
-                    while (SystemClock.elapsedRealtime() < deadline) {
-                        if (keyboard != null && SystemClock.elapsedRealtime() >= nextKeyboardPair && SystemClock.elapsedRealtime() < deadline - 4_500) {
-                            assertTrue("Keyboard pair bound", keyboardPairs < durationMs / 2_000)
-                            if (SystemClock.elapsedRealtime() >= nextKeyboardImage) {
-                                checkKeyboardImage("keyboard-${keyboardPairs.toString().padStart(4, '0')}")
-                                nextKeyboardImage = SystemClock.elapsedRealtime() + 30_000
-                            }
-                            val start = SystemClock.elapsedRealtime()
-                            assertTrue("Keyboard pair started too near end", start < deadline - 4_500)
-                            keyboardTap("letter", keyboardPairs, deadline - 3_000)
-                            Thread.sleep(250)
-                            keyboardTap("backspace", keyboardPairs, deadline - 3_000)
-                            keyboardPairs++; nextKeyboardPair = SystemClock.elapsedRealtime() + 2_000
-                        }
-                        Thread.sleep(minOf(1000, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
+                    fun observeRunning(phase: String) {
                         val current = snapshot("running")
                         if (extended) {
                             val interval = JSONObject().put("fromSample", samples.length() - 2).put("toSample", samples.length() - 1)
                                 .put("guestConsumptionInferred", false).put("continuousTwoContactsClaimed", false)
+                                .put("keyboardPhase", phase)
                             fun delta(key: String, old: Bundle, now: Bundle): Long = (now.getLong(key) - old.getLong(key)).also {
                                 assertTrue("Counter reset: $key", it >= 0); interval.put(key + "Delta", it)
                             }
@@ -316,6 +313,40 @@ class GuestMediaLifecycleTest {
                             }
                         }
                         previous = current
+                    }
+                    // Reserve both visible waits, captures and the original
+                    // three-second no-input tail. No missed pair is caught up.
+                    val keyboardPairReserveMs = if (visibleKeyboardPhases) 9_000 else 4_500
+                    fun retainVisiblePhase(key: String) {
+                        val phaseStart = SystemClock.elapsedRealtime()
+                        assertTrue("Visible keyboard phase cannot extend the measurement", phaseStart + 1_500 < deadline - 3_000)
+                        Thread.sleep(1_500)
+                        assertTrue("Visible keyboard phase crossed the quiet tail", SystemClock.elapsedRealtime() < deadline - 3_000)
+                        val label = "keyboard-${keyboardPairs.toString().padStart(4, '0')}-$key-visible"
+                        checkKeyboardImage(label)
+                        assertTrue("Visible keyboard capture crossed the quiet tail", SystemClock.elapsedRealtime() < deadline - 3_000)
+                        keyboardEvent(JSONObject().put("keyboardPair", keyboardPairs).put("visiblePhase", key)
+                            .put("phaseStartElapsedMs", phaseStart).put("phaseObservedElapsedMs", SystemClock.elapsedRealtime())
+                            .put("expectedTextVisuallyVerified", false).put("captureLabel", label))
+                        observeRunning("$key-visible")
+                    }
+                    while (SystemClock.elapsedRealtime() < deadline) {
+                        if (keyboard != null && SystemClock.elapsedRealtime() >= nextKeyboardPair && SystemClock.elapsedRealtime() < deadline - keyboardPairReserveMs) {
+                            assertTrue("Keyboard pair bound", keyboardPairs < durationMs / 2_000)
+                            if (SystemClock.elapsedRealtime() >= nextKeyboardImage) {
+                                checkKeyboardImage("keyboard-${keyboardPairs.toString().padStart(4, '0')}")
+                                nextKeyboardImage = SystemClock.elapsedRealtime() + 30_000
+                            }
+                            val start = SystemClock.elapsedRealtime()
+                            assertTrue("Keyboard pair started too near end", start < deadline - keyboardPairReserveMs)
+                            keyboardTap("letter", keyboardPairs, deadline - 3_000)
+                            if (visibleKeyboardPhases) retainVisiblePhase("letter") else Thread.sleep(250)
+                            keyboardTap("backspace", keyboardPairs, deadline - 3_000)
+                            if (visibleKeyboardPhases) retainVisiblePhase("erased")
+                            keyboardPairs++; nextKeyboardPair = SystemClock.elapsedRealtime() + 2_000
+                        }
+                        Thread.sleep(minOf(1000, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
+                        observeRunning("cadence")
                     }
                     if (requireConcurrentWindows && SystemClock.elapsedRealtime() - blockStart >= 5_000)
                         assertTrue("No concurrent counter interval in the final workload block", qualifyingInBlock > 0)
