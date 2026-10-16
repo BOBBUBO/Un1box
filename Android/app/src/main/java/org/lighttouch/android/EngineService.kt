@@ -50,6 +50,11 @@ class EngineService : Service() {
             if (stopping.get()) return "This worker is disposing; vCPU accounting requires a fresh worker"
             return started.configureUnused { Native.debugArmVcpuAccounting() }
         }
+        override fun debugSelectTcgIrCache(enabled: Boolean): String {
+            requireDebugDiagnosis()
+            if (stopping.get()) return "This worker is disposing; experimental cache selection requires a fresh worker"
+            return started.configureUnused("Experimental cache selection") { Native.debugSelectTcgIrCache(enabled) }
+        }
         override fun debugEnableTouchTrace(): String {
             requireDebugDiagnosis()
             if (started.isConsumed()) return "Touch trace selection requires a fresh unused worker"
@@ -118,6 +123,8 @@ class EngineService : Service() {
                 putBoolean("graphicsProviderFixed", s.getOrElse(6) { "0" } == "1")
                 putBoolean("touchTraceConfigured", s.getOrElse(7) { "0" } == "1")
                 putBoolean("vcpuAccountingConfigured", s.getOrElse(15) { "0" } == "1")
+                // Request only. Actual hits/coverage are established by engine logs.
+                putBoolean("experimentalTcgIrCacheRequested", s.getOrElse(16) { "0" } == "1")
                 putLong("displayInputGeneration", s.getOrElse(13) { "0" }.toLongOrNull() ?: 0L)
                 putLong("displayInputOwner", s.getOrElse(14) { "0" }.toLongOrNull() ?: 0L)
                 val shutdown = ShutdownNativeSnapshot.from(s)

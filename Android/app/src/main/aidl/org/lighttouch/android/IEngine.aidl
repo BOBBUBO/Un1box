@@ -34,4 +34,5 @@ interface IEngine {
     Bundle performance(long observationEpoch);
     String debugArmVcpuAccounting();
     Bundle debugShutdownProgress();
+    String debugSelectTcgIrCache(boolean enabled);
 }
