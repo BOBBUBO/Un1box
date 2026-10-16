@@ -3,6 +3,8 @@
 #include "../ui/ControlBar.hpp"
 #include "../ui/Presentation.hpp"
 #include "../ui/Cursor.hpp"
+#include <cstdio>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <new>
@@ -147,8 +149,31 @@ extern "C" LTDesktopWindow *lt_desktop_window_create(const char *title, int widt
     active_window = true;
     result->window = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height,
                                      SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
-    if (result->window)
-        result->renderer = SDL_CreateRenderer(result->window, -1, SDL_RENDERER_ACCELERATED);
+    if (result->window) {
+        int driver = -1;
+#ifdef _WIN32
+        // Presentation is independent of the guest's WGL/OpenGL context.
+        // Select by index: an inherited SDL_RENDER_DRIVER hint must not send
+        // window creation through an unstable vendor OpenGL path, and SDL
+        // must not silently fall back to it when D3D11 creation fails.
+        for (int index = 0; index < SDL_GetNumRenderDrivers(); ++index) {
+            SDL_RendererInfo candidate{};
+            if (SDL_GetRenderDriverInfo(index, &candidate) == 0 && candidate.name &&
+                std::strcmp(candidate.name, "direct3d11") == 0) {
+                driver = index;
+                break;
+            }
+        }
+        if (driver < 0) {
+            lt_desktop_window_destroy(result);
+            SDL_SetError("The bundled SDL runtime has no Direct3D 11 display backend");
+            return nullptr;
+        }
+        std::fprintf(stderr, "[desktop-display] creating accelerated direct3d11 renderer\n");
+        std::fflush(stderr);
+#endif
+        result->renderer = SDL_CreateRenderer(result->window, driver, SDL_RENDERER_ACCELERATED);
+    }
     SDL_RendererInfo info{};
     if (!result->renderer || SDL_GetRendererInfo(result->renderer, &info) != 0 ||
         !(info.flags & SDL_RENDERER_ACCELERATED) || (info.flags & SDL_RENDERER_SOFTWARE)) {
@@ -157,6 +182,7 @@ extern "C" LTDesktopWindow *lt_desktop_window_create(const char *title, int widt
         return nullptr;
     }
     SDL_SetWindowMinimumSize(result->window, 320, 180);
+    std::fprintf(stderr, "[desktop-display] renderer=%s flags=0x%x\n", info.name, info.flags);
     lt::desktop_cursor(result->window);
     return result;
 }
