@@ -172,13 +172,19 @@ struct NativeServicesReceipt: Encodable {
         ready = false; emit("unavailable")
     }
 
+    /// Failed optional readiness must not hold guest preparation behind daemon
+    /// teardown. Retain exactly one cleanup task; FINAL still awaits its result.
+    func beginRetirement() {
+        guard retirement == nil else { return }
+        willStop()
+        retirement = Task { @MainActor [self] in await retireOwned() }
+    }
+
     /// Await the upstream subprocess TERM/5s/KILL/reap before a native FINAL.
     /// Unexpected files are retained and prevent a clean-state claim.
     func retire() async -> Bool {
-        if let retirement { return await retirement.value }
-        willStop()
-        let retirement = Task { @MainActor [self] in await retireOwned() }
-        self.retirement = retirement
+        beginRetirement()
+        guard let retirement else { return false }
         return await retirement.value
     }
 
