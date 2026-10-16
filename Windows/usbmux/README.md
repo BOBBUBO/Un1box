@@ -23,6 +23,17 @@ on the include path. Add `windows-main.c` and `windows-peer.c`. Link the listed
 WinSock/IP Helper/security/Shell libraries and pinned libplist/glue. Their build
 configuration and generated headers still need a reviewed finite build packet;
 the source list is **not** a successful build recipe.
+Include upstream `preflight.c` without `HAVE_LIBIMOBILEDEVICE`: its established
+no-preflight path publishes the QEMU device without adding another dependency
+on libimobiledevice or its installer. `conf.c` also references `CoTaskMemFree`,
+so the daemon link needs `ole32` in addition to `shell32`.
+
+Every Windows daemon socket creation and accept explicitly uses `ltw_socket`
+or `ltw_accept`. These retain native SOCKET width until checking `INT_MAX`,
+close unrepresentable handles and disable inheritance before the existing
+protocol's int-descriptor model sees them. Compatibility macros also protect
+other original call sites; explicit calls do not depend on those macros for
+the creation/accept conversion.
 
 For libusbmuxd, apply the connector patch and compile `windows-connect.c` and
 `windows-peer.c` into that DLL with the stated libraries. Do **not** force-include

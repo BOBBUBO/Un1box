@@ -14,6 +14,7 @@
 int no_preflight = 1;
 unsigned int log_level = LL_NOTICE;
 static int stopping;
+static int control_invalid;
 static HANDLE control_input = INVALID_HANDLE_VALUE;
 static char command[5];
 static DWORD command_used;
@@ -25,14 +26,24 @@ int ltw_windows_stopping(void)
 {
     DWORD available = 0, count = 0;
     if (stopping) return 1;
-    if (!PeekNamedPipe(control_input, NULL, 0, NULL, &available, NULL)) return stopping = 1;
+    if (!PeekNamedPipe(control_input, NULL, 0, NULL, &available, NULL)) {
+        control_invalid = command_used != 0 || GetLastError() != ERROR_BROKEN_PIPE;
+        return stopping = 1;
+    }
     for (DWORD i = 0; i < available && i < 6; i++) {
         char value;
-        if (!ReadFile(control_input, &value, 1, &count, NULL) || count != 1) return stopping = 1;
-        if (value == '\n' || command_used == sizeof(command)) return stopping = 1;
+        if (!ReadFile(control_input, &value, 1, &count, NULL) || count != 1) {
+            control_invalid = 1; return stopping = 1;
+        }
+        if (value == '\n') {
+            control_invalid = command_used != 4 || memcmp(command, "stop", 4) != 0;
+            return stopping = 1;
+        }
+        if (command_used == sizeof(command)) { control_invalid = 1; return stopping = 1; }
         command[command_used++] = value;
-        if (memcmp(command, "stop", command_used > 4 ? 4 : command_used)) return stopping = 1;
-        if (command_used > 4) return stopping = 1;
+        if (memcmp(command, "stop", command_used > 4 ? 4 : command_used) || command_used > 4) {
+            control_invalid = 1; return stopping = 1;
+        }
     }
     return 0;
 }
@@ -81,7 +92,7 @@ int main(int argc, char **argv)
     control_input = input;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 2;
     if (config_set_config_dir(argv[1]) != 0) goto cleanup;
-    listener = socket(AF_INET, SOCK_STREAM, 0);
+    listener = ltw_socket(AF_INET, SOCK_STREAM, 0);
     int yes = 1;
     struct sockaddr_in address = {0};
     address.sin_family = AF_INET; address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -124,6 +135,7 @@ int main(int argc, char **argv)
     fdlist_free(&list);
 cleanup:
     stopping = 1;
+    if (control_invalid) result = 2;
     /* Keep upstream teardown ordering: USB removal still references device
      * and client collections. Never destroy their mutexes first. */
     if (usb_started) usb_shutdown();

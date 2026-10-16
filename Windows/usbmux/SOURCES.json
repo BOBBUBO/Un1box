@@ -34,7 +34,8 @@
       "device.c",
       "usb-qemu.c",
       "utils.c",
-      "conf.c"
+      "conf.c",
+      "preflight.c"
     ],
     "replace_main_with": "windows-main.c",
     "additional_translation_units": [
@@ -45,6 +46,7 @@
       "iphlpapi",
       "advapi32",
       "shell32",
+      "ole32",
       "plist-2.0",
       "imobiledevice-glue-1.0"
     ]
