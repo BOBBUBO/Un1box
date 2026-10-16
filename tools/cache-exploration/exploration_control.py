@@ -6,6 +6,7 @@ import struct
 import time
 
 from exploration_common import *
+import matched_trial
 
 def module(path):
     spec = importlib.util.spec_from_file_location('lock_continuity', path)
@@ -27,7 +28,7 @@ def unchanged_except_clock(first, second):
             return False
     return True
 
-def continuity(source, scene, label):
+def continuity(source, scene, label, inspected=True):
     started, worker = owner()
     original = R / source
     if original.parent != R or not (original / 'receipt.json').is_file():
@@ -40,8 +41,8 @@ def continuity(source, scene, label):
                 coherent_current(receipt, now, started['frontend'], worker))
     if not admitted(old, int(old['saved_monotonic_ns'])):
         raise RuntimeError('Original inspected capture was not awake/fresh')
-    inspected = time.monotonic_ns()
-    if inspected - int(old['saved_monotonic_ns']) > 60 * SECOND:
+    inspected_at = time.monotonic_ns()
+    if inspected_at - int(old['saved_monotonic_ns']) > 60 * SECOND:
         raise RuntimeError('Original image too old for current scene admission')
     current, receipt = capture(label, convert=False)
     if not admitted(receipt, time.monotonic_ns()):
@@ -57,14 +58,17 @@ def continuity(source, scene, label):
     else:
         matched = unchanged_except_clock((original / 'native.bmp').read_bytes(), (current / 'native.bmp').read_bytes())
         comparison = {'policy': 'exact-except-status-clock-RGB-all-alpha-protected', 'matched': matched}
-    record = {'scene': scene, 'model_inspected': True, 'inspected_monotonic_ns': inspected,
-              'inspection_semantics': 'Caller explicitly states actual view_image inspection completed before this command; recorded now, no backdating',
+    record = {'scene': scene, 'model_inspected': bool(inspected),
+              'inspection_semantics': ('Caller explicitly states actual view_image inspection completed before this command; recorded now, no backdating'
+                                       if inspected else 'Automatic exact image continuity only; personal post-run review required'),
               'original_capture': source, 'current_capture': current.name, 'comparison': comparison,
               'same_worker': same, 'original_sha256': old['sha256'], 'current_sha256': receipt['sha256'],
               'readback_policy': 'new-source-and-awake' if scene == 'lock' else 'current-coherent-copy-awake-static-source-allowed',
               'original_source_age_at_saved_ns': int(old['saved_monotonic_ns']) - int(old['frame_monotonic_ns']),
               'current_source_age_at_saved_ns': int(receipt['saved_monotonic_ns']) - int(receipt['frame_monotonic_ns']),
               'verification_monotonic_ns': time.monotonic_ns()}
+    if inspected:
+        record['inspected_monotonic_ns'] = inspected_at
     save(current / 'continuity.json', record)
     if not same or not matched:
         raise RuntimeError('Inspected scene changed; retained captures require fresh actual inspection')
@@ -138,7 +142,7 @@ def wait_awake_frame(home_begin, deadline, worker, record):
     finally:
         record['awake_wait_end_ns'] = time.monotonic_ns()
 
-def home_unlock(label):
+def home_unlock(label, matched=False):
     """One Home, bounded awake/frame wait, exact anchors and guarded slider."""
     if re.fullmatch('[a-z0-9-]{1,54}', label) is None:
         raise RuntimeError('Bounded private home-unlock label required')
@@ -164,6 +168,7 @@ def home_unlock(label):
             raise RuntimeError('Bounded Home input deadline expired before input')
         record['pre_home_status'] = latest
         record['home_input_begin_ns'] = time.monotonic_ns()
+        matched_trial.input_claim(matched, R, hello, 'home-unlock', record['home_input_begin_ns'])
         press_key('h')
         record['home_released_ns'] = time.monotonic_ns()
         wait_awake_frame(record['home_input_begin_ns'], deadline, worker, record)
@@ -222,8 +227,12 @@ def main():
     parser.add_argument('--x', type=int)
     parser.add_argument('--y', type=int)
     parser.add_argument('--model-inspected', action='store_true')
+    parser.add_argument('--wifi-name', help='Personally viewed Settings Wi-Fi row; required by matched diagnostic')
     args = parser.parse_args()
     owner()
+    matched = matched_trial.enabled(read(P / 'EXPLORATION-INPUTS.json'))
+    if matched and args.operation in ('wake', 'unlock'):
+        raise RuntimeError('Matched diagnostic allows only one scheduled Home/slider input')
     if args.operation == 'stop':
         save(R / 'operator-stop.json', {'requested_monotonic_ns': time.monotonic_ns()}); return
     label = args.output or ('operator-%d' % time.monotonic_ns())
@@ -245,7 +254,7 @@ def main():
     if args.operation == 'home-unlock':
         if not args.model_inspected:
             raise RuntimeError('Actual personal inspection of prepared Lock reference required')
-        home_unlock(label)
+        home_unlock(label, matched)
         print('Input completed; personally inspect retained post-input PNG. No Home pass asserted.')
         return
     if not args.model_inspected or not args.capture:
@@ -270,6 +279,7 @@ def main():
         if time.monotonic_ns() - hello >= 129 * SECOND:
             raise RuntimeError('Original Home129s deadline missed')
         record['geometry'] = geometry()
+        matched_trial.attest(matched, 'home', record, hello, time.monotonic_ns())
         save(R / 'home-inspected.json', record)
         print('Actual Home inspection retained; use inspected native Settings icon pixel coordinates.')
     elif args.operation == 'tap-settings':
@@ -285,6 +295,7 @@ def main():
         with capture_lock():
             move(args.x, args.y, g)
             record['input_begin_ns'] = time.monotonic_ns()
+            matched_trial.input_claim(matched, R, hello, 'tap-settings', record['input_begin_ns'], [args.x, args.y])
             try:
                 xcall(['mousedown', '1']); time.sleep(.15)
             finally:
@@ -297,8 +308,11 @@ def main():
         record = continuity(args.capture, 'settings', label)
         record['geometry'] = geometry()
         record['explicit_operator_scene'] = 'Full Settings list including complete rows'
+        matched_trial.attest(matched, 'settings', record, hello, time.monotonic_ns(), args.wifi_name)
         save(R / 'settings-inspected.json', record)
-        print('Actual Settings inspection retained; controller will request ordinary Stop.')
+        print('Actual Settings inspection retained; ' +
+              ('matched controller keeps the original scheduled Stop180s.' if matched else
+               'controller will request ordinary Stop.'))
 
 if __name__ == '__main__':
     main()

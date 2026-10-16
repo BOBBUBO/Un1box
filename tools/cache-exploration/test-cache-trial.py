@@ -50,9 +50,13 @@ class CacheTrialTests(unittest.TestCase):
         receipt_path = self.root / 'cache-trial.json'
         save(receipt_path, receipt)
         result_path = self.root / 'RESULT.json'
-        save(result_path, {'status': 'SCOPED_PASS', 'cache_enabled': True,
+        result = {'status': 'SCOPED_PASS', 'cache_enabled': True,
             'cache_evidence_sha256': digest(receipt_path), 'confirmed_clean_receipt': True,
-            'strict_retirement': True, 'dirty': False})
+            'strict_retirement': True, 'dirty': False}
+        if 'matchedDiagnostic' in self.cfg:
+            result['matched_diagnostic'] = dict(self.cfg['matchedDiagnostic'],
+                status='DIAGNOSTIC_SCHEDULE_COMPLETED')
+        save(result_path, result)
         self.cfg['cacheTrial']['mode'] = 'reuse'
         self.cfg['pins']['cacheReuseReceipt'] = {'path': str(receipt_path), 'sha256': digest(receipt_path)}
         self.cfg['pins']['cacheReuseResult'] = {'path': str(result_path), 'sha256': digest(result_path)}
@@ -161,6 +165,35 @@ class CacheTrialTests(unittest.TestCase):
         self.record(payload=b'different checksummed IR')
         with self.assertRaisesRegex(RuntimeError, 'altered'):
             trial.finish(self.cfg, initial, self.log(stored=0, hits=2), True, [44, 326])
+
+    def test_scheduled_reuse_requires_actual_matching_completed_producer(self):
+        import matched_trial
+        self.cfg['matchedDiagnostic'] = {'mode': matched_trial.MODE}
+        self.produce()
+        self.assertEqual(trial.before(self.cfg)['records'], 1)
+        changed = copy.deepcopy(self.cfg)
+        changed.pop('matchedDiagnostic')
+        with self.assertRaisesRegex(RuntimeError, 'clean producer'):
+            trial.before(changed)
+        pin = self.cfg['pins']['cacheReuseResult']
+        result = __import__('json').loads(Path(pin['path']).read_text())
+        for schedule in [None, {'mode': 'other', 'status': 'DIAGNOSTIC_SCHEDULE_COMPLETED'},
+                         {'mode': matched_trial.MODE, 'status': 'FAIL'}]:
+            save(pin['path'], dict(result, matched_diagnostic=schedule))
+            pin['sha256'] = digest(pin['path'])
+            with self.assertRaisesRegex(RuntimeError, 'completed matching producer schedule'):
+                trial.before(self.cfg)
+
+    def test_reuse_never_accepts_dirty_or_unconfirmed_producer_with_updated_pin(self):
+        self.produce()
+        pin = self.cfg['pins']['cacheReuseResult']
+        result = __import__('json').loads(Path(pin['path']).read_text())
+        for mutation in [dict(dirty=True), dict(confirmed_clean_receipt=False),
+                         dict(strict_retirement=False), dict(status='FAIL')]:
+            save(pin['path'], dict(result, **mutation))
+            pin['sha256'] = digest(pin['path'])
+            with self.assertRaisesRegex(RuntimeError, 'clean producer'):
+                trial.before(self.cfg)
 
     def test_native_telemetry_cannot_be_wrong_producer_duplicate_or_reset(self):
         initial = trial.before(self.cfg)

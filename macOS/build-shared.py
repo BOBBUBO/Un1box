@@ -154,6 +154,31 @@ def load_minimum_macos(text):
     return max(versions, key=lambda v: tuple(int(p) for p in v.split(".")))
 
 
+def sdl_compat_runtime(library, supplied):
+    """Find SDL2-compat's dlopen dependency, absent from its Mach-O load list.
+
+    SDL2-compat searches @loader_path/libSDL3.dylib during its initializer.
+    Requiring an explicit provider keeps builds reproducible and prevents a
+    packaged helper from hanging in SDL2-compat's missing-library NSAlert.
+    Ordinary SDL2 does not require SDL3.
+    """
+    library = Path(library)
+    if not library.name.startswith("libSDL2"):
+        return None
+    image = library.read_bytes()
+    if b"SDL2COMPAT_" not in image or b"@loader_path/libSDL3.dylib" not in image:
+        return None
+    if supplied is None:
+        raise ValueError("SDL2-compat requires --sdl3-runtime with its matching libSDL3.dylib.")
+    provider = Path(supplied).resolve(strict=True)
+    if not provider.is_file():
+        raise ValueError("Choose the matching native SDL3 dynamic library.")
+    with provider.open("rb") as stream:
+        if stream.read(4) not in MACH_MAGICS:
+            raise ValueError("The SDL3 runtime must be a native Mach-O library.")
+    return provider
+
+
 def minimum_macos(versions):
     return max(versions, key=lambda v: tuple(int(p) for p in v.split(".")))
 
@@ -275,6 +300,8 @@ def main():
     for name in ("output", "scratch", "engine", "firmwarekit", "python-runtime", "vendor-contents"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--engine-revision", required=True)
+    parser.add_argument("--sdl3-runtime", type=Path,
+                        help="Explicit matching libSDL3.dylib when SDL2 is SDL2-compat")
     parser.add_argument("--source-manifest", type=Path)
     parser.add_argument("--source-manifest-sha256")
     args = parser.parse_args()
@@ -304,6 +331,7 @@ def main():
                "engine_revision": args.engine_revision, "shared_ui": True, "guest_acceptance": False,
                "source_manifest_sha256": args.source_manifest_sha256,
                "compile_argv": compile_commands(SOURCE, scratch), "origins": {},
+               "dynamic_dependencies": [],
                "limitations": ["development/ad-hoc signing", "shared Mac target execution unqualified",
                                "guest app services and native process metrics not implemented"]}
     receipt_path = output.with_suffix(".build-receipt.json")
@@ -328,7 +356,12 @@ def main():
                 copy(binaries / name, contents / "Helpers" / name)
             copy(engine, contents / "Frameworks/libqemu-arm.dylib")
             copy(firmwarekit, contents / "MacOS/firmwarekit")
-            packaged_runtime = contents / "Frameworks/Python"
+            # This tree contains Tcl/Tk scripts and dotted data directories
+            # such as tcl9.1. Frameworks is a nested-code location: codesign
+            # interprets those directories as malformed code bundles there.
+            # Sign each actual Mach-O below, then seal the mixed runtime tree
+            # as Resources. All native load paths remain explicitly relocated.
+            packaged_runtime = contents / "Resources/Python"
             stage_runtime(runtime, packaged_runtime)
             runtime_targets = {}
             for path in native_files(packaged_runtime):
@@ -356,6 +389,22 @@ def main():
                 load_commands = subprocess.check_output(["otool", "-l", str(original)], text=True)
                 rpaths = load_rpaths(load_commands)
                 minimum_versions[str(local.relative_to(contents))] = load_minimum_macos(load_commands)
+                dynamic = sdl_compat_runtime(original, args.sdl3_runtime)
+                if dynamic is not None:
+                    target = contents / "Frameworks/libSDL3.dylib"
+                    existing = runtime_targets.get(dynamic)
+                    if existing is not None and existing != target:
+                        raise ValueError("SDL3 provider already has a different staged destination.")
+                    if existing is None:
+                        if target.exists():
+                            raise ValueError("SDL3 runtime would overwrite a staged input.")
+                        copy(dynamic, target)
+                        runtime_targets[dynamic] = target
+                        pending.append((target, dynamic))
+                    receipt["dynamic_dependencies"].append({
+                        "consumer": str(local.relative_to(contents)),
+                        "provider": str(dynamic), "input_sha256": sha(dynamic),
+                        "target": str(target.relative_to(contents)), "mechanism": "SDL2-compat dlopen"})
                 # The first -L entry of a dylib is its install ID, even if the
                 # original runtime is no longer installed at that old path.
                 ids = subprocess.run(["otool", "-D", str(original)], text=True,
@@ -387,7 +436,7 @@ def main():
 set -eu
 LIGHTTOUCH_CONTENTS="$(CDPATH= cd -P "$(dirname "$0")/.." && pwd)"
 unset PYTHONPATH PYTHONSTARTUP PYTHONINSPECT
-export PYTHONHOME="$LIGHTTOUCH_CONTENTS/Frameworks/Python"
+export PYTHONHOME="$LIGHTTOUCH_CONTENTS/Resources/Python"
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1
 unset TCL_LIBRARY TK_LIBRARY TCLLIBPATH PYTHONUSERBASE PYTHONPLATLIBDIR

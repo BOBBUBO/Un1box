@@ -12,6 +12,8 @@ import time
 
 from exploration_common import *
 import cache_trial
+import matched_trial
+import image_operator
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -19,6 +21,8 @@ def main():
     parser.add_argument('--grant', type=Path)
     args = parser.parse_args()
     cfg = read(P / 'EXPLORATION-INPUTS.json')
+    matched = matched_trial.Tracker(cfg)
+    timed = image_operator.Operator(cfg)
     if not args.execute:
         print(__import__('json').dumps({'execution': False, 'argv': cfg['argv'],
               'cache': cfg.get('cacheTrial', {'mode': 'off'}), 'root_grant_required': True}))
@@ -129,6 +133,7 @@ def main():
         descriptors += [log, stderr]
         save(R / 'command.json', {'argv': cfg['argv'], 'environment': {key: env.get(key) for key in cfg['recordEnvironment']},
                                   'cache': cache_before['mode'], 'cache_before': cache_before,
+                                  'clock_ticks_per_second': os.sysconf('SC_CLK_TCK'),
                                   'cgroup': str(root), 'controls': controls})
         frontend = subprocess.Popen(cfg['argv'], env=env, stdout=log, stderr=stderr)
         ffd = os.pidfd_open(frontend.pid)
@@ -199,13 +204,19 @@ def main():
                     error = 'log byte bound'; stop(error)
                 if hello is None and (now - origin >= 900 * SECOND or now - last_progress >= 30 * SECOND):
                     error = 'admission/no-progress deadline'; stop(error)
-                if hello is not None and now - hello >= 129 * SECOND and not (R / 'home-inspected.json').exists():
+                home_receipt = 'home-admitted.json' if timed.active else 'home-inspected.json'
+                if hello is not None and now - hello >= 129 * SECOND and not (R / home_receipt).exists():
                     error = 'original Home129s deadline'; stop(error)
                 if hello is not None and now - hello >= 205 * SECOND:
                     stop('original Stop205s')
                 if now - origin >= 1150 * SECOND:
                     error = 'original outer retirement reserve'; stop(error)
-                if (R / 'settings-inspected.json').exists():
+                if stop_clock is None and worker and (R / 'window.json').exists():
+                    timed.tick(R, hello, now)
+                scheduled_stop = matched.observe(R, hello, time.monotonic_ns(), complete)
+                if scheduled_stop:
+                    stop(scheduled_stop)
+                if not matched.active and (R / 'settings-inspected.json').exists():
                     stop('actual operator Home/Settings geometry captured')
                 if (R / 'operator-stop.json').exists():
                     stop('operator ordinary Stop')
@@ -215,7 +226,7 @@ def main():
                     time.sleep(.5)
                     send(wfd, signal.SIGKILL, 'bounded retirement'); send(ffd, signal.SIGKILL, 'bounded retirement')
                     break
-                if hello is not None and worker and (R / 'window.json').exists() and stop_clock is None and now >= next_capture:
+                if not timed.active and hello is not None and worker and (R / 'window.json').exists() and stop_clock is None and now >= next_capture:
                     auto_count += 1
                     try:
                         directory, receipt = capture('auto-%03d' % auto_count)
@@ -271,14 +282,23 @@ def main():
                   'immutable_base_unchanged': base_after['inventorySHA256'] == base_before['inventorySHA256'],
                   'home_operator_attestation': (R / 'home-inspected.json').exists(),
                   'settings_operator_attestation': (R / 'settings-inspected.json').exists(),
+                  'automatic_image_admission': timed.active,
+                  'home_image_admitted': (R / 'home-admitted.json').exists(),
+                  'settings_image_admitted': (R / 'settings-admitted.json').exists(),
                   'exact_candidate_mapping_observed': engine_mapping is not None,
                   'cache_enabled': cache_before['mode'] != 'off',
                   'guest_acceptance': False, 'performance_qualified': False,
                   'unit_cgroup_retirement_independent_root_review_required': True}
         result['status'] = 'SCOPED_PASS' if (error is None and clean and retired and free and not result['dirty']
             and result['seed_unchanged'] and result['immutable_base_unchanged']
-            and result['home_operator_attestation'] and result['settings_operator_attestation'] and engine_mapping is not None
+            and ((result['home_image_admitted'] and result['settings_image_admitted']) if timed.active else
+                 (result['home_operator_attestation'] and result['settings_operator_attestation'])) and engine_mapping is not None
             and not any(item['signal'] in [9, 15] for item in signals)) else 'FAIL'
+        try:
+            result['matched_diagnostic'] = matched.finish(R, hello, stop_clock)
+        except Exception as matched_error:
+            result['status'] = 'FAIL'
+            result['matched_error'] = str(matched_error)
         try:
             settings = read(R / 'settings-input.json') if (R / 'settings-input.json').exists() else {}
             cache_receipt = cache_trial.finish(cfg, cache_before,
@@ -288,6 +308,11 @@ def main():
             result['cache_evidence_sha256'] = digest(R / 'cache-trial.json')
             if cache_receipt['status'] != 'SCOPED_PASS':
                 result['status'] = 'FAIL'
+            elif timed.active and result['status'] == 'SCOPED_PASS':
+                result['status'] = 'AWAITING_ROOT_REVIEW'
+                cache_receipt['status'] = 'AWAITING_ROOT_REVIEW'
+                save(R / 'cache-trial.json', cache_receipt)
+                result['cache_evidence_sha256'] = digest(R / 'cache-trial.json')
         except Exception as cache_error:
             result['status'] = 'FAIL'
             result['cache_error'] = str(cache_error)
@@ -296,7 +321,7 @@ def main():
             if descriptor is not None:
                 os.close(descriptor)
         print(__import__('json').dumps(result, indent=2), flush=True)
-    if result['status'] != 'SCOPED_PASS':
+    if result['status'] not in ('SCOPED_PASS', 'AWAITING_ROOT_REVIEW'):
         raise SystemExit(1)
 
 if __name__ == '__main__':

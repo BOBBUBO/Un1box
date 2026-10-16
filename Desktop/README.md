@@ -56,6 +56,14 @@ A successful dispatcher receipt records child exit and file artifact hashes;
 keep underlying per-file/dependency/native-test receipts and matching source.
 No build receipt establishes guest acceptance.
 
+When the Mac SDL2 provider is SDL2-compat, also pass
+`--sdl3-runtime /absolute/path/to/libSDL3.dylib` to the shared bundle action.
+SDL2-compat loads SDL3 dynamically, so `otool -L` alone does not discover it.
+The recipe stages the explicit provider beside SDL2, relocates and signs its
+dependency closure, and records its input hash and deployment floor. Ordinary
+SDL2 builds do not require this option. The packaged native `--runtime-info`
+checks exercise library initialization before the bundle can pass packaging.
+
 Shared Mac development uses the same saved-profile schema but a separate default
 library (`~/Library/Application Support/LightTouch Shared Desktop`), explicit
 native admission, isolated writable state, matching guest packages and fresh

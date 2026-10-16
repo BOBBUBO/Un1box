@@ -39,6 +39,28 @@ class PackagingTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
+    def test_sdl2_compat_requires_explicit_dynamic_sdl3_provider(self):
+        sdl2 = self.root / "libSDL2-2.0.0.dylib"
+        sdl2.write_bytes(b"SDL2COMPAT_NO_UNLOAD\0@loader_path/libSDL3.dylib\0")
+        with self.assertRaisesRegex(ValueError, "--sdl3-runtime"):
+            build.sdl_compat_runtime(sdl2, None)
+        provider = self.root / "libSDL3.0.dylib"
+        provider.write_bytes(bytes.fromhex("cffaedfe") + b"synthetic provider")
+        alias = self.root / "libSDL3.dylib"
+        alias.symlink_to(provider.name)
+        self.assertEqual(build.sdl_compat_runtime(sdl2, alias), provider)
+        provider.write_bytes(b"not a native library")
+        with self.assertRaisesRegex(ValueError, "Mach-O"):
+            build.sdl_compat_runtime(sdl2, alias)
+
+    def test_ordinary_sdl2_does_not_acquire_unrelated_sdl3(self):
+        sdl2 = self.root / "libSDL2-2.0.0.dylib"
+        sdl2.write_bytes(b"ordinary native SDL2")
+        self.assertIsNone(build.sdl_compat_runtime(sdl2, self.root / "missing"))
+        other = self.root / "libother.dylib"
+        other.write_bytes(b"SDL2COMPAT_ @loader_path/libSDL3.dylib")
+        self.assertIsNone(build.sdl_compat_runtime(other, None))
+
     def test_relocated_bundle_imports_actual_shared_host_widgets_and_original_profile_format(self):
         contents = self.root / "unrelated space.app/Contents"
         build.stage_python(SOURCE, contents)
@@ -167,6 +189,26 @@ assert Path(window.__file__).resolve().parent == Path.cwd() / 'app_services'
         with self.assertRaisesRegex(ValueError, "input changed"):
             runtime.export_runtime(plan, output)
         self.assertFalse(output.exists())
+
+    def test_framework_runtime_exports_real_interpreter_instead_of_spawn_stub(self):
+        prefix, extension, tcl, tk = self.provider()
+        interpreter = prefix / "Resources/Python.app/Contents/MacOS/Python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_bytes(b"real framework interpreter")
+        interpreter.chmod(0o755)
+        plan = runtime.plan_runtime(prefix, "3.13", extension, tcl, tk)
+        self.assertEqual(plan["files"]["bin/python3.13"]["source"], str(interpreter))
+        output = self.root / "runtime-real-interpreter"
+        runtime.export_runtime(plan, output)
+        self.assertEqual((output / "bin/python3").read_bytes(), interpreter.read_bytes())
+        self.assertEqual((prefix / "bin/python3.13").read_text(),
+                         "pinned public runtime input bin/python3.13")
+        interpreter.unlink()
+        outside = self.root / "external-interpreter"
+        outside.write_bytes(b"unreviewed external interpreter")
+        interpreter.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            runtime.plan_runtime(prefix, "3.13", extension, tcl, tk)
 
     def test_curated_runtime_excludes_only_top_level_cpython_darwin_development_config(self):
         prefix, extension, tcl, tk = self.provider()
