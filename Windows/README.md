@@ -12,6 +12,13 @@ Extract the complete Windows preview ZIP to a writable local folder, then run
 `LightTouchWin.exe`. The .NET WindowsDesktop runtime is included in the
 self-contained publish; no administrator installation is intended.
 
+If replacing the first preview after a `nor-rw must be a private copy` error,
+close the launcher and extract the updated ZIP into a new folder. Reopen the
+same prepared base and tools; saves stay in the existing application data
+folder. No base reimport or save deletion is needed. The engine now uses actual
+Windows file identifiers: the old CRT inode check could mistake a separate NOR
+copy for the base. Same-file and hardlink protection remains enabled.
+
 1. Choose **Open prepared folder** for an existing base, or **Import .itbase**
    to unpack one into the application data folder. Prefer an existing prepared
    folder for the large n81 base; there is no need for a redundant18GB copy.
@@ -38,6 +45,12 @@ preserved state; a dark screen alone never means clean shutdown. Keep a backup
 of important guest data. Strict guest shutdown/persistence still needs an actual
 Windows/iOS run, even though separate-process host contract tests exercise the
 confirmation and timeout paths.
+
+For an asset-free native loader and NOR identity check, run
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\SmokeWindows.ps1` from the
+extracted folder. It checks separate identical-content copies, same-file names,
+hardlinks, Unicode paths and failed lookups using synthetic temporary files.
+This does not boot or alter a guest.
 
 ## Scope and limitations
 

@@ -11,4 +11,11 @@ foreach ($board in @('iPod-Touch ', 'iPod-Touch-4G ')) {
 }
 & $engine -display help
 if ($LASTEXITCODE -ne 0) { throw 'Display enumeration failed.' }
+$identityTest = Join-Path $PSScriptRoot 'runtime/test-ios-file-identity.exe'
+if (!(Test-Path $identityTest)) { throw 'Missing NOR file-identity regression test.' }
+$scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('LightTouch-NOR-identity-' + [guid]::NewGuid().ToString('N'))
+[System.IO.Directory]::CreateDirectory($scratch) | Out-Null
+& $identityTest $scratch
+if ($LASTEXITCODE -ne 0) { throw "NOR file-identity regression failed; synthetic evidence retained at $scratch" }
+[System.IO.Directory]::Delete($scratch, $false)
 Write-Output 'Native loader/machine/display smoke PASS. Guest, graphics and audio acceptance remain unqualified.'
