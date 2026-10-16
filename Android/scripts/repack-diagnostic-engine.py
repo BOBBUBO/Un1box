@@ -12,6 +12,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import zipfile
 
@@ -31,7 +32,25 @@ def signature(name):
             re.fullmatch(r'META-INF/[^/]+\.(?:SF|RSA|DSA|EC)', name, re.I))
 
 
-def repack(base, expected_base_sha, engine_root, notices, expected_engine_revision, output):
+def cpp_runtime_proof(packaged, runtime, strip_tool=None):
+    expected = hashlib.sha256(packaged).hexdigest()
+    original = sha(runtime)
+    if expected == original:
+        return {'kind': 'EXACT_BYTES', 'runtimeSha256': original}
+    require(strip_tool is not None, 'C++ runtime changed; explicit exact stripping proof required')
+    tool = Path(strip_tool).resolve(strict=True)
+    tool_hash = sha(tool)
+    with tempfile.TemporaryDirectory() as temporary:
+        stripped = Path(temporary) / 'libc++_shared.so'
+        subprocess.run([str(tool), '--strip-unneeded', '-o', str(stripped), str(runtime)],
+                       check=True, capture_output=True, timeout=15)
+        require(sha(stripped) == expected, 'C++ runtime changed after exact stripping reproduction')
+    require(sha(tool) == tool_hash and sha(runtime) == original, 'Stripping inputs changed')
+    return {'kind': 'EXACT_STRIP_UNNEEDED_REPRODUCTION', 'runtimeSha256': original,
+            'packagedSha256': expected, 'stripTool': str(tool), 'stripToolSha256': tool_hash}
+
+
+def repack(base, expected_base_sha, engine_root, notices, expected_engine_revision, output, strip_tool=None):
     base, engine_root, notices, output = map(Path, (base, engine_root, notices, output))
     require(not output.exists() and not output.is_symlink(), 'Output already exists')
     require(sha(base) == expected_base_sha, 'Original APK hash changed')
@@ -62,8 +81,7 @@ def repack(base, expected_base_sha, engine_root, notices, expected_engine_revisi
             require(engine_entry in names and 'lib/arm64-v8a/libc++_shared.so' in names,
                     'Original APK lacks expected ARM64 runtime')
             require(any(n.startswith(prefix) for n in names), 'Original engine notices missing')
-            require(hashlib.sha256(original.read('lib/arm64-v8a/libc++_shared.so')).hexdigest() == sha(cpp),
-                    'C++ runtime changed; engine-only packaging cannot replace it')
+            cpp_proof = cpp_runtime_proof(original.read('lib/arm64-v8a/libc++_shared.so'), cpp, strip_tool)
             with zipfile.ZipFile(output, 'x') as destination:
                 for info in original.infolist():
                     require(not info.filename.startswith('/') and '..' not in info.filename.split('/'),
@@ -91,6 +109,7 @@ def repack(base, expected_base_sha, engine_root, notices, expected_engine_revisi
     return {'schema': 1, 'kind': 'UNSIGNED_ENGINE_ONLY_DIAGNOSTIC_NOT_TARGET_ACCEPTANCE',
             'originalApkSha256': expected_base_sha, 'unsignedApkSha256': sha(output),
             'engineRevision': expected_engine_revision, 'engineSha256': sha(library),
+            'cppRuntimeProof': cpp_proof,
             'unchangedPayloads': preserved, 'replacementPayloads': replaced,
             'removedEntries': removed, 'nativeManagedRecompiled': False,
             'zipalignRequired': True, 'signingRequired': True, 'targetExecutionVerified': False}
@@ -105,10 +124,12 @@ if __name__ == '__main__':
     parser.add_argument('--engine-revision', required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--receipt', type=Path, required=True)
+    parser.add_argument('--strip-tool', type=Path,
+                        help='Reproduce original stripped C++ runtime exactly; never replaces its APK payload')
     args = parser.parse_args()
     require(not args.receipt.exists(), 'Receipt already exists')
     receipt = repack(args.base_apk, args.base_sha256, args.engine_root, args.notices,
-                     args.engine_revision, args.output)
+                     args.engine_revision, args.output, args.strip_tool)
     with args.receipt.open('x') as stream:
         json.dump(receipt, stream, indent=2)
         stream.write('\n')

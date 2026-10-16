@@ -84,3 +84,9 @@ python3 Android/scripts/verify-diagnostic-output.py --output apk-review.json \
 A successful artifact check records that target execution remains unverified.
 Strict guest correctness, concurrency, clean Stop and persistence evidence
 remain separate requirements.
+
+If the original APK contains a stripped C++ runtime, pass the pinned NDK
+`llvm-strip` as `--strip-tool`. The packager must reproduce the existing APK's
+runtime bytes exactly using `--strip-unneeded`; a different result still fails.
+The original C++ payload remains unchanged. The receipt records the tool and
+input/output hashes, alongside the original unstripped runtime's notices.

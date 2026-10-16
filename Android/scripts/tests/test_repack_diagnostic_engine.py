@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import warnings
 import zipfile
 
@@ -109,6 +110,30 @@ class RepackTests(unittest.TestCase):
         self.write_base()
         with self.assertRaisesRegex(ValueError, 'C\\+\\+ runtime changed'):
             self.run_repack()
+        self.assertFalse(self.output.exists())
+
+    def test_exact_stripping_proof_preserves_original_cpp_payload(self):
+        self.entries['lib/arm64-v8a/libc++_shared.so'] = b'packaged-stripped-cpp'
+        self.write_base()
+        tool = self.root / 'strip-tool'; tool.write_bytes(b'pinned tool fixture')
+        def strip(argv, **kwargs):
+            self.assertEqual(argv[1:3], ['--strip-unneeded', '-o'])
+            Path(argv[3]).write_bytes(b'packaged-stripped-cpp')
+        with patch.object(REPACK.subprocess, 'run', side_effect=strip):
+            result = self.run_repack(strip_tool=tool)
+        self.assertEqual(result['cppRuntimeProof']['kind'], 'EXACT_STRIP_UNNEEDED_REPRODUCTION')
+        with zipfile.ZipFile(self.output) as archive:
+            self.assertEqual(archive.read('lib/arm64-v8a/libc++_shared.so'), b'packaged-stripped-cpp')
+        self.assertNotIn('lib/arm64-v8a/libc++_shared.so', result['replacementPayloads'])
+
+    def test_different_runtime_after_stripping_still_refused(self):
+        self.entries['lib/arm64-v8a/libc++_shared.so'] = b'other-runtime'
+        self.write_base()
+        tool = self.root / 'strip-tool'; tool.write_bytes(b'pinned tool fixture')
+        def strip(argv, **kwargs): Path(argv[3]).write_bytes(b'wrong-stripped-runtime')
+        with patch.object(REPACK.subprocess, 'run', side_effect=strip):
+            with self.assertRaisesRegex(ValueError, 'after exact stripping'):
+                self.run_repack(strip_tool=tool)
         self.assertFalse(self.output.exists())
 
     def test_notice_pin_failure_refused_before_output(self):
