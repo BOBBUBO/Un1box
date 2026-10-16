@@ -66,7 +66,8 @@ def runtime_fixture():
                 scene=scene, model_inspected=False, scene_qualified=False, admitted_monotonic_ns=saved+1,
                 hello_ns=hello, capture=path.name, bitmap_sha256=receipt['sha256'],
                 png_sha256=digest(path / 'native.png'), receipt_sha256=digest(path / 'receipt.json'),
-                reference=refs[scene], frontend={'pid': 41}, worker={'pid': 42, 'start_ticks': '123'}))
+                reference=refs[scene], policy=operator.scene_policy(scene),
+                frontend={'pid': 41}, worker={'pid': 42, 'start_ticks': '123'}))
         matched_trial.input_claim(True, root, hello, 'home-unlock', hello + 50 * SECOND)
         save(root / 'settings-input.json', {'input_begin_ns': hello + 105 * SECOND, 'native_pixel': [44, 326], 'model_inspected': False})
         logs = ['status observed_monotonic_ns=%d state=2 agent=1 shutdown_phase=0 sleeping=0 backlight=255' % (hello + s * SECOND) for s in range(120, 136)]
@@ -134,6 +135,50 @@ class Tests(unittest.TestCase):
         for x,y,channel,expected in [(150,10,0,True),(150,10,3,False),(30,10,0,False),(100,100,0,False)]:
             changed=bytearray(original);changed[54+(y*320+x)*4+channel]=1
             self.assertEqual(control.unchanged_except_clock(original,changed),expected)
+
+    def test_scene_specific_calendar_policy_protects_alpha_wifi_edges_and_other_icons(self):
+        original=bitmap()
+        for x,y,channel,home,settings in [
+                (150,10,0,True,True), (150,10,3,False,False),
+                (101,38,0,True,False), (120,70,2,True,False),
+                (101,38,3,False,False), (120,70,3,False,False),
+                (30,10,0,False,False), (93,40,0,False,False),
+                (149,40,0,False,False), (120,34,0,False,False),
+                (120,49,0,False,False), (120,90,0,False,False),
+                (44,60,0,False,False), (100,100,0,False,False)]:
+            changed=bytearray(original);changed[54+(y*320+x)*4+channel]^=1
+            with self.subTest(pixel=(x,y,channel)):
+                self.assertEqual(operator.scene_equal(original,changed,'home'),home)
+                self.assertEqual(operator.scene_equal(original,changed,'settings'),settings)
+                if home and not settings:
+                    self.assertFalse(control.unchanged_except_clock(original,changed))
+        for changed in [original[:-1], original+bytes(1), bytearray(original)]:
+            if len(changed)==len(original):changed[22]^=1
+            self.assertFalse(operator.scene_equal(original,changed,'home'))
+        with self.assertRaises(RuntimeError):operator.scene_equal(original,original,'unknown')
+
+    def test_wrong_scene_and_policy_identity_never_admit(self):
+        with runtime_fixture() as (_,root,cfg,_):
+            home=Path(cfg['imageBoundOperator']['references']['home']['native.bmp']['path']).read_bytes()
+            settings=Path(cfg['imageBoundOperator']['references']['settings']['native.bmp']['path']).read_bytes()
+            self.assertFalse(operator.scene_equal(home,settings,'home'))
+            self.assertFalse(operator.scene_equal(home,settings,'settings'))
+            path=root/'home-admitted.json';row=read(path);row['policy']=operator.SETTINGS_POLICY;save(path,row)
+            with self.assertRaises(RuntimeError):operator.validate_admission(root,'home')
+            old=copy.deepcopy(cfg);old['imageBoundOperator']['mode']='n72-image-bound-v1'
+            self.assertNotEqual(cache_trial.identity(cfg),cache_trial.identity(old))
+            with self.assertRaises(RuntimeError):operator.enabled(old)
+
+    def test_missing_scene_deadline_has_explicit_error_before_settings_input(self):
+        for scene,seconds in [('home',95),('settings',120)]:
+            with self.subTest(scene=scene),runtime_fixture() as (_,root,cfg,result):
+                (root/(scene+'-admitted.json')).unlink()
+                timed=operator.Operator(cfg);timed.home_sent=True;timed.settings_sent=scene=='settings'
+                hello=result['first_hello_monotonic_ns']
+                with patch.object(control,'xcall') as inputs,patch.object(control,'move') as move:
+                    with self.assertRaisesRegex(RuntimeError,'Original '+scene.capitalize()+' image admission deadline'):
+                        timed.tick(root,hello,hello+seconds*SECOND)
+                    inputs.assert_not_called();move.assert_not_called()
 
     def test_current_automatic_capture_is_retained_without_inspected_receipt(self):
         with runtime_fixture() as (_, root, cfg, _):
