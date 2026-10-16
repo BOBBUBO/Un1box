@@ -41,3 +41,38 @@ reaping. Mac services/IPA and process counters are explicitly unavailable in
 this first slice. Native Mac compilation/package/guest behavior remain
 unqualified until target execution; synthetic host tests do not qualify them.
 Windows implementation is pending; no fallback launches WinForms/Cocoa.
+
+The shared `ManagedSession` in `session.py` owns fresh subprocesses, bounded
+output queues, stdin Stop, reader retirement and strict terminal receipt
+parsing. `MacSession` is a label-only subclass. Windows adapters can construct
+`ManagedSession(application_log, storage=ops, label=...)`; an optional
+`open_log(path, *, exclusive)` callback returns an owned binary file. It must
+create a new log exclusively for Start, and securely append for application
+errors. `strict_clean_exit` requires the full native shutdown/reaping receipt;
+the session never kills by PID or publishes clean writable state itself.
+
+`Profiles`, `Preparation` and the shared profile helper functions accept an
+optional keyword `storage=ops`. This keeps all profile schemas, base metadata,
+archive algorithms and identity/state rules shared. The narrow `StorageOps`
+backend supplies:
+
+- `ensure_directory(path)`: validate/create a private writable container.
+- `open_regular(path, flags=os.O_RDONLY, mode=0o600)`: owned noninheritable file
+  descriptor; reject symbolic links/reparse paths and special files. Writable
+  logs must also reject multiple hard links.
+- `create_temp(directory)`: exclusively created private `(fd, path)` in that
+  container, never an unrelated or existing file.
+- `flush_file(fd)` and `replace_and_sync(temp, destination)`: durable file
+  contents and atomic durable publication. The Windows implementation must
+  supply native write-through/handle-flush semantics; ignoring unsupported
+  directory fsync is insufficient.
+- `immutable_base(path, stat_result)`: explicit platform immutability admission;
+  shared native complete integrity admission remains authoritative.
+
+POSIX defaults retain no-follow/close-on-exec opens and file/directory fsync.
+They fail closed on Windows, which must supply its native backend. Do not
+monkeypatch shared globals or weaken checks when flags are unavailable. The
+Windows backend owns reparse-point/container admission and durable publication
+implementation. These host-contract tests do not qualify actual Windows APIs
+or guest execution. Failed library publication retains the prior in-memory
+selection as well as the prior library when replacement has not occurred.
