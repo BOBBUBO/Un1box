@@ -27,6 +27,27 @@ class ModelTests(unittest.TestCase):
         self.frontend.chmod(0o700)
         self.profile = dict(id=uuid.uuid4().hex, name="iPod touch", base=str(self.base), state=str(self.root / "new state"), guest_package=str(self.package), bootrom="", audio=True)
 
+    def test_saved_configuration_switch_keeps_independent_state_and_bindings(self):
+        store = model.Profiles(self.root / "library")
+        first = dict(self.profile)
+        second = dict(self.profile, id="b" * 32, name="Second iPod", state=str(self.root / "second state"))
+        store.save(first)
+        store.save(second)
+        reloaded = model.Profiles(store.directory)
+        self.assertEqual(reloaded.selected, second["id"])
+        self.assertEqual(len(reloaded.devices), 2)
+        reloaded.selected = first["id"]
+        reloaded.persist()
+        self.assertEqual(model.Profiles(store.directory).selected, first["id"])
+        self.assertFalse(Path(first["state"]).exists())
+        self.assertFalse(Path(second["state"]).exists())
+        before = store.file.read_bytes()
+        with self.assertRaisesRegex(model.SetupError, "own writable"):
+            store.save(dict(second, id="c" * 32, state=first["state"]))
+        with self.assertRaisesRegex(model.SetupError, "Add a new configuration"):
+            store.save(dict(first, base=str(self.root / "another system")))
+        self.assertEqual(store.file.read_bytes(), before)
+
     def test_kboot_has_no_hardware_rom_argument_or_shell(self):
         command = model.start_command(self.frontend, self.package, self.profile)
         self.assertIsInstance(command, list)

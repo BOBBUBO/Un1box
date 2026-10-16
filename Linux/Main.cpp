@@ -218,9 +218,9 @@ static Options options(int argc, char **argv) {
             std::cout
                 << "lighttouch-linux --base DIR --state DIR --engine LIB [--rom FILE] [--package ITPACK]\n  [--import "
                    "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n  [--script FILE] [--screenshot BMP] "
-                   "[--no-audio] [--trace-io] [--debug-touch-trace]\n\nMouse left/right: contacts 1/2. H: Home, P: "
-                   "Power (guest sleep/wake), Space: pause/resume, +/-: volume, R: rotate, S: host screenshot.\n"
-                   "Visible controls below the guest mirror these shortcuts. "
+                   "[--no-audio] [--trace-io] [--debug-touch-trace]\n\nMouse left/right: contacts 1/2. "
+                << lt::desktop_shortcut_help() << "\n"
+                << "Visible controls below the guest mirror these shortcuts. "
                    "Escape: cancel admission or orderly "
                    "stop. Validation:900s absolute/30s checkpoint budget; Ctrl+C cancels or stops.\nC: release all "
                    "contacts. F5: pinch in. F6: labeled two-contact pinch. F7: "
@@ -1496,24 +1496,19 @@ static int frontend(const Options &o, int argc, char **argv) {
                 if (event.key.repeat)
                     continue;
                 auto key = event.key.keysym.sym;
-                if (key == SDLK_ESCAPE && down)
-                    activate_control(lt::WindowAction::stop);
-                else if (key == SDLK_SPACE && down)
-                    activate_control(lt::WindowAction::pause);
-                else if (key == SDLK_s && down)
-                    activate_control(lt::WindowAction::screenshot);
-                else if (key == SDLK_r && down)
-                    activate_control(lt::WindowAction::rotate);
-                else if (key == SDLK_c && down)
-                    cancel_controls();
-                else if (key == SDLK_h || key == SDLK_p || key == SDLK_EQUALS || key == SDLK_MINUS) {
-                    const auto action = key == SDLK_h ? lt::WindowAction::home : key == SDLK_p ? lt::WindowAction::power
-                        : key == SDLK_EQUALS ? lt::WindowAction::louder : lt::WindowAction::quieter;
-                    const lt::WindowControls::Owner owner{2, key};
+                const auto action = lt::desktop_shortcut(key);
+                if (action == lt::WindowAction::cancel) {
                     if (down)
-                        controls.press(owner, action, hardware_edge);
-                    else
-                        controls.release(owner, action, hardware_edge, activate_control);
+                        cancel_controls();
+                } else if (action != lt::WindowAction::none) {
+                    if (lt::WindowControls::button(action) >= 0) {
+                        const lt::WindowControls::Owner owner{2, key};
+                        if (down)
+                            controls.press(owner, action, hardware_edge);
+                        else
+                            controls.release(owner, action, hardware_edge, activate_control);
+                    } else if (down)
+                        activate_control(action);
                 } else if ((key == SDLK_F5 || key == SDLK_F6) && down) {
                     std::cerr << "deterministic touch replay (guest acceptance requires observation)\n";
                     for (int step = 0; step <= 12; step++) {
