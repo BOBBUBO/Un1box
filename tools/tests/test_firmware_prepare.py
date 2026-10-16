@@ -50,6 +50,32 @@ class FirmwarePrepareTests(unittest.TestCase):
             self.assertEqual("FAILED", second["status"])
             self.assertEqual(receipt, (root / "create-supervised-01/RECEIPT.json").read_bytes())
 
+    def test_actual_pinned_help_matches_all_emitted_flags_and_refuses_old_language_flag(self):
+        help_text = (Path(__file__).parent / "fixtures/firmwarekit-0.2.0-create-help.txt").read_text()
+        config = dict(self.config(Path("/private/pilot")), tool="/pinned/firmwarekit", entry="/input/entry.json",
+                      ipsw="/input/firmware.ipsw", staging="/private/pilot/prepared", seed="test",
+                      guest_tools="/input/guest-tools", cache="/private/pilot/cache")
+        argv = module.Supervisor(config).argv()
+        module.validate_create_argv(argv, help_text)
+        self.assertNotIn("--language", argv)
+        with self.assertRaisesRegex(ValueError, "argument contract"):
+            module.validate_create_argv(argv + ["--language", "en-US"], help_text)
+        with self.assertRaisesRegex(ValueError, "does not offer"):
+            module.validate_create_argv(argv, help_text.replace("--cache", "--old-cache"))
+
+    def test_successor_run_preserves_original_phase_and_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(module, "mounted_images", return_value={"images": []}):
+            root = Path(tmp)
+            old = root / "create-supervised-01"
+            old.mkdir()
+            (old / "RECEIPT.json").write_text('{"status":"FAILED"}')
+            config = dict(self.config(root), run_name="create-supervised-02")
+            result = FakePreparation(config, self.limits()).execute()
+            self.assertEqual("CONTENT_VERIFIED_REVIEW_REQUIRED", result["status"])
+            self.assertEqual('{"status":"FAILED"}', (old / "RECEIPT.json").read_text())
+            with self.assertRaisesRegex(ValueError, "run name"):
+                module.Supervisor(dict(config, run_name="../escape"))
+
     def test_original_deadline_kills_owned_escaped_child_and_retains_logs(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(module, "mounted_images", return_value={"images": []}):
             root = Path(tmp)

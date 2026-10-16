@@ -192,6 +192,14 @@ flat `guest_tool_sha256` manifest, `seed`, and `resident_avd_pid`. No firmware,
 decryption keys, private manifests or host-specific execution config belongs in
 Git. See the private handoff packet for an exact pinned configuration.
 
+`create_help_sha256` pins the actual CLI's `create --help` bytes. Every emitted
+flag is checked against that output before launching preparation. The old pinned
+0.2.0 release has no `--language` option; it uses its existing locale defaults.
+Do not derive its CLI from a newer checkout sharing the same version number.
+`run_name` accepts a reviewed single-use `create-supervised-NN` directory. A
+separately allocated successor uses new output/cache/state/source/config paths;
+it preserves the first failure and shares only verified immutable inputs.
+
 The process refuses reused outputs and independently verifies inputs, directory
 privacy, selected recipe and fresh 32 GiB disk/8 GiB free+inactive RAM admission.
 It uses one original 600-second clock (540 work, through 585 cancellation, through 600
@@ -215,7 +223,7 @@ NOR/GID/identity hashes, and the full NAND listing hash using upstream's sorted
 No second extracted base is made. Input pins are rehashed after output verification.
 `CONTENT_VERIFIED_REVIEW_REQUIRED` deliberately does **not** establish reference
 boot, target support or a clean guest shutdown. Fit details/warnings/logs and
-cleanup identities remain in the private `create-supervised-01/RECEIPT.json`.
+cleanup identities remain in the private `create-supervised-NN/RECEIPT.json`.
 
 Synthetic tests exercise real owned subprocess success, original deadlines,
 escaped-child retirement, observer timeout, preservation of previous receipts,
