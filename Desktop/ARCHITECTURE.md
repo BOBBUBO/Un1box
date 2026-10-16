@@ -47,6 +47,12 @@ The existing Cocoa/Swift macOS app remains a native reference and development
 backend route. Its library/menu/control code is not shared with Linux today.
 Preserve its CGL/engine/helper integration; add a host adapter for the shared
 Tk/SDL shell, then retire duplicate product controls only after target tests.
+The incremental `macOS/SharedDesktop/SharedGuestWindow.swift` adapter now routes
+existing DeviceLink IOSurfaces/input through `Desktop/native/Window.cpp` and
+these exact SDL controls. It is an optional source library, not yet the native
+application's window. Compilation and macOS execution remain unqualified;
+the managed-record/shared Tk host adapter and strict native shutdown receipt
+are still required. See its README for the concrete lifecycle boundary.
 The upstream Xcode frontend may remain a reference, not a second source of
 product UI requirements. Adopting Tk on macOS needs packaged Tcl/Tk validation,
 main-thread event handling and native dialog/menu checks; this is unqualified.
