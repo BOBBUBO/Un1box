@@ -9,7 +9,7 @@ from pathlib import Path
 import os
 import re
 
-from .profiles import (FORMAT, VERSION, Profiles, SetupError, absolute, display_title,
+from .profiles import (FORMAT, VERSION, Profiles, SetupError, InterruptedStateError, absolute, display_title,
                        disjoint, inspect_base, load_profile, regular, save_json, validate)
 from .preparation import Preparation
 from .session import ManagedSession, strict_clean_exit
@@ -71,7 +71,7 @@ class WindowsHost:
         result = validate(profile, allow_dirty=allow_dirty, storage=self.storage)
         dirty = Path(profile["state"])/"shutdown-unconfirmed.json"
         if (dirty.exists() or dirty.is_symlink()) and not allow_dirty:
-            raise SetupError("This saved device has an unconfirmed shutdown. Select recovery to retain and cold-boot its state.")
+            raise InterruptedStateError("This saved device has an unconfirmed shutdown. Choose Boot recovered state to cold boot it with saved data retained.")
         return result
 
     def _helper(self, args):
