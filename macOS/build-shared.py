@@ -356,7 +356,12 @@ def main():
                 copy(binaries / name, contents / "Helpers" / name)
             copy(engine, contents / "Frameworks/libqemu-arm.dylib")
             copy(firmwarekit, contents / "MacOS/firmwarekit")
-            packaged_runtime = contents / "Frameworks/Python"
+            # This tree contains Tcl/Tk scripts and dotted data directories
+            # such as tcl9.1. Frameworks is a nested-code location: codesign
+            # interprets those directories as malformed code bundles there.
+            # Sign each actual Mach-O below, then seal the mixed runtime tree
+            # as Resources. All native load paths remain explicitly relocated.
+            packaged_runtime = contents / "Resources/Python"
             stage_runtime(runtime, packaged_runtime)
             runtime_targets = {}
             for path in native_files(packaged_runtime):
@@ -431,7 +436,7 @@ def main():
 set -eu
 LIGHTTOUCH_CONTENTS="$(CDPATH= cd -P "$(dirname "$0")/.." && pwd)"
 unset PYTHONPATH PYTHONSTARTUP PYTHONINSPECT
-export PYTHONHOME="$LIGHTTOUCH_CONTENTS/Frameworks/Python"
+export PYTHONHOME="$LIGHTTOUCH_CONTENTS/Resources/Python"
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1
 unset TCL_LIBRARY TK_LIBRARY TCLLIBPATH PYTHONUSERBASE PYTHONPLATLIBDIR
