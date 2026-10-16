@@ -1,0 +1,162 @@
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+SCRIPT = Path(__file__).resolve().parents[1] / "firmware-prepare.py"
+spec = importlib.util.spec_from_file_location("firmware_prepare", SCRIPT)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+class FakePreparation(module.Supervisor):
+    """Run real process supervision on Linux without any firmware or macOS actions."""
+    def preflight(self):
+        self.run.mkdir(mode=0o700)
+        self.owns_run = True
+        table = module.process_table(self.work_end)
+        self.result["resident_avd_before"] = table[os.getpid()]
+
+    def argv(self):
+        return [sys.executable, "-c", self.config["script"]]
+
+    def verify(self):
+        self.result["fake_verifier_called"] = True
+
+
+class FirmwarePrepareTests(unittest.TestCase):
+    def config(self, root, script="print('done')"):
+        return dict(root=str(root), resident_avd_pid=os.getpid(), script=script, service_state=str(root / "service"))
+
+    def limits(self, **kw):
+        return dict(module.LIMITS, total=4, work=2, term_end=3, free_disk=0, **kw)
+
+    def test_real_subprocess_success_and_no_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(module, "mounted_images", return_value={"images": []}):
+            root = Path(tmp)
+            first = FakePreparation(self.config(root), self.limits()).execute()
+            self.assertEqual("CONTENT_VERIFIED_REVIEW_REQUIRED", first["status"])
+            self.assertTrue(first["fake_verifier_called"])
+            receipt = (root / "create-supervised-01/RECEIPT.json").read_bytes()
+            second = FakePreparation(self.config(root), self.limits()).execute()
+            self.assertEqual("FAILED", second["status"])
+            self.assertEqual(receipt, (root / "create-supervised-01/RECEIPT.json").read_bytes())
+
+    def test_original_deadline_kills_owned_escaped_child_and_retains_logs(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(module, "mounted_images", return_value={"images": []}):
+            root = Path(tmp)
+            child_script = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)"
+            script = ("import subprocess,sys,signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);"
+                      "p=subprocess.Popen([sys.executable,'-c'," + repr(child_script) + "],start_new_session=True);"
+                      "print(p.pid,flush=True);time.sleep(30)")
+            before = time.monotonic()
+            instance = FakePreparation(self.config(root, script), self.limits())
+            result = instance.execute()
+            self.assertLess(time.monotonic() - before, 4.5)
+            self.assertEqual("FAILED", result["status"])
+            self.assertIn("deadline", result["error"])
+            child = int((instance.run / "stdout.jsonl").read_text())
+            table = module.process_table(time.monotonic()+2)
+            self.assertTrue(child not in table or table[child]["state"].startswith("Z"))
+            self.assertFalse(result["cleanup"]["errors"])
+            self.assertIsNotNone(instance.process.returncode)
+
+    def test_failed_preflight_never_detaches_existing_images(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(module, "mounted_images") as mounts:
+            instance = module.Supervisor(self.config(Path(tmp)))
+            result = instance.execute()
+            self.assertEqual("FAILED", result["status"])
+            mounts.assert_not_called()
+
+    def test_cancel_does_not_extend_original_deadline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = module.Supervisor(self.config(Path(tmp)))
+            original = instance.end
+            instance.cancelled = True
+            with self.assertRaises(InterruptedError):
+                instance.check()
+            self.assertEqual(original, instance.end)
+
+    def test_observer_timeout_retires_its_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = Path(tmp) / "pid"
+            script = "import os,time;open(" + repr(str(pidfile)) + ",'w').write(str(os.getpid()));time.sleep(30)"
+            with self.assertRaises(subprocess.TimeoutExpired):
+                module.helper([sys.executable, "-c", script], time.monotonic()+1, timeout=.25)
+            pid = int(pidfile.read_text())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+
+    def test_mount_ownership_is_exact_root_and_preserves_unrelated_images(self):
+        images = {"images": [{"image-path": "/tmp/pilot/work/source.dmg"},
+                             {"image-path": "/tmp/pilot-other/user.dmg"}, {"image-path": "/Users/blake/source.dmg"}]}
+        self.assertEqual(images["images"][:1], module.owned_images(images, Path("/tmp/pilot")))
+
+    def synthetic(self, root):
+        entry = root / "entry.json"
+        entry.write_text('{"id":"n72ap-5G77a"}')
+        instance = module.Supervisor(dict(self.config(root), staging=str(root / "prepared"), entry=str(entry),
+                         seed="test-seed", guest_tool_sha256={"armv6.itpack": "f"*64}))
+        instance.run.mkdir()
+        out = root / "prepared"
+        nand = out / "nand"
+        nand.mkdir(parents=True)
+        def file(name, data, readonly=False):
+            p = out / name
+            p.write_bytes(data)
+            if readonly:
+                p.chmod(0o400)
+            return hashlib.sha256(data).hexdigest()
+        nor = file("nor.bin", b"nor", True)
+        gid = file("gid-blobs.bin", b"gid", True)
+        identity = file("identity.json", b"{}")
+        page = file("nand/page-1", b"page", True)
+        listing = hashlib.sha256(("page-1 " + page + "\n").encode()).hexdigest()
+        nand.chmod(0o500)
+        lock = dict(board="n72ap", build="5G77a", entry={"id": "n72ap-5G77a", "content": {"id": "n72ap-5G77a"}}, boot_strategy="bootrom",
+                    guest_package={"family": "n72-ios2", "itpack": {"sha256": "f"*64}},
+                    tool={"built": {"guest tools": {"armv6.itpack": "f"*64}}},
+                    inputs={"ipsw": {"sha1": "34a0a489605f34d6cc6c9954edcaaf9a050deedc"}},
+                    identity={"seed": "test-seed", "sha256": identity}, fit=[{"fits": True}],
+                    outputs={"nor": {"path": "nor.bin", "sha256": nor}, "gid_blobs": {"path": "gid-blobs.bin", "sha256": gid},
+                             "nand": {"path": "nand", "pages": 1, "listing_sha256": listing, "built_listing_sha256": listing}})
+        (out / "device.lock.json").write_text(json.dumps(lock))
+        (instance.run / "stdout.jsonl").write_text('{"event":"done","lock":"device.lock.json"}\n')
+        return instance, lock
+
+    def test_complete_synthetic_output_verification_and_corruption_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            instance, lock = self.synthetic(Path(tmp))
+            instance.verify()
+            self.assertEqual(1, instance.result["output"]["nand_files"])
+            self.assertEqual("NOT_RUN", instance.result["output"]["runtime_acceptance"])
+            page = Path(instance.config["staging"]) / "nand/page-1"
+            page.chmod(0o600)
+            page.write_bytes(b"evil")
+            page.chmod(0o400)
+            with self.assertRaisesRegex(ValueError, "listing hash"):
+                instance.verify()
+
+    def test_unreadable_done_and_symlink_outputs_never_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            instance, lock = self.synthetic(Path(tmp))
+            (instance.run / "stdout.jsonl").write_text('{"event":"error"}\n')
+            with self.assertRaisesRegex(ValueError, "done event"):
+                instance.verify()
+            nor = Path(instance.config["staging"]) / "nor.bin"
+            nor.unlink()
+            nor.symlink_to("gid-blobs.bin")
+            with self.assertRaisesRegex(ValueError, "escapes staging"):
+                instance.verify()
+
+
+if __name__ == "__main__":
+    unittest.main()
