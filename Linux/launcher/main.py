@@ -17,6 +17,7 @@ from tkinter import filedialog, messagebox, ttk
 from model import FORMAT, VERSION, Profiles, SetupError, import_command, inspect_base, load_profile, save_json, start_command, validate
 from session import Session, clean_exit
 from preparation import Preparation
+from experimental_cache import worker_environment
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app_services.bridge import Bridge
@@ -441,6 +442,9 @@ class Launcher:
                 self.bridge = Bridge(*paths, self.store.directory / "devices" / self.current / "pairing",
                                      self.store.directory / "service-logs")
                 env = self.bridge.start()
+            # Ordinary launches remain cache-off until actual guest correctness
+            # and fresh-process benefit are qualified. Ignore inherited opt-ins.
+            env = worker_environment(self.store.directory, profile, False, env)
             self.launch(command, "guest", env=env)
             if self.bridge is None:
                 self.detail.set("Guest app services are unavailable in this build. Log: " + str(self.session.log_path))
