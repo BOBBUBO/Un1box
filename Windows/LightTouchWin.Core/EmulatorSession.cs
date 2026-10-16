@@ -131,8 +131,8 @@ public sealed class EmulatorSession : IAsyncDisposable
         }
         finally { pending.TryRemove(id, out _); }
     }
-    public Task<JsonElement> KeyAsync(params string[] keys) => CommandAsync("send-key", new {
-        keys = keys.Select(k => new { type = "qcode", data = k }).ToArray(), hold_time = 100
+    public Task<JsonElement> KeyAsync(params string[] keys) => CommandAsync("send-key", new Dictionary<string, object> {
+        ["keys"] = keys.Select(k => new { type = "qcode", data = k }).ToArray(), ["hold-time"] = 100
     });
     public async Task StopAsync(TimeSpan? timeout = null)
     {

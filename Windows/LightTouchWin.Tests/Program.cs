@@ -16,6 +16,19 @@ if (args.Contains("-qmp"))
         var root = json.RootElement;
         string command = root.GetProperty("execute").GetString()!;
         int id = root.GetProperty("id").GetInt32();
+        if (command == "send-key")
+        {
+            var arguments = root.GetProperty("arguments");
+            bool valid = arguments.EnumerateObject().Select(p => p.Name).Order().SequenceEqual(new[] { "hold-time", "keys" })
+                && arguments.GetProperty("hold-time").GetInt32() == 100
+                && arguments.GetProperty("keys").EnumerateArray().All(k =>
+                    k.GetProperty("type").GetString() == "qcode" && k.GetProperty("data").GetString() is "meta_l" or "shift" or "h" or "l");
+            if (!valid)
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new { id, error = new { @class = "GenericError", desc = "send-key requires exact QAPI hold-time and qcode keys" } }));
+                continue;
+            }
+        }
         if (command == "system_powerdown")
         {
             bool reject = Environment.GetEnvironmentVariable("LT_TEST_QMP_MODE") == "reject-first" && shutdowns++ == 0;
@@ -96,6 +109,9 @@ try
         await using var session = new EmulatorSession();
         await session.StartAsync(Environment.ProcessPath!, n72, state);
         Check(session.IsRunning, "fresh native QMP worker " + mode);
+        await session.KeyAsync("meta_l", "shift", "h");
+        await session.KeyAsync("meta_l", "l");
+        Check(session.IsRunning, "Home/Power chords serialize exact QMP hold-time field " + mode);
         Check(File.Exists(Path.Combine(state, "shutdown-unconfirmed.json")), "running state marked unconfirmed " + mode);
         bool disposed = false; try { await session.DisposeAsync(); } catch (InvalidOperationException) { disposed = true; }
         Check(disposed && session.IsRunning, "disposal retains live guest " + mode);
