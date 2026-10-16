@@ -17,6 +17,42 @@ import time
 GIB = 1024 ** 3
 LIMITS = dict(total=600, work=540, term_end=585, rss=2 * GIB,
               disk=20 * GIB, free_disk=32 * GIB, free_memory=8 * GIB, processes=32)
+CREATE03_LIMITS = dict(LIMITS, rss=4 * GIB, host_memory_floor=4 * GIB)
+
+
+def assess_fits(fits, events):
+    """Narrow n72 pilot policy: preserve optional misfits; never turn false into true.
+
+    FitCheck.Log.check throws for required misfits but stores only piece/fits/proof.
+    Pieces.checkBootArgs explicitly makes cs_enforcement_disable optional/inert.
+    Unknown negatives still require review: the wire has no required/optional bit.
+    """
+    if not isinstance(fits, list) or not fits:
+        raise ValueError("prepared fit evidence is absent")
+    seen, optional, blocking = set(), [], []
+    for fit in fits:
+        if (not isinstance(fit, dict) or type(fit.get("fits")) is not bool or
+                not isinstance(fit.get("piece"), str) or not isinstance(fit.get("proof"), str)):
+            raise ValueError("malformed fit evidence")
+        if fit["piece"] in seen:
+            raise ValueError("duplicate fit evidence")
+        seen.add(fit["piece"])
+        if fit["fits"]:
+            continue
+        expected = (fit["piece"] == "boot-arg cs_enforcement_disable" and
+                    fit["proof"] == "the kernel does not read it as a boot-arg")
+        message = (fit["piece"] + " does not fit this firmware (kept: inert here): " + fit["proof"])
+        warned = any(e == {"event": "warning", "message": message} for e in events)
+        if expected and warned:
+            optional.append(dict(fit, disposition="OPTIONAL_INERT_WARNING_UNQUALIFIED"))
+        else:
+            blocking.append(fit)
+    amfi = next((f for f in fits if f["piece"] == "boot-arg amfi_allow_any_signature"), None)
+    if not amfi or amfi["fits"] is not True:
+        blocking.append(dict(piece="boot-arg amfi_allow_any_signature", fits=False,
+                             proof="required positive fit missing or false"))
+    return dict(optional_misfits=optional, blocking_misfits=blocking,
+                policy="only source-proven optional cs_enforcement_disable warning admitted; other negatives held for review")
 
 
 def save(path, value):
@@ -116,7 +152,10 @@ def validate_create_argv(argv, help_text):
 class Supervisor:
     def __init__(self, config, limits=None):
         self.config = config
-        self.limits = limits or LIMITS
+        profile = config.get("resource_profile", "original-2gib")
+        if profile not in ("original-2gib", "n72-create03-4gib"):
+            raise ValueError("unreviewed resource profile")
+        self.limits = limits or (CREATE03_LIMITS if profile == "n72-create03-4gib" else LIMITS)
         self.start = time.monotonic()
         self.end = self.start + self.limits["total"]
         self.work_end = self.start + self.limits["work"]
@@ -246,22 +285,41 @@ class Supervisor:
         self.check()
         processes, table = self.observe(self.work_end)
         rss = sum(p["rss"] for p in processes)
-        if len(processes) > self.limits["processes"] or rss > self.limits["rss"]:
-            raise RuntimeError("owned process count/RSS watchdog exceeded")
-        if any(re.search(r"qemu|LightTouchDevice|emulator", p["command"], re.I) for p in processes):
-            raise RuntimeError("unexpected helper/guest emulator in no-boot preparation")
         resident = table.get(self.config["resident_avd_pid"])
+        value = dict(elapsed=time.monotonic()-self.start, rss=rss, processes=processes,
+                     owned_process_count=len(processes), resident_avd=resident, violations=[])
+        self.result["samples"].append(value)
+
+        def fail(message):
+            value["violations"].append(message)
+            save(self.run / "RECEIPT.json", self.result)
+            raise RuntimeError(message)
+
+        # Save the exact violating measurement BEFORE throwing or starting cleanup.
+        if len(processes) > self.limits["processes"]:
+            fail("owned process count watchdog exceeded")
+        if rss > self.limits["rss"]:
+            fail("owned RSS watchdog exceeded")
+        if any(re.search(r"qemu|LightTouchDevice|emulator", p["command"], re.I) for p in processes):
+            fail("unexpected helper/guest emulator in no-boot preparation")
         if not resident or resident["identity"] != self.result["resident_avd_before"]["identity"]:
-            raise RuntimeError("resident AVD changed/absent")
-        value = dict(elapsed=time.monotonic()-self.start, rss=rss, processes=processes)
+            fail("resident AVD changed/absent")
+        save(self.run / "RECEIPT.json", self.result)
         if time.monotonic() - self.last_disk_sample >= 5:
             used = int(helper(["du", "-sk", str(self.root)], self.work_end).split()[0]) * 1024
             free = shutil.disk_usage(self.root).free
             self.last_disk_sample = time.monotonic()
             value.update(allocated=used, free_disk=free)
             if used > self.limits["disk"] or free < self.limits["free_disk"]:
-                raise RuntimeError("new-root allocation/free-disk watchdog exceeded")
-        self.result["samples"].append(value)
+                fail("new-root allocation/free-disk watchdog exceeded")
+            if self.limits.get("host_memory_floor"):
+                raw = helper(["vm_stat"], self.work_end).decode()
+                page = int(re.search(r"page size of (\d+) bytes", raw).group(1))
+                free_pages = int(re.search(r"Pages free:\s+(\d+)", raw).group(1))
+                inactive_pages = int(re.search(r"Pages inactive:\s+(\d+)", raw).group(1))
+                value.update(host_free_plus_inactive=(free_pages + inactive_pages) * page, vm_stat=raw)
+                if value["host_free_plus_inactive"] < self.limits["host_memory_floor"]:
+                    fail("host free+inactive memory reserve watchdog exceeded")
         save(self.run / "RECEIPT.json", self.result)
 
     def signal_owned(self, sig, deadline):
@@ -387,16 +445,14 @@ class Supervisor:
         if not events or events[-1] != {"event": "done", "lock": "device.lock.json"} or any(e.get("event") == "error" for e in events):
             raise ValueError("missing exact final done event or preparer error")
         fits = lock.get("fit", [])
-        if not isinstance(fits, list) or not fits:
-            raise ValueError("prepared fit evidence is absent")
-        failures = [f for f in fits if f.get("fits") is not True]
+        assessment = assess_fits(fits, events)
         self.result["output"] = dict(lock_sha256=digest(lock_path, self.check), boot_hashes=checked,
              nand_listing_sha256=listing.hexdigest(), nand_files=len(files), nand_logical_bytes=total,
-             pages=expected.get("pages"), fits=fits, fit_failures=failures,
+             pages=expected.get("pages"), fits=fits, fit_assessment=assessment,
              warnings=[e for e in events if e.get("event") == "warning"],
              status="CONTENT_VERIFIED_REVIEW_REQUIRED", runtime_acceptance="NOT_RUN")
-        if failures:
-            raise ValueError("prepared fit failures require review")
+        if assessment["blocking_misfits"]:
+            raise ValueError("required or unreviewed prepared fit failures require review")
 
     def execute(self):
         try:

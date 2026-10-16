@@ -219,7 +219,7 @@ preflight never detaches images. The resident AVD must retain its identity.
 Success requires exit0, the exact final done event, matching board/build/entry,
 bootrom strategy, n72-ios2 guest family and source/package provenance, complete
 NOR/GID/identity hashes, and the full NAND listing hash using upstream's sorted
-`path sha256\n` algorithm. NAND count/read-only modes and fit failures are checked.
+`path sha256\n` algorithm. NAND count/read-only modes and fit dispositions are checked.
 No second extracted base is made. Input pins are rehashed after output verification.
 `CONTENT_VERIFIED_REVIEW_REQUIRED` deliberately does **not** establish reference
 boot, target support or a clean guest shutdown. Fit details/warnings/logs and
@@ -228,3 +228,27 @@ cleanup identities remain in the private `create-supervised-NN/RECEIPT.json`.
 Synthetic tests exercise real owned subprocess success, original deadlines,
 escaped-child retirement, observer timeout, preservation of previous receipts,
 unrelated mount exclusion and corrupted output rejection without any firmware.
+
+The original 2 GiB create02 watchdog run remains FAILED, even though its retained
+output hashes match. It lacks a final done event and clean successful command
+receipt. Later verifier changes cannot reclassify that operation.
+
+Upstream `FitCheck.Log.check` throws for required negative fits and records/warns
+optional negatives. Its persisted wire has only `piece`, `fits` and `proof`, so a
+negative is not automatically a fatal required failure. `Pieces.checkBootArgs`
+requires `amfi_allow_any_signature`; `cs_enforcement_disable` is explicitly optional
+and may remain inert with a warning. This narrow supervisor admits only that exact
+optional reason with its matching actual warning event. It retains `fits:false`
+and `OPTIONAL_INERT_WARNING_UNQUALIFIED`. Required AMFI must have a positive record;
+unknown negatives, malformed/duplicate records, missing warning or a different
+reason are held for review. Other optional upstream capabilities are not silently
+accepted by this pilot policy.
+
+Resource profile `n72-create03-4gib` is a separately reviewed **proposal**, never an
+automatic retry: 4 GiB sampled preparer RSS, existing 8 GiB free+inactive admission,
+and a new 4 GiB free+inactive host reserve sampled every five seconds. Original
+time/disk/process limits and resident AVD identity checks remain. The controller
+now durably stores exact process identities/count/RSS and any violation before
+raising, including reserve/disk failures. Watchdogs remain sampled rather than
+hard reservations. A new reviewed config/source/run and original clock are needed
+for a new phase; no hidden limit escalation occurs within an existing run.
