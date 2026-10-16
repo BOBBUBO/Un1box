@@ -4,6 +4,7 @@
 #define SDL_MAIN_HANDLED
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shellapi.h>
 #include <io.h>
 #include <fcntl.h>
 #include <SDL.h>
@@ -156,7 +157,7 @@ void screenshot(const fs::path &directory, const void *pixels, int width, int he
 }
 }
 
-int main(int argc, char **argv) {
+static int run(int argc, char **argv) {
     try {
         std::string title = "LightTouch";
         fs::path state, screenshots;
@@ -210,4 +211,28 @@ int main(int argc, char **argv) {
         error(failure.what());
         return 3;
     }
+}
+
+// MinGW narrow main argv otherwise follows the system ANSI codepage. Convert
+// the native command line ourselves so QEMU and the shared UTF-8 ABI receive
+// exact non-ASCII device/package/state names on every Windows locale.
+int main() {
+    int argc = 0;
+    wchar_t **arguments = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!arguments) { error("Cannot read the native Windows command line."); return 3; }
+    std::vector<std::string> values;
+    bool valid = true;
+    for (int index = 0; index < argc; ++index) {
+        const int count = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, arguments[index], -1, nullptr, 0, nullptr, nullptr);
+        if (!count) { valid = false; break; }
+        std::string value(count, '\0');
+        if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, arguments[index], -1, value.data(), count, nullptr, nullptr)) { valid = false; break; }
+        value.resize(count - 1); values.push_back(std::move(value));
+    }
+    LocalFree(arguments);
+    if (!valid) { error("Windows command line contains invalid Unicode."); return 3; }
+    std::vector<char *> argv;
+    for (auto &value : values) argv.push_back(value.data());
+    argv.push_back(nullptr);
+    return run(argc, argv.data());
 }
