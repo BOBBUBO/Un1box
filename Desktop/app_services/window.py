@@ -97,6 +97,7 @@ class AppsWindow:
         self.admit()
         self.service = ServiceJob(self.bridge().command(action, self.scratch, ipa), timeout=30 if action == "info" else 900,
                                   owns_install=action == "install",
+                                  env=getattr(self.bridge(), "service_environment", lambda: None)(),
                                   log_path=self.scratch.parent / "service-logs" / ("app-" + uuid.uuid4().hex + ".jsonl"))
         self.message.set("Connecting to guest…" if action == "info" else "Preparing app…")
 

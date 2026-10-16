@@ -111,7 +111,7 @@ static async Task<int> MainWindows(string[] arguments)
         }
         finally { foreach (var pin in pins) pin.Dispose(); }
     }
-    if (arguments[0] != "run" || options.Keys.Any(k => k is not ("--id" or "--name" or "--base" or "--state" or "--package" or "--rom" or "--worker" or "--recover" or "--audio" or "--validation-cache" or "--recheck")))
+    if (arguments[0] != "run" || options.Keys.Any(k => k is not ("--id" or "--name" or "--base" or "--state" or "--package" or "--rom" or "--worker" or "--recover" or "--audio" or "--validation-cache" or "--recheck" or "--usb-endpoint" or "--usb-pid" or "--usb-created")))
         throw new ArgumentException("Unknown shared helper action/option.");
     string identity = Need("--id");
     if (identity.Length != 32 || identity.Any(c => !char.IsAsciiHexDigit(c))) throw new InvalidDataException("Invalid saved device identity.");
@@ -123,6 +123,7 @@ static async Task<int> MainWindows(string[] arguments)
     foreach (string sub in new[] { "overlay", "work", "screenshots" }) PrivateWindows.Ensure(Path.Combine(state, sub));
     var statePins = PrivateWindows.Pin(state, false); var basePins = new List<Microsoft.Win32.SafeHandles.SafeFileHandle>();
     Process? child = null;
+    Process? serviceOwner = null;
     var assetPins = new List<Stream>();
     int stopRequested = 0, frontendFailed = 0;
     async Task Stop()
@@ -189,16 +190,31 @@ static async Task<int> MainWindows(string[] arguments)
         start.ArgumentList.Add("--"); foreach (string value in engine) start.ArgumentList.Add(value);
         start.Environment["SDL_AUDIODRIVER"] = "wasapi"; start.Environment["IT_TVOUT_READY"] = "1";
         foreach (string key in new[] { "LT_TCG_IR_CACHE_ENABLE", "LT_TCG_IR_CACHE", "LTM_QEMU_DYLIB" }) start.Environment.Remove(key);
-        // Guest app services are unavailable in this shared preview. A shell or
-        // another saved device must not silently attach this guest to its USB
-        // bridge. Windows environment names are case-insensitive; retain that
-        // rule even if this source is exercised with an explicit mapping.
+        // Clear ambient endpoints; only the explicit owned launch below may
+        // attach this guest to its per-device foreground USB bridge.
         foreach (string key in start.Environment.Keys.ToArray())
             if (key.Equals("IT_USB_TCP", StringComparison.OrdinalIgnoreCase) ||
                 key.Equals("USBMUXD_SOCKET_ADDRESS", StringComparison.OrdinalIgnoreCase) ||
                 key.Equals("USBMUXD_QEMU_ADDR", StringComparison.OrdinalIgnoreCase) ||
                 key.StartsWith("LTW_USBMUX_", StringComparison.OrdinalIgnoreCase) ||
                 key.StartsWith("LTW_SESSION_", StringComparison.OrdinalIgnoreCase)) start.Environment.Remove(key);
+        if (options.Keys.Any(k => k is "--usb-endpoint" or "--usb-pid" or "--usb-created"))
+        {
+            string endpoint = Need("--usb-endpoint");
+            if (!endpoint.StartsWith("127.0.0.1:", StringComparison.Ordinal) ||
+                !ushort.TryParse(endpoint[10..], out ushort port) || port == 0 || endpoint != "127.0.0.1:" + port ||
+                !int.TryParse(Need("--usb-pid"), out int pid) || pid <= 0 ||
+                !long.TryParse(Need("--usb-created"), out long created) || created <= 0)
+                throw new IOException("Invalid owned guest app-service endpoint.");
+            serviceOwner = Process.GetProcessById(pid);
+            // Force retention of the native process handle before reading its
+            // creation identity. No endpoint probe or system USB fallback.
+            _ = serviceOwner.Handle;
+            if (serviceOwner.HasExited || serviceOwner.StartTime.ToUniversalTime().ToFileTimeUtc() != created)
+                throw new IOException("Guest app-service process changed before launch.");
+            start.Environment["IT_USB_TCP"] = endpoint;
+            Console.WriteLine("[services] Connecting guest to its owned per-device app bridge.");
+        }
         if (Volatile.Read(ref stopRequested) != 0) throw new OperationCanceledException("Start was cancelled before guest boot; state was retained.");
         child = Process.Start(start) ?? throw new IOException("Cannot start the maintained Windows guest window.");
         if (Volatile.Read(ref stopRequested) != 0) await Stop();
@@ -229,7 +245,7 @@ static async Task<int> MainWindows(string[] arguments)
             try { await child.StandardInput.WriteLineAsync("stop"); await child.StandardInput.FlushAsync(); } catch (IOException) { }
             await child.WaitForExitAsync();
         }
-        child?.Dispose(); foreach (var pin in assetPins) pin.Dispose(); foreach (var pin in basePins) pin.Dispose(); foreach (var pin in statePins) pin.Dispose();
+        child?.Dispose(); serviceOwner?.Dispose(); foreach (var pin in assetPins) pin.Dispose(); foreach (var pin in basePins) pin.Dispose(); foreach (var pin in statePins) pin.Dispose();
     }
 }
 

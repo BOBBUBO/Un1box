@@ -28,7 +28,7 @@ def copy_tree(source, destination):
     shutil.copytree(source, destination, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
 
 
-def stage(source, output, python_runtime, helper, worker, native_runtime):
+def stage(source, output, python_runtime, helper, worker, native_runtime, services_runtime=None):
     source, output, python_runtime, helper, worker, native_runtime = map(Path, (source, output, python_runtime, helper, worker, native_runtime))
     if output.exists() or output.is_symlink(): raise ValueError('Choose a new staging directory.')
     for name in ('python.exe', 'pythonw.exe', 'Lib/tkinter/__init__.py', 'DLLs/_tkinter.pyd'):
@@ -54,6 +54,13 @@ def stage(source, output, python_runtime, helper, worker, native_runtime):
             if path.is_symlink() or not path.is_file(): raise ValueError('Native DLL must be a regular file.')
             shutil.copy2(path, native/path.name)
     shutil.copy2(worker, native/'lighttouch-windows-worker.exe')
+    services_argument = ''
+    if services_runtime is not None:
+        services_runtime = Path(services_runtime)
+        for name in ('lighttouch-usbmuxd.exe', 'libimobiledevice-1.0.dll', 'libplist-2.0.dll', 'libusbmuxd-2.0.dll'):
+            if not (services_runtime/name).is_file(): raise ValueError('Missing guest app-service provider: '+name)
+        copy_tree(services_runtime, runtime/'services')
+        services_argument = ' --services-runtime "%~dp0runtime\\services"'
     (runtime/'python'/(versions[0]+'._pth')).write_text(versions[0]+'.zip\n.\nDLLs\nLib\n../../ui\n', encoding='utf-8')
     # _pth supplies isolated, relocatable imports; no ambient site-packages.
     batch = ('@echo off\r\nsetlocal\r\n'
@@ -61,7 +68,7 @@ def stage(source, output, python_runtime, helper, worker, native_runtime):
              'set "TK_LIBRARY=%~dp0runtime\\python\\tcl\\'+tk[0].name+'"\r\n'
              '"%~dp0runtime\\python\\pythonw.exe" -I "%~dp0ui\\launcher.py" '
              '--frontend "%~dp0runtime\\helper\\LightTouchWin.Headless.exe" '
-             '--worker "%~dp0runtime\\native\\lighttouch-windows-worker.exe"\r\n')
+             '--worker "%~dp0runtime\\native\\lighttouch-windows-worker.exe"'+services_argument+'\r\n')
     (output/'LightTouch.cmd').write_bytes(batch.encode('utf-8'))
     (output/'README.txt').write_text('Shared Tk library/import UI and maintained SDL guest controls. Native target acceptance is pending. Use LightTouch.cmd; configurations and writable data default to %LOCALAPPDATA%\\LightTouch\\SharedWindows. Prepared firmware/guest tools are supplied separately. Guest service transport/LegacyStore/IPA integration is not yet qualified for this Windows adapter. The older C# preview library is never automatically migrated.\n', encoding='utf-8')
     records = [{'file':str(p.relative_to(output)).replace('\\','/'), 'bytes':p.stat().st_size, 'sha256':sha(p)} for p in sorted(output.rglob('*')) if p.is_file()]
@@ -75,8 +82,9 @@ def stage(source, output, python_runtime, helper, worker, native_runtime):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('source','output','python-runtime','helper','worker','native-runtime'): parser.add_argument('--'+name, type=Path, required=True)
+    parser.add_argument('--services-runtime', type=Path)
     args = parser.parse_args()
-    stage(args.source, args.output, args.python_runtime, args.helper, args.worker, args.native_runtime)
+    stage(args.source, args.output, args.python_runtime, args.helper, args.worker, args.native_runtime, args.services_runtime)
 
 
 if __name__ == '__main__': main()

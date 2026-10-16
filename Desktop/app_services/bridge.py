@@ -163,8 +163,8 @@ class Bridge:
 
 class ServiceJob:
     """One finite subprocess; no blocking library thread can hang the launcher."""
-    def __init__(self, command, timeout=900, owns_install=False, log_path=None):
-        env = dict(os.environ)
+    def __init__(self, command, timeout=900, owns_install=False, log_path=None, env=None):
+        env = dict(os.environ, **(env or {}))
         # Bundle source root; do not use caller's cwd or global installed modules.
         env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
         self.log = None

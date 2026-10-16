@@ -31,6 +31,11 @@ class WindowsSession(ManagedSession):
             if (name in ("IT_USB_TCP", "USBMUXD_SOCKET_ADDRESS", "USBMUXD_QEMU_ADDR") or
                     name.startswith("LTW_USBMUX_") or name.startswith("LTW_SESSION_")):
                 environment.pop(key)
+        bridge = getattr(self, "bridge", None)
+        if bridge is not None and len(command) > 1 and command[1] == "run":
+            service = bridge.service_environment()
+            command = list(command) + ["--usb-endpoint", service["IT_USB_TCP"],
+                       "--usb-pid", service["LTW_USBMUX_PID"], "--usb-created", service["LTW_USBMUX_CREATED"]
         super().start(command, log_path, environment)
 
 
@@ -47,7 +52,8 @@ class WindowsHost:
         return Profiles(directory, storage=self.storage)
 
     def create_session(self, application_log):
-        return WindowsSession(application_log, storage=self.storage, label="LightTouch shared Windows launcher")
+        self.session = WindowsSession(application_log, storage=self.storage, label="LightTouch shared Windows launcher")
+        return self.session
 
     def inspect_base(self, path):
         return inspect_base(path, storage=self.storage)
@@ -107,12 +113,22 @@ class WindowsHost:
         return self._helper(args) + ["import", "--source", absolute(source),
                                     "--destination", str(destination), "--sha256", sha256.lower()] + self._validation_cache(args)
 
-    @staticmethod
-    def start_services(args, directory, identity):
-        # Shared Desktop/app_services is authoritative. Windows still needs
-        # native guest-service transport; no copied catalog/IPA implementation.
-        return None, None
+    def start_services(self, args, directory, identity):
+        from .windows_services import WindowsBridge
+        runtime = getattr(args, "services_runtime", None)
+        if runtime is None:
+            self.session.bridge = None
+            return None, None
+        bridge = WindowsBridge(runtime, directory, identity, self.storage)
+        try:
+            environment = bridge.start()
+        except BaseException:
+            bridge.close()
+            raise
+        self.session.bridge = bridge
+        return bridge, environment
 
     @staticmethod
     def apps_window(*args, **kwargs):
-        raise SetupError("Guest app-service transport is not qualified in this shared Windows development build.")
+        from app_services.window import AppsWindow
+        return AppsWindow(*args, **kwargs)

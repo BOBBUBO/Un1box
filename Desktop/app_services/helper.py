@@ -8,6 +8,7 @@ import shutil
 import socket
 import stat
 import tempfile
+import re
 
 from .ipa import prepare
 from .mobile import Mobile
@@ -25,16 +26,36 @@ def main():
     parser.add_argument("--plist-library", required=True)
     parser.add_argument("--scratch", required=True)
     parser.add_argument("--ipa")
+    parser.add_argument("--daemon-pid")
+    parser.add_argument("--daemon-created")
     args = parser.parse_args()
     path = Path(args.socket)
     try:
-        info = path.lstat()
-        parent = path.parent.stat()
-        if (not path.is_absolute() or path.is_symlink() or not stat.S_ISSOCK(info.st_mode) or
-                info.st_uid != os.geteuid() or info.st_mode & 0o077 or
-                parent.st_uid != os.geteuid() or parent.st_mode & 0o077):
-            raise ValueError("A private owner-only guest usbmux socket is required.")
-        os.environ["USBMUXD_SOCKET_ADDRESS"] = "UNIX:" + str(path)
+        if os.name == "nt":
+            # Owned libusbmuxd verifies the actual reverse TCP owner + SID +
+            # exact process creation time before sending any protocol bytes.
+            match = re.fullmatch(r"127\.0\.0\.1:([1-9][0-9]{0,4})", args.socket)
+            if (not match or int(match[1]) > 65535 or
+                    not re.fullmatch(r"[1-9][0-9]{0,9}", args.daemon_pid or "") or
+                    int(args.daemon_pid) > 2**32-1 or
+                    not re.fullmatch(r"[1-9][0-9]{0,19}", args.daemon_created or "") or
+                    int(args.daemon_created) > 2**64-1):
+                raise ValueError("An exact owned Windows guest-service endpoint is required.")
+            expected = {"USBMUXD_SOCKET_ADDRESS": args.socket, "LTW_USBMUX_PID": args.daemon_pid,
+                        "LTW_USBMUX_CREATED": args.daemon_created}
+            if any(os.environ.get(key) != value for key, value in expected.items()):
+                raise ValueError("Guest service launch environment differs from its owned endpoint.")
+            from lighttouch_desktop.windows_storage import WindowsStorage
+            storage = WindowsStorage()
+            storage.ensure_directory(args.scratch)
+        else:
+            info = path.lstat()
+            parent = path.parent.stat()
+            if (not path.is_absolute() or path.is_symlink() or not stat.S_ISSOCK(info.st_mode) or
+                    info.st_uid != os.geteuid() or info.st_mode & 0o077 or
+                    parent.st_uid != os.geteuid() or parent.st_mode & 0o077):
+                raise ValueError("A private owner-only guest usbmux socket is required.")
+            os.environ["USBMUXD_SOCKET_ADDRESS"] = "UNIX:" + str(path)
         mobile = Mobile(args.library, args.plist_library)
         try:
             target = mobile.target()

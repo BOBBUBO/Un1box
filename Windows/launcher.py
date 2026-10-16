@@ -14,6 +14,7 @@ def main():
     root = Path(__file__).resolve().parent.parent  # packaged ui/launcher.py
     parser.add_argument("--frontend", type=Path, default=root/"runtime/LightTouchWin.Headless.exe")
     parser.add_argument("--worker", type=Path, default=root/"runtime/lighttouch-windows-worker.exe")
+    parser.add_argument("--services-runtime", type=Path)
     parser.add_argument("--data-dir", type=Path, default=Path(os.environ.get("LOCALAPPDATA", str(Path.home())))/"LightTouch/SharedWindows")
     args = parser.parse_args()
     window = tk.Tk()
