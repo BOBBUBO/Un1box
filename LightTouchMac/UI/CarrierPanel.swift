@@ -217,7 +217,7 @@ extension GPSLocation {
     required init?(coder: NSCoder) { fatalError("not used") }
 }
 
-#if DEBUG
+#if DEBUG && !LIGHTTOUCH_CLT_BUILD
     @MainActor private final class PreviewBackend: CarrierBackend {
         var carrierSettings = CarrierSettings()
         func setCarrierSettings(_ settings: CarrierSettings) -> Bool {
