@@ -29,7 +29,8 @@ original asset manifest, then the platform helper verifies the resulting files
 and publishes that same staged directory without copying NAND again. Writable
 NOR and NAND overlays stay in each saved device's separate data folder. This is
 an alpha format change: reimport existing devices; no migration is provided.
-One real n72 streaming import measured 4.6 seconds on Linux; this is not a
+Windows packed NAND import is user-confirmed. One real n72 streaming import
+measured 4.6 seconds on Linux; this is not a
 Windows/macOS speed measurement or a complete setup-time claim.
 Android retains its touch UI; APK orchestration remains a future entrypoint
 adapter rather than an advertised output of this initial desktop foundation.

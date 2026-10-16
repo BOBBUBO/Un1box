@@ -1,62 +1,76 @@
 # Session checkpoint: 2026-10-16
 
-The project is paused and incomplete. Both maintained forks use `main`; former
-port/work branches and linked development worktrees were retired after retaining
-all their commits in consolidated history. Upstream remotes and research archive
-tags are retained. Do not resume work from an obsolete branch or worktree path.
+The broader project is paused and incomplete. Both maintained forks use `main`;
+all temporary development branches and linked worktrees have been retired after
+retaining reviewed changes and original worker history. Upstream refs and
+research archive tags remain references. Start new work from current `main`.
+
+## Delivered desktop refinement
 
 The maintained desktop UI is one Python/Tk launcher and shared SDL guest-window
-controls across Linux, Windows and macOS. Android keeps its touch UI. Start with
-[Desktop/README.md](Desktop/README.md) and [Desktop/build.py](Desktop/build.py).
-The WinForms preview and original Cocoa app are transitional/reference paths.
+controls across Linux, Windows and macOS. Android keeps its touch UI. The
+WinForms preview and original Cocoa app are transitional/reference paths.
+See [Desktop/README.md](Desktop/README.md) and the numbered
+[asset acquisition/setup guide](docs/ASSETS.md), linked from README.
 
-Useful current changes include consistent Windows archive identity checks and
-live setup progress (`b5a7e07e`), independent saved devices from the same imported
-system (`50927382`), Windows owned service transport/build recipes, and bounded
-Foundation lifetimes in firmware preparation. Existing configurations/saves must
-be preserved. Windows services have cross-linked providers but still need shared
-loader/allocator/owned-endpoint wiring and actual Windows guest validation.
-Mac shared host compilation and packaging do not establish guest/Apps parity.
+All three desktop launchers now use the common bounded streaming `.itbase`
+importer. n72 NAND pages go directly into one indexed read-only `ITNAND01` file;
+n81 retains its few large NAND files. The original archive and manifest are
+verified, then a narrow native finalizer validates disk bytes and publishes the
+same staging directory without copying NAND again. Writable overlays remain
+separate. Alpha users may reimport original archives; no migration was required.
+One real Linux n72 streaming import took 4.637s, with 1.866s native finalization;
+these are scoped measurements, not Windows/macOS timing claims.
 
-The final Windows update also recognizes Python 3.13's private OWNER RIGHTS
-ACL only after verifying current-user ownership. Earlier packages wrongly
-rejected their own `SharedWindows/bases` folder. Update the whole Windows ZIP;
-do not delete bases/saves or change folder permissions to work around this.
+Windows boot, rendering/audio, shutdown, startup UI, Legacy Store guest app
+installation and the new packed NAND import are user-confirmed. The shared
+Rotate fix turns video and pointer coordinates together; its actual Windows
+retest remains open. Apps-enabled startup preserves the full OS environment,
+fixing the NVIDIA display-create crash caused by dropping SystemRoot/PATH/TEMP.
+Windows saves successful immutable-system validation for reuse on ordinary Start;
+Advanced provides an explicit full recheck. Interrupted shutdown offers direct
+Boot recovered state without discarding saved data.
 
-The subsequent Windows import refinement overlaps ordered decompression with
-four bounded file writers, then parallelizes verification reads and per-file
-read-only ACL updates. Phase timings are logged. Focused import tests pass on
-Linux; this establishes correctness checks, not a measured Windows speedup.
-Windows now also saves successful validation outside the immutable base and
-reuses it on ordinary Starts after checking protected ownership, directory file
-identity and the system lock. Existing imports get one four-reader check;
-Advanced offers an explicit full recheck. This deliberately avoids rereading
-NAND on every Start and does not detect manual NAND changes with unchanged
-system lock. Keep that limit clear; full recheck remains available.
+Updated Windows ZIP, Linux AppImage and Apple Silicon macOS ZIP are collected
+with exact component revisions, checksums and build logs in the private
+workspace's `deliverables/session-wrap-20261016/`. Filenames contain
+`packed-import`. Native Windows helper/Rotate worker, Linux frontend and Mac
+host/helper were rebuilt; receipts identify reused engine/dependency providers.
+Mac requires macOS 26 and uses development signing. Compilation/packaging does
+not establish Mac shared guest/Apps qualification or new Linux packed guest
+acceptance. Existing Linux Radeon guest/audio/local IPA evidence remains scoped.
 
-The QEMU fork consolidates Windows WGL/storage/worker support, desktop EGL
-initialization diagnostics and the persistent symbolic-IR experiment. The cache
-remains **disabled and unqualified** on Linux and Android; no cross-session guest
-speed improvement is established. The rejected hybrid CPU experiment stays in
-history/archive tags, outside production sources. Real guests still use TCG.
+## Provisional alpha release
 
-Remaining work includes shared Windows/macOS guest and Apps qualification,
-required multi-touch/concurrent input-render-audio/lifecycle/persistence and
-sustained Android acceptance, the complete actual page-size matrix, qualified
-Linux/Android persistent cache, and the selected firmware/device matrix. Gyro is
-explicitly deferred and unqualified. Measured QEMU worker CPU/RAM is not iOS CPU
-or RAM telemetry. Build success is never a guest acceptance pass.
+`v0.0.1` collects the current Android APK, Linux AppImage, Windows ZIP and
+Apple Silicon macOS ZIP as a provisional GitHub prerelease. See the
+[release page](https://github.com/blake-lucas/LightTouch/releases/tag/v0.0.1)
+for checksums, installation and exact component provenance. Packaged engines
+and dependencies include retained providers; the release tag does not imply
+every component was rebuilt from that tag. Android uses debug signing; Mac
+uses development signing and requires macOS 26. Private guest assets are excluded.
 
-The private coordination workspace holds `GOAL.txt`, `CHECKLIST.md`,
-`OVERVIEW.md`, `DECISIONS.md`, `CONTRACTS.md`, and
-`agents/root-current-handoff.md`. Final packages/logs/component provenance are
-collected in its `deliverables/session-wrap-20261016/`. Old Git metadata, commit
-inventories and artifact relocation maps are in `session-wrap-20261016/`;
-previous coordination is archived in
-`coordination-history/2026-10-16-session-wrap/`. Private fixtures, failed trials,
-builds, saves and virtual-device disks remain outside Git/public uploads.
+## Remaining qualification
 
-Use focused checks for changed behavior and required build checks. Reuse valid
-unchanged evidence; do not restart broad smoke/harness/grant-packet cycles for
-minor edits. Do not invoke question tools, flash/reboot devices, wipe saves,
-change security settings, dedicate a GPU, create PRs or force push.
+Real guest CPUs still use QEMU TCG. The persistent symbolic-IR experiment stays
+**disabled and unqualified** on Linux/Android; no cross-session guest speedup is
+established. Rejected CPU experiments remain history, outside production paths.
+Gyro is deferred and unqualified. Host QEMU CPU/RAM counters are not iOS telemetry.
+
+Remaining gates include actual shared Mac guest/Apps behavior, required
+multi-touch/concurrent input-render-audio/lifecycle/persistence, sustained Android
+acceptance, the complete actual page-size matrix, qualified persistent cache,
+and the selected firmware/device matrix. Preserve existing acceptance evidence
+without expanding its scope or manufacturing passes.
+
+## Continuation
+
+The private coordination workspace contains GOAL.txt, CHECKLIST.md, OVERVIEW.md,
+DECISIONS.md, CONTRACTS.md and agents/root-current-handoff.md. Source notes,
+failed attempts, screenshots, assets, saves and build outputs remain outside
+public Git. Retired worker build outputs were preserved in their build parents;
+retirement mappings and review receipts identify exact locations.
+
+Use focused checks for changed behavior. Do not restart broad smoke/audit cycles
+for minor edits, invoke question tools, flash/reboot devices, wipe saves, dedicate
+a GPU, create PRs or force push. Resume broader implementation only when asked.

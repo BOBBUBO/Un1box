@@ -9,8 +9,9 @@ The desktop ports share one device-library/setup UI and the same guest-window
 controls. Android uses a touch-oriented UI. Prepared systems can be reused by
 several saved devices, each with its own writable storage.
 
-This is a development project. Working features and test coverage differ by
-platform; builds are previews, not a fully qualified cross-platform release.
+[Download v0.0.1 — provisional alpha](https://github.com/blake-lucas/LightTouch/releases/tag/v0.0.1).
+Working features and test coverage differ by platform; this is an early
+development release with the qualification limits below.
 
 ## Current platforms
 
@@ -18,7 +19,7 @@ platform; builds are previews, not a fully qualified cross-platform release.
 | --- | --- | --- |
 | Android | APK; ARM64 and x86_64, Android 10+ | Real guest boot, graphics, input and audio exercised on Poco and Pixel hardware. Complete lifecycle, concurrent media and 4/16 KiB compatibility acceptance is ongoing. |
 | Linux | x86_64 AppImage | Guest boot, input, accelerated graphics and audio exercised, including a Radeon desktop. Local IPA installation works; Legacy Store HTTPS trust/logging fixes are included. |
-| Windows | x86_64 ZIP | Shared UI boot/render/audio, shutdown and startup status user-tested. Legacy Store guest installation user-confirmed through the shared Apps window. Local IPA services are implemented; wider acceptance is ongoing. |
+| Windows | x86_64 ZIP | Shared UI boot/render/audio, shutdown and startup status user-tested. Legacy Store guest installation user-confirmed through the shared Apps window. Packed NAND import is user-confirmed. Local IPA services are implemented; wider acceptance is ongoing. |
 | macOS | Apple Silicon app ZIP | Shared desktop UI and native host compile/package successfully. Shared guest execution and Apps services remain unqualified. Current packaged dependencies require macOS 26. |
 
 Intel macOS and 32-bit Android hosts are not qualified. Virtual devices supplement
@@ -28,8 +29,8 @@ physical testing; their graphics drivers do not reproduce every phone GPU.
 
 Use the supplied platform development package: launch the Linux AppImage, install
 the Android APK, extract the Windows ZIP and run `LightTouch.cmd`, or extract the
-macOS ZIP and open its app. Development packages come with their checksums,
-build logs and component revisions.
+macOS ZIP and open its app. Release downloads include checksums, install notes and component revisions.
+Detailed build logs are retained in the development workspace.
 Upstream notarized macOS releases remain available from
 [LightTouchMac releases](https://github.com/samhenrigold/LightTouchMac/releases).
 
