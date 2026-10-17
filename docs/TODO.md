@@ -29,22 +29,28 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Cleanup
 
-- [ ] Prune the upstream Mac app code. Our macOS port still builds with SwiftPM from the root
-  `Package.swift` (`macOS/build-shared.py`), so this goes in stages:
-  1. Safe now (no port references): `LightTouchMac.xcodeproj`, `LightTouchMac.xcworkspace`,
-     `*.xctestplan`, `.swift-format`, `Packages/BuildTools`, `Packages/ReleaseChecks`, `Models/`,
-     `scripts/` except `check-android-package.py` and `measure-android-session.py`,
-     `tests/offline`, `tests/sessions`, and `Configuration/{Shared.xcconfig,ExportOptions.plist,
-     Tool.entitlements,Debug.lldbinit}`.
-  2. Move `LightTouchMac/Resources/firmware-catalog.json` (Android gradle, `lighttouch-prepare`,
-     firmware-matrix tests, docs) and `Packages/FirmwareKit/Sources/CActivation` (Portable/firmware
-     CMake, so Android too) somewhere neutral; update the references.
-  3. Retire `macOS/build-native.py` and drop the `LightTouch`, `CLockdown` and
-     `LightTouchServices` targets from `Package.swift`; then `LightTouchMac/`,
-     `LightTouchServices/` and `Packages/DeviceServices` can go.
-  4. Keep `Packages/{HostRuntime,DeviceRuntime,FirmwareKit,LightTouchCore}`, `LightTouchDevice/`
-     and `Configuration/LightTouchDevice{-Info.plist,.entitlements}` (macOS port). Rewrite the
-     Xcode parts of `CONTRIBUTING.md`. Verify with a macOS build (needs a Mac).
+- [x] Prune the upstream Mac app code (branch `dev/cleanup`; the macOS port still builds with SwiftPM
+  from the root `Package.swift` via `macOS/build-shared.py`):
+  1. [x] Xcode project/workspace, xctestplans, `Packages/BuildTools`, `Packages/ReleaseChecks`,
+     `Models/`, the upstream `scripts/` (kept `check-android-package.py`, `measure-android-session.py`),
+     `tests/offline`, `tests/sessions` and the Xcode-only `Configuration/` files (b40cb574).
+  2. [x] `firmware-catalog.json` now lives in `Portable/firmware/` (2a9a518f). `CActivation` stays in
+     `Packages/FirmwareKit/Sources`: SwiftPM cannot take a target path outside its package and FirmwareKit
+     stays for the macOS port; `Portable/firmware` already compiles it from there.
+  3. [x] `LightTouchMac/`, `LightTouchServices/`, `macOS/build-native.py`, the `macos-arm64` dispatcher
+     target and the `LightTouch`/`CLockdown`/`LightTouchServices` targets (57bb9aaa).
+     `Packages/DeviceServices` stays: `LightTouchCore` (linked by `LightTouchDesktopHost`) depends on
+     `HostServiceWire`/`HostServiceClient`.
+  4. [x] `CONTRIBUTING.md` rewritten without Xcode; stale handoff/branch notes and the stopped TCG
+     profiling proposals removed.
+- [ ] Verify the SwiftPM macOS build after the cleanup on a Mac (`macOS/build-shared.py`, or at least
+  `swift build --product LightTouchDesktopHost --product LightTouchDevice`, then
+  `swift test --package-path Packages/LightTouchCore`). `Package.resolved` lost its Sparkle pin by hand;
+  SwiftPM will refresh its origin hash.
+- [ ] Further pruning, needs a Mac to compile-check: most of `Packages/LightTouchCore` is upstream Cocoa-app
+  logic (App, Apps, UI, Capture, Catalog models) that `macOS/SharedHost` does not import; trim it to what
+  `NativeSession`/`Import`/`NativeAppServices` use, then drop `Packages/DeviceServices` with it.
+  Also unreferenced since `scripts/` went: `build-support/{sources.json,developer-disk-images.json}`.
 
 ## Android bugs seen, not yet fixed
 

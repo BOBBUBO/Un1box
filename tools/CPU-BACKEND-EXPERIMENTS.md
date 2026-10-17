@@ -92,8 +92,9 @@ Private receipts remain outside Git beneath the workspace's
 
 Root reviews and a separate worker offline receipt/log revalidation accompany
 these results. No new engine run is implied by offline review. The next useful
-work is [representative actual-guest TCG profiling](TCG-GUEST-PROFILING.md),
-using existing bounded collectors before another backend integration.
+work is representative actual-guest TCG profiling with the existing bounded
+collectors before another backend integration (the proposal documents were
+retired; see the repository history).
 
 The dated sections below preserve the experiment's progression. Statements
 marked source-only or unrun describe their historical checkpoint; the current

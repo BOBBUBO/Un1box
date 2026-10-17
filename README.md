@@ -94,12 +94,10 @@ python3 Desktop/build.py --matrix
 staging and native macOS build/package recipes. Builds use the appropriate
 platform toolchains and explicit dependency inputs. Android currently uses its
 [Gradle/native build route](Android/BUILD-AND-RUN.md). See also
-[Linux packaging](Linux/packaging/README.md),
-[macOS shared host](macOS/SharedDesktop/README.md), and
-[session handoff](SESSION-HANDOFF.md).
+[Linux packaging](Linux/packaging/README.md) and
+[macOS shared host](macOS/SharedDesktop/README.md).
 
-[CONTRIBUTING.md](CONTRIBUTING.md) retains upstream Cocoa/Xcode development and
-firmware-preparation instructions. Compile/package success is distinct from
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the repository layout, firmware preparation, tests and style. Compile/package success is distinct from
 actual guest acceptance. Use focused checks for changed behavior, preserve
 working saves and retain failed test evidence.
 

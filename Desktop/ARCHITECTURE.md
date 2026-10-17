@@ -54,8 +54,7 @@ shared Tk `MacHost`. It uses a separate default library and leaves installed
 Cocoa/Linux libraries untouched. Shared profile/archive code now lives in
 `Desktop/lighttouch_desktop`; Linux retains compatibility imports. See the
 adapter README for the concrete lifecycle boundary and missing services.
-The upstream Xcode frontend may remain a reference, not a second source of
-product UI requirements. Adopting Tk on macOS needs packaged Tcl/Tk validation,
+Adopting Tk on macOS needs packaged Tcl/Tk validation,
 main-thread event handling and native dialog/menu checks; this is unqualified.
 `macos-shared-arm64` selects the separate shared bundle recipe with an explicit
 self-contained Python/Tk runtime. Source and synthetic host tests are not a

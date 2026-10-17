@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a native macOS TCG/CGL engine from an existing qemu-ios checkout.
 
-This recipe uses native Homebrew dependencies; build-native.py later copies
+This recipe uses native Homebrew dependencies; build-shared.py later copies
 and relocates their dylib closure into the development app. No guest is run.
 Use a memory/time supervisor on shared hosts. Requires ninja, meson, jq,
 pkg-config, glib, pixman, libslirp, OpenSSL3 and the macOS Command Line Tools.
