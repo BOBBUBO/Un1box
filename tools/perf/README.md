@@ -31,7 +31,6 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
 
 In-app on the Poco: v0.0.1 50-52 s, big-core build 39-41 s.
 
-Measured and rejected: a 16K jump cache; per-ASID jump caches (wipes 20.9K ->
-3.2K per boot, no time change; branch `exp/asid-jmp-cache` in the engine);
+Measured and rejected: a 16K jump cache;
 lock-free timer counter reads; isolating the vCPU on the prime core (worse
 animation on the Pixel); LTO on Android (no measurable phone gain).

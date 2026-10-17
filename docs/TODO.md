@@ -29,10 +29,22 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Cleanup
 
-- [ ] Prune code no port uses: the upstream LightTouchMac app/Xcode project and Swift packages
-  (our macOS port is `macOS/` + `Desktop/`), and anything else only they reference. Keep
-  `LightTouchMac/Resources/firmware-catalog.json` (Android assets, `lighttouch-prepare` and
-  ASSETS.md use it): move it and update those references.
+- [ ] Prune the upstream Mac app code. Our macOS port still builds with SwiftPM from the root
+  `Package.swift` (`macOS/build-shared.py`), so this goes in stages:
+  1. Safe now (no port references): `LightTouchMac.xcodeproj`, `LightTouchMac.xcworkspace`,
+     `*.xctestplan`, `.swift-format`, `Packages/BuildTools`, `Packages/ReleaseChecks`, `Models/`,
+     `scripts/` except `check-android-package.py` and `measure-android-session.py`,
+     `tests/offline`, `tests/sessions`, and `Configuration/{Shared.xcconfig,ExportOptions.plist,
+     Tool.entitlements,Debug.lldbinit}`.
+  2. Move `LightTouchMac/Resources/firmware-catalog.json` (Android gradle, `lighttouch-prepare`,
+     firmware-matrix tests, docs) and `Packages/FirmwareKit/Sources/CActivation` (Portable/firmware
+     CMake, so Android too) somewhere neutral; update the references.
+  3. Retire `macOS/build-native.py` and drop the `LightTouch`, `CLockdown` and
+     `LightTouchServices` targets from `Package.swift`; then `LightTouchMac/`,
+     `LightTouchServices/` and `Packages/DeviceServices` can go.
+  4. Keep `Packages/{HostRuntime,DeviceRuntime,FirmwareKit,LightTouchCore}`, `LightTouchDevice/`
+     and `Configuration/LightTouchDevice{-Info.plist,.entitlements}` (macOS port). Rewrite the
+     Xcode parts of `CONTRIBUTING.md`. Verify with a macOS build (needs a Mac).
 
 ## Android bugs seen, not yet fixed
 

@@ -23,3 +23,6 @@ sh("input", "swipe", *gpt(rect, .9, .5), *gpt(rect, .15, .5), "300"); time.sleep
 sh("input", "tap", *gpt(rect, .143, .127)); time.sleep(18)  # Flight Control
 sh("input", "tap", *gpt(rect, .153, .629)); time.sleep(4)   # PLAY!
 subprocess.run([sys.executable, os.path.join(D, "gamefps.py"), secs])
+if os.environ.get("FC_SHOT"):
+    with open(os.environ["FC_SHOT"], "wb") as f:
+        f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True).stdout)

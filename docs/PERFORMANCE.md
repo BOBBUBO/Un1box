@@ -35,14 +35,14 @@ treats the app's worker process differently, and that turned out to be the large
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| One TB jump cache per ARM ASID (16 per CPU, lazy epoch clearing) instead of emptying the only one on every context switch | `f9fe5bfd74` | Flight Control play on the Poco (`fcbench.py`, three interleaved 30 s rounds): 18.1/18.1 → 20.1/19.7/20.2 fps, +10%. No change to boot time, which is why it was first parked. A 64K-entry geometry was worse in play (16.8/16.8/18.0). |
 | Android builds default to API 29 native ELF TLS | `5323ba7cfc` | Removes emulated-TLS calls from every TCG helper that touches thread-locals: ~5–8% faster boot. |
 | PKE: keep the Montgomery radix inverse for the loaded modulus | `a41eb8e07b` | The boot's RSA work recomputed it on every operation: ~7% faster boot. |
 | Already in the fork before this work (upstream adopted them later) | 909d3ccb62; cdbcff9724, 38642ff7a2, a4749f1ba6 | 4K target pages; learned per-TB I/O instruction limits (no re-translation after mid-block device reads). |
 
 ### Measured and rejected
 
-No gain, so not kept: larger or per-ASID TB jump caches (engine branch `exp/asid-jmp-cache`),
-a lockless timer counter, the vCPU alone on the prime core, LTO for the Android engine.
+No gain, so not kept: a larger (64K-entry) TB jump cache, a lockless timer counter, the vCPU alone on the prime core, LTO for the Android engine.
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
 
 ## Current state and next targets
@@ -51,6 +51,6 @@ The upstream qemu-ios merge brings no speed by itself (its two TCG wins were alr
 | --- | --- | --- |
 | Boot to lock screen (in app) | ~21 s | ~37–45 s |
 | Springboard Home ↔ Spotlight | ~50 fps | ~47–51 fps |
-| Flight Control 1.9.2, in play | — | ~24 fps |
+| Flight Control 1.9.2, first 30 s of play (`fcbench.py`) | — | ~20 fps, with ~25 gaps ≥ 200 ms per 30 s |
 
 Games are the main gap; see [TODO.md](TODO.md).
