@@ -13,13 +13,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
@@ -57,6 +61,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var performanceEpoch = SystemClock.elapsedRealtimeNanos()
     private var performanceInFlight = false
     private var performanceNowMs by mutableLongStateOf(0L)
+    // Guest frame rate: one sample per second of running, the last 60 kept for the graph.
+    private val guestFps = mutableStateListOf<Float>()
+    private var guestFpsMark: Pair<Long, Long>? = null
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
     private var storeOpen by mutableStateOf(false)
@@ -178,6 +185,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             val reportedError = b.getString("error") ?: ""
                             if (reportedError.isNotEmpty() || status == "running") error = reportedError
                             workerPid = b.getInt("pid")
+                            trackGuestFps(if (status == "running") b.getLong("guestFrames", -1L) else -1L)
                             sessionOwned = b.getBoolean("sessionStarted")
                             val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
                             if (socket != muxSocket) { muxSocket = socket; if (socket.isNotEmpty() && storeOpen) store.refreshGuest() }
@@ -239,6 +247,19 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (performanceNowMs < stamp) return " · age unavailable"
         return " · ${(performanceNowMs - stamp) / 1_000}s ago"
     }
+    /** Frames the guest produced per second (a static screen produces none). */
+    private fun trackGuestFps(frames: Long) {
+        val now = SystemClock.elapsedRealtime()
+        val mark = guestFpsMark
+        if (frames < 0 || (mark != null && frames < mark.second)) { guestFpsMark = null; guestFps.clear(); return }
+        if (mark == null) { guestFpsMark = now to frames; return }
+        if (now - mark.first < 1000) return
+        guestFps.add((frames - mark.second) * 1000f / (now - mark.first))
+        if (guestFps.size > 60) guestFps.removeAt(0)
+        guestFpsMark = now to frames
+    }
+    private fun guestFpsSummary(): String = if (guestFps.isEmpty()) "" else
+        String.format(Locale.ROOT, " · %.1f fps · avg %.1f over %d s", guestFps.last(), guestFps.average(), guestFps.size)
     private fun performanceNumber(value: Double) = String.format(Locale.ROOT, "%.1f", value)
 
     private val importTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -332,6 +353,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                                 "iOS guest CPU / RAM: unavailable",
                                 "Worker PID: " + (sample?.getInt("pid")?.toString() ?: "unavailable") + " · sampled every 2s while open"
                             ).forEach { line -> Text(line, modifier = Modifier.fillMaxWidth().height(22.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            Text("Guest fps, last 60 s (lines at 30 and 60)", modifier = Modifier.fillMaxWidth().height(22.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            FpsGraph(guestFps, Modifier.fillMaxWidth().height(48.dp).testTag("fps_graph"))
                         }
                         Box {
                             OutlinedButton(onClick = { refreshDevices(); deviceMenu = true }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping"), modifier = Modifier.testTag("device_selector")) {
@@ -354,7 +377,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             Text("${record.getString("contacts")}-finger touch" + if (sensors.isEmpty()) "" else "; " + sensors.joinToString(" and "), style = MaterialTheme.typography.bodySmall)
                         }
                         Text(status, Modifier.testTag("session_status"), style = MaterialTheme.typography.titleMedium)
-                        Text(detail, style = MaterialTheme.typography.bodySmall)
+                        Text(detail + guestFpsSummary(), Modifier.testTag("guest_fps"), style = MaterialTheme.typography.bodySmall)
                         if (captureNotice.isNotEmpty()) Text(captureNotice, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                         if (error.isNotEmpty()) Text(error, Modifier.testTag("session_error").semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error)
                         if (status !in listOf("running", "paused", "starting", "stopping")) {
@@ -413,6 +436,22 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 if (preparationOpen) PreparationDialog()
                 if (licensesOpen) LicenseDialog { licensesOpen = false }
             }
+        }
+    }
+    @Composable
+    private fun FpsGraph(samples: List<Float>, modifier: Modifier) {
+        val trace = MaterialTheme.colorScheme.primary
+        Canvas(modifier.background(Color(0xFF1C1C1E))) {
+            fun y(fps: Float) = size.height * (1f - fps.coerceIn(0f, 66f) / 66f)
+            for (mark in listOf(30f, 60f)) drawLine(Color(0xFF48484A), Offset(0f, y(mark)), Offset(size.width, y(mark)), 1f)
+            if (samples.size < 2) return@Canvas
+            val step = size.width / 59f
+            val path = Path()
+            samples.forEachIndexed { i, fps ->
+                val x = size.width - (samples.size - 1 - i) * step
+                if (i == 0) path.moveTo(x, y(fps)) else path.lineTo(x, y(fps))
+            }
+            drawPath(path, trace, style = Stroke(2f))
         }
     }
     @Composable

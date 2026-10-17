@@ -511,7 +511,7 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
             detail="frames "+std::to_string(s.frames);
         }
     }
-    auto arr=env->NewObjectArray(17,env->FindClass("java/lang/String"),nullptr);
+    auto arr=env->NewObjectArray(18,env->FindClass("java/lang/String"),nullptr);
     env->SetObjectArrayElement(arr,0,string(env,states[starting ? (startup_stop_requested ? 4u : 1u) : (!diagnostic.empty() && !runtime ? 5u : std::min(s.state,5u))]));
     env->SetObjectArrayElement(arr,1,string(env,detail));
     env->SetObjectArrayElement(arr,2,string(env,diagnostic));env->SetObjectArrayElement(arr,3,string(env,engine_log_path));env->SetObjectArrayElement(arr,4,string(env,debug_qmp_path));
@@ -528,7 +528,9 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
     env->SetObjectArrayElement(arr,13,string(env,std::to_string(display_lease.inputGeneration(display_lease.currentOwner()))));
     env->SetObjectArrayElement(arr,14,string(env,std::to_string(display_lease.currentOwner())));
     env->SetObjectArrayElement(arr,15,string(env,debug_vcpu_accounting_configured?"1":"0"));
-    env->SetObjectArrayElement(arr,16,string(env,experimental_tcg_ir_cache_requested?"1":"0"));return arr;
+    env->SetObjectArrayElement(arr,16,string(env,experimental_tcg_ir_cache_requested?"1":"0"));
+    // Guest frames produced, for the frame-rate readout; -1 without a valid poll.
+    env->SetObjectArrayElement(arr,17,string(env,poll_snapshot_valid?std::to_string(s.frames):"-1"));return arr;
 }
 // Must hold guard. Routine attachment/detachment with no View-owned contacts
 // never cancels an unrelated Home/Power pulse. A real held-contact handoff uses

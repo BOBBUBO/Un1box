@@ -143,6 +143,7 @@ class EngineService : Service() {
                 // Request only. Actual hits/coverage are established by engine logs.
                 putBoolean("experimentalTcgIrCacheRequested", s.getOrElse(16) { "0" } == "1")
                 putLong("displayInputGeneration", s.getOrElse(13) { "0" }.toLongOrNull() ?: 0L)
+                putLong("guestFrames", s.getOrElse(17) { "-1" }.toLongOrNull() ?: -1L)
                 putLong("displayInputOwner", s.getOrElse(14) { "0" }.toLongOrNull() ?: 0L)
                 val shutdown = ShutdownNativeSnapshot.from(s)
                 putBoolean("nativePollSnapshotValid", shutdown.valid)
