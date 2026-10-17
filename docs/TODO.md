@@ -13,9 +13,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `address_space_read`/`write` dispatch (~44K/s); the LCD converts lines and resets TLB dirty
   tracking. Remaining vCPU takes: interrupt delivery (cpu-exec.c), timer IRQ ack writes, VIC, LCD.
   Measure with the `[acct]` BQL tables and `tools/perf/bqlsites.py`.
-- [ ] Pixel: the user sees Doodle Jump swing between full speed and stutters. Check per-second fps
-  (`FC_SERIES=1`) with ADPF on and off; a hint that reports little work once the guest idles at
-  full speed could let clocks drop, then recover, in a cycle.
+- [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
+  (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
+  17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second
+  reaches 60, so ADPF is not causing it (it is worth 1.7× here). Next: per-frame gaps against the
+  BQL hold log, to see whether the slow seconds line up with main-loop work (audio DMA, LCD).
 - [ ] Try the engine's upstream merge (`qemu-ios-android` `dev/upstream-sync`, 7ab545390b) on a phone;
   verified on Linux only.
 - [ ] Desktop frontends poll for frames (Linux 10 ms loop, Windows `SDL_Delay(8)`); move them to
