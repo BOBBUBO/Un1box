@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""Delivered guest fps over a window of live play: SurfaceFlinger timestats for the guest
+SurfaceView. usage: gamefps.py SECONDS (ANDROID_SERIAL set; the game must be on screen)."""
+import re, subprocess, sys, time
+PKG = "org.lighttouch.android"
+def sh(*a): return subprocess.run(["adb", "shell", *a], capture_output=True, text=True).stdout
+secs = float(sys.argv[1]) if len(sys.argv) > 1 else 20
+sh("dumpsys", "SurfaceFlinger", "--timestats", "-enable", "-clear")
+time.sleep(secs)
+out = sh("dumpsys", "SurfaceFlinger", "--timestats", "-dump")
+sh("dumpsys", "SurfaceFlinger", "--timestats", "-disable")
+i = out.find("SurfaceView[" + PKG)
+blk = out[i:out.find("layerName", i + 10)]
+h = {int(k): int(v) for k, v in re.findall(r"(\d+)ms=(\d+)", re.search(r"present2present histogram is as below:\n([^\n]*)", blk).group(1)) if int(v)}
+n = int(re.search(r"totalFrames = (\d+)", blk).group(1))
+gaps = sum(h.values()); mean = sum(k * v for k, v in h.items()) / max(gaps, 1)
+print(f"frames={n} over {secs:.0f}s => {n/secs:.1f} fps delivered; mean gap {mean:.1f}ms; hist {dict(sorted(h.items()))}")

@@ -36,6 +36,10 @@ class EngineService : Service() {
         nativeStatus = { Native.status() }, dispose = { receipt -> disposeAfterShutdown(receipt) },
         persistTerminal = { receipt -> persistTerminalReceipt(receipt) })
     private val performanceSampler by lazy { WorkerPerformanceSampler(applicationContext) }
+    private val usb by lazy { UsbBridge(applicationContext) }
+    // The daemon's parent-death signal follows the thread that forked it, so fork from one that never exits.
+    private val usbThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "usb-bridge") }
+    @Volatile private var usbError = ""
     private val binder = object : IEngine.Stub() {
         override fun performance(observationEpoch: Long): Bundle = performanceSampler.request(Binder.getCallingPid(), observationEpoch)
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
@@ -94,6 +98,8 @@ class EngineService : Service() {
             }
             foreground()
             val libraryRoot = File(filesDir, "library").absolutePath
+            // Before the engine starts: its USB controller dials the bridge when the guest brings the port up.
+            usbError = usbThread.submit<String?> { usb.start(recordId) }.get() ?: ""
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId) else Native.start(libraryRoot, recordId)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) requestAudioFocus() }
             val response = status()
@@ -136,6 +142,8 @@ class EngineService : Service() {
                 putString("error", error.ifEmpty { audioError })
                 putInt("pid", Process.myPid())
                 putInt("uid", Process.myUid())
+                putString("usbMuxSocket", usb.muxSocket ?: "")
+                putString("appServicesError", usbError)
                 putBoolean("sessionStarted", started.isConsumed())
                 putBundle("observations", observations())
             }
@@ -527,5 +535,5 @@ class EngineService : Service() {
         startForeground(1, Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("LightTouch guest").setContentText("Tap to return; Stop ends this worker").setContentIntent(launch).setOngoing(true).build())
     }
-    override fun onDestroy() { performanceSampler.close(); alive.set(false); Native.cancelInput(); abandonAudioFocus(); super.onDestroy() }
+    override fun onDestroy() { usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); abandonAudioFocus(); super.onDestroy() }
 }
