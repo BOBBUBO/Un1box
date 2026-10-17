@@ -24,6 +24,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
@@ -61,9 +64,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var performanceEpoch = SystemClock.elapsedRealtimeNanos()
     private var performanceInFlight = false
     private var performanceNowMs by mutableLongStateOf(0L)
-    // Guest frame rate: one sample per second of running, the last 60 kept for the graph.
-    private val guestFps = mutableStateListOf<Float>()
-    private var guestFpsMark: Pair<Long, Long>? = null
+    // Guest frames per 250 ms over the last 60 s, from the engine process; null when not running.
+    private var guestFrameBuckets by mutableStateOf<IntArray?>(null)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
     private var storeOpen by mutableStateOf(false)
@@ -185,7 +187,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             val reportedError = b.getString("error") ?: ""
                             if (reportedError.isNotEmpty() || status == "running") error = reportedError
                             workerPid = b.getInt("pid")
-                            trackGuestFps(if (status == "running") b.getLong("guestFrames", -1L) else -1L)
+                            guestFrameBuckets = if (status == "running") b.getIntArray("guestFrameBuckets") else null
                             sessionOwned = b.getBoolean("sessionStarted")
                             val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
                             if (socket != muxSocket) { muxSocket = socket; if (socket.isNotEmpty() && storeOpen) store.refreshGuest() }
@@ -247,19 +249,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (performanceNowMs < stamp) return " · age unavailable"
         return " · ${(performanceNowMs - stamp) / 1_000}s ago"
     }
-    /** Frames the guest produced per second (a static screen produces none). */
-    private fun trackGuestFps(frames: Long) {
-        val now = SystemClock.elapsedRealtime()
-        val mark = guestFpsMark
-        if (frames < 0 || (mark != null && frames < mark.second)) { guestFpsMark = null; guestFps.clear(); return }
-        if (mark == null) { guestFpsMark = now to frames; return }
-        if (now - mark.first < 1000) return
-        guestFps.add((frames - mark.second) * 1000f / (now - mark.first))
-        if (guestFps.size > 60) guestFps.removeAt(0)
-        guestFpsMark = now to frames
-    }
-    private fun guestFpsSummary(): String = if (guestFps.isEmpty()) "" else
-        String.format(Locale.ROOT, " · %.1f fps · avg %.1f over %d s", guestFps.last(), guestFps.average(), guestFps.size)
     private fun performanceNumber(value: Double) = String.format(Locale.ROOT, "%.1f", value)
 
     private val importTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -353,8 +342,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                                 "iOS guest CPU / RAM: unavailable",
                                 "Worker PID: " + (sample?.getInt("pid")?.toString() ?: "unavailable") + " · sampled every 2s while open"
                             ).forEach { line -> Text(line, modifier = Modifier.fillMaxWidth().height(22.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                            Text("Guest fps, last 60 s (lines at 30 and 60)", modifier = Modifier.fillMaxWidth().height(22.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                            FpsGraph(guestFps, Modifier.fillMaxWidth().height(48.dp).testTag("fps_graph"))
                         }
                         Box {
                             OutlinedButton(onClick = { refreshDevices(); deviceMenu = true }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping"), modifier = Modifier.testTag("device_selector")) {
@@ -377,7 +364,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             Text("${record.getString("contacts")}-finger touch" + if (sensors.isEmpty()) "" else "; " + sensors.joinToString(" and "), style = MaterialTheme.typography.bodySmall)
                         }
                         Text(status, Modifier.testTag("session_status"), style = MaterialTheme.typography.titleMedium)
-                        Text(detail + guestFpsSummary(), Modifier.testTag("guest_fps"), style = MaterialTheme.typography.bodySmall)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(detail, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                            // Fixed size whether or not it has data, so starting a guest does not move the layout.
+                            FpsGraph(guestFrameBuckets, Modifier.size(144.dp, 40.dp).testTag("fps_graph"))
+                        }
                         if (captureNotice.isNotEmpty()) Text(captureNotice, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                         if (error.isNotEmpty()) Text(error, Modifier.testTag("session_error").semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error)
                         if (status !in listOf("running", "paused", "starting", "stopping")) {
@@ -438,20 +429,48 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             }
         }
     }
+    /**
+     * Guest fps over the last 60 s on a fixed 0-60 scale: each point is the rate over 500 ms, so a dip
+     * shows as a dip instead of being averaged into the second around it. The current rate (last 1 s)
+     * floats at the head of the trace; the corner has the average and the lowest point over the last 10 s.
+     */
     @Composable
-    private fun FpsGraph(samples: List<Float>, modifier: Modifier) {
+    private fun FpsGraph(buckets: IntArray?, modifier: Modifier) {
         val trace = MaterialTheme.colorScheme.primary
-        Canvas(modifier.background(Color(0xFF1C1C1E))) {
-            fun y(fps: Float) = size.height * (1f - fps.coerceIn(0f, 66f) / 66f)
-            for (mark in listOf(30f, 60f)) drawLine(Color(0xFF48484A), Offset(0f, y(mark)), Offset(size.width, y(mark)), 1f)
-            if (samples.size < 2) return@Canvas
-            val step = size.width / 59f
-            val path = Path()
-            samples.forEachIndexed { i, fps ->
-                val x = size.width - (samples.size - 1 - i) * step
-                if (i == 0) path.moveTo(x, y(fps)) else path.lineTo(x, y(fps))
+        Canvas(modifier) {
+            val first = buckets?.indexOfFirst { it > 0 } ?: -1
+            if (buckets == null || first < 0) return@Canvas
+            drawRect(Color(0xFF1C1C1E))
+            val top = 2f
+            fun y(fps: Float) = size.height - fps.coerceIn(0f, 60f) / 60f * (size.height - top)
+            drawLine(Color(0xFF48484A), Offset(0f, y(30f)), Offset(size.width, y(30f)), 1f)
+            drawLine(Color(0xFF48484A), Offset(0f, y(60f)), Offset(size.width, y(60f)), 1f)
+            val step = size.width / (buckets.size - 1)
+            val start = maxOf(first, 1)
+            val points = (start until buckets.size).map { i -> i * step to (buckets[i - 1] + buckets[i]) * 2f }
+            if (points.size >= 2) {
+                val line = Path(); val fill = Path()
+                points.forEachIndexed { k, (x, fps) -> if (k == 0) line.moveTo(x, y(fps)) else line.lineTo(x, y(fps)) }
+                fill.addPath(line); fill.lineTo(points.last().first, size.height); fill.lineTo(points.first().first, size.height); fill.close()
+                drawPath(fill, trace.copy(alpha = 0.25f))
+                drawPath(line, trace, style = Stroke(1.5f))
             }
-            drawPath(path, trace, style = Stroke(2f))
+            val now = buckets.takeLast(4).sum().toFloat()
+            val recent = maxOf(first, buckets.size - 40)
+            val avg = buckets.drop(recent).sum() * 4f / (buckets.size - recent)
+            val low = points.filter { it.first >= recent * step }.minOfOrNull { it.second } ?: now
+            drawIntoCanvas { canvas ->
+                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    textSize = 11.dp.toPx(); color = trace.toArgb(); textAlign = android.graphics.Paint.Align.RIGHT
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
+                }
+                val label = String.format(Locale.ROOT, "%.0f", now)
+                val headY = (y(now) + paint.textSize / 2).coerceIn(paint.textSize, size.height - 1f)
+                canvas.nativeCanvas.drawText(label, size.width - 3f, headY, paint)
+                paint.apply { textSize = 9.dp.toPx(); color = 0xFFAEAEB2.toInt(); textAlign = android.graphics.Paint.Align.LEFT; typeface = android.graphics.Typeface.DEFAULT }
+                canvas.nativeCanvas.drawText(String.format(Locale.ROOT, "10 s avg %.0f  low %.0f", avg, low), 3f, paint.textSize + 1f, paint)
+            }
         }
     }
     @Composable

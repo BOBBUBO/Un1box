@@ -11,6 +11,7 @@ internal object Native {
     external fun start(libraryRoot: String, id: String): String
     external fun recoverStart(libraryRoot: String, id: String): String
     external fun status(): Array<String>
+    external fun guestFrameBuckets(): IntArray
     external fun claimDisplay(): Long
     external fun ownsDisplay(lease: Long): Boolean
     external fun displayInputGeneration(lease: Long): Long

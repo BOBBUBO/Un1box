@@ -60,12 +60,22 @@ std::mutex frame_wake_mutex;
 std::condition_variable frame_wake;
 uint64_t frame_wake_sequence=0;
 VcpuPerformanceHint vcpu_hint;  // frame publisher thread only
+uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
+// Guest frames per 250 ms for the UI's fps graph: the 500 ms status poll alone
+// would average away the dips it is there to show. Written by the publisher
+// thread only; a reader may see a bucket mid-update, which costs one frame.
+constexpr int fps_buckets=256;
+constexpr uint64_t fps_bucket_ns=250000000;
+std::atomic<uint64_t> fps_bucket_id[fps_buckets];
+std::atomic<uint32_t> fps_bucket_frames[fps_buckets];
 void frame_published(void *,uint64_t published) {
     vcpu_hint.framePublished();
+    const uint64_t id=monotonic_ns()/fps_bucket_ns;auto &slot=fps_bucket_id[id%fps_buckets];
+    if(slot.load(std::memory_order_relaxed)!=id){fps_bucket_frames[id%fps_buckets].store(0,std::memory_order_relaxed);slot.store(id,std::memory_order_release);}
+    fps_bucket_frames[id%fps_buckets].fetch_add(1,std::memory_order_relaxed);
     {std::lock_guard<std::mutex> lock(frame_wake_mutex);frame_wake_sequence=published;}
     frame_wake.notify_one();
 }
-uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
 // Diagnostic stages only; they neither admit controls nor establish a guest scene.
 // This telemetry is lock-free on both supported Android ABIs. The sole presenter
 // writes the tuple; a reader samples once and reports overlaps rather than spins.
@@ -896,6 +906,15 @@ JNI(debugEnableTouchTrace) jstring JNICALL Java_org_lighttouch_android_Native_de
 #else
     return string(env,"Debug diagnosis is unavailable in this build");
 #endif
+}
+// Frames in each of the last 240 complete 250 ms buckets, oldest first (0 = none published).
+JNI(guestFrameBuckets) jintArray JNICALL Java_org_lighttouch_android_Native_guestFrameBuckets(JNIEnv *env,jobject) {
+    constexpr int n=240;jint values[n];const uint64_t now=monotonic_ns()/fps_bucket_ns;
+    for(int i=0;i<n;i++){
+        const uint64_t id=now-n+i;
+        values[i]=fps_bucket_id[id%fps_buckets].load(std::memory_order_acquire)==id?jint(fps_bucket_frames[id%fps_buckets].load(std::memory_order_relaxed)):0;
+    }
+    auto array=env->NewIntArray(n);env->SetIntArrayRegion(array,0,n,values);return array;
 }
 JNI(debugArmVcpuAccounting) jstring JNICALL Java_org_lighttouch_android_Native_debugArmVcpuAccounting(JNIEnv *env,jobject) {
 #ifdef LT_ANDROID_DEBUG

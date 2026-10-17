@@ -246,6 +246,9 @@ struct lt_runtime {
         r->wake.notify_one();
     }
     int frame_fd = -1;
+    // Perf work: LT_FRAME_LOG=path appends "monotonic_ns sequence" for each published frame
+    // (tools/perf/framestats.py turns it into fps percentiles, hitches and a chart).
+    FILE *frame_log = nullptr;
     int debug_qmp_fd = -1;
     std::string debug_qmp_path, debug_qmp_endpoint;
     lt_shared_frame *shared = nullptr;
@@ -276,6 +279,8 @@ struct lt_runtime {
             munmap(shared, mapping_bytes);
         if (frame_fd >= 0)
             close(frame_fd);
+        if (frame_log)
+            fclose(frame_log);
         if (debug_qmp_fd >= 0) {
             struct stat st {};
             if (lstat(debug_qmp_path.c_str(), &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == geteuid())
@@ -392,6 +397,11 @@ struct lt_runtime {
                         frame_timestamp = f.timestamp_ns;
                         frame_published = lt::now_ns();
                         frame_count++;
+                        if (frame_log) {
+                            fprintf(frame_log, "%llu %llu\n", (unsigned long long)frame_published.load(),
+                                    (unsigned long long)f.sequence);
+                            fflush(frame_log);
+                        }
                         std::lock_guard<std::mutex> lock(listener_mutex);
                         if (listener)
                             listener(listener_opaque, f.sequence);
@@ -513,6 +523,8 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
             runtime->argv.push_back(const_cast<char *>(argv[i]));
         runtime->argv.push_back(nullptr);
         runtime->audio_enabled = boot.audio_enabled;
+        if (const char *log = getenv("LT_FRAME_LOG"); log && *log)
+            runtime->frame_log = fopen(log, "a");
 #ifdef SYS_memfd_create
         runtime->frame_fd = int(syscall(SYS_memfd_create, "lighttouch-frame", MFD_CLOEXEC | MFD_ALLOW_SEALING));
 #else
