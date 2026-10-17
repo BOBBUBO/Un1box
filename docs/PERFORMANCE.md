@@ -35,6 +35,8 @@ treats the app's worker process differently, and that turned out to be the large
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| Look up the accelerometer/multitouch devices once instead of walking the QOM tree per event | `15c120f16f` | Each 100 Hz tilt sample ran `object_resolve_path_type` under the BQL: about a quarter of the main loop's CPU in Flight Control. |
+| 16K-entry TB jump cache (128 page groups) | `0584dbc9cc` | Flight Control, Poco, three interleaved rounds: 4K 18.8/19.5/20.7 → 16K 22.0/20.9/21.9 fps (+10%); 8K was in between. |
 | One TB jump cache per ARM ASID (16 per CPU, lazy epoch clearing) instead of emptying the only one on every context switch | `f9fe5bfd74` | Flight Control play on the Poco (`fcbench.py`, three interleaved 30 s rounds): 18.1/18.1 → 20.1/19.7/20.2 fps, +10%. No change to boot time, which is why it was first parked. A 64K-entry geometry was worse in play (16.8/16.8/18.0). |
 | Android builds default to API 29 native ELF TLS | `5323ba7cfc` | Removes emulated-TLS calls from every TCG helper that touches thread-locals: ~5–8% faster boot. |
 | PKE: keep the Montgomery radix inverse for the loaded modulus | `a41eb8e07b` | The boot's RSA work recomputed it on every operation: ~7% faster boot. |
@@ -42,8 +44,17 @@ treats the app's worker process differently, and that turned out to be the large
 
 ### Measured and rejected
 
-No gain, so not kept: a larger (64K-entry) TB jump cache, a lockless timer counter, the vCPU alone on the prime core, LTO for the Android engine.
+No gain, so not kept: a 64K-entry TB jump cache (slower than 4K in play), a lockless timer counter, the vCPU alone on the prime core, LTO for the Android engine.
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
+
+### Where game time goes
+
+Debug builds can log the vCPU's time split: `adb shell run-as org.lighttouch.android touch
+files/debug-vcpu-accounting`, start the guest, and read the `[acct]` lines in the record's
+`state/engine-PID.log`. In Flight Control the vCPU is ~91% running guest code, ~2% halted and
+0.5% waiting for the BQL, so games are bound by TCG throughput alone. The host GL calls are
+~2% of the vCPU. With 4K jump caches, TB lookup was ~26% of vCPU time (`qht_lookup_custom`
+12.6%, `helper_lookup_tb_ptr` 9.2%, `tb_lookup_cmp` 4.1%).
 
 ## Current state and next targets
 
@@ -51,6 +62,6 @@ The upstream qemu-ios merge brings no speed by itself (its two TCG wins were alr
 | --- | --- | --- |
 | Boot to lock screen (in app) | ~21 s | ~37–45 s |
 | Springboard Home ↔ Spotlight | ~50 fps | ~47–51 fps |
-| Flight Control 1.9.2, first 30 s of play (`fcbench.py`) | — | ~20 fps, with ~25 gaps ≥ 200 ms per 30 s |
+| Flight Control 1.9.2, first 30 s of play (`fcbench.py`) | — | ~21–22 fps (v0.0.2: ~18) |
 
 Games are the main gap; see [TODO.md](TODO.md).

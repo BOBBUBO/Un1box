@@ -100,6 +100,10 @@ class EngineService : Service() {
             val libraryRoot = File(filesDir, "library").absolutePath
             // Before the engine starts: its USB controller dials the bridge when the guest brings the port up.
             usbError = usbThread.submit<String?> { usb.start(recordId) }.get() ?: ""
+            // Perf work on debug builds: `touch files/debug-vcpu-accounting` (run-as) logs the vCPU's
+            // run/halt/BQL split every 5 s to the record's state/engine-PID.log.
+            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 &&
+                File(filesDir, "debug-vcpu-accounting").exists()) Native.debugArmVcpuAccounting()
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId) else Native.start(libraryRoot, recordId)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) requestAudioFocus() }
             val response = status()
