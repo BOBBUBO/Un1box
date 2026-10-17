@@ -15,6 +15,9 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   per spec on one phone; engines go in the app's `files/bench/`.
 - `appab.py label=apk ...` installs APKs in turn and times an in-app boot to
   the lock screen (buttons found by text via uiautomator).
+- `gamefps.py SECS` reads delivered guest fps while a game is on screen;
+  `fcbench.py APK SECS` installs an APK, boots, unlocks, starts Flight Control
+  (first icon on Home page 2) and measures it. See docs/PERFORMANCE.md.
 - `build-apk.sh ENGINE_DIR NAME` builds an arm64-only debug APK from this
   working tree. Paths are this workstation's; adjust before reuse.
 

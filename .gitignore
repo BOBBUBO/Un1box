@@ -12,8 +12,11 @@ tools/activation/build/
 build/
 docs/matrix-results.json.lock
 
-# Working notes and generated reports stay local
-docs/
+# Working notes and generated reports stay local; the user docs below are tracked
+docs/*
+!docs/ASSETS.md
+!docs/PERFORMANCE.md
+!docs/TODO.md
 *.profraw
 
 # scripts/vendor output and local overrides

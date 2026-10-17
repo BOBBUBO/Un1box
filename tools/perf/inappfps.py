@@ -82,7 +82,7 @@ def latency(name):
         if len(p) == 3 and p[1] != "0" and int(p[1]) < 2**62: rows.append(int(p[1]))
     return sorted(set(rows))
 ap = argparse.ArgumentParser(); ap.add_argument("--no-start", action="store_true"); ap.add_argument("--swipes", type=int, default=6)
-ap.add_argument("--stop", action="store_true"); ap.add_argument("--threads", action="store_true"); ap.add_argument("--boot-only", action="store_true"); a = ap.parse_args()
+ap.add_argument("--stop", action="store_true"); ap.add_argument("--threads", action="store_true"); ap.add_argument("--boot-only", action="store_true"); ap.add_argument("--idle", type=int, default=0); a = ap.parse_args()
 sh("input", "keyevent", "KEYCODE_WAKEUP"); sh("am", "start", "-n", f"{PKG}/.MainActivity"); time.sleep(2)
 rect = guest_rect()
 if not a.no_start:
@@ -131,5 +131,14 @@ if r:
     n = sum(anim.values()); mean = sum((k+0.5)*v for k, v in anim.items())/max(n, 1)
     print(f"posted={total} in-animation n={n} mean gap {mean:.1f}ms => {1000/mean:.1f} fps; min gap {min(anim) if anim else '-'}ms; hist {anim}")
 else: print("no layer stats")
+def proc_ticks():
+    out = sh(f"cat /proc/$(pidof {PKG}:engine)/stat /proc/uptime")
+    st, up = out.strip().split("\n")[-2:]
+    f = st[st.rindex(")")+2:].split()
+    return int(f[11]) + int(f[12]), float(up.split()[0])
+if a.idle:
+    tap_text("Home"); time.sleep(3)
+    t0, u0 = proc_ticks(); time.sleep(a.idle); t1, u1 = proc_ticks()
+    print(f"idle engine process CPU {100*(t1-t0)/100/(u1-u0):.1f}% of one core over {u1-u0:.0f}s", flush=True)
 if a.stop:
     tap_text("Stop")
