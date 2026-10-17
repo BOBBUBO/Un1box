@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -248,11 +250,12 @@ private fun AppIcon(url: String?, size: Int = 48) {
 }
 
 /** Full-screen Legacy Store: search, compatibility, version picker and install progress. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () -> Unit, onClose: () -> Unit) {
     BackHandler(enabled = model.chosen == null, onBack = onClose)
     // Drawn over the activity's content (not a Dialog window, which gets no usable insets edge to edge).
-    Surface(Modifier.fillMaxSize().testTag("store")) {
+    Surface(Modifier.fillMaxSize().testTag("store").semantics { testTagsAsResourceId = true }) {
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {

@@ -26,6 +26,7 @@
 #include "frame_cache.h"
 #include "touch_mapping_result.h"
 #include "experimental_tcg_cache.h"
+#include "performance_hint.h"
 
 namespace {
 std::mutex guard;
@@ -58,7 +59,9 @@ unsigned window_log_budget=8;
 std::mutex frame_wake_mutex;
 std::condition_variable frame_wake;
 uint64_t frame_wake_sequence=0;
+VcpuPerformanceHint vcpu_hint;  // frame publisher thread only
 void frame_published(void *,uint64_t published) {
+    vcpu_hint.framePublished();
     {std::lock_guard<std::mutex> lock(frame_wake_mutex);frame_wake_sequence=published;}
     frame_wake.notify_one();
 }

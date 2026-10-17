@@ -44,7 +44,11 @@ treats the app's worker process differently, and that turned out to be the large
 
 ### Measured and rejected
 
-No gain, so not kept: a 64K-entry TB jump cache (slower than 4K in play), a lockless timer counter, the vCPU alone on the prime core, LTO for the Android engine.
+No gain, so not kept: a 64K-entry TB jump cache (slower than 4K in play), a lockless timer counter,
+LTO for the Android engine, and the vCPU alone on the prime core. Unpinned, the vCPU spends only ~29%
+of a game on the Poco's 3.19 GHz prime core, which looks like a win to take, but pinned there
+(re-pinned each second, because core_ctl drops single-core masks) schedutil held the prime core
+at 1.6–1.9 GHz and Flight Control fell to 9 fps (Pixel animation was also worse earlier).
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
 
 ### Where game time goes
