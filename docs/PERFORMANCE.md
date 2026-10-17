@@ -13,12 +13,23 @@ The harness is in [`tools/perf/`](../tools/perf):
 | --- | --- |
 | `inappfps.py` | In-app boot to lock screen, then Home ↔ Spotlight swipes; delivered fps from SurfaceFlinger `--timestats` for the guest SurfaceView (`--idle SECS` adds idle engine CPU). |
 | `gamefps.py SECS` | Delivered fps while a game runs on screen. |
-| `fcbench.py APK SECS` | Installs an APK, boots, unlocks, starts Flight Control and runs `gamefps.py` (Poco F3 layout). |
+| `fcbench.py APK SECS [GAME]` | Installs an APK, boots, unlocks, starts a game from Home page 2; presets follow each phone's layout (Poco: `flightcontrol`; Pixel: `doodlejump`, `jellycar`; check with `FC_SHOT=file.png`) and runs `gamefps.py`. Debug builds read `files/debug-env` (`KEY=VALUE`), e.g. `LT_CROSS_PAGE_CHAIN=off` or `LT_ADPF=off`, for same-APK A/B runs. |
 | `gameprof.sh` / `inappprof.sh` | `simpleperf` of the `:engine` process during play / swipes: per-thread split, vCPU DSOs and symbols. |
 | `abtimer.sh`, `appab.py`, `scrollab.sh` | Interleaved A/B runs. |
 
 "Delivered fps" is frames the guest surface actually presented, from SurfaceFlinger, not a
-counter inside the app. Measure in-app (not the standalone engine): the Android scheduler
+counter inside the app. It counts guest screen updates, not a fixed refresh: a static screen
+publishes almost nothing.
+
+**What full speed is.** The iPod touch 2G panel refreshes at 60 Hz, and a game's own cap is
+60 or 30 fps. Find a game's cap on a host fast enough to reach it: the Linux frontend runs the
+phone's record headless (`lighttouch-linux --library DIR --record ID --engine libqemu-arm.so
+--headless --seconds N --no-audio --script FILE`, with timed `touch`/`button`/`screenshot`
+lines) and its `status` lines carry the produced frame count. On a Ryzen 7 3700X, Flight
+Control 1.9.2 holds **60 fps** throughout play, so it targets 60: the phones' ~18–25 fps are
+30–40% of full speed.
+
+Measure in-app (not the standalone engine): the Android scheduler
 treats the app's worker process differently, and that turned out to be the largest effect.
 
 ## Android
@@ -36,6 +47,7 @@ treats the app's worker process differently, and that turned out to be the large
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| Chain direct jumps across guest pages (`-accel tcg,cross-page-chain=on`, passed by every port) | engine `53744be61d` | System-mode QEMU never chains a jump to another guest page, because the page could be remapped to other code while the TB found there stays valid. iOS 3 never does that (static kernel text, code-signed user code at fixed addresses, no JIT/ASLR/aliases; a reused page is written first, which invalidates its TBs). A third of TB lookups in Flight Control were such jumps (0.66M of 2M/s). Flight Control, interleaved: Poco 17.3/21.3/19.3/19.0/19.4/22.2 → 27.5/23.9/21.4/25.3/23.7/25.2 fps (means 19.8 → 24.5, +24%); Pixel (Doodle Jump's animated menu; the Pixel's page 2 differs) 17.6/14.0/14.2 → 18.8/17.4/17.8 (+18%); won all 9 pairs. Kernel-only chaining gave about half of it. JellyCar's menu on the Pixel did not move (13.7 → 14.0), so that scene is bound elsewhere. |
 | Hash cs_base into the jump cache; TLBIASID empties only that ASID's jump cache (and the TLB only if it is current) | `68d4df35e4` | Jump-cache misses in Flight Control 20.1% → 10.2% of lookups; whole-cache flushes ~20/s → 0. Poco, three interleaved rounds: 19.3/16.6/20.0 → 20.8/18.8/20.5 fps (+7%). A third of the misses were one PC with two TBs (iOS lazy VFP flips FPEXC.EN, which is in cs_base) evicting each other. |
 | Look up the accelerometer/multitouch devices once instead of walking the QOM tree per event | `15c120f16f` | Each 100 Hz tilt sample ran `object_resolve_path_type` under the BQL: about a quarter of the main loop's CPU in Flight Control. |
 | 16K-entry TB jump cache (128 page groups) | `0584dbc9cc` | Flight Control, Poco, three interleaved rounds: 4K 18.8/19.5/20.7 → 16K 22.0/20.9/21.9 fps (+10%); 8K was in between. |
@@ -52,6 +64,11 @@ of a game on the Poco's 3.19 GHz prime core, which looks like a win to take, but
 (re-pinned each second, because core_ctl drops single-core masks) schedutil held the prime core
 at 1.6–1.9 GHz and Flight Control fell to 9 fps (Pixel animation was also worse earlier).
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
+A 2-way set-associative jump cache halved jump-cache misses in Flight Control (10.6% → 5.4% of
+lookups) but did not move frame rate: Poco 23.3/22.3/22.5 → 25.1/21.0/19.6 fps, Pixel JellyCar
+14.0/13.8/14.9 → 13.7/14.3/13.0. Misses are no longer where lookup time goes: at ~2M lookups/s
+the *hit* path (`tb_lookup` 12%, `helper_lookup_tb_ptr` 6%) costs more than the remaining qht
+lookups (5.6%), mostly cache misses on the jump-cache entry and the TB it points to.
 
 ### Where game time goes
 

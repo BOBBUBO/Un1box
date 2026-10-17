@@ -908,6 +908,15 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
             }
         }
         d->args = {"LightTouch", "-M", machine};
+        // Chain TCG jumps across guest pages: iOS never remaps a code page to other code
+        // in place (the engine's cross-page-chain property documents the assumption).
+        // Interleaved A/B: Poco F3 Flight Control 19.8 -> 24.5 fps (6 pairs), Pixel 10
+        // Doodle Jump menu 15.3 -> 18.0. LT_CROSS_PAGE_CHAIN=off turns it off for A/B runs.
+        const char *chain = getenv("LT_CROSS_PAGE_CHAIN");
+        if (!chain || strcmp(chain, "off") != 0) {
+            d->args.push_back("-accel");
+            d->args.push_back("tcg,cross-page-chain=on");
+        }
         if (n72) {
             d->args.push_back("-m");
             d->args.push_back("128M");

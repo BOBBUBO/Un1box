@@ -201,6 +201,9 @@ import LightTouchSharedDesktopMac
             audio: args.flags.contains("no-audio") ? ["-audio", "driver=none"] : ["-audio", "driver=coreaudio,out.buffer-count=16"],
             netdev: nil)
         config.storageProof = proof
+        // Chain TCG jumps across guest pages, as the Android and Linux ports do
+        // (Portable/src/Storage.cpp has the measurements).
+        config.argv += ["-accel", "tcg,cross-page-chain=on"]
         return config
     }
 

@@ -2,15 +2,17 @@
 """Game fps for an APK: install it, boot to the lock screen, unlock, open Home page 2, run a
 game's launch steps and measure delivered fps with gamefps.py.
 usage: fcbench.py APK [SECONDS] [GAME] (ANDROID_SERIAL set; the game installed in the guest)
-GAME: flightcontrol (default; first icon on Home page 2) or jellycar (second icon; main menu).
+GAME: a preset below; each follows one phone's Home page 2 (Poco: Flight Control, Pocket God; Pixel:
+Doodle Jump, JellyCar). Check what was measured with FC_SHOT=file.png.
 Guest coordinates are fractions of the guest screen, so they work on any phone."""
 import os, subprocess, sys, time
 D = os.path.dirname(os.path.abspath(__file__))
 exec(open(os.path.join(D, "inappfps.py")).read().split("ap = argparse")[0])
 GAMES = {
     # (tap x, y) or seconds to wait
-    "flightcontrol": [(.143, .127), 18, (.153, .629), 4],  # icon, PLAY!
-    "jellycar": [(.397, .127), 20, (.294, .497), 8],       # icon, dismiss the push prompt
+    "flightcontrol": [(.143, .127), 18, (.153, .629), 4],  # icon, PLAY! (Poco layout)
+    "doodlejump": [(.143, .127), 22],                      # main menu (Pixel layout)
+    "jellycar": [(.397, .127), 20, (.294, .497), 8],       # icon, dismiss the push prompt (Pixel layout)
 }
 apk = sys.argv[1]; secs = sys.argv[2] if len(sys.argv) > 2 else "30"
 steps = GAMES[sys.argv[3] if len(sys.argv) > 3 else "flightcontrol"]
