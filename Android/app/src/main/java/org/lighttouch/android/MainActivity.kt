@@ -394,7 +394,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Switch(tiltEnabled, { setTilt(it) }, Modifier.testTag("tilt_toggle"))
-                            Text("Tilt controls", Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                                Text("Tilt controls", style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                if (tiltReadout.isNotEmpty()) Text(tiltReadout, style = MaterialTheme.typography.bodySmall, maxLines = 1, modifier = Modifier.testTag("tilt_readout"))
+                            }
                             FilledTonalButton(onClick = { showDeviceView(true) }, modifier = Modifier.testTag("fullscreen_button")) { Text("Full screen", maxLines = 1, softWrap = false) }
                         }
                         Text("Backgrounding pauses the guest. Reopen and tap Resume.", style = MaterialTheme.typography.bodySmall)
@@ -732,6 +735,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val sensorThread by lazy { HandlerThread("guest-motion").apply { start() } }
     @Volatile private var motionWorker: IEngine? = null
     @Volatile private var displayRotation = 0
+    // Last accelerometer sample sent (m/s², device axes), shown beside the switch at a few Hz so tilt can be checked by eye.
+    @Volatile private var lastAcceleration: FloatArray? = null
+    private var tiltReadout by mutableStateOf("")
+    private val tiltReadoutTick = object : Runnable {
+        override fun run() {
+            tiltReadout = lastAcceleration?.let { v -> String.format(Locale.ROOT, "x %+.1f  y %+.1f  z %+.1f", v[0], v[1], v[2]) } ?: ""
+            if (listening) handler.postDelayed(this, 250)
+        }
+    }
     /** Only the sensors the guest board models are opened; the 2G has an accelerometer and no gyroscope. */
     private fun startSensors() {
         val record = selected
@@ -744,10 +756,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (record.getBoolean("acceleration")) sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sensors.registerListener(this, it, 10_000, thread) }
         if (record.getBoolean("gyro")) sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sensors.registerListener(this, it, 10_000, thread) }
         listening = true
+        handler.removeCallbacks(tiltReadoutTick); handler.post(tiltReadoutTick)
     }
-    private fun stopSensors() { sensors.unregisterListener(this); listening = false; motionWorker = null }
+    private fun stopSensors() { sensors.unregisterListener(this); listening = false; motionWorker = null; lastAcceleration = null; tiltReadout = "" }
     override fun onSensorChanged(event: SensorEvent) {
         val kind = if (event.sensor.type == Sensor.TYPE_GYROSCOPE) 2 else 1
+        if (kind == 1) lastAcceleration = event.values.copyOf(3)
         try { motionWorker?.motion(kind, event.timestamp, event.values.copyOf(3), displayRotation) } catch (_: RemoteException) { }
     }
     private fun setTilt(on: Boolean) {
