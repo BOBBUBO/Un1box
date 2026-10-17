@@ -1,1 +1,0 @@
-../../../../Packages/LightTouchCore/Tests/LightTouchCoreTests/Features/LegacyStoreStub.swift

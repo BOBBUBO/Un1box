@@ -1,1 +1,0 @@
-../../../../LightTouchMac/UI/DeviceModelView.swift

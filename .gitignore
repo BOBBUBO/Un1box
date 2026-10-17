@@ -18,7 +18,3 @@ docs/*
 !docs/PERFORMANCE.md
 !docs/TODO.md
 *.profraw
-
-# scripts/vendor output and local overrides
-Configuration/Vendor.xcconfig
-Configuration/Local.xcconfig

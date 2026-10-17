@@ -1,1 +1,0 @@
-../../../../LightTouchMac/UI/AddDeviceSummary.swift

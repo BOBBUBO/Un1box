@@ -1,1 +1,0 @@
-../../../../LightTouchMac/UI/DevicePlaceholderViewController.swift
