@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -51,6 +52,16 @@ int first_lock_error=0,last_lock_error=0,first_post_error=0,last_post_error=0,la
 int last_buffer_format=0,last_buffer_width=0,last_buffer_height=0,last_buffer_stride=0;
 uint64_t geometry_failures=0,invalid_buffers=0,first_window_error_ns=0;
 unsigned window_log_budget=8;
+// The runtime's publisher wakes the presenter as each frame lands. Polling on a
+// fixed 16 ms sleep added up to a frame of latency and, with the copy and scale
+// on top, capped delivery below the guest's 60 Hz and beat against its vsync.
+std::mutex frame_wake_mutex;
+std::condition_variable frame_wake;
+uint64_t frame_wake_sequence=0;
+void frame_published(void *,uint64_t published) {
+    {std::lock_guard<std::mutex> lock(frame_wake_mutex);frame_wake_sequence=published;}
+    frame_wake.notify_one();
+}
 uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
 // Diagnostic stages only; they neither admit controls nor establish a guest scene.
 // This telemetry is lock-free on both supported Android ABIs. The sole presenter
@@ -144,6 +155,7 @@ using WindowSnapshot = PresentationWindow<ANativeWindow, ANativeWindow_acquire, 
 using WindowPost = PresentationPost<ANativeWindow, ANativeWindow_unlockAndPost>;
 void present() {
     uint64_t configured_generation = 0;
+    uint64_t woken_sequence = 0;
     uint64_t phase_generation=0,phase_epoch=0;
     for (;;) {
         // The snapshot outlives both guarded scopes, so its release is outside
@@ -313,7 +325,12 @@ void present() {
             snapshot.reset(); // Platform release is outside guard, including detach.
             present_stage(PresentPhase::Idle,phase_generation,phase_epoch);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        // A frame published while this one was drawn is presented at once.
+        // The timeout keeps input-status and surface changes serviced while the
+        // guest screen is static.
+        std::unique_lock<std::mutex> wake(frame_wake_mutex);
+        frame_wake.wait_for(wake,std::chrono::milliseconds(16),[&] { return frame_wake_sequence!=woken_sequence; });
+        woken_sequence=frame_wake_sequence;
     }
 }
 }
@@ -428,6 +445,7 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;
     engine.boot.guest_package_path=selected.guest_package_path;engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
     if(status==LT_OK)status=lt_runtime_create(&engine,&prepared_runtime,&error);
+    if(status==LT_OK)status=lt_runtime_set_frame_listener(prepared_runtime,frame_published,nullptr,&error);
 #ifdef LT_ANDROID_DEBUG
     if(status==LT_OK && touch_trace_requested) {
         status=lt_runtime_debug_touch_trace_enable(prepared_runtime,&error);
@@ -445,7 +463,8 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     if(status==LT_OK)status=lt_runtime_start(prepared_runtime,&error);
     if(status!=LT_OK) {
         bool released=!prepared_runtime;
-        if(prepared_runtime){lt_error cleanup=LT_INIT(lt_error);released=lt_runtime_destroy(prepared_runtime,&cleanup)==LT_OK;}
+        if(prepared_runtime){lt_error cleanup=LT_INIT(lt_error);lt_runtime_set_frame_listener(prepared_runtime,nullptr,nullptr,&cleanup);
+            released=lt_runtime_destroy(prepared_runtime,&cleanup)==LT_OK;}
         if(released && prepared_device)lt_device_close(prepared_device);
         std::lock_guard<std::mutex> lock(guard);starting=false;diagnostic=result(status,error);
         return string(env,diagnostic);

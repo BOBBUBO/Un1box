@@ -235,6 +235,13 @@ lt_status lt_runtime_copy_frame(lt_runtime *, void *pixels, uint64_t capacity, u
  * Callers must bound growth/retries and validate the actual successful copy.
  * This additive query preserves the existing layouts and copy_frame contract. */
 lt_status lt_runtime_frame_metadata(lt_runtime *, uint64_t since_sequence, lt_frame_info *, lt_error *);
+/* Wakeup for presenters that would otherwise poll frame_metadata. listener runs
+ * on the runtime's publisher thread right after each publication, with the new
+ * sequence; it must not block or call into the runtime. NULL clears it; once
+ * this returns, no call to the previous listener is in flight. Clear it before
+ * lt_runtime_destroy. Additive; existing layouts are unchanged. */
+typedef void (*lt_frame_listener)(void *opaque, uint64_t sequence);
+lt_status lt_runtime_set_frame_listener(lt_runtime *, lt_frame_listener, void *opaque, lt_error *);
 /* Export a private bounded shared-frame FD. Caller owns fd and closes it.
  * mmap read-only; header followed by capacity bytes; generation seqlock must be
  * equal/even before and after copying. Producer never waits for consumer. */

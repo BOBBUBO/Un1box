@@ -11,6 +11,7 @@
 #include <atomic>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cmath>
 #include <deque>
 #include <dlfcn.h>
@@ -120,6 +121,8 @@ struct Engine {
     decltype(&qemu_ios_audio_capture_start) audio_start = nullptr;
     decltype(&qemu_ios_audio_capture_read) audio_read = nullptr;
     decltype(&qemu_ios_audio_capture_stop) audio_stop = nullptr;
+    // Optional: older engines lack it and are polled instead.
+    decltype(&qemu_ios_ui_attach) attach = nullptr;
     template <class F> F symbol(const char *n) {
         auto p = dlsym(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
@@ -172,6 +175,7 @@ struct Engine {
             LOAD(audio_read, qemu_ios_audio_capture_read);
             LOAD(audio_stop, qemu_ios_audio_capture_stop);
 #undef LOAD
+            attach = reinterpret_cast<decltype(attach)>(dlsym(library, "qemu_ios_ui_attach"));
         } catch (...) {
             dlclose(library);
             library = nullptr;
@@ -224,6 +228,23 @@ struct lt_runtime {
     std::atomic<uint64_t> frame_count{0};
     std::atomic<uint64_t> frame_sequence{0}, frame_timestamp{0}, frame_published{0}, pcm_captured{0}, pcm_pulled{0};
     std::mutex mutex;
+    // The engine signals each captured frame (on QEMU's main loop, holding the
+    // BQL) so the publisher copies it at once instead of on its next 10 ms poll.
+    std::mutex wake_mutex;
+    std::condition_variable wake;
+    uint64_t engine_frames = 0;
+    // Called on the publisher thread after each publication; see the header.
+    std::mutex listener_mutex;
+    lt_frame_listener listener = nullptr;
+    void *listener_opaque = nullptr;
+    static void engine_frame(void *opaque) {
+        auto *r = static_cast<lt_runtime *>(opaque);
+        {
+            std::lock_guard<std::mutex> lock(r->wake_mutex);
+            r->engine_frames++;
+        }
+        r->wake.notify_one();
+    }
     int frame_fd = -1;
     int debug_qmp_fd = -1;
     std::string debug_qmp_path, debug_qmp_endpoint;
@@ -249,6 +270,8 @@ struct lt_runtime {
             guest.join();
         if (publisher.joinable())
             publisher.join();
+        if (engine && engine->attach)
+            engine->attach(nullptr, nullptr);
         if (shared)
             munmap(shared, mapping_bytes);
         if (frame_fd >= 0)
@@ -369,6 +392,9 @@ struct lt_runtime {
                         frame_timestamp = f.timestamp_ns;
                         frame_published = lt::now_ns();
                         frame_count++;
+                        std::lock_guard<std::mutex> lock(listener_mutex);
+                        if (listener)
+                            listener(listener_opaque, f.sequence);
                     }
                     if (audio_enabled) {
                         uint64_t read_epoch;
@@ -431,7 +457,11 @@ struct lt_runtime {
                     quit_sent = true;
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            {
+                std::unique_lock<std::mutex> lock(wake_mutex);
+                const uint64_t seen = engine_frames;
+                wake.wait_for(lock, std::chrono::milliseconds(10), [&] { return engine_frames != seen; });
+            }
         }
         if (shutdown_admission.wake_down() && engine->ready())
             engine->button(QEMU_IOS_BUTTON_HOME, false);
@@ -585,6 +615,8 @@ lt_status lt_runtime_start(lt_runtime *r, lt_error *e) {
         // Start supervisor first. A guest thread creation failure leaves a terminal dirty
         // state; no destructor can block waiting on a guest without a supervisor.
         try {
+            if (r->engine->attach)
+                r->engine->attach(&lt_runtime::engine_frame, r);
             r->publisher_running = true;
             r->publisher = std::thread([r] { r->publish(); });
             r->guest = std::thread([r] {
@@ -735,6 +767,14 @@ lt_status lt_runtime_frame_metadata(lt_runtime *r, uint64_t since, lt_frame_info
     if (status != LT_OK)
         return status;
     return ready ? status : lt::error(e, LT_AGAIN, "no newer coherent published frame");
+}
+lt_status lt_runtime_set_frame_listener(lt_runtime *r, lt_frame_listener listener, void *opaque, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r, "invalid frame listener runtime");
+        std::lock_guard<std::mutex> lock(r->listener_mutex);
+        r->listener = listener;
+        r->listener_opaque = opaque;
+    });
 }
 lt_status lt_runtime_frame_fd(lt_runtime *r, int *fd, uint64_t *bytes, lt_error *e) {
     return lt::guard(e, [&] {
