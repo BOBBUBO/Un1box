@@ -504,7 +504,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private fun bindWorker() {
         workerEvidenceDelivery.advance()
         if (bound) { unbindService(connection); bound = false }
-        bound = bindService(Intent(this, EngineService::class.java), connection, BIND_AUTO_CREATE)
+        // BIND_IMPORTANT gives the worker this activity's scheduling group while
+        // it is on screen (top-app: every core, fast frequency ramp). Without it
+        // the worker sits in foreground, which on Pixel excludes the prime core
+        // and leaves the vCPU's cores near minimum frequency.
+        bound = bindService(Intent(this, EngineService::class.java), connection, BIND_AUTO_CREATE or BIND_IMPORTANT)
     }
     private fun workerExited() {
         val evidenceGeneration = workerEvidenceDelivery.retire(engine != null || workerPid != 0) ?: return
