@@ -43,11 +43,8 @@ safe shutdown lessons; replace its UI with the shared Tk/SDL surfaces after a
 Windows process/frame/input adapter exists. Its native standalone QEMU SDL
 window does not yet consume `Desktop/ui`.
 
-The existing Cocoa/Swift macOS app remains a native reference and development
-backend route. Its library/menu/control code is not shared with Linux today.
-Preserve its CGL/engine/helper integration; add a host adapter for the shared
-Tk/SDL shell, then retire duplicate product controls only after target tests.
-The incremental `macOS/SharedDesktop/SharedGuestWindow.swift` adapter now routes
+The upstream Cocoa/Swift macOS app has been removed from this repository; the
+macOS port is the shared Tk/SDL shell with a native host adapter. The incremental `macOS/SharedDesktop/SharedGuestWindow.swift` adapter now routes
 existing DeviceLink IOSurfaces/input through `Desktop/native/Window.cpp` and
 these exact SDL controls. It is an optional source library, not yet the native
 application's window. Compilation and macOS execution remain unqualified;

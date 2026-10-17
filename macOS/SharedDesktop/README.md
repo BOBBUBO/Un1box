@@ -12,8 +12,7 @@ native engine's CGL path; the SDL renderer presents finished guest pixels.
 
 The optional Swift package product is `LightTouchSharedDesktopMac`. It needs
 Swift6.2/macOS14.4 and SDL2 development headers/library discoverable by `sdl2`
-pkg-config (Homebrew `sdl2`). It is not linked into the default Cocoa executable.
-The `LightTouchDesktopHost` product now owns this adapter for the maintained
+pkg-config (Homebrew `sdl2`). The `LightTouchDesktopHost` product now owns this adapter for the maintained
 shared Tk launcher through `macOS/launcher.py` and `lighttouch_desktop.macos`.
 This is implemented source with asset-free host tests, not yet a native macOS
 compilation, packaged Tcl/Tk or guest execution pass.
@@ -126,7 +125,7 @@ of relying on build-scratch resources. Native resource paths, dependency floors
 and runtime manifest binding are retained in the build receipt. Relocated
 package testing must remove access to the original build scratch/providers
 before claiming self-containment.
-The `macos-arm64` Cocoa route remains a reference, never a shared UI pass.
+The upstream Cocoa app has been removed from this repository.
 
 The initial shared host at source27f4b168 compiled natively on arm64 macOS26
 with Swift6.3.3 and SDL2 API2.32.74. This proves compilation of that revision;

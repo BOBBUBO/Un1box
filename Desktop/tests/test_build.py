@@ -13,10 +13,9 @@ spec.loader.exec_module(build)
 
 
 class PlanTests(unittest.TestCase):
-    def test_native_host_is_explicit_and_mac_ui_adoption_is_honest(self):
-        plan = build.make_plan("macos-arm64", "bundle", "/private/mac output.app", ["--engine", "/private/libqemu-arm.dylib"], host=["linux", "x86_64"])
+    def test_native_host_is_explicit_and_mac_acceptance_is_honest(self):
+        plan = build.make_plan("macos-shared-arm64", "bundle", "/private/mac output.app", ["--engine", "/private/libqemu-arm.dylib"], host=["linux", "x86_64"])
         self.assertFalse(plan["host_compatible"])
-        self.assertFalse(plan["shared_guest_controls"])
         self.assertFalse(plan["guest_acceptance"])
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / "receipt.json"

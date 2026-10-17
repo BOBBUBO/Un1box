@@ -1,15 +1,9 @@
 # Native macOS development build
 
-This builds the existing Cocoa/Swift frontend and its two native helpers, plus
-qemu-ios with TCG and its existing accelerated CGL/OpenGL renderer. It does not
-port the Linux EGL path to macOS or enable CPU hardware virtualization. The
-Xcode project remains the upstream release/archive route.
-
-The Command Line Tools recipe needs Swift 6.2 or newer. Its explicit
-`LIGHTTOUCH_CLT_BUILD` flag excludes the two Xcode-only preview macros and gives
-the development app a separate default device library:
-`~/Library/Application Support/org.lighttouch.native-test/State`.
-Set `LTM_STATE_DIR` to override that with another private test directory.
+This builds the macOS port with the Command Line Tools: qemu-ios with TCG and its existing
+accelerated CGL/OpenGL renderer, the native SDL host and the `LightTouchDevice` engine helper.
+It does not port the Linux EGL path to macOS or enable CPU hardware virtualization. Swift 6.2
+or newer is required.
 
 Only native ARM64/macOS 26 has been compiled here so far. The Swift frontend's
 14.4 deployment target does **not** qualify that operating system floor for the
@@ -20,9 +14,8 @@ unqualified.
 ## Dependencies and engine
 
 Install the macOS Command Line Tools and native dependencies. A trusted existing
-Light Touch.app supplies ancillary tools/dylibs and its resource artwork; this
-recipe does not rebuild those dependencies. Sparkle 2.10.0 is the official
-prebuilt SwiftPM XCFramework, pinned by the root `Package.resolved`.
+Light Touch.app supplies ancillary tools/dylibs (`--vendor-contents`); this
+recipe does not rebuild those dependencies.
 
 ```sh
 brew install ninja meson jq pkgconf glib pixman libslirp openssl@3 libimobiledevice ffmpeg dtc
@@ -41,29 +34,13 @@ needed by the emulated board's big-number crypto implementation.
 
 ## Frontend and test bundle
 
-```sh
-python3 macOS/build-native.py \
-  --vendor-contents "/Applications/Light Touch.app/Contents" \
-  --engine /absolute/private/native-engine/libqemu-arm.dylib \
-  --scratch /absolute/private/mac-swift-build \
-  --output "/absolute/private/LightTouch Native Test.app" --jobs 2
-open "/absolute/private/LightTouch Native Test.app"
-```
-
-For an exported app source archive, pass `--source-revision`; use
-`--engine-revision` to record its separately compiled QEMU revision.
-The recipe refuses to replace an existing app. It compiles `LightTouch`,
-`LightTouchDevice` and `LightTouchServices`, copies and relocates the engine's
-Homebrew dylib closure, then ad-hoc signs and verifies the development app.
-The adjacent `.build-receipt.json` records final file hashes and distinguishes
-newly compiled code from reused dependencies. Keep it beside the app.
-
-This is a development bundle, not a fully rebuilt or notarized release. Named
-vendor resources and guest tools are reused; `Resources/Device`, firmware,
-prepared bases and writable state are excluded. Supply compatible private
-assets separately. No guest was booted to qualify this build. Automatic update
-checks are disabled for the test bundle. Retain upstream dependency licenses
-and perform a source-distribution audit before redistributing it.
+The macOS app is the shared Tk/SDL shell (`Desktop/`) with the `LightTouchDesktopHost` and
+`LightTouchDevice` Swift products from the root `Package.swift`. `macOS/build-shared.py`
+compiles them, stages the shared Python sources and a supplied self-contained Python/Tk
+runtime, relocates the engine's dylib closure, then ad-hoc signs and verifies the bundle.
+See `macOS/SharedDesktop/README.md` for its arguments and the receipt it writes. The recipe
+refuses to replace an existing app. The upstream Cocoa app, its Xcode project and its
+`LightTouchServices` helper are no longer part of this repository.
 
 ## Focused native checks
 

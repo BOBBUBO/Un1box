@@ -45,29 +45,6 @@
       "actions": {},
       "blocker": "Windows reference preview is not integrated into this dispatcher; use windows-shared-x86_64 stage for shared Tk/SDL packaging."
     },
-    "macos-arm64": {
-      "hosts": [
-        [
-          "darwin",
-          "arm64"
-        ]
-      ],
-      "ui": "Existing native Cocoa/Swift development/reference frontend; separate shared Tk/SDL development route is macos-shared-arm64.",
-      "shared_guest_controls": false,
-      "qualification": "Native compile/CGL host checks only; guest parity and distribution signing unqualified.",
-      "actions": {
-        "engine": {
-          "recipe": "macOS/build-engine.py",
-          "fixed": [],
-          "resource_control": "Requires external finite memory/time supervisor and native macOS SDK/dependencies."
-        },
-        "bundle": {
-          "recipe": "macOS/build-native.py",
-          "fixed": [],
-          "resource_control": "Requires external finite memory/time supervisor, native SDK/Swift and explicit trusted vendor inputs."
-        }
-      }
-    },
     "macos-shared-arm64": {
       "hosts": [
         [
@@ -79,6 +56,11 @@
       "shared_guest_controls": true,
       "qualification": "Native compilation, package/sign/Python imports and finite Tk window startup checked on M4; actual shared guest, visual review, services and metrics remain unqualified.",
       "actions": {
+        "engine": {
+          "recipe": "macOS/build-engine.py",
+          "fixed": [],
+          "resource_control": "Requires external finite memory/time supervisor and native macOS SDK/dependencies."
+        },
         "bundle": {
           "recipe": "macOS/build-shared.py",
           "fixed": [],

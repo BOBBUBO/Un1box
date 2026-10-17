@@ -1,8 +1,8 @@
 # Shared desktop foundation and build entrypoint
 
 Read [ARCHITECTURE.md](ARCHITECTURE.md) for current source adoption and planned
-Tk/SDL host adapters. Linux uses the actual shared Tk launcher and SDL controls now. Existing Mac
-Cocoa and isolated Windows WinForms previews retain their reference UI. A new
+Tk/SDL host adapters. Linux uses the actual shared Tk launcher and SDL controls now. The isolated
+Windows WinForms preview retains its reference UI. The
 `macos-shared-arm64` development route adopts the exact shared launcher/SDL
 window through native DeviceRuntime. Native M4 compilation, development packaging,
 signature/Python-import checks and finite Tk window startup have passed. Actual
@@ -54,12 +54,9 @@ python3 Desktop/build.py --target linux-x86_64 --action package --output /privat
 python3 Desktop/build.py --target windows-shared-x86_64 --action stage --output /private/LightTouch-Windows -- \
   --python-runtime /private/windows-python-tk --helper /private/headless-publish \
   --worker /private/lighttouch-windows-worker.exe --native-runtime /private/audited-dlls
-python3 Desktop/build.py --target macos-arm64 --action engine --output /private/mac-engine -- \
+python3 Desktop/build.py --target macos-shared-arm64 --action engine --output /private/mac-engine -- \
   --qemu-source /private/committed/qemu-ios --python /opt/homebrew/bin/python3.13 \
   --openssl-prefix /opt/homebrew/opt/openssl@3 --jobs 2
-python3 Desktop/build.py --target macos-arm64 --action bundle --output '/private/LightTouch Native Test.app' -- \
-  --vendor-contents '/Applications/Light Touch.app/Contents' --engine /private/mac-engine/libqemu-arm.dylib \
-  --scratch /private/mac-swift-build --jobs 2
 python3 Desktop/build.py --target macos-shared-arm64 --action bundle --output '/private/LightTouch Shared.app' -- \
   --vendor-contents '/Applications/Light Touch.app/Contents' --engine /private/mac-engine/libqemu-arm.dylib \
   --engine-revision COMMITTED_QEMU_SHA --firmwarekit /private/native/firmwarekit \
