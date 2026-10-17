@@ -26,7 +26,8 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
-    packaging { jniLibs { useLegacyPackaging = false } }
+    // Guest app-services executables run from nativeLibraryDir, which holds files only when extracted.
+    packaging { jniLibs { useLegacyPackaging = providers.gradleProperty("mobileServicesArm64").isPresent } }
 }
 dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
@@ -51,6 +52,22 @@ val prepareCatalog = tasks.register<Copy>("prepareFirmwareCatalog") {
 }
 android.sourceSets["main"].assets.srcDir(catalogAssets)
 tasks.named("preBuild").configure { dependsOn(prepareCatalog) }
+
+// Optional private usbmuxd-qemu daemon and IPA helper (Android/packaging/build-mobile-android.py OUTPUT/arm64-v8a).
+providers.gradleProperty("mobileServicesArm64").orNull?.let { input ->
+    val executables = listOf("libusbmuxd_qemu.so", "liblt_appservice.so")
+    require(executables.all { file("$input/$it").isFile }) { "mobileServicesArm64 must contain ${executables.joinToString()}" }
+    require("arm64-v8a" in providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",")) {
+        "mobileServicesArm64 requires arm64-v8a in targetAbis"
+    }
+    val mobileServicesJniLibs = layout.buildDirectory.dir("generated/mobileServicesJniLibs")
+    val prepareMobileServices = tasks.register<Copy>("prepareMobileServices") {
+        from(file(input)) { include(executables) }
+        into(mobileServicesJniLibs.map { it.dir("arm64-v8a") })
+    }
+    android.sourceSets["main"].jniLibs.srcDir(mobileServicesJniLibs)
+    tasks.named("preBuild").configure { dependsOn(prepareMobileServices) }
+}
 
 // The publisher can override these for its complete corresponding-source bundle.
 // The local checkout reference is development provenance, not distribution clearance.
