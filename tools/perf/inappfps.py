@@ -35,6 +35,14 @@ def guest_rect():
     return x0+(w-gw)/2, y0+(h-gh)/2, gw, gh
 def box_from_layout(xml):
     # Guest view sits between the controls above it and the Home/Power row.
+    ids = dict((m.group(1), tuple(map(int, m.groups()[1:]))) for m in
+               re.finditer(r'resource-id="([a-z_]+)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml))
+    if "stop_guest" in ids and "home_button" in ids:
+        # Tagged controls (current app): Start/Stop row above, Home row below; the view spans
+        # the content width, from the Start button's left edge to the same margin on the right.
+        x0 = ids.get("start_guest", ids["stop_guest"])[0]
+        w = int(sh("wm", "size").split()[-1].split("x")[0])
+        return x0, ids["stop_guest"][3], w - x0, ids["home_button"][1]
     nodes = [tuple(map(int, b)) for b in re.findall(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)]
     nodes = [n for n in nodes if n[3]-n[1] < 1500]
     _, home = find(xml, "Home")

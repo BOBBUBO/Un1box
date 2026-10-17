@@ -100,10 +100,17 @@ class EngineService : Service() {
             val libraryRoot = File(filesDir, "library").absolutePath
             // Before the engine starts: its USB controller dials the bridge when the guest brings the port up.
             usbError = usbThread.submit<String?> { usb.start(recordId) }.get() ?: ""
-            // Perf work on debug builds: `touch files/debug-vcpu-accounting` (run-as) logs the vCPU's
-            // run/halt/BQL split every 5 s to the record's state/engine-PID.log.
-            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 &&
-                File(filesDir, "debug-vcpu-accounting").exists()) Native.debugArmVcpuAccounting()
+            // Perf work on debug builds (create these with run-as): files/debug-vcpu-accounting logs the
+            // vCPU's run/halt/BQL split every 5 s to the record's state/engine-PID.log; files/debug-env
+            // holds KEY=VALUE engine environment lines, e.g. QEMU_PERFMAP_DIR=<files>/perfmap for JIT
+            // symbols or IT_GLES_PROF=1 (see docs/PERFORMANCE.md).
+            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                if (File(filesDir, "debug-vcpu-accounting").exists()) Native.debugArmVcpuAccounting()
+                File(filesDir, "debug-env").takeIf { it.exists() }?.readLines()?.forEach { line ->
+                    val (key, value) = line.split('=', limit = 2).takeIf { it.size == 2 } ?: return@forEach
+                    android.system.Os.setenv(key.trim(), value.trim(), true)
+                }
+            }
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId) else Native.start(libraryRoot, recordId)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) requestAudioFocus() }
             val response = status()

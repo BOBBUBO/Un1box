@@ -385,8 +385,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                                 "Recovery boots retained writable data and keeps private diagnostics; it does not confirm a previous shutdown.",
                                 style = MaterialTheme.typography.bodySmall)
                         }
-                        if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.", modifier = Modifier.testTag("guest_screen_asleep"))
-                        guestSurface(Modifier.weight(1f).fillMaxWidth())
+                        // The asleep notice overlays the (black) guest view: inserting it above shifted the
+                        // view on every sleep and wake, under the user's finger.
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            guestSurface(Modifier.fillMaxSize())
+                            if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.",
+                                modifier = Modifier.align(Alignment.Center).padding(16.dp).testTag("guest_screen_asleep"), color = Color(0xFF8E8E93))
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { pulse(0) }, enabled = status == "running", modifier = Modifier.testTag("home_button")) { Text("Home") }
                             Button(onClick = { pulse(1) }, enabled = status == "running", modifier = Modifier.testTag("power_button")) { Text("Power") }

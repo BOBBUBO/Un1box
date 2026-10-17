@@ -48,10 +48,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Android bugs seen, not yet fixed
 
-- [ ] The first touch after the guest wakes is often ignored (unlock needs a retry). Partly the
-  "Guest screen asleep" label: it sits above the guest view and disappears on wake, so the view
-  jumps down under the finger. Reserve its space or overlay it.
+- [x] The first touch after the guest wakes was often ignored: the "Guest screen asleep" label sat
+  above the guest view and the view jumped down on wake. It is now an overlay on the guest view.
+  (Harness note: the guest re-sleeps ~5 s after a Power wake; a second Power tap before the wake
+  shows puts it back to sleep.)
 - [ ] Stop was seen disabled once after Store use; not reproduced.
-- [ ] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.
+- [x] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.
 - [ ] Some catalog apps marked compatible need iOS 4 APIs (Doodle Jump 3.x: GCD). Consider flagging
   apps that weak-link iOS 4 symbols, or surfacing Last crash automatically after a quick quit.

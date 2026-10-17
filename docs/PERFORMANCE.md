@@ -25,6 +25,7 @@ treats the app's worker process differently, and that turned out to be the large
 
 | Change | Commit | Before → after |
 | --- | --- | --- |
+| Ask for vCPU performance through ADPF (`APerformanceHint`, API 33+): each published frame reports the vCPU threads' CPU time against a 16.67 ms target | `44cfb147` | Pixel 10, JellyCar's live physics menu, same APK with ADPF switched off by `LT_ADPF=off` (three interleaved rounds): 5.7/5.5/6.0 → 13.2/13.4/13.3 fps (2.3×); screenshots confirm the same scene. No effect on the Poco: its LineageOS power HAL has no hint sessions (`dumpsys performance_hint`: `Hint Session Support: false`), and its 4.19 kernel has no uclamp, so an app has no portable substitute there. |
 | Guest timer 4 at the hardware's 6 MHz instead of 10 MHz (Android only) | `e0d81871` | Interleaved A/B ×2 per phone: Poco animation 43.7/45.0 → 50.9/47.2 fps, frames on the 16.7 ms cadence 62% → 75%; Pixel 47.5/50.1 → 50.7/50.1 fps. Idle engine CPU −5 to −13%. Desktop keeps 10 MHz: an older desktop measurement found worse pacing there. |
 | Bind the engine service with `BIND_IMPORTANT` | `25d12df7` | The `:engine` worker ran in the *foreground* cgroup: on the Pixel that excludes the X925 prime core and leaves the vCPU's cores near 400 MHz. Now it inherits the activity's *top-app* group. Pixel boot to lock screen 55.8 s → 20.9 s (same as the standalone engine); Poco 42.6 s → 37.4–38.5 s. |
 | Deliver frames when the engine publishes them | `09381ce2` | Frames crossed two polling timers (the runtime publisher's 10 ms poll, then a fixed 16 ms sleep *after* each present), so present gaps were never under ~16.7 ms + work and frames were dropped. Now the engine's `qemu_ios_ui_attach` callback wakes the publisher and a new `lt_runtime_set_frame_listener` wakes the presenter. Home ↔ Spotlight: Pixel 29–32 → 50.2–50.6 fps, Poco 36–37 → 44.8–49.2 fps. |
@@ -35,6 +36,7 @@ treats the app's worker process differently, and that turned out to be the large
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| Hash cs_base into the jump cache; TLBIASID empties only that ASID's jump cache (and the TLB only if it is current) | `68d4df35e4` | Jump-cache misses in Flight Control 20.1% → 10.2% of lookups; whole-cache flushes ~20/s → 0. Poco, three interleaved rounds: 19.3/16.6/20.0 → 20.8/18.8/20.5 fps (+7%). A third of the misses were one PC with two TBs (iOS lazy VFP flips FPEXC.EN, which is in cs_base) evicting each other. |
 | Look up the accelerometer/multitouch devices once instead of walking the QOM tree per event | `15c120f16f` | Each 100 Hz tilt sample ran `object_resolve_path_type` under the BQL: about a quarter of the main loop's CPU in Flight Control. |
 | 16K-entry TB jump cache (128 page groups) | `0584dbc9cc` | Flight Control, Poco, three interleaved rounds: 4K 18.8/19.5/20.7 → 16K 22.0/20.9/21.9 fps (+10%); 8K was in between. |
 | One TB jump cache per ARM ASID (16 per CPU, lazy epoch clearing) instead of emptying the only one on every context switch | `f9fe5bfd74` | Flight Control play on the Poco (`fcbench.py`, three interleaved 30 s rounds): 18.1/18.1 → 20.1/19.7/20.2 fps, +10%. No change to boot time, which is why it was first parked. A 64K-entry geometry was worse in play (16.8/16.8/18.0). |
@@ -59,6 +61,12 @@ files/debug-vcpu-accounting`, start the guest, and read the `[acct]` lines in th
 0.5% waiting for the BQL, so games are bound by TCG throughput alone. The host GL calls are
 ~2% of the vCPU. With 4K jump caches, TB lookup was ~26% of vCPU time (`qht_lookup_custom`
 12.6%, `helper_lookup_tb_ptr` 9.2%, `tb_lookup_cmp` 4.1%).
+The `[acct]` lines also count jump-cache lookups and misses, split into empty slots, another PC in
+the slot, and the same PC with different `cs_base`/flags (with the differing bits), plus whole-cache
+flushes; `68d4df35e4` was found this way. Guest-side attribution: put `QEMU_PERFMAP_DIR=/data/data/org.lighttouch.android/files`
+in `files/debug-env` (debug builds read `KEY=VALUE` lines into the engine's environment), profile
+with `tools/perf/gameprof.sh`, and map JIT samples to guest PCs with the perf map. In Flight Control
+the guest's time is ~50% kernel (IPC, scheduling, timers), ~41% shared cache, ~8.5% the game itself.
 
 ## Current state and next targets
 
@@ -66,6 +74,7 @@ files/debug-vcpu-accounting`, start the guest, and read the `[acct]` lines in th
 | --- | --- | --- |
 | Boot to lock screen (in app) | ~21 s | ~37–45 s |
 | Springboard Home ↔ Spotlight | ~50 fps | ~47–51 fps |
-| Flight Control 1.9.2, first 30 s of play (`fcbench.py`) | — | ~21–22 fps (v0.0.2: ~18) |
+| Flight Control 1.9.2, first 30 s of play (`fcbench.py`) | — | ~20–22 fps (v0.0.2: ~18) |
+| JellyCar main menu (live physics; `fcbench.py ... jellycar`) | ~13 fps (5.7 without ADPF) | — |
 
 Games are the main gap; see [TODO.md](TODO.md).

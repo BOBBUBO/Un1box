@@ -36,7 +36,8 @@ private:
 
     bool open() {
         // Retried until QEMU has created and named its vCPU threads.
-        if(android_get_device_api_level()<33){failed_=true;return false;}
+        const char *mode=getenv("LT_ADPF");  // "off" for A/B measurements
+        if(android_get_device_api_level()<33 || (mode && !strcmp(mode,"off"))){failed_=true;return false;}
         if(!report_) {
             void *android=dlopen("libandroid.so",RTLD_NOW|RTLD_LOCAL);
             auto manager=android?reinterpret_cast<GetManager>(dlsym(android,"APerformanceHint_getManager")):nullptr;
