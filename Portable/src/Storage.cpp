@@ -911,6 +911,16 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         if (n72) {
             d->args.push_back("-m");
             d->args.push_back("128M");
+#ifdef __ANDROID__
+            // Timer 4 at the hardware's 6 MHz rather than the model's 10 MHz default.
+            // Measured on a Pixel 10 and Poco F3 (2026-10-17, interleaved x2, frame-woken
+            // presenter): delivered animation fps equal or better (Poco 44 -> 49), share of
+            // frames on the 16.7 ms cadence equal or better (Poco 62% -> 75%), idle engine
+            // CPU 5-13% lower. Desktop stays at 10 MHz: ipod_touch_timer.c records a
+            // desktop measurement where 6 MHz made frame pacing worse.
+            d->args.push_back("-global");
+            d->args.push_back("driver=ipodtouch.timer,property=freq-hz,value=6000000");
+#endif
         }
         d->args.insert(d->args.end(),
                        {"-display", "none", "-no-shutdown", "-audio", "driver=none", "-serial",
