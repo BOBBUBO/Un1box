@@ -8,6 +8,8 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 
 /** Pointer IDs survive crossing and index changes. Pixel mapping belongs to native domain. */
+private const val TAG = "LightTouchInput"
+
 class GuestDisplay(context: Context, private val onError: (String) -> Unit = {}, private val isActiveOwner: () -> Boolean = { true }, private val ownerTicket: () -> Long = { 1L }, private val engine: () -> IEngine?) : SurfaceView(context), SurfaceHolder.Callback {
     // A newly created view cannot continue contacts owned by the previous Surface.
     private var rejectedGesture = true
@@ -106,12 +108,15 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
         if (!hasWindowFocus) cancelGesture() else attachActiveSurface()
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (!isActiveOwner() || ownedWorker() == null) { dropLocalGesture(); suppressedContinuations++; return true }
+        if (!isActiveOwner() || ownedWorker() == null) {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) android.util.Log.w(TAG, "touch dropped: owner=${isActiveOwner()} worker=${ownedWorker() != null}")
+            dropLocalGesture(); suppressedContinuations++; return true
+        }
         if (event.actionMasked == MotionEvent.ACTION_CANCEL) { cancelGesture(); return true }
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
             val (worker, token) = ownedWorker() ?: return true
             inputGeneration = try { worker.displayInputGeneration(token) } catch (_: RemoteException) { 0L }
-            if (inputGeneration <= 0L) { dropLocalGesture(); suppressedContinuations++; return true }
+            if (inputGeneration <= 0L) { android.util.Log.w(TAG, "touch dropped: no input generation"); dropLocalGesture(); suppressedContinuations++; return true }
             rejectedGesture = false
         }
         if (rejectedGesture) { suppressedContinuations++; return true }
@@ -136,8 +141,8 @@ class GuestDisplay(context: Context, private val onError: (String) -> Unit = {},
             val admission = try { worker.touchDisplay(token, inputGeneration, event.eventTime * 1_000_000, ids, phases, xy, width, height, display?.rotation?.times(90) ?: 0) }
                 catch (_: RemoteException) { "Guest worker unavailable; input was cancelled" }
             forwardedBatches++
-            if (DisplayInputAdmission.isCancellation(admission)) { expectedCancellationBatches++; dropLocalGesture() }
-            else if (admission.isNotEmpty()) { rejectedBatches++; dropLocalGesture(); onError(admission) }
+            if (DisplayInputAdmission.isCancellation(admission)) { android.util.Log.i(TAG, "gesture cancelled: $admission"); expectedCancellationBatches++; dropLocalGesture() }
+            else if (admission.isNotEmpty()) { android.util.Log.w(TAG, "touch rejected: $admission"); rejectedBatches++; dropLocalGesture(); onError(admission) }
             else {
                 for (index in ids.indices) {
                     if (phases[index] == 2) contactIds.remove(ids[index]) else contactIds.add(ids[index])

@@ -6,13 +6,18 @@ import android.net.Uri
 import android.provider.MediaStore
 import org.json.JSONObject
 import android.os.*
+import android.content.pm.ActivityInfo
+import android.view.WindowInsets as PlatformInsets
+import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -24,6 +29,7 @@ import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 class MainActivity : ComponentActivity(), SensorEventListener {
@@ -51,6 +57,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var performanceEpoch = SystemClock.elapsedRealtimeNanos()
     private var performanceInFlight = false
     private var performanceNowMs by mutableLongStateOf(0L)
+    private var muxSocket by mutableStateOf("")
+    private var appServicesError by mutableStateOf("")
+    private var storeOpen by mutableStateOf(false)
+    private val store by lazy { StoreModel(applicationContext) { muxSocket.ifEmpty { null } } }
+    private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) store.installLocal(uri) }
+    // board-build -> (product type, iOS version), from the bundled firmware catalog.
+    @Volatile private var firmwareTargets: Map<String, StoreTarget> = emptyMap()
+    private var fullscreen by mutableStateOf(false)
+    private var tiltEnabled by mutableStateOf(true)
+    // Hardware buttons are Binder calls; one thread keeps down/up ordered and off the UI thread.
+    private val buttonCalls = Executors.newSingleThreadExecutor { Thread(it, "guest-buttons") }
     private var devices by mutableStateOf<List<Bundle>>(emptyList())
     private var selected by mutableStateOf<Bundle?>(null)
     private var deviceMenu by mutableStateOf(false)
@@ -162,6 +179,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             if (reportedError.isNotEmpty() || status == "running") error = reportedError
                             workerPid = b.getInt("pid")
                             sessionOwned = b.getBoolean("sessionStarted")
+                            val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
+                            if (socket != muxSocket) { muxSocket = socket; if (socket.isNotEmpty() && storeOpen) store.refreshGuest() }
+                            appServicesError = b.getString("appServicesError") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
                         }
@@ -246,13 +266,45 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             preparation = retainedPreparation(); preparedImported = retainedPreparedOutput
             preparedImportError = "Completed preparation is retained; retry importing it as a device."
         }
+        val ui = getSharedPreferences("ui", MODE_PRIVATE)
+        tiltEnabled = ui.getBoolean("tilt", true)
+        fullscreen = ui.getBoolean("fullscreen", false)
+        Thread({
+            try {
+                val entries = JSONObject(assets.open("firmware-catalog.json").bufferedReader().use { it.readText() }).getJSONArray("entries")
+                firmwareTargets = (0 until entries.length()).map { entries.getJSONObject(it) }
+                    .filter { it.has("product_type") && it.has("version") }
+                    .associate { "${it.getString("board")}-${it.getString("build")}" to StoreTarget.of(it.getString("product_type"), it.getString("version")) }
+                handler.post { if (storeOpen) store.useRecord(recordTarget()) }
+            } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
+        }, "store-targets").start()
         bindWorker()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF71DCC8))) {
+                // One SurfaceView moves between the windowed and device layouts, keeping its display lease.
+                val guestSurface = remember { movableContentOf { modifier: Modifier ->
+                    WorkerGuestSurface(worker = engine, currentWorker = { engine },
+                        mayClaim = { view -> mayClaimDisplay() && displayView === view },
+                        ownerTicket = { displayOwnerTicket }, onError = { error = it },
+                        onCreated = { displayView = it },
+                        onReleased = { view -> if (displayView === view) displayView = null },
+                        keepScreenOn = active && status in listOf("starting", "running", "stopping"),
+                        modifier = modifier.background(Color.Black).testTag("guest_display"))
+                } }
+                if (fullscreen) {
+                    BackHandler { showDeviceView(false) }
+                    Box(Modifier.fillMaxSize().background(Color.Black).semantics { testTagsAsResourceId = true }) {
+                        DeviceFrame(DeviceSkin.forBoard(selected?.getString("board")), enabled = status == "running",
+                            button = ::sendButton, screen = { guestSurface(it) }, modifier = Modifier.fillMaxSize().padding(8.dp))
+                        TextButton(onClick = { showDeviceView(false) }, modifier = Modifier.align(Alignment.TopEnd).testTag("exit_fullscreen")) { Text("Exit", color = Color(0xFF8E8E93)) }
+                        if (status != "running") Text(status, Modifier.align(Alignment.BottomCenter).padding(16.dp), color = Color(0xFF8E8E93))
+                    }
+                } else
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp).semantics { testTagsAsResourceId = true }) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("LightTouch", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1)
+                            TextButton(onClick = { openStore() }, modifier = Modifier.testTag("open_store"), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Store") }
                             TextButton(onClick = { togglePerformance() }, modifier = Modifier.testTag("toggle_performance").semantics { stateDescription = if (performanceOpen) "Expanded" else "Collapsed" }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Performance") }
                             TextButton(onClick = { licensesOpen = true }, modifier = Modifier.testTag("open_licenses"), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Licenses") }
                         }
@@ -297,7 +349,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                                 })
                             }
                         }
-                        selected?.let { record -> Text("Guest contacts ${record.getString("contacts")}; gyro ${if (record.getBoolean("gyro")) "deferred/unqualified (modeled)" else "deferred/unqualified (not modeled)"}", style = MaterialTheme.typography.bodySmall) }
+                        selected?.let { record ->
+                            val sensors = listOfNotNull("accelerometer".takeIf { record.getBoolean("acceleration") }, "gyroscope".takeIf { record.getBoolean("gyro") })
+                            Text("${record.getString("contacts")}-finger touch" + if (sensors.isEmpty()) "" else "; " + sensors.joinToString(" and "), style = MaterialTheme.typography.bodySmall)
+                        }
                         Text(status, Modifier.testTag("session_status"), style = MaterialTheme.typography.titleMedium)
                         Text(detail, style = MaterialTheme.typography.bodySmall)
                         if (captureNotice.isNotEmpty()) Text(captureNotice, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
@@ -313,7 +368,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { startGuest() }, enabled = !busy && selected != null && selected?.getBoolean("dirty") != true && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
-                            Button(onClick = { stopGuest() }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed"), modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
+                            Button(onClick = { stopGuest() }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed") && !store.installing, modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
                             Button(onClick = {
                                 val pausing = status != "paused"
                                 if (pausing) displayView?.cancelOwnedGesture()
@@ -331,25 +386,25 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                                 style = MaterialTheme.typography.bodySmall)
                         }
                         if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.", modifier = Modifier.testTag("guest_screen_asleep"))
-                        WorkerGuestSurface(worker = engine, currentWorker = { engine },
-                            mayClaim = { view -> mayClaimDisplay() && displayView === view },
-                            ownerTicket = { displayOwnerTicket }, onError = { error = it },
-                            onCreated = { displayView = it },
-                            onReleased = { view -> if (displayView === view) displayView = null },
-                            keepScreenOn = active && status in listOf("starting", "running", "stopping"),
-                            modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black).testTag("guest_display"))
+                        guestSurface(Modifier.weight(1f).fillMaxWidth())
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { pulse(0) }, enabled = status == "running", modifier = Modifier.testTag("home_button")) { Text("Home") }
                             Button(onClick = { pulse(1) }, enabled = status == "running", modifier = Modifier.testTag("power_button")) { Text("Power") }
                             Button(onClick = { capture() }, enabled = status in listOf("running", "paused"), modifier = Modifier.testTag("screenshot_button")) { Text("Screenshot") }
                         }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(tiltEnabled, { setTilt(it) }, Modifier.testTag("tilt_toggle"))
+                            Text("Tilt controls", Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                            FilledTonalButton(onClick = { showDeviceView(true) }, modifier = Modifier.testTag("fullscreen_button")) { Text("Full screen", maxLines = 1, softWrap = false) }
+                        }
                         Text("Backgrounding pauses the guest. Reopen and tap Resume.", style = MaterialTheme.typography.bodySmall)
-                        if (status !in listOf("running", "paused", "starting", "stopping")) Text("Host gyro: ${sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.name ?: "Unavailable"}. Guest gyro deferred/unqualified.", style = MaterialTheme.typography.bodySmall)
                     }
                 }
+                // Inside the theme: dialogs composed outside it rendered in the default light scheme.
+                if (storeOpen && !fullscreen) StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(), onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { storeOpen = false }
+                if (preparationOpen) PreparationDialog()
+                if (licensesOpen) LicenseDialog { licensesOpen = false }
             }
-            if (preparationOpen) PreparationDialog()
-            if (licensesOpen) LicenseDialog { licensesOpen = false }
         }
     }
     @Composable
@@ -672,20 +727,61 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             else contentResolver.openInputStream(child.uri)?.use { input -> target.outputStream().use { input.copyTo(it) } } ?: error("Cannot read $name")
         }
     }
-    // User scope D12: preserve adapters, keep automatic experimental motion off.
-    private val experimentalMotionEnabled = false
     private var listening = false
+    // Sensor callbacks arrive here, not on the UI thread; motion() is a oneway Binder call.
+    private val sensorThread by lazy { HandlerThread("guest-motion").apply { start() } }
+    @Volatile private var motionWorker: IEngine? = null
+    @Volatile private var displayRotation = 0
+    /** Only the sensors the guest board models are opened; the 2G has an accelerometer and no gyroscope. */
     private fun startSensors() {
-        if (!experimentalMotionEnabled || listening) return
-        // Android units are already rad/s and m/s². Axis transformation is native.
-        sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sensors.registerListener(this, it, 20_000) }
-        sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sensors.registerListener(this, it, 20_000) }
+        val record = selected
+        if (!tiltEnabled || listening || record == null) return
+        motionWorker = engine
+        displayRotation = (display?.rotation ?: 0) * 90
+        val thread = Handler(sensorThread.looper)
+        // 100 Hz: the runtime admits up to 200 Hz per stream. Units are already m/s² and rad/s;
+        // axis and rotation mapping into guest portrait axes is native (lt_map_motion).
+        if (record.getBoolean("acceleration")) sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sensors.registerListener(this, it, 10_000, thread) }
+        if (record.getBoolean("gyro")) sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sensors.registerListener(this, it, 10_000, thread) }
         listening = true
     }
-    private fun stopSensors() { sensors.unregisterListener(this); listening = false }
+    private fun stopSensors() { sensors.unregisterListener(this); listening = false; motionWorker = null }
     override fun onSensorChanged(event: SensorEvent) {
         val kind = if (event.sensor.type == Sensor.TYPE_GYROSCOPE) 2 else 1
-        engine?.motion(kind, event.timestamp, event.values.copyOf(3), display?.rotation?.times(90) ?: 0)
+        try { motionWorker?.motion(kind, event.timestamp, event.values.copyOf(3), displayRotation) } catch (_: RemoteException) { }
+    }
+    private fun setTilt(on: Boolean) {
+        tiltEnabled = on
+        getSharedPreferences("ui", MODE_PRIVATE).edit().putBoolean("tilt", on).apply()
+        if (!on) stopSensors() else if (status == "running") startSensors()
+    }
+    private fun sendButton(id: Int, down: Boolean) {
+        val worker = engine ?: return
+        buttonCalls.execute { try { worker.button(id, down) } catch (_: RemoteException) { } }
+    }
+    /** Device view: the guest in a drawn device, system bars hidden, held in portrait like the real device. */
+    private fun showDeviceView(on: Boolean) {
+        fullscreen = on
+        getSharedPreferences("ui", MODE_PRIVATE).edit().putBoolean("fullscreen", on).apply()
+        applyWindowMode()
+    }
+    private fun applyWindowMode() {
+        val on = fullscreen
+        requestedOrientation = if (on) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        if (Build.VERSION.SDK_INT >= 30) window.insetsController?.let { controller ->
+            if (on) { controller.hide(PlatformInsets.Type.systemBars()); controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
+            else controller.show(PlatformInsets.Type.systemBars())
+        } else @Suppress("DEPRECATION") {
+            window.decorView.systemUiVisibility = if (on) (android.view.View.SYSTEM_UI_FLAG_FULLSCREEN or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE) else 0
+        }
+    }
+    private fun recordTarget(): StoreTarget? = selected?.let { firmwareTargets["${it.getString("board")}-${it.getString("build")}"] }
+    private fun openStore() {
+        storeOpen = true
+        store.close(); store.dismissJob() // Reopen on the search, not a finished install's details.
+        store.useRecord(recordTarget())
+        if (muxSocket.isNotEmpty()) store.refreshGuest()
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
     override fun onStart() { super.onStart(); active = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll); resetPerformanceObservation() }
@@ -701,6 +797,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) applyWindowMode() // Transient bars shown by a swipe hide again.
         // Consult actual Activity focus too: an old callback alone is not authority.
         displayOwnerTicket = DisplayOwners.active.focusChanged(this, hasFocus && hasWindowFocus())
         displayView?.attachActiveSurface()
@@ -720,5 +817,5 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         DisplayOwners.active.stopped(this, displayOwnerTicket)
         handler.removeCallbacks(poll); resetPerformanceObservation(); super.onStop()
     }
-    override fun onDestroy() { displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    override fun onDestroy() { buttonCalls.shutdown(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }

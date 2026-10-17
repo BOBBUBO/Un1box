@@ -23,7 +23,7 @@ interface IEngine {
     void button(int button, boolean down);
     String touch(long timestampNanos, in int[] ids, in int[] phases, in float[] coordinates, int width, int height, int rotation);
     void cancelInput();
-    void motion(int kind, long timestampNanos, in float[] xyz, int rotation);
+    oneway void motion(int kind, long timestampNanos, in float[] xyz, int rotation);
     String screenshot(String path);
     Bundle guestRequest(int operation, String argument, int timeoutMs);
     Bundle guestPoll(long requestId);
