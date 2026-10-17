@@ -6,13 +6,22 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 ## Performance (current focus)
 
 - [ ] Android: steady ~60 Hz guest UI (Springboard animations measure 45–51 fps on Pixel 10 / Poco F3).
-- [ ] Android: steady target frame rate in common period games (Flight Control ~24 fps on Poco F3).
-  Profile the GL passthrough / readback present path during play (`tools/perf/gameprof.sh`).
+- [ ] Android: steady target frame rate in common period games. Now (engine 974c213352): Flight Control
+  35 of 60 fps on the Poco, Doodle Jump menu 32 of 60 and JellyCar menu 23 of 30 on the Pixel.
+- [ ] The vCPU still waits ~9% of wall time for the BQL, behind main-loop holds. What the main loop
+  does under it: the PL080 moves audio to the I2S FIFO one 4-byte element per full
+  `address_space_read`/`write` dispatch (~44K/s); the LCD converts lines and resets TLB dirty
+  tracking. Remaining vCPU takes: interrupt delivery (cpu-exec.c), timer IRQ ack writes, VIC, LCD.
+  Measure with the `[acct]` BQL tables and `tools/perf/bqlsites.py`.
+- [ ] Pixel: the user sees Doodle Jump swing between full speed and stutters. Check per-second fps
+  (`FC_SERIES=1`) with ADPF on and off; a hint that reports little work once the guest idles at
+  full speed could let clocks drop, then recover, in a cycle.
 - [ ] Try the engine's upstream merge (`qemu-ios-android` `dev/upstream-sync`, 7ab545390b) on a phone;
   verified on Linux only.
 - [ ] Desktop frontends poll for frames (Linux 10 ms loop, Windows `SDL_Delay(8)`); move them to
   frame-published wakeups like Android.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
+- [x] Guest fps readout and 60 s graph in the Android app (b11ef28b).
 
 ## Firmware and assets
 

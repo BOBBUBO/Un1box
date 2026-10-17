@@ -1,10 +1,24 @@
 #!/usr/bin/env python3
 """Delivered guest fps over a window of live play: SurfaceFlinger timestats for the guest
-SurfaceView. usage: gamefps.py SECONDS (ANDROID_SERIAL set; the game must be on screen)."""
+SurfaceView. usage: gamefps.py SECONDS [--series] (ANDROID_SERIAL set; the game must be on screen).
+--series prints one fps figure per second instead, to see a rate that swings."""
 import re, subprocess, sys, time
 PKG = "org.lighttouch.android"
 def sh(*a): return subprocess.run(["adb", "shell", *a], capture_output=True, text=True).stdout
 secs = float(sys.argv[1]) if len(sys.argv) > 1 else 20
+def frames(out):
+    i = out.find("SurfaceView[" + PKG)
+    return int(re.search(r"totalFrames = (\d+)", out[i:]).group(1)) if i >= 0 else 0
+if "--series" in sys.argv:
+    sh("dumpsys", "SurfaceFlinger", "--timestats", "-enable", "-clear")
+    series, t0, last = [], time.monotonic(), 0
+    for k in range(int(secs)):
+        time.sleep(max(0, t0 + k + 1 - time.monotonic()))
+        n = frames(sh("dumpsys", "SurfaceFlinger", "--timestats", "-dump"))
+        series.append(n - last); last = n
+    sh("dumpsys", "SurfaceFlinger", "--timestats", "-disable")
+    print(f"fps per second: {' '.join(map(str, series))}; mean {sum(series)/len(series):.1f}, min {min(series)}, max {max(series)}")
+    sys.exit()
 sh("dumpsys", "SurfaceFlinger", "--timestats", "-enable", "-clear")
 time.sleep(secs)
 out = sh("dumpsys", "SurfaceFlinger", "--timestats", "-dump")

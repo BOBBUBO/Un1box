@@ -3,7 +3,7 @@
 game's launch steps and measure delivered fps with gamefps.py.
 usage: fcbench.py APK [SECONDS] [GAME] (ANDROID_SERIAL set; the game installed in the guest)
 GAME: a preset below; each follows one phone's Home page 2 (Poco: Flight Control, Pocket God; Pixel:
-Doodle Jump, JellyCar). Check what was measured with FC_SHOT=file.png.
+Doodle Jump, JellyCar). Check what was measured with FC_SHOT=file.png; FC_SERIES=1 prints fps per second.
 Guest coordinates are fractions of the guest screen, so they work on any phone."""
 import os, subprocess, sys, time
 D = os.path.dirname(os.path.abspath(__file__))
@@ -37,7 +37,7 @@ sh("input", "swipe", *gpt(rect, .9, .5), *gpt(rect, .15, .5), "300"); time.sleep
 for step in steps:
     if isinstance(step, tuple): sh("input", "tap", *gpt(rect, *step))
     else: time.sleep(step)
-subprocess.run([sys.executable, os.path.join(D, "gamefps.py"), secs])
+subprocess.run([sys.executable, os.path.join(D, "gamefps.py"), secs] + (["--series"] if os.environ.get("FC_SERIES") else []))
 if os.environ.get("FC_SHOT"):
     with open(os.environ["FC_SHOT"], "wb") as f:
         f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True).stdout)
