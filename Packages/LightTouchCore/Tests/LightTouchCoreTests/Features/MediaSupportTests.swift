@@ -31,7 +31,7 @@ struct MediaSupportTests {
         let entries = try JSONDecoder().decode(
             Catalog.self,
             from: Data(
-                contentsOf: repositoryRoot.appendingPathComponent("LightTouchMac/Resources/firmware-catalog.json")
+                contentsOf: repositoryRoot.appendingPathComponent("Portable/firmware/firmware-catalog.json")
             )
         ).entries
         #expect(entries.count > 10)

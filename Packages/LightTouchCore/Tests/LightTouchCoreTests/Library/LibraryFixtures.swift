@@ -5,7 +5,7 @@ nonisolated enum LibraryFixtures {
     /// The repository checkout this test file is in.
     static let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    static var shippedCatalog: URL { repo.appendingPathComponent("LightTouchMac/Resources/firmware-catalog.json") }
+    static var shippedCatalog: URL { repo.appendingPathComponent("Portable/firmware/firmware-catalog.json") }
     static var fakeFirmwarekit: URL { repo.appendingPathComponent("tests/fixtures/fake-firmwarekit") }
 
     /// Points the app's state and log roots (Bundled, which logEvent's app.log goes through) at a temporary

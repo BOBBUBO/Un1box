@@ -15,7 +15,7 @@ ROOT = SCRIPT.parents[1]
 
 class FirmwareMatrixTests(unittest.TestCase):
     def test_real_catalog_preserves_upstream_uncertainty_and_sibling_dependencies(self):
-        result = matrix.enumerate_catalog(ROOT / "LightTouchMac/Resources/firmware-catalog.json", all_catalog=True)
+        result = matrix.enumerate_catalog(ROOT / "Portable/firmware/firmware-catalog.json", all_catalog=True)
         self.assertEqual(329, result["entry_count"])
         self.assertEqual(8, len({r["board"] for r in result["entries"]}))
         self.assertEqual(22, sum(bool(r["sibling_entry"]) for r in result["entries"]))
@@ -37,7 +37,7 @@ class FirmwareMatrixTests(unittest.TestCase):
         self.assertTrue(all(r["notes"] for r in later_1g))
 
     def test_stable_only_selection_is_exactly_six_available_builds(self):
-        result = matrix.enumerate_catalog(ROOT / "LightTouchMac/Resources/firmware-catalog.json", stable_only=True)
+        result = matrix.enumerate_catalog(ROOT / "Portable/firmware/firmware-catalog.json", stable_only=True)
         self.assertEqual("upstream_available_only", result["selection"])
         self.assertEqual(329, result["catalog_entry_count"])
         self.assertEqual(6, result["entry_count"])
@@ -46,7 +46,7 @@ class FirmwareMatrixTests(unittest.TestCase):
         self.assertEqual({"available"}, {e["upstream_status"] for e in result["entries"]})
 
     def test_default_selection_has_stable_first_then_explicit_release_majors(self):
-        result = matrix.enumerate_catalog(ROOT / "LightTouchMac/Resources/firmware-catalog.json")
+        result = matrix.enumerate_catalog(ROOT / "Portable/firmware/firmware-catalog.json")
         self.assertEqual("stable_first_and_representative_releases", result["selection"])
         self.assertEqual(11, result["entry_count"])
         self.assertEqual({"available"}, {e["upstream_status"] for e in result["entries"][:6]})
@@ -75,7 +75,7 @@ class FirmwareMatrixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = self.blob(Path(tmp), [{"name": "test-family/manifest.json", "size": len(raw)}], raw)
             pack = matrix.read_guest_manifests(path)
-            result = matrix.enumerate_catalog(ROOT / "LightTouchMac/Resources/firmware-catalog.json", [pack], all_catalog=True)
+            result = matrix.enumerate_catalog(ROOT / "Portable/firmware/firmware-catalog.json", [pack], all_catalog=True)
         rows = {r["id"]: r for r in result["entries"]}
         self.assertEqual("test-family", rows["n81ap-8C148"]["matching_guest_packages"][0]["family"])
         self.assertTrue(rows["n81ap-8C148"]["matching_guest_packages"][0]["stub"])
@@ -109,7 +109,7 @@ class FirmwareMatrixTests(unittest.TestCase):
                 matrix.read_guest_manifests(path)
 
     def test_refuses_broken_source_contract_and_missing_sibling(self):
-        source = json.loads((ROOT / "LightTouchMac/Resources/firmware-catalog.json").read_text())
+        source = json.loads((ROOT / "Portable/firmware/firmware-catalog.json").read_text())
         direct = next(e for e in source["entries"] if e["id"] == "n72ap-7E18")
         wrapped = next(e for e in source["entries"] if e["source"]["kind"] == "rar")
         sibling = next(e for e in source["entries"] if e["recipe"].get("keybag_ramdisk_from"))
@@ -125,7 +125,7 @@ class FirmwareMatrixTests(unittest.TestCase):
 
     def test_prepared_lock_projection_never_marks_contents_or_runtime_verified(self):
         import hashlib
-        result = matrix.enumerate_catalog(ROOT / "LightTouchMac/Resources/firmware-catalog.json", all_catalog=True)
+        result = matrix.enumerate_catalog(ROOT / "Portable/firmware/firmware-catalog.json", all_catalog=True)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "device.lock.json"
             lock = {"format": 1, "board": "n81ap", "build": "8C148", "boot_strategy": "kboot",
@@ -145,14 +145,14 @@ class FirmwareMatrixTests(unittest.TestCase):
                 matrix.attach_lock_metadata(result, [path])
 
     def test_plan_never_executes_and_refuses_nonselected_build(self):
-        result = matrix.preparation_plan(ROOT / "LightTouchMac/Resources/firmware-catalog.json",
+        result = matrix.preparation_plan(ROOT / "Portable/firmware/firmware-catalog.json",
                                          "n72ap-5G77a", "/private/input.ipsw", "/private/new-run", "/tool", "/helper", "/guest")
         self.assertFalse(result["execution_authorized"])
         self.assertEqual([], result["blockers"])
         self.assertIn("--helper", result["create_argv"])
         self.assertFalse(Path("/private/new-run").exists())
         with self.assertRaisesRegex(ValueError, "entry not found"):
-            matrix.preparation_plan(ROOT / "LightTouchMac/Resources/firmware-catalog.json",
+            matrix.preparation_plan(ROOT / "Portable/firmware/firmware-catalog.json",
                                     "n81ap-8G4", "/private/input.ipsw", "/private/new-run", "/tool", None, None)
 
 

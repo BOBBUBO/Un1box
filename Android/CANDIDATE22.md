@@ -24,7 +24,7 @@ QEMU was already optimized in candidate20/21b; this audio fix does not change it
 ## Build
 
 Use the [pinned tools and verified build inputs](BUILD-AND-RUN.md#inputs-and-build).
-Export Android and `LightTouchMac/Resources/firmware-catalog.json` from the Android
+Export Android and `Portable/firmware/firmware-catalog.json` from the Android
 revision above. Export `Portable` and `Packages/FirmwareKit/Sources/CActivation`
 from the native revision. Export the QEMU bridge headers and fixed diagnostic
 helper as described in that guide. Do not omit the catalog or CActivation.

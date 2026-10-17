@@ -97,7 +97,7 @@ tools folder: make it with `python3 tools/get-assets.py --verified-tools`.
 | Windows | Use one of the others, then copy the `.itbase` | Same |
 
 The stock n72 input is `iPod2,1_3.1.3_7E18_Restore.ipsw` (SHA-1 and size are checked
-against the [firmware catalog](../LightTouchMac/Resources/firmware-catalog.json)). Apple
+against the [firmware catalog](../Portable/firmware/firmware-catalog.json)). Apple
 no longer hosts this update; the catalog lists archive mirrors.
 
 **Android:** copy the IPSW and the `verified-tools` folder to the phone. Tap **Prepare
@@ -108,7 +108,7 @@ from stock IPSW**, choose `n72ap-7E18`, then **Stock IPSW** and **Verified tools
 
 ```sh
 python3 tools/get-assets.py --verified-tools
-lighttouch-prepare LightTouchMac/Resources/firmware-catalog.json n72ap-7E18 \
+lighttouch-prepare Portable/firmware/firmware-catalog.json n72ap-7E18 \
   iPod2,1_3.1.3_7E18_Restore.ipsw \
   LightTouch-assets/verified-tools/release-guest-unpacked/guest-tools \
   LightTouch-assets/verified-tools/inventory.json \

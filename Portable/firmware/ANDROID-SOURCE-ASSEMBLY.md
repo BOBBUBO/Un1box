@@ -39,7 +39,7 @@ mkdir -m 700 "$OUT"
 git archive --format=tar --prefix=application/ \
   --output="$OUT/application-source.tar" "$FINAL_APP_REV" \
   Android Portable Packages/FirmwareKit/Sources/CActivation \
-  README.md LICENSE LightTouchMac/Resources/firmware-catalog.json
+  README.md LICENSE Portable/firmware/firmware-catalog.json
 sha256sum "$OUT/application-source.tar"
 ```
 

@@ -64,7 +64,7 @@ See [Linux setup](Linux/launcher/README.md),
 The main exercised baseline is **iPod touch 2G, iOS 3.1.3 (n72ap-7E18)**. A
 prepared iPod touch 4G/iOS 4.2.1 route is also present, with further qualification
 in progress. Upstream's broader
-[firmware catalog](LightTouchMac/Resources/firmware-catalog.json) and device list
+[firmware catalog](Portable/firmware/firmware-catalog.json) and device list
 are preparation references, not verified compatibility claims for these ports.
 A selected firmware/device matrix covering iPhone OS/iOS 1–7 is planned; betas
 and untested preparation routes are outside the current cohort.

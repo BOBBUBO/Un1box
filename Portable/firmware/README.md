@@ -14,7 +14,7 @@ cmake -S Portable/firmware -B /private/build/firmware \
 cmake --build /private/build/firmware -j1
 ctest --test-dir /private/build/firmware --output-on-failure
 /private/build/firmware/lighttouch-prepare \
-  LightTouchMac/Resources/firmware-catalog.json n72ap-7E18 \
+  Portable/firmware/firmware-catalog.json n72ap-7E18 \
   /private/stock.ipsw /private/verified/guest-tools \
   /private/verified/inventory.json /private/new-prepared-device
 ```
@@ -140,7 +140,7 @@ Optional private acceptance checks (outside public CI):
 ```sh
 python3 Portable/firmware/tests/private-acceptance.py /private/new-prepared-device
 python3 Portable/firmware/tests/private-cancel.py /private/build/firmware/liblighttouch_firmware.so \
-  LightTouchMac/Resources/firmware-catalog.json /private/stock.ipsw \
+  Portable/firmware/firmware-catalog.json /private/stock.ipsw \
   /private/verified/guest-tools /private/verified/inventory.json /private/cancelled-output
 ```
 

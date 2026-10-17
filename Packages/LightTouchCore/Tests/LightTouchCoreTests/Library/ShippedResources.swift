@@ -7,7 +7,7 @@ import HostRuntime
 enum ShippedResources {
     static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    static let catalogURL = root.appendingPathComponent("LightTouchMac/Resources/firmware-catalog.json")
+    static let catalogURL = root.appendingPathComponent("Portable/firmware/firmware-catalog.json")
     static var catalog: FirmwareCatalog { try! FirmwareCatalog.load(from: catalogURL) }
 
     /// tests/fixtures/machines.json (`LightTouchDevice '{"mode":{"machines":{}}}'`) as the process's machines, for board lookups

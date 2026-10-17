@@ -10,17 +10,17 @@ Light Touch is a native macOS (AppKit) app that runs a library of emulated legac
 The device catalog covers the iPhone (m68ap), iPhone 3GS (n88ap), iPhone 4 (n90ap), iPod touch 1G to 4G
 (n45ap, n72ap, n18ap, n81ap) and iPad (k48ap). Each device is prepared
 from a stock Apple IPSW by the bundled Swift preparer, `firmwarekit` (`Packages/FirmwareKit`), using
-the keys pinned in `LightTouchMac/Resources/firmware-catalog.json`; there are no hand-prepared images
+the keys pinned in `Portable/firmware/firmware-catalog.json`; there are no hand-prepared images
 per firmware. Each running device is its own helper process (`LightTouchDevice`), which is the only
 thing that links the emulator.
 
 ## Firmwares in the catalog
 
-The shared [firmware catalog](LightTouchMac/Resources/firmware-catalog.json) is the source of truth for
+The shared [firmware catalog](Portable/firmware/firmware-catalog.json) is the source of truth for
 builds, availability, keys and preparation recipes. The CLI reads that same catalog:
 
 ```sh
-firmwarekit create --catalog LightTouchMac/Resources/firmware-catalog.json \
+firmwarekit create --catalog Portable/firmware/firmware-catalog.json \
   --id k48ap-7B500 --ipsw /path/to/stock.ipsw --out /path/to/new-device \
   --helper /path/to/LightTouchDevice --guest-tools /path/to/ipad-guest-tools
 ```

@@ -30,7 +30,7 @@ enum Oracle {
     static let catalog = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("LightTouchMac/Resources/firmware-catalog.json")
+        .appendingPathComponent("Portable/firmware/firmware-catalog.json")
 
     static func entry(_ id: String) throws -> FirmwareEntry {
         struct Catalog: Decodable { var entries: [FirmwareEntry] }

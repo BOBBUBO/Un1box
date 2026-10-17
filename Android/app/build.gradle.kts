@@ -47,7 +47,7 @@ providers.gradleProperty("buildRoot").orNull?.let { output ->
 
 val catalogAssets = layout.buildDirectory.dir("generated/catalogAssets")
 val prepareCatalog = tasks.register<Copy>("prepareFirmwareCatalog") {
-    from(file("../../LightTouchMac/Resources/firmware-catalog.json"))
+    from(file("../../Portable/firmware/firmware-catalog.json"))
     into(catalogAssets)
 }
 android.sourceSets["main"].assets.srcDir(catalogAssets)

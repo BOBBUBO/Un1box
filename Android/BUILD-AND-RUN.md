@@ -13,7 +13,7 @@ This guide follows the verified candidate20 build. It is a Debug development APK
 | Portable domain, firmware and CActivation | `53ea530954411460d915aace69249398801c4101` |
 | QEMU engine and JNI bridge headers/helper, both ABIs | `b59b3620b01da9285dea3a9ee6f58c1bb3cecfc2` |
 
-All62 tracked native/JNI/CActivation files at the two app revisions were checked byte-identical. Candidate20 includes provider frame readiness and a post-capture freshness/coherence check; the Portable/JNI source remains unchanged. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `LightTouchMac/Resources/firmware-catalog.json`.
+All62 tracked native/JNI/CActivation files at the two app revisions were checked byte-identical. Candidate20 includes provider frame readiness and a post-capture freshness/coherence check; the Portable/JNI source remains unchanged. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `Portable/firmware/firmware-catalog.json`.
 
 For an archived Android build, export the catalog explicitly alongside Android:
 
@@ -23,7 +23,7 @@ LT_ENGINE_REPO=/path/to/verified-QEMU-checkout
 LT_APP_REVISION=3409cce3b21d9617723c80ac88665944f51553c3
 LT_NATIVE_REVISION=53ea530954411460d915aace69249398801c4101
 LT_ENGINE_REVISION=b59b3620b01da9285dea3a9ee6f58c1bb3cecfc2
-git -C "$LT_PROJECT_REPO" archive "$LT_APP_REVISION" Android LightTouchMac/Resources/firmware-catalog.json \
+git -C "$LT_PROJECT_REPO" archive "$LT_APP_REVISION" Android Portable/firmware/firmware-catalog.json \
   > android-source.tar
 git -C "$LT_PROJECT_REPO" archive "$LT_NATIVE_REVISION" \
   Portable Packages/FirmwareKit/Sources/CActivation > native-source.tar

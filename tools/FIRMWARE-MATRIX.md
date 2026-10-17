@@ -74,7 +74,7 @@ mounts, boots, extracts or writes a configuration. Redirect results outside Git.
 
 ```sh
 python3 tools/firmware-matrix.py enumerate \
-  --catalog LightTouchMac/Resources/firmware-catalog.json \
+  --catalog Portable/firmware/firmware-catalog.json \
   --guest-pack /private/guest-tools/armv6.itpack \
   --guest-pack /private/guest-tools/armv7.itpack > /private/selected-matrix.json
 
