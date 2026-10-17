@@ -188,4 +188,4 @@ Required guest multi-contact response, concurrent touch/render/nonzero audio, fu
 
 At this guide checkpoint, candidate20 is installed on Poco and its explicit retained-state recovery/QMP diagnosis reaches a visually inspected boot logo. This is not Home, unlock, touch, audio, lifecycle or prepared-stock boot acceptance. Historical candidate15 Home/Photos and later partial wake evidence do not qualify candidate20. The first helper19b attempt ended on a fresh Lock frame; its second attempt had stale copied captures and cannot establish the final guest screen.
 
-Gyro/motion is explicitly deferred/unqualified and does not block the initial goal. Do not enable experimental motion, build a probe/SDK or advertise modeled board gyro as working. Android display/audio/touch/lifecycle and durability remain required.
+Tilt controls (on by default, switch beside the guest) feed the phone's accelerometer to boards that model one, and the gyroscope to boards that model one (the iPod touch 2G has no gyroscope). The value last sent is shown under the switch. Android display/audio/touch/lifecycle and durability remain required.

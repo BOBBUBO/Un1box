@@ -76,7 +76,10 @@ object LegacyStore {
         connection.setRequestProperty("User-Agent", USER_AGENT)
         // HttpURLConnection never follows a redirect across protocols, so an https
         // request cannot be downgraded; the final URL is checked again below.
-        val code = try { connection.responseCode } catch (e: java.io.IOException) {
+        val code = try { connection.responseCode } catch (e: java.net.UnknownHostException) {
+            // GrapheneOS's Network permission and LineageOS's per-app network access both look like no DNS.
+            throw StoreError("Could not reach Legacy Store. Check your connection, and that LightTouch is allowed network access in Android's app settings.")
+        } catch (e: java.io.IOException) {
             throw StoreError("Could not connect to Legacy Store: ${e.message}")
         }
         if (connection.url.protocol != "https") { connection.disconnect(); throw StoreError("The catalog redirected to an insecure address.") }

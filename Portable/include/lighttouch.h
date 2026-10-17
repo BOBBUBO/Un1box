@@ -127,8 +127,8 @@ lt_status lt_library_device_open_observed(lt_library *, const char *record_id, u
                                           lt_progress_fn, void *opaque, lt_device **, lt_error *);
 /* Engine-owned hardware facts. Call before boot; machine is selected by board
  * from engine discovery when boot.machine is null. Cap bits: 1 accel,2 guest
- * gyro MODEL,4 multi-touch,8 frame copy. Gyro is deferred/unqualified, never
- * a working-feature claim. Host sensor presence is reported separately. */
+ * gyro MODEL,4 multi-touch,8 frame copy. Frontends feed host sensors only for
+ * the bits a board sets. Host sensor presence is reported separately. */
 typedef struct {
     uint32_t size, version;
     char machine[32], board[16];
@@ -316,7 +316,6 @@ lt_status lt_runtime_pcm(lt_runtime *, int16_t *, uint32_t capacity_frames, lt_p
 /* Small typed guest operations use the existing agent, never a host/guest shell.
  * Requests are async, at most one pending; caller polls completion. Lost/timeout
  * mutations are not retried. Launch builtin IDs are limited to com.apple.*;
- * Gyro/motion qualification is DEFERRED and unqualified for initial release.
  * A preserved gyro probe API requires an explicitly authorized already-installed workload and
  * actual engine guest gyro capability. No probe binary is synthesized. */
 typedef enum {

@@ -504,7 +504,8 @@ JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEn
         else {
             if(s.state==LT_STOPPED && (s.dirty || !s.guest_shutdown_confirmed))s.state=LT_FAILED;
             if(s.state==LT_FAILED && diagnostic.empty())diagnostic="Guest exited without a confirmed clean shutdown (code "+std::to_string(s.engine_exit)+"); writable state retained. Stop this worker, then explicitly recover in a fresh worker. Diagnostics are retained.";
-            detail="Gyro deferred/unqualified "+std::string((board.capabilities & 2)?"(modeled)":"(not modeled)")+"; contacts "+std::to_string(board.max_contacts)+"; frames "+std::to_string(s.frames)+"; "+(s.dirty?"writable state dirty":"writable state clean")+"; "+(s.guest_shutdown_confirmed?"guest shutdown confirmed":"shutdown unconfirmed");
+            // The writable state is dirty for the whole of every session, so it is not news while running.
+            detail="frames "+std::to_string(s.frames);
         }
     }
     auto arr=env->NewObjectArray(17,env->FindClass("java/lang/String"),nullptr);
