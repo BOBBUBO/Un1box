@@ -42,11 +42,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   What empties the slots (desktop, Flight Control play): 95% are one kernel routine's TLBIASID of the
   current ASID (~60/s, each empties the 16K-entry cache); revalidating entries instead cut misses 40%
   and lost 2% on the Poco (rejected, PERFORMANCE.md). Misses are not the cost any more.
-- [ ] Measure the TB lookup hit-path experiment (`164ec930cc`, `LT_TB_LOOKUP_INLINE=on`, default off).
+- [ ] Confirm the TB lookup hit-path experiment (`164ec930cc`, `LT_TB_LOOKUP_INLINE=on`, default off).
   Fresh Poco Jetpack samples put `tb_lookup` at 5.19% self (46.2% call-chain unwind errors).
   The fully validated hit is now inlined; misses/accounting use the existing lookup, and register
   hardening remains enabled. Preliminary Linux/Android builds pass; disassembly confirms inlining.
-  No speedup claimed yet. Compare direct LT Bench costs and unrecorded same-APK Jetpack pairs.
+  Three same-APK Poco Jetpack title pairs: mean 52.03/53.60/53.80 → 54.13/54.73/54.43 fps
+  (53.14 → 54.43, +2.4%, 3/3 ahead). Ceiling 56/58/58 → 58/60/58, median 52/54/54 →
+  54/54/54, low 46/50/50 → 50/50/50, 1% low 27.94/28.61/28.80 → 28.27/27.99/28.50.
+  Hitches 8/5/3 → 6/8/2; durations 419.0/301.9/153.4 → 304.5/425.1/116.9 ms per 30 s.
+  `icall` best/median 27.1/28.8, 31.2/33.0, 31.6/32.7 → 26.8/28.5, 26.8/27.5, 26.5/27.1 ns.
+  Useful throughput candidate, no consistent pacing gain. Keep off pending reverse-order
+  confirmation and a combined baseline. Exact windows/screenshots in PERFORMANCE.md and local results.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest

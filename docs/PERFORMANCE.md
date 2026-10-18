@@ -341,7 +341,7 @@ Linux/Android builds succeeded (`build/perf-codex/dirty-query-build.txt`). Froze
 same-APK game pairs are pending; no speedup claimed. Keep other experiments off when measuring.
 APK SHA256: `6c92d049a1f724ce4667b8cd86f370f910093cd3dca0e3ec008674ab35f9ea37`.
 
-### TB lookup hit path (experiment pending measurement)
+### TB lookup hit path (2026-10-18, default off pending confirmation)
 
 Engine `164ec930cc` adds `LT_TB_LOOKUP_INLINE=on` (default off). A fresh Poco Jetpack profile
 attributed 5.19% self samples to `tb_lookup`; 46.2% of call chains failed to unwind, so caller
@@ -351,15 +351,38 @@ the fully validated jump-cache hit into callers. Misses and all accounting runs 
 lookup; misses repeat the initial probe. Compiler register hardening remains enabled.
 
 Preliminary Linux and Android builds succeeded (`build/perf-codex/tb-lookup-inline-build.txt`).
-Android disassembly confirms a hit skips the extra function call. No timing or FPS improvement
-is claimed yet; measure direct LT Bench costs and same-APK interleaved Jetpack pairs before
-considering enabling it.
+Android disassembly confirms a hit skips the extra function call.
 
 After removing the separate indexed-cache experiment, Linux/Android builds also succeeded on
 `fd92f34185` (`build/perf-codex/tb-lookup-inline-final-build.txt`). The inlining experiment is
-still off and unmeasured. Its frozen APK/symbols are `tb-lookup-inline.apk` and
+still default off. Its frozen APK/symbols are `tb-lookup-inline.apk` and
 `tb-lookup-inline-symbols/` under `build/perf-codex/`. APK SHA256:
 `7f20b957ab434d21ccbdaf2ba52657a34dee5c7eaa66ec87e391d64cf8cc5ab0`.
+
+Three same-APK interleaved off/on pairs on the Snapdragon 865-class Poco, Jetpack title,
+30 s each. Array caching on; batch fast path and context timing off; no live recorder/full
+accounting. All six scene screenshots confirm the title and recorder off. Zero skipped frames.
+
+| Pair | LT Bench `icall` best / median ns, off → on | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 27.1 / 28.8 → 26.8 / 28.5 | 52.03 → 54.13 | 56 → 58 | 52 → 54 | 46 → 50 | 27.94 → 28.27 | 8 (419.0 ms) → 6 (304.5 ms) |
+| 2 | 31.2 / 33.0 → 26.8 / 27.5 | 53.60 → 54.73 | 58 → 60 | 54 → 54 | 50 → 50 | 28.61 → 27.99 | 5 (301.9 ms) → 8 (425.1 ms) |
+| 3 | 31.6 / 32.7 → 26.5 / 27.1 | 53.80 → 54.43 | 58 → 58 | 54 → 54 | 50 → 50 | 28.80 → 28.50 | 3 (153.4 ms) → 2 (116.9 ms) |
+
+Aggregate mean **53.14 → 54.43 fps (+2.4%)**, ahead in three of three. This is a small throughput
+gain; no consistent pacing improvement: hitches total 16 → 16, duration 874.3 → 846.4 ms over
+90 s per mode, 1% lows remain ~28 fps. `icall` improves clearly in pairs 2/3; other LT Bench
+costs are mixed with frequency variation. Keep the default off until a reverse-order confirmation
+and a combined baseline; this is not steady 60 fps.
+
+Evidence: `build/perf-codex/poco-tb-lookup-inline-{1,2,3}-{off,on}/` contains exact frame logs,
+screenshots, environment, LT Bench and engine logs. `tb-lookup-inline-results.json` records exact
+half-open 30 s boundaries and individual hitch durations. A 15 s attached call-graph profile
+after the final frame window is in `poco-tb-lookup-inline-profile/` (18,037 total samples, zero lost).
+Its symbolized vCPU report has 13,357 samples with 45.6% call-chain unwind errors. The inlined
+hit now appears in callers (`helper_lookup_tb_ptr_cached` 4.08% self, `cpu_exec_loop` 1.00%);
+`tb_lookup_legacy` is 0.09% self / 2.74% inclusive. This is one enabled-arm CPU profile, not a
+matched profile A/B. TLS remains 0.95% self; dirty-flag queries 0.60%, `find_next_bit` 0.42%.
 
 ### Measured and rejected
 
