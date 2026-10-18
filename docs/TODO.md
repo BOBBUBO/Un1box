@@ -53,9 +53,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `icall` best/median 27.1/28.8, 31.2/33.0, 31.6/32.7 → 26.8/28.5, 26.8/27.5, 26.5/27.1 ns.
   Useful throughput candidate, no consistent pacing gain. Keep off pending reverse-order
   confirmation and a combined baseline. Exact windows/screenshots in PERFORMANCE.md and local results.
-  Confirmation is now queued on current engine `9fd2a85805` / `lcd-stages.apk`, with
-  all diagnostics off, order on/off, off/on, on/off. It follows the TLB comparison and
-  precedes LCD stage diagnostics. No confirmation result yet.
+  Confirmation completed on current engine `9fd2a85805` / `lcd-stages.apk`, with
+  all diagnostics off, order on/off, off/on, on/off. Three more pairs: means
+  52.60/52.00/53.63 → 53.23/53.30/53.87 (52.74 → 53.47, +1.4%, 3/3 ahead).
+  Ceiling 58/58/58 → 58/58/58, median 52/52/54 → 54/54/54, low 46/46/48 →
+  48/48/48, 1% low 27.88/28.09/22.14 → 25.85/28.13/28.28. Hitches 6/7/9 →
+  12/6/7, durations 305.3/534.4/683.3 → 822.6/334.5/385.9 ms per 30 s.
+  All six final scenes reviewed, recorder off, zero skips. Six of six pairs across
+  both sets favor throughput; no consistent pacing gain. Combined baseline remains
+  outstanding before enabling by default. LCD stage diagnostics now follow.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest

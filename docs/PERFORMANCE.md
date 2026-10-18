@@ -746,12 +746,25 @@ gain; no consistent pacing improvement: hitches total 16 → 16, duration 874.3 
 90 s per mode, 1% lows remain ~28 fps. `icall` improves clearly in pairs 2/3; other LT Bench
 costs are mixed with frequency variation. Keep the default off until a reverse-order confirmation
 and a combined baseline; this is not steady 60 fps.
-A fresh same-APK confirmation is now queued using current engine `9fd2a85805`
+A fresh same-APK confirmation completed using current engine `9fd2a85805`
 (`lcd-stages.apk`, SHA256 above), order on/off, off/on, on/off, 30 s per arm.
-All diagnostic switches and other experiments are off, array caching on. It follows
-the complete TLB comparison and precedes LCD stage captures; no confirmation result yet.
-Artifacts will be `build/perf-codex/poco-tb-confirm-{1,2,3}-{off,on}/`, summarized by
-`tb-confirm-analyze.py` / `tb-confirm-results.json`.
+All diagnostic switches and other experiments were off, array caching on. All six
+final screenshots reviewed: correct title scene, recorder off, zero skipped frames.
+
+| Pair | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 (on first) | 52.60 → 53.23 | 58 → 58 | 52 → 54 | 46 → 48 | 27.88 → 25.85 | 6 (305.3 ms) → 12 (822.6 ms) |
+| 2 | 52.00 → 53.30 | 58 → 58 | 52 → 54 | 46 → 48 | 28.09 → 28.13 | 7 (534.4 ms) → 6 (334.5 ms) |
+| 3 (on first) | 53.63 → 53.87 | 58 → 58 | 54 → 54 | 48 → 48 | 22.14 → 28.28 | 9 (683.3 ms) → 7 (385.9 ms) |
+
+Aggregate mean **52.74 → 53.47 fps (+1.4%)**, ahead in all three confirmation
+pairs, including both on-first pairs. Across the original and confirmation sets,
+all six pairs favor inlining for throughput, but pacing still does not improve
+consistently: confirmation hitches total **22 → 25**, duration **1523.0 → 1542.9 ms**
+over 90 s per mode. Keep default off pending a combined baseline; no steady-60 or
+stutter fix established. The completed runner handed the phone to LCD stage captures.
+Artifacts: `build/perf-codex/poco-tb-confirm-{1,2,3}-{off,on}/`, summarized by
+`tb-confirm-analyze.py` / `tb-confirm-results.json`, with exact frame windows and hitches.
 
 Evidence: `build/perf-codex/poco-tb-lookup-inline-{1,2,3}-{off,on}/` contains exact frame logs,
 screenshots, environment, LT Bench and engine logs. `tb-lookup-inline-results.json` records exact
