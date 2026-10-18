@@ -111,6 +111,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   verified on Linux only.
 - [ ] Desktop frontends poll for frames (Linux 10 ms loop, Windows `SDL_Delay(8)`); move them to
   frame-published wakeups like Android.
+- [x] Manual Start/Stop scene profiling above the Android FPS graph (engine `50a08eb2d2`).
+  Saves the frontmost app name/bundle ID, per-frame GL totals and slow calls, BQL wait/hold intervals,
+  vCPU wall/CPU counters and Android buffer/scale/pacing/post stages. Pixel Battle Bears identity,
+  and DoodleJump identities, saving/pulling, Stop while paused and text/JSON/PNG reports work; this is diagnostic instrumentation, with no FPS
+  improvement or overhead claim. [PROFILING.md](PROFILING.md) explains capture/retrieval and limits.
+- [ ] Characterize recording overhead with interleaved on/off pairs before treating a captured rate
+  as an uninstrumented baseline. Use manual recordings from the user's hitching scenes to rank
+  slow calls and correlate engine gaps, BQL intervals and Android presentation stalls.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Guest fps readout and 60 s graph in the Android app (b11ef28b).
 

@@ -12,6 +12,7 @@ interface IEngine {
     String importPrepared(String source, String displayName);
     String setGuestPackage(String recordId, String path);
     Bundle status();
+    Bundle profile(boolean recording);
     long claimDisplay();
     String attachDisplay(long lease, in Surface surface);
     void detachDisplay(long lease);

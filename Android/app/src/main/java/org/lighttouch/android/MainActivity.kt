@@ -56,6 +56,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var engineRestarting = false
     private var busy by mutableStateOf(false)
     private var captureNotice by mutableStateOf("")
+    private var profileRecording by mutableStateOf(false)
+    private var profileBusy by mutableStateOf(false)
+    private var profileNotice by mutableStateOf("")
     private var licensesOpen by mutableStateOf(false)
     private var performanceOpen by mutableStateOf(false)
     private var performanceData by mutableStateOf<Bundle?>(null)
@@ -131,6 +134,24 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var active = false
     private var displayOwnerTicket = 0L
     private var displayResumed = false
+    private fun toggleProfile() {
+        val worker = engine ?: return
+        val recording = !profileRecording
+        profileBusy = true
+        Thread({
+            val result = try { worker.profile(recording) }
+                catch (e: Exception) { Bundle().apply { putString("profileError", e.message ?: "Profile capture failed") } }
+            handler.post {
+                if (engine?.asBinder() == worker.asBinder()) {
+                    profileRecording = result.getBoolean("profileRecording")
+                    profileNotice = result.getString("profileNotice") ?: ""
+                    result.getString("profileError")?.takeIf { it.isNotEmpty() }?.let { error = it }
+                }
+                profileBusy = false
+            }
+        }, "profile-control").start()
+    }
+
     private fun ownsDisplay() = active && DisplayOwners.active.owns(this, displayOwnerTicket)
     private fun mayClaimDisplay() = active && displayResumed && DisplayOwners.active.canClaim(this, displayOwnerTicket)
     private var bound = false
@@ -184,9 +205,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             displayAsleep = b.getBundle("observations")?.let {
                                 it.getBoolean("runtimeDiagnosticsAvailable") && it.getLong("engineReady") != 0L && it.getLong("displaySleeping") != 0L
                             } ?: false
-                            val reportedError = b.getString("error") ?: ""
+                            val reportedError = b.getString("profileError")?.takeIf { it.isNotEmpty() } ?: b.getString("error") ?: ""
                             if (reportedError.isNotEmpty() || status == "running") error = reportedError
                             workerPid = b.getInt("pid")
+                            profileRecording = b.getBoolean("profileRecording")
+                            profileNotice = b.getString("profileNotice") ?: ""
                             guestFrameBuckets = if (status == "running") b.getIntArray("guestFrameBuckets") else null
                             sessionOwned = b.getBoolean("sessionStarted")
                             val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
@@ -396,9 +419,21 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         Text(status, Modifier.testTag("session_status"), style = MaterialTheme.typography.titleMedium)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(detail, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                            // Fixed size whether or not it has data, so starting a guest does not move the layout.
-                            FpsGraph(guestFrameBuckets, Modifier.size(144.dp, 40.dp).testTag("fps_graph"))
+                            // Reserve the control and graph space across guest start/stop.
+                            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(144.dp)) {
+                                Box(Modifier.height(40.dp), contentAlignment = Alignment.CenterEnd) {
+                                    if (status == "running" || profileRecording) {
+                                        TextButton(onClick = { toggleProfile() }, enabled = !profileBusy,
+                                            modifier = Modifier.height(40.dp).testTag("profile_capture"),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                                            Text(if (profileBusy) "Please wait…" else if (profileRecording) "Stop profile" else "Start profile")
+                                        }
+                                    }
+                                }
+                                FpsGraph(guestFrameBuckets, Modifier.size(144.dp, 40.dp).testTag("fps_graph"))
+                            }
                         }
+                        Text(profileNotice, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.height(20.dp).semantics { liveRegion = LiveRegionMode.Polite })
                         if (captureNotice.isNotEmpty()) Text(captureNotice, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                         if (error.isNotEmpty()) Text(error, Modifier.testTag("session_error").semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error)
                         if (status !in listOf("running", "paused", "starting", "stopping")) {
@@ -665,6 +700,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         val evidenceGeneration = workerEvidenceDelivery.retire(engine != null || workerPid != 0) ?: return
         val unexpected = !engineExpectedExit && (guestStartRequested || sessionOwned || status in listOf("running", "starting", "paused"))
         val exitedPid = workerPid
+        profileRecording = false; profileBusy = false
         engine = null; resetPerformanceObservation(); workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
         status = if (unexpected) "failed" else "stopped"
         detail = ""

@@ -24,6 +24,14 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
 - `build-apk.sh ENGINE_DIR NAME` builds an arm64-only debug APK from this
   working tree. Paths are this workstation's; adjust before reuse.
 
+## Manual hitch captures
+
+Use **Start profile / Stop profile** above the Android FPS graph. Each recording saves the
+frontmost iOS app name, engine frames, GL totals/outliers, BQL waits/holds and Android presentation
+stages. `profile.py --pull build/profiles` retrieves them; `profile.py CAPTURE --chart report.png
+--json report.json` reports the longest frames and expensive calls. See
+[PROFILING.md](../../docs/PROFILING.md) for capture workflow, file formats and timing limitations.
+
 ## Results (n72ap-7E18, boot to lock screen / Settings fling fps)
 
 | Host | Original engine, unpinned | dev/perf, big cores |

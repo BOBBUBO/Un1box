@@ -19,5 +19,6 @@ docs/*
 !docs/TODO.md
 !docs/GUEST-BENCHMARKS.md
 !docs/BUILDING.md
+!docs/PROFILING.md
 scripts/build.env
 *.profraw

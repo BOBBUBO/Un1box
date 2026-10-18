@@ -166,6 +166,34 @@ no game FPS or pacing claim is made. Ceiling, low, 1% low and hitches are not ap
 individual-call timings; game measurements remain open before considering a default change.
 Linux and Android builds succeed. Raw results/logs: `build/perf-codex/pixel-batch-{1,2}-{off,on}*`.
 
+### Manual scene captures (2026-10-18, engine `50a08eb2d2`)
+
+Android now has Start/Stop profile above its FPS graph. Start queries the guest agent's frontmost
+bundle ID and localized app name; each session saves independent files under `files/profiles/`.
+The engine records actual publication times and intended LCD times, approximate cumulative vCPU
+wall/CPU time, GL count/total/max per publication interval, and individual GL calls/BQL waits/holds
+of at least 0.5 ms. Android separately records buffer acquisition, scaling, pacing and post timings.
+No guest update, `IT_VCPU_ACCT`, `IT_GLES_PROF` or instruction instrumentation is required.
+`LT_PROFILE=off` disables the recording API; recording work is inactive until Start.
+
+The Pixel Start/Stop path saved `Battle Bears` / `net.skyvu.battlebears1` correctly. Its capture
+(79.9 s including a static notification prompt/menu) produced 4,091 engine-event lines and 97 Android
+post rows, ~268 KiB including metadata/manifests/logs. Pull, text/JSON report and histogram/timeline
+PNG generation succeeded. A second capture identified `DoodleJump` /
+`com.yourcompany.DoodleJump`, wrote 805 Android post rows, and saved successfully after pausing the
+guest and pressing Stop profile. These were functional captures, not game-speed measurements: static scenes
+produce long gaps. No before → after FPS improvement or recording-overhead claim is made. Ceiling,
+median, low, 1% low and hitches are reported by the analysis tool for each capture, with the same
+scene-context caveat. Uninstrumented interleaved pairs remain the basis for performance decisions.
+
+Captures stop on user request/guest Stop and are bounded to 15 minutes or about 128 MiB. A missing
+stop footer identifies a partial/crashed capture. `tools/perf/profile.py` ranks GL calls and shows
+the longest engine and Android presentation intervals with overlapping slow-call and lock details.
+Counters overlap, completed GL totals can cross frame boundaries, snapshots can lag, and GL wall time
+is not GPU execution time. See [PROFILING.md](PROFILING.md) for retrieval and interpretation.
+Linux and Android builds succeed. Captures and generated reports remain local under
+`build/perf-codex/profile-captures/` and `build/perf-codex/profile-battlebears*`.
+
 ### Measured and rejected
 
 **Inline jump-cache probe after the two-entry indirect-site cache** (2026-10-18,
