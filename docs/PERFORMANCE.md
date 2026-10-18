@@ -299,7 +299,56 @@ driver waits; these are wall times, not GPU execution times. No optimization or 
 Screenshot verifies the Jetpack title; raw log and scene: `build/perf-codex/context-stages-*`.
 APK SHA256: `e534dd536d9c137d2515908ffeb675a76dce8101d68883a3454db8b585372d77`.
 
+### TB lookup hit path (experiment pending measurement)
+
+Engine `164ec930cc` adds `LT_TB_LOOKUP_INLINE=on` (default off). A fresh Poco Jetpack profile
+attributed 5.19% self samples to `tb_lookup`; 46.2% of call chains failed to unwind, so caller
+attribution is incomplete. Disassembly showed its common hit path out of line, including a
+stack frame and compiler-generated register clearing on return. The experiment inlines only
+the fully validated jump-cache hit into callers. Misses and all accounting runs use the existing
+lookup; misses repeat the initial probe. Compiler register hardening remains enabled.
+
+Preliminary Linux and Android builds succeeded (`build/perf-codex/tb-lookup-inline-build.txt`).
+Android disassembly confirms a hit skips the extra function call. No timing or FPS improvement
+is claimed yet; measure direct LT Bench costs and same-APK interleaved Jetpack pairs before
+considering enabling it.
+
+After removing the separate indexed-cache experiment, Linux/Android builds also succeeded on
+`fd92f34185` (`build/perf-codex/tb-lookup-inline-final-build.txt`). The inlining experiment is
+still off and unmeasured. Its frozen APK/symbols are `tb-lookup-inline.apk` and
+`tb-lookup-inline-symbols/` under `build/perf-codex/`. APK SHA256:
+`7f20b957ab434d21ccbdaf2ba52657a34dee5c7eaa66ec87e391d64cf8cc5ab0`.
+
 ### Measured and rejected
+
+**Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,
+`LT_IBTC_INDEXED=on`, default off): replace the site's two recent targets with eight direct-indexed
+buckets, probing one bucket in generated code and comparing the full PC/Thumb/context key.
+This is a per-site experiment, distinct from the rejected global jump-cache geometries below.
+The experimental layout reserved 128 bytes per TB in both modes (normally 32), an additional
+96 bytes even for TBs without an indirect exit. Same frozen APK, Snapdragon 865-class Poco,
+three interleaved off/on pairs; array caching on, batch fast path and focused GL timing off,
+no live recorder or full accounting. All six game screenshots confirm the Jetpack title.
+
+| Pair | LT Bench `icall` best / median ns, off → on | Jetpack mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 37.5 / 43.1 → 14.3 / 16.9 | 50.97 → 50.87 | 58 → 58 | 52 → 52 | 42 → 42 | 19.94 → 20.01 | 16 (1121.4 ms) → 15 (1184.8 ms) |
+| 2 | 41.7 / 45.7 → 16.5 / 20.7 | 47.10 → 51.50 | 54 → 58 | 50 → 52 | 34 → 44 | 11.89 → 20.25 | 46 (3684.7 ms) → 13 (919.9 ms) |
+| 3 | 41.5 / 42.1 → 13.5 / 15.3 | 50.90 → 50.20 | 56 → 56 | 52 → 50 | 42 → 42 | 20.01 → 19.93 | 15 (1089.9 ms) → 17 (1239.9 ms) |
+
+Each game window is 30 s, with zero skipped frames. Aggregate mean **49.66 → 50.86 fps (+2.4%)**
+is dominated by pair 2's unusually hitch-heavy baseline; two of three pairs lose, with no
+repeatable ceiling or pacing gain. The focused indirect-call improvement is real, but it does
+not justify the added TB footprint for this game workload. Rejected and removed in `fd92f34185`,
+including the enlarged slot. Do not repeat this cache unchanged.
+
+Raw windows, engine logs, launch screenshots and LT Bench results:
+`build/perf-codex/poco-ibtc-indexed-{1,2,3}-{off,on}/`; summary:
+`ibtc-indexed-results.json`; patch: `ibtc-indexed.patch`. The first off arm's missed Home-to-game
+tap produced static Home frames, preserved as `invalid-home-*` and excluded. Its valid LT Bench
+pass was retained; the corrected title window was then captured without repeating the pass.
+Linux/Android builds succeeded before measurement. Frozen APK SHA256:
+`92fc00f23712d2a39af89554d5e6ebb5c1bd0d2c75f17ec1ac70c7e58293c759`.
 
 **Inline jump-cache probe after the two-entry indirect-site cache** (2026-10-18,
 `LT_INLINE_JC=on`, patch retained locally as `build/perf-codex/inline-jc-rejected.patch`): generated

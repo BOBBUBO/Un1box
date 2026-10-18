@@ -30,9 +30,23 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   1% low 28.0/28.4/28.1 → 27.9/27.5/27.8; hitches 5/3/10 → 7/7/4 (full durations in
   PERFORMANCE.md). Do not repeat the same probe. A possible new idea is promoting inline hits
   into the site's two-entry cache; this version did not do that.
+  Eight-bucket indexed per-site caching (`7b4a86c9f1`, `LT_IBTC_INDEXED`) was also measured and
+  removed (`fd92f34185`): `icall` best/median 37.5/43.1, 41.7/45.7, 41.5/42.1 →
+  14.3/16.9, 16.5/20.7, 13.5/15.3 ns. Jetpack means 50.97/47.10/50.90 → 50.87/51.50/50.20,
+  ceiling 58/54/56 → 58/58/56, median 52/50/52 → 52/52/50, low 42/34/42 → 42/44/42,
+  1% low 19.94/11.89/20.01 → 20.01/20.25/19.93; hitches 16/46/15 → 15/13/17,
+  durations 1121.4/3684.7/1089.9 → 1184.8/919.9/1239.9 ms per 30 s.
+  Aggregate 49.66 → 50.86 fps is dominated by one hitch-heavy baseline; two pairs lose.
+  No repeatable game gain to justify +96 bytes/TB. The extra memory was removed too.
+  Keep the patch/results locally; do not retry unchanged. Full evidence in PERFORMANCE.md.
   What empties the slots (desktop, Flight Control play): 95% are one kernel routine's TLBIASID of the
   current ASID (~60/s, each empties the 16K-entry cache); revalidating entries instead cut misses 40%
   and lost 2% on the Poco (rejected, PERFORMANCE.md). Misses are not the cost any more.
+- [ ] Measure the TB lookup hit-path experiment (`164ec930cc`, `LT_TB_LOOKUP_INLINE=on`, default off).
+  Fresh Poco Jetpack samples put `tb_lookup` at 5.19% self (46.2% call-chain unwind errors).
+  The fully validated hit is now inlined; misses/accounting use the existing lookup, and register
+  hardening remains enabled. Preliminary Linux/Android builds pass; disassembly confirms inlining.
+  No speedup claimed yet. Compare direct LT Bench costs and unrecorded same-APK Jetpack pairs.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
