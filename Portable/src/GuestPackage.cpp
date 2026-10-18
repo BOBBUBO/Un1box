@@ -1,4 +1,5 @@
 #include "Internal.hpp"
+#include "GuestPackageJudge.hpp"
 #include <zlib.h>
 #include <unistd.h>
 #include <set>
@@ -24,6 +25,17 @@ static bool contains(const Json &array, const std::string &text) {
         if (v.string() == text)
             return true;
     return false;
+}
+void record_guest_verdict(lt_device *d, bool good, int64_t serial) {
+    auto path = d->state / "guest-verdicts";
+    std::error_code missing;
+    auto verdicts = GuestVerdicts::parse(fs::exists(path, missing) ? read_file(path, 4096) : "");
+    int64_t seed = -1;
+    if (const auto *record = d->lock.find("guest_package"))
+        if (const auto *s = record->find("seed"))
+            seed = int64_t(s->integer());
+    if (verdicts.judge(good ? GuestPackageJudge::Verdict::good : GuestPackageJudge::Verdict::bad, serial, seed))
+        atomic_write(path, verdicts.text());
 }
 std::string guest_offer(lt_device *d, const char *pack) {
     require(fs::is_regular_file(fs::symlink_status(pack)), "guest package must be a regular .itpack");
@@ -128,6 +140,9 @@ std::string guest_offer(lt_device *d, const char *pack) {
     try {
         std::string offer = "ltpkg 1\nbuild " + build + "\nserial " + manifest.at("serial").text + " " +
                             manifest.at("version").string() + "\n";
+        std::error_code missing;
+        if (fs::exists(d->state / "guest-verdicts", missing))
+            offer += GuestVerdicts::parse(read_file(d->state / "guest-verdicts", 4096)).text("verdict ");
         size_t index = 0;
         for (const auto &f : manifest.at("files").array) {
             auto name = f.at("name").string();

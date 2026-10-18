@@ -54,6 +54,8 @@ void atomic_write(const fs::path &, const std::string &);
 void sync_dir(const fs::path &);
 std::string prepared_guest_package(lt_device *);
 std::string guest_offer(lt_device *, const char *);
+// A boot's verdict on the guest package it ran (GuestPackageJudge), for later offers.
+void record_guest_verdict(lt_device *, bool good, int64_t serial);
 void clean_device(lt_device *, bool);
 } // namespace lt
 struct lt_device {

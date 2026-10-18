@@ -4,6 +4,7 @@
 #include "PcmEpoch.hpp"
 #include "VmPauseControl.hpp"
 #include "GuestShutdownAdmission.hpp"
+#include "GuestPackageJudge.hpp"
 #include "FrameStorage.hpp"
 #include "Base64.hpp"
 #include "qemu-ios-ui.h"
@@ -123,6 +124,8 @@ struct Engine {
     decltype(&qemu_ios_audio_capture_stop) audio_stop = nullptr;
     // Optional: older engines lack it and are polled instead.
     decltype(&qemu_ios_ui_attach) attach = nullptr;
+    // Optional: engines before the guest-package hypercalls lack it.
+    decltype(&qemu_ios_guest_package_report) package_report = nullptr;
     template <class F> F symbol(const char *n) {
         auto p = dlsym(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
@@ -176,6 +179,8 @@ struct Engine {
             LOAD(audio_stop, qemu_ios_audio_capture_stop);
 #undef LOAD
             attach = reinterpret_cast<decltype(attach)>(dlsym(library, "qemu_ios_ui_attach"));
+            package_report =
+                reinterpret_cast<decltype(package_report)>(dlsym(library, "qemu_ios_guest_package_report"));
         } catch (...) {
             dlclose(library);
             library = nullptr;
@@ -288,9 +293,28 @@ struct lt_runtime {
             close(debug_qmp_fd);
         }
     }
+    // Without verdicts the guest's loader reverts any package it was not told is good after two
+    // boots and refuses it from then on (GuestPackageJudge).
+    void judge_package(lt::GuestPackageJudge &judge, bool paused) {
+        int64_t serial = -1;
+        int32_t result = 0;
+        bool reported = engine->package_report(&serial, &result);
+        auto verdict = judge.observe(lt::now_ns(), !paused, agent_state.load(), reported, serial);
+        if (verdict == lt::GuestPackageJudge::Verdict::none)
+            return;
+        bool good = verdict == lt::GuestPackageJudge::Verdict::good;
+        fprintf(stderr, "lighttouch: guest package serial %lld (loader result %d) judged %s\n",
+                (long long)judge.serial(), int(result), good ? "good" : "bad");
+        try {
+            lt::record_guest_verdict(device, good, judge.serial());
+        } catch (const std::exception &e) {
+            fprintf(stderr, "lighttouch: could not record the guest package verdict: %s\n", e.what());
+        }
+    }
     void publish() {
         bool quit_sent = false;
         lt::GuestShutdownAdmission shutdown_admission;
+        lt::GuestPackageJudge package_judge;
         while (!done) {
             try {
                 if (engine->ready()) {
@@ -308,6 +332,8 @@ struct lt_runtime {
                         engine->resume();
                     agent_state = uint32_t(engine->agent_status());
                     shutdown_admission.observe(agent_state.load());
+                    if (engine->package_report && !stopping)
+                        judge_package(package_judge, actual_paused);
                     if (shutdown_ready && shutdown_requested.exchange(false)) {
                         shutdown_phase = 2;
                         engine->cancel();

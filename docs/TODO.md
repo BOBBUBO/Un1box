@@ -29,12 +29,29 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
   kernel work: four BSD syscalls and two scheduler switches per round trip, against two Mach traps
   with a direct handoff for the RPC. Left open only to compare with a real device.
-- [ ] Ship the quiet GL shim (engine `7f744e80cc`, guest package serial 27): build the guest package
-  on the Mac with the usual Xcode and put it in the next APK/AppImage. The measurements used the
-  shipped OpenGLES binary-patched to skip the per-frame lines. The Mac at 192.168.1.54 has only Command
-  Line Tools 26.6, whose `ld` (ld-1267) cannot make the legacy armv6 links: it emits lazy stubs
-  (`__picsymbolstub4` + `__stub_helper`) and, for dylibs, shared-cache split info. `-bind_at_load`
-  gets past machotool's check, but the result crashes SpringBoard (bus error), so don't use it.
+- [ ] Ship the quiet GL shim (engine `7f744e80cc`, guest package serial 27). Built 2026-10-18 on the Mac
+  with Xcode 27.1 (`~/Documents/LightTouch-Development/guest-package-27/`, not uploaded; how: qemu-ios
+  `contrib/armv6-toolchain/README.md`, "Setting up a Mac to build the guest package"). The apps do not
+  bundle guest tools: a record keeps the `armv6.itpack` it was imported with (pinned by
+  `guest_package_sha256` in `record.json`), so users get it only through a new Guest tools file and the
+  update below. Installed by hand on the Poco and Pixel records (backups in `files/pkg-backup-*`).
+- [x] Guest package verdicts on Android and Linux. The portable runtime never told the guest's loader
+  (qemu-ios `contrib/it-boot`) that a package was good, so `it_boot` reverted any package newer than
+  the record's after two boots (`MAX_TRIES`) and refused that serial from then on. That is why serial
+  27 installed by hand lasted two boots. `Portable/src/GuestPackageJudge.hpp` now judges each boot as
+  the macOS app's `GuestPackage.verdict` does: good after 10 s with the agent alive and a loader
+  report, bad after 300 s of running time without that. Time paused does not count. The verdicts go to
+  `state/guest-verdicts`, and each offer carries them as `verdict good N` / `verdict bad N` lines.
+- [ ] Update a record's guest tools in place, keeping the device. Today a new `armv6.itpack` only
+  reaches a device through a fresh import, which starts from the base and loses the user's apps and
+  data. The device state does not depend on the package: replacing `records/ID/assets/guest.itpack`
+  and its `guest_package_sha256`, then booting, makes `it_boot` install the newer serial over the
+  existing system (done by hand for serial 27; apps and saves kept; it stays installed only with the
+  verdicts above). Needs a library call (e.g.
+  `lt_library_set_guest_package(library, id, path)`: refuse while the record is open, check the
+  itpack has a family for the record's board/build and a serial not older than the current one,
+  stage and swap the asset and `record.json` atomically) and a "Guest tools" action on an existing
+  record in the Android and Linux UIs.
 - [ ] LT Bench: add GL tests (draw calls, texture upload, present) and run it on the Pixel.
 - [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint
