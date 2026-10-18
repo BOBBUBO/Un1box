@@ -166,6 +166,21 @@ no game FPS or pacing claim is made. Ceiling, low, 1% low and hitches are not ap
 individual-call timings; game measurements remain open before considering a default change.
 Linux and Android builds succeed. Raw results/logs: `build/perf-codex/pixel-batch-{1,2}-{off,on}*`.
 
+Poco Jetpack title, two interleaved 30 s pairs, one APK (engine `50a08eb2d2`, recording inactive,
+array caching on, no `IT_GLES_PROF` or instruction accounting):
+
+| Pair | Mean off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 53.1 → 53.2 | 58 → 58 | 54 → 54 | 46 → 48 | ~28 → 28.5 | 12 (840 ms) → 7 (387 ms) |
+| 2 | 53.1 → 53.8 | 58 → 58 | 52 → 54 | 48 → 50 | 28.3 → 28.8 | 3 (152 ms) → 5 (283 ms) |
+
+Mean **53.07 → 53.50 fps (+0.8%)**. Both pairs are ahead, but the first barely moves and pacing
+does not consistently improve. Keep the switch **off by default**; the local copy saving is real,
+but there is no convincing game-level improvement. Screenshots confirm the same title scene and
+no skipped frames. Raw results: `build/perf-codex/poco-batch-{1,2}-{off,on}/`. Pair 1 off retains the
+printed result and full runtime log; its exact original measurement window was not saved, so its
+1% low is available only at the printed integer precision. Later windows are saved exactly.
+
 ### Manual scene captures (2026-10-18, engine `50a08eb2d2`)
 
 Android now has Start/Stop profile above its FPS graph. Start queries the guest agent's frontmost

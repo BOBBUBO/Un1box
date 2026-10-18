@@ -17,7 +17,12 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   the lock screen (buttons found by text via uiautomator).
 - `gamefps.py SECS` reads delivered guest fps while a game is on screen;
   `fcbench.py APK SECS` installs an APK, boots, unlocks, starts Flight Control
-  (first icon on Home page 2) and measures it. See docs/PERFORMANCE.md.
+  (first icon on Home page 2) and measures it. `FC_FRAMES=chart.png` also saves
+  the exact frame window as `chart.png.frames.log`. See docs/PERFORMANCE.md.
+- `gameprof.sh OUTDIR [SECONDS]` attaches simpleperf to the running engine worker.
+  `SP_CALLGRAPH=fp` or `dwarf` adds call stacks; `SP_FREQ=1000` changes the sampling
+  frequency (default 4000 Hz). It retains recorder diagnostics and rejects empty
+  recordings. Resolve samples with the exact matching unstripped engine library.
 - `guestsyslog.py` (desktop) runs a headless guest and reads its syslog through the
   app's USB bridge, then counts messages by sender: a guest that logs every frame pays
   for launchd and syslogd handling each line (found this way: engine `7f744e80cc`).

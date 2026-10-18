@@ -73,12 +73,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   two of three ahead), ceiling 56–58 → 56–58, median 52 → 52–54, low 44–48 → 46–48,
   1% low 20.9–28.1 → 27.8–28.5, hitches 6–7 → 1–8. A useful local saving; game-level gain and
   pacing remain inconclusive (full pairs in PERFORMANCE.md). Strict pointer validation stays on.
-- [ ] Measure GL batch-buffer RAM copying in a game before changing its default.
+- [x] Measure GL batch-buffer RAM copying in Jetpack (engine `d99e32c8eb`, default still off).
   `LT_GLES_BATCH_FAST=on` is experimental, default off. Pixel, two interleaved pairs: the direct
   steady 12-byte batch copy is 0.206 → 0.043 µs and 0.199 → 0.044 µs (all RAM hits).
   `gl-sprite` best / median: 4.34 / 4.40 → 3.96 / 4.21 µs and 4.14 / 4.23 → 3.93 / 4.31 µs;
-  end-to-end draw/upload medians do not improve. Game ceiling, median, low, 1% low and hitches
-  remain unmeasured for this switch. Keep it off for ordinary captures pending the game pairs.
+  end-to-end draw/upload medians do not improve. Two Poco Jetpack pairs: mean 53.07 → 53.50 fps
+  (+0.8%, within session spread), ceiling 58/58 → 58/58, median 54/52 → 54/54,
+  low 46/48 → 48/50, 1% low ~28/28.3 → 28.5/28.8, hitches 12/3 → 7/5
+  (840/152 → 387/283 ms). No consistent pacing gain; keep it off for ordinary use.
 - [ ] Dynamic TLS in the engine. `libqemu-arm.so` is `dlopen`ed, so each `__thread` access in QEMU's
   hot paths (`current_cpu`, the RCU reader) goes through `tlsdesc_resolver_dynamic`: 1.2% of the vCPU
   in Jetpack, 3.2% in `gl-sprite` on the Poco. Find the hot accessors (a call-graph profile), then cache
@@ -97,11 +99,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Pixel AHardwareBuffer present uses `IOSurface`: confirmed in the debug engine GL init log
   during the client-array A/B runs (PowerVR D-Series DXT-48-1536, guest-api=1). LT Bench renders
   correctly through that path.
-- [ ] The vCPU still waits ~9% of wall time for the BQL, behind main-loop holds. What the main loop
-  does under it: the PL080 moves audio to the I2S FIFO one 4-byte element per full
-  `address_space_read`/`write` dispatch (~44K/s); the LCD converts lines and resets TLB dirty
-  tracking. Remaining vCPU takes: interrupt delivery (cpu-exec.c), timer IRQ ack writes, VIC, LCD.
-  Measure with the `[acct]` BQL tables and `tools/perf/bqlsites.py`.
+- [ ] Revisit the remaining BQL waits with current scene captures and recheck the earlier ~9%
+  wall-time figure. The PL080 FIFO burst path (`a62f05bae3`) and LCD conversion outside the BQL
+  (`d7c4927685`) are already implemented. Inspect the remaining LCD dirty tracking,
+  interrupt delivery (cpu-exec.c), timer IRQ ack writes, VIC and LCD register access.
+  Measure with the capture's BQL wait/hold intervals, `[acct]` tables and `tools/perf/bqlsites.py`.
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second

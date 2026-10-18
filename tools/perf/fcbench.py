@@ -59,7 +59,8 @@ frames = None
 if os.environ.get("FC_FRAMES"):  # matplotlib may live only in the system python
     py = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
     frames = subprocess.Popen([py, os.path.join(D, "framestats.py"), "--device", secs, "--chart", os.environ["FC_FRAMES"],
-                               "--label", os.path.basename(apk.rstrip("/").rsplit("/", 1)[0])])
+                               "--label", os.path.basename(apk.rstrip("/").rsplit("/", 1)[0]),
+                               "--save", os.environ["FC_FRAMES"] + ".frames.log"])
 subprocess.run([sys.executable, os.path.join(D, "gamefps.py"), secs] + (["--series"] if os.environ.get("FC_SERIES") else []))
 if frames: frames.wait()
 save_shot()
