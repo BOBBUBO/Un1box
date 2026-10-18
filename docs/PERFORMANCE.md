@@ -402,6 +402,15 @@ Evidence: `build/perf-codex/poco-lcd-snapshot-{1,2,3}-{off,on}/` (frames, scene 
 engine logs, timing blocks). `lcd-snapshot-results.json` retains individual hitch times/durations;
 `lcd-snapshot-analyze.py` regenerates it. Do not repeat this skip unchanged.
 
+Removed from current engine source in `197f75d7ae`: every linear update now takes and
+clears its snapshot, including forced repaints. The independent snapshot/stage diagnostics
+remain; skip fields are fixed at zero for log-reader compatibility. The environment switch
+`LT_LCD_FORCED_SNAPSHOT_SKIP` is no longer read. Linux/Android builds succeeded
+(`build/perf-codex/lcd-skip-remove-build.txt`). No new FPS gain is claimed for removing a
+default-off rejected experiment. Frozen comparison APKs and symbols remain unchanged,
+including the queued current-build lookup confirmation and LCD stage diagnostic APK.
+
+
 Separate experiment, engine `42d50e5d2e`: `LT_TLB_DIRTY_FAST=on` (default off) preserves dirty
 snapshot clearing and TLB locking, but checks the compact entry's flags and host address range
 before fetching the full entry's slow-write flags. Invalid, already tracked and out-of-range

@@ -119,10 +119,11 @@ blocks: `n`, `forced`, `skipped`, summed `ns`, `forced-ns` and `max-ns`. Divide 
 their respective counts for means. Timing covers the dirty snapshot stage of linear scanout;
 composed/rotated paths bypass it. Log output follows the LCD unlock. Host descheduling is included.
 
-`LT_LCD_FORCED_SNAPSHOT_SKIP=on` independently skips this work when all rows must be repainted
-(default off). It leaves dirty bits set, which can add later redundant repaint or surface uploads.
-Measure that cost as well as the saved snapshot time before enabling it. Skipped work contributes
-zero nanoseconds to the diagnostic. Neither switch enables the live recorder or full accounting.
+The `LT_LCD_FORCED_SNAPSHOT_SKIP` experiment was rejected: saving snapshot time worsened
+Jetpack throughput and hitches. Engine `197f75d7ae` removes it and always clears the snapshot;
+that environment variable is no longer read. Older frozen APKs retain the switch for their
+recorded comparisons. Current logs retain `skip-forced=off` and `skipped 0` for compatibility.
+Snapshot diagnostics do not enable the live recorder or full accounting.
 
 ## Focused dirty-state queries
 

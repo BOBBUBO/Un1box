@@ -182,7 +182,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   20.01/28.66/28.58 → 14.89/29.18/20.40. Hitches 15/4/4 → 36/5/13; duration
   1086.8/219.3/202.7 → 2747.4/302.5/1017.8 ms per 30 s. Aggregate snapshot mean
   512.46 → 76.42 µs/update across separate approximate timing blocks, but pacing worsens.
-  Keep off; do not retry unchanged. Full windows and timings in PERFORMANCE.md.
+  Removed from current engine in `197f75d7ae`; do not retry unchanged. Every snapshot
+  clears again; independent diagnostics remain, skip log fields are zero. Linux/Android
+  builds pass. Frozen measurement APKs/symbols unchanged. Full evidence in PERFORMANCE.md.
   A separate follow-up: `physical_memory_snapshot_and_clear_dirty` resets TLB write tracking
   unconditionally, even for an empty snapshot. `physical_memory_test_and_clear_dirty` already
   resets only when it actually cleared bits. Count empty snapshots; consider retaining the clear
