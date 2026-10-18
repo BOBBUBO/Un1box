@@ -123,3 +123,15 @@ composed/rotated paths bypass it. Log output follows the LCD unlock. Host desche
 (default off). It leaves dirty bits set, which can add later redundant repaint or surface uploads.
 Measure that cost as well as the saved snapshot time before enabling it. Skipped work contributes
 zero nanoseconds to the diagnostic. Neither switch enables the live recorder or full accounting.
+
+## Focused dirty-state queries
+
+`LT_DIRTY_QUERY_PROF=on` (engine `4d06b57f50`, default off) samples one in 256
+`physical_memory_is_clean` calls on CPU 0. `[dirty-query]` logs give exact `begin-ns`/`end-ns`
+block boundaries, total `queries`, timed `samples`, summed `ns` and `max-ns`. Divide `ns` by
+`samples` for mean sampled query time. Timings include timer overhead and host descheduling;
+they exclude diagnostic output and counter bookkeeping. Non-vCPU/other-CPU queries are untimed.
+
+Compare interleaved `LT_DIRTY_QUERY_FAST=off/on` runs with this diagnostic enabled in both.
+The diagnostic can perturb scheduling, so keep it off for ordinary FPS comparisons. It does
+not enable the live recorder, full accounting or exception/LCD diagnostics.

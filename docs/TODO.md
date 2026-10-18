@@ -133,6 +133,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   behind default-off `LT_DIRTY_QUERY_FAST`. Bitmap/RCU lifetimes are retained; no coroutine TLS
   pointer is cached. Linux/Android builds pass. Focused LT Bench timings and same-APK Jetpack
   pairs are pending; no speedup claim.
+  `4d06b57f50` adds default-off `LT_DIRTY_QUERY_PROF`: CPU 0 directly times one in 256 combined
+  queries, with exact block boundaries and query/sample counts. Linux/Android builds pass;
+  focused timing capture is pending and must be separate from uninstrumented FPS windows.
 - [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint
   `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in

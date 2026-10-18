@@ -375,6 +375,14 @@ Linux/Android builds succeeded (`build/perf-codex/dirty-query-build.txt`). Froze
 same-APK game pairs are pending; no speedup claimed. Keep other experiments off when measuring.
 APK SHA256: `6c92d049a1f724ce4667b8cd86f370f910093cd3dca0e3ec008674ab35f9ea37`.
 
+Engine `4d06b57f50` separately adds `LT_DIRTY_QUERY_PROF=on` (default off) for focused host timings:
+CPU 0 samples one in 256 combined queries, with explicit five-second block boundaries, query/sample
+counts and summed/max durations. Timings include timer overhead and descheduling, exclude logging
+and profiler bookkeeping. The diagnostic itself may perturb scheduling; capture it separately
+from the ordinary FPS pairs. Linux/Android builds succeeded (`dirty-query-prof-build.txt`).
+Frozen diagnostic APK/symbols: `dirty-query-prof.apk`, `dirty-query-prof-symbols/`. Runtime pending.
+APK SHA256: `b1d695fda6aef562790e1ec4feab45149571e4919989574f089e9c07fc340341`.
+
 ### TB lookup hit path (2026-10-18, default off pending confirmation)
 
 Engine `164ec930cc` adds `LT_TB_LOOKUP_INLINE=on` (default off). A fresh Poco Jetpack profile
