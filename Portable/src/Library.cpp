@@ -225,8 +225,68 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         throw;
     }
 }
+static void set_guest_package(lt_library *l, const std::string &id, const char *path, lt_record_info *out) {
+    abi(out);
+    record_id(id);
+    require(path && *path, "guest package path missing");
+    auto directory = l->root / "records" / id;
+    auto metadata = parse(read_file(directory / "record.json", 65536));
+    require(metadata.at("schema").integer() == 1 && metadata.at("id").string() == id, "invalid device record");
+    // The device's own lease: a running (or opening) device holds it.
+    int lease = open((directory / "state/.lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    io(lease >= 0, "device lease");
+    struct Closer {
+        int fd;
+        ~Closer() { close(fd); }
+    } closer{lease};
+    require(flock(lease, LOCK_EX | LOCK_NB) == 0, "stop the device before updating its guest tools", LT_BUSY);
+    require(fs::is_regular_file(fs::symlink_status(path)), "guest package must be a regular .itpack file");
+    {
+        char magic[8] = {};
+        int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        io(fd >= 0, "open guest package");
+        ssize_t n = read(fd, magic, sizeof magic);
+        close(fd);
+        require(n == 8 && std::memcmp(magic, "ITPACK01", 8) == 0, "not a guest tools package (ITPACK01)");
+    }
+    auto assets = directory / "assets";
+    fs::create_directories(assets);
+    io(chmod(assets.c_str(), 0700) == 0, "record assets permissions");
+    try {
+        std::error_code stale;
+        fs::remove(assets / ".guest.itpack.new", stale);
+        copy_regular(path, assets / ".guest.itpack.new", true);
+        std::string sha = digest_file(assets / ".guest.itpack.new");
+        fs::rename(assets / ".guest.itpack.new", assets / "guest.itpack");
+        sync_dir(assets);
+        std::string json = "{\"schema\":1,\"id\":" + quote(id) + ",\"name\":" + quote(metadata.at("name").string()) +
+                           ",\"board\":" + quote(metadata.at("board").string()) +
+                           ",\"build\":" + quote(metadata.at("build").string()) +
+                           ",\"base_sha256\":" + quote(metadata.at("base_sha256").string());
+        if (const auto *rom = metadata.find("bootrom_sha256"))
+            json += ",\"bootrom_sha256\":" + quote(rom->string());
+        json += ",\"guest_package_sha256\":" + quote(sha) + "}\n";
+        atomic_write(directory / "record.json", json);
+        sync_dir(directory);
+    } catch (...) {
+        std::error_code ec;
+        fs::remove(assets / ".guest.itpack.new", ec);
+        chmod(assets.c_str(), 0500);
+        throw;
+    }
+    io(chmod(assets.c_str(), 0500) == 0, "immutable record assets");
+    describe(l, id, out);
+}
 } // namespace lt
 extern "C" {
+lt_status lt_library_set_guest_package(lt_library *l, const char *id, const char *path, lt_record_info *out,
+                                       lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::LibraryLock lock(l);
+        lt::require(id, "record ID missing");
+        lt::set_guest_package(l, id, path, out);
+    });
+}
 lt_status lt_library_open(const lt_library_config *c, lt_library **out, lt_error *e) {
     return lt::guard(e, [&] {
         lt::abi(c);

@@ -45,16 +45,16 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   the macOS app's `GuestPackage.verdict` does: good after 10 s with the agent alive and a loader
   report, bad after 300 s of running time without that. Time paused does not count. The verdicts go to
   `state/guest-verdicts`, and each offer carries them as `verdict good N` / `verdict bad N` lines.
-- [ ] Update a record's guest tools in place, keeping the device. Today a new `armv6.itpack` only
-  reaches a device through a fresh import, which starts from the base and loses the user's apps and
-  data. The device state does not depend on the package: replacing `records/ID/assets/guest.itpack`
-  and its `guest_package_sha256`, then booting, makes `it_boot` install the newer serial over the
-  existing system (done by hand for serial 27; apps and saves kept; it stays installed only with the
-  verdicts above). Needs a library call (e.g.
-  `lt_library_set_guest_package(library, id, path)`: refuse while the record is open, check the
-  itpack has a family for the record's board/build and a serial not older than the current one,
-  stage and swap the asset and `record.json` atomically) and a "Guest tools" action on an existing
-  record in the Android and Linux UIs.
+- [x] Update a record's guest tools in place, keeping the device. `lt_library_set_guest_package(library,
+  id, path, ...)` refuses while the record is open (`state/.lease`) or when the file is not an
+  `ITPACK01` package, then stages and swaps `assets/guest.itpack` and rewrites `guest_package_sha256` in
+  `record.json`. The guest's `it_boot` installs a newer serial over the existing system at the next
+  boot, keeping apps and data. Linux: `lighttouch-linux --library LIB --record ID --set-guest-package
+  ITPACK`. Android: "Guest tools" on a stopped device applies the file to the selected device. Tested:
+  desktop (serial 26 record → 27, two boots judged good) and the Pixel (26 ↔ 27 through the picker).
+- [ ] Guest tools update, follow-ups: check that the package has a family for the record's board and
+  build before swapping (today an older or mismatched package is accepted; `it_boot` then keeps the
+  installed serial), and add the action to the Windows and macOS apps.
 - [x] LT Bench GL tests (`gl-get`, `gl-state`, `gl-draw`, `gl-sprite`, `gl-upload`, `gl-present`), run on
   the desktop, the Poco and the Pixel (docs/GUEST-BENCHMARKS.md, PERFORMANCE.md).
 - [ ] Fewer host GL calls per draw (the next lead for Jetpack on the Poco). For each draw,

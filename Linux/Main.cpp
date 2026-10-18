@@ -174,7 +174,8 @@ static void peer(int socket) {
             "worker peer UID mismatch");
 }
 struct Options {
-    std::string base, state, rom, engine, package, import, finalize_import, sha, screenshot, script, library, record, name;
+    std::string base, state, rom, engine, package, import, finalize_import, sha, screenshot, script, library, record, name,
+        set_guest_package;
     bool recover = false, headless = false, audio = true, worker = false, list = false, library_operation = false;
     bool debug_qmp = false, trace_io = false, debug_touch_trace = false;
     int control = -1, pcm = -1;
@@ -187,7 +188,8 @@ static Options options(int argc, char **argv) {
         {"--engine", &o.engine},   {"--package", &o.package},       {"--import", &o.import},
         {"--finalize-import", &o.finalize_import},
         {"--library", &o.library}, {"--record", &o.record},         {"--name", &o.name},
-        {"--sha256", &o.sha},      {"--screenshot", &o.screenshot}, {"--script", &o.script}};
+        {"--sha256", &o.sha},      {"--screenshot", &o.screenshot}, {"--script", &o.script},
+        {"--set-guest-package", &o.set_guest_package}};
     for (int i = 1; i < argc; i++) {
         std::string key = argv[i];
         if (fields.count(key)) {
@@ -220,7 +222,8 @@ static Options options(int argc, char **argv) {
             std::cout
                 << "lighttouch-linux --base DIR --state DIR --engine LIB [--rom FILE] [--package ITPACK]\n  [--import "
                    "ITPACK --sha256 HASH] [--recover] [--headless --seconds N]\n"
-                   "  lighttouch-linux --finalize-import STAGE --base DEST\n  [--script FILE] [--screenshot BMP] "
+                   "  lighttouch-linux --finalize-import STAGE --base DEST\n"
+                   "  lighttouch-linux --library DIR --record ID --set-guest-package ITPACK (keeps the device)\n  [--script FILE] [--screenshot BMP] "
                    "[--no-audio] [--trace-io] [--debug-touch-trace]\n\nMouse left/right: contacts 1/2. "
                 << lt::desktop_shortcut_help() << "\n"
                 << "Visible controls below the guest mirror these shortcuts. "
@@ -240,7 +243,7 @@ static Options options(int argc, char **argv) {
     if (o.state.empty() && !o.base.empty())
         o.state = fs::absolute(o.base).parent_path().string() + "/state";
     for (auto *p : {&o.base, &o.state, &o.rom, &o.engine, &o.package, &o.import, &o.finalize_import,
-                   &o.screenshot, &o.script, &o.library})
+                   &o.screenshot, &o.script, &o.library, &o.set_guest_package})
         if (!p->empty())
             *p = fs::absolute(*p).string();
     return o;
@@ -275,6 +278,13 @@ static void prepare_library(Options &o) {
         o.import.clear();
         o.library_operation = true;
         std::cout << "imported record " << info.id << " " << info.board << " " << info.build << "\n";
+    }
+    if (!o.worker && !o.set_guest_package.empty()) {
+        require(!o.record.empty(), "--set-guest-package needs --record");
+        check(lt_library_set_guest_package(l, o.record.c_str(), o.set_guest_package.c_str(), &info, &e), e);
+        std::cout << "record " << info.id << " guest package replaced; it installs at the next boot\n";
+        o.library_operation = true;
+        return;
     }
     if (!o.worker && (o.list || (o.engine.empty() && o.record.empty()))) {
         uint32_t count = 0;
@@ -1673,7 +1683,7 @@ int main(int argc, char **argv) {
         InterruptGuard import_and_library_interrupts;
         auto o = options(argc, argv);
         prepare_library(o);
-        if (!o.worker && !o.library.empty() && o.engine.empty())
+        if (!o.worker && !o.library.empty() && (o.engine.empty() || !o.set_guest_package.empty()))
             return 0;
         return o.worker ? worker(o) : frontend(o, argc, argv);
     } catch (const std::exception &e) {

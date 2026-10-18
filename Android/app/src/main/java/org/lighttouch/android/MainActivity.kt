@@ -781,7 +781,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 val temporary = File(filesDir, "$targetName.partial")
                 contentResolver.openInputStream(uri)?.use { input -> temporary.outputStream().use { input.copyTo(it) } } ?: error("Cannot read file")
                 check(temporary.renameTo(target)) { "Could not publish imported file" }
-                handler.post { detail = "Imported $targetName"; busy = false }
+                // Guest tools also replace the selected device's package; the guest
+                // installs the newer serial at its next boot.
+                val device = if (targetName == "guest.itpack") selected?.getString("id") else null
+                if (device != null) {
+                    val result = engine?.setGuestPackage(device, target.absolutePath) ?: error("Worker unavailable")
+                    require(result.isEmpty()) { result }
+                }
+                handler.post { if (device != null) captureNotice = "Guest tools updated; they install at the next boot" else detail = "Imported $targetName"; busy = false }
             } catch (e: Exception) { handler.post { error = e.message ?: "Import failed"; busy = false } }
         }, "asset-import").start()
     }

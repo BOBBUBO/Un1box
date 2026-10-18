@@ -146,7 +146,9 @@ boots from its own `kboot.bin`. See upstream's
 Building the guest tools yourself (`armv6.itpack` / `armv7.itpack` from qemu-ios `contrib/`): a Mac
 with Xcode and the iPhoneOS 3.1.3 and 3.2 SDKs; the steps, where each input came from, and what does
 not work are in qemu-ios `contrib/armv6-toolchain/README.md` ("Setting up a Mac to build the guest
-package"). A record keeps the guest tools it was imported with; see TODO.md for updating them in place.
+package"). A record keeps the guest tools it was imported with until they are replaced: on Android, "Guest
+tools" on a stopped device; on Linux, `lighttouch-linux --library LIB --record ID --set-guest-package
+ITPACK`. A newer serial installs over the existing system at the next boot, keeping apps and data.
 
 Storage note: the desktop importer stores n72 NAND as one indexed file. Alpha builds do not
 migrate old library layouts; keep the original `.itbase` so you can re-import.

@@ -10,6 +10,7 @@ interface IEngine {
     String select(String recordId);
     String importBase(String source, String displayName);
     String importPrepared(String source, String displayName);
+    String setGuestPackage(String recordId, String path);
     Bundle status();
     long claimDisplay();
     String attachDisplay(long lease, in Surface surface);

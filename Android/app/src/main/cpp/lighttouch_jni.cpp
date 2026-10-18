@@ -417,6 +417,15 @@ JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JN
     status=lt_library_import(library,&config,&record,&error);
     return string(env,result(status,error));
 }
+JNI(setGuestPackage) jstring JNICALL Java_org_lighttouch_android_Native_setGuestPackage(JNIEnv *env,jobject,jstring root,jstring id,jstring guest) {
+    std::lock_guard<std::mutex> lock(library_guard);
+    Utf path(env,root),record_id(env,id),package(env,guest);
+    lt_error error=LT_INIT(lt_error);auto status=open_library(path.value,&error);
+    if(status!=LT_OK)return string(env,result(status,error));
+    lt_record_info record=LT_INIT(lt_record_info);
+    status=lt_library_set_guest_package(library,record_id.value,package.value,&record,&error);
+    return string(env,result(status,error));
+}
 JNI(records) jobjectArray JNICALL Java_org_lighttouch_android_Native_records(JNIEnv *env,jobject,jstring root) {
     std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root);lt_error error=LT_INIT(lt_error);
     auto status=open_library(path.value,&error);uint32_t count=0;

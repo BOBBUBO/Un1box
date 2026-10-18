@@ -74,6 +74,11 @@ typedef struct {
     void *opaque;
 } lt_library_import_config;
 lt_status lt_library_import(lt_library *, const lt_library_import_config *, lt_record_info *, lt_error *);
+/* Replace a stopped record's guest package (assets/guest.itpack and its pinned SHA-256), keeping
+ * its base and state: the guest's loader installs the new package over the existing system at the
+ * next boot. LT_BUSY while the record's device is open. path must be a regular ITPACK01 file. */
+lt_status lt_library_set_guest_package(lt_library *, const char *record_id, const char *path, lt_record_info *,
+                                       lt_error *);
 /* Transactionally copy a stopped legacy base/state into a new record while
  * holding its writer lease. Preserves old data, including dirty/pin/overlay.
  * Library must be empty to avoid accidentally adopting legacy data twice. */

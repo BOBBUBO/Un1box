@@ -29,7 +29,9 @@ own hosts (`Desktop/README.md`), and `Linux/packaging/README.md` has the AppImag
 
 An engine change happens in the qemu-ios checkout (`$QEMU_IOS`, default `~/git-projects/qemu-ios`,
 branch `dev/perf`). `scripts/build.sh android` (or `linux`) rebuilds it incrementally and packages it
-again. The engine is QEMU's `qemu-system-arm` link turned into a shared library by qemu-ios
+again. Known issue: the first configure of a fresh Android tree has once stopped at QEMU's meson
+postconf with `FileNotFoundError: .../pyvenv/bin/meson` although the file exists afterwards; running
+the same command again built normally. The engine is QEMU's `qemu-system-arm` link turned into a shared library by qemu-ios
 `contrib/portable/make-shared.py`. The build keeps the link's response file (`ninja -d keeprsp`), which
 that step reads. The Android APK checks that the engine notice bundle names the library by SHA-256, so
 the script rewrites `notices/manifest.json` after each engine build.
