@@ -443,7 +443,7 @@ Linux/Android builds succeeded (`build/perf-codex/publish-wake-build.txt`). Froz
 `publish-wake.apk`, `publish-wake-symbols/` under `build/perf-codex/`, engine `4d06b57f50`.
 APK SHA256: `ca730421e1c3f1e213f433b774130c35c9c977616e19fdc0404ba7610e814578`.
 
-### Single-page dirty queries (no repeatable game gain; focused timing pending)
+### Single-page dirty queries (local saving; no repeatable game gain)
 
 Engine `cc6063a40f` adds `LT_DIRTY_QUERY_FAST=on` (default off). A fresh Poco Jetpack profile
 put `physical_memory_is_clean` at 1.25% inclusive and `physical_memory_get_dirty_flag` at
@@ -452,7 +452,7 @@ range scan; the combined three-client query shares one RCU guard. All bitmap poi
 inside their RCU lifetime, including concurrent growth. No coroutine TLS pointer is cached.
 
 Linux/Android builds succeeded (`build/perf-codex/dirty-query-build.txt`). Frozen APK/symbols:
-`dirty-query.apk`, `dirty-query-symbols/` under `build/perf-codex/`. The three ordinary same-APK pairs below are complete; focused host timings remain pending.
+`dirty-query.apk`, `dirty-query-symbols/` under `build/perf-codex/`. The ordinary pairs and focused host timings below are complete.
 Keep other experiments off when measuring.
 APK SHA256: `6c92d049a1f724ce4667b8cd86f370f910093cd3dca0e3ec008674ab35f9ea37`.
 
@@ -468,7 +468,7 @@ confirm the title and recorder off, with zero skipped frames. The profiler below
 
 Aggregate mean **53.33 → 53.67 fps (+0.6%)**, within session drift; one pair loses 1.30 fps.
 Hitches total 25 → 24, duration 1625.7 → 1476.8 ms over 90 s per mode. No repeatable game or
-pacing gain; keep default off pending focused query costs. LT Bench results are mixed too:
+pacing gain; keep default off; focused query costs follow. LT Bench results are mixed too:
 `icall` best/median ns 30.1/34.3, 30.3/31.9, 30.2/32.0 → 30.5/33.2, 30.0/30.7, 30.7/30.8.
 
 Exact half-open frame windows (monotonic ns):
@@ -488,8 +488,44 @@ CPU 0 samples one in 256 combined queries, with explicit five-second block bound
 counts and summed/max durations. Timings include timer overhead and descheduling, exclude logging
 and profiler bookkeeping. The diagnostic itself may perturb scheduling; capture it separately
 from the ordinary FPS pairs. Linux/Android builds succeeded (`dirty-query-prof-build.txt`).
-Frozen diagnostic APK/symbols: `dirty-query-prof.apk`, `dirty-query-prof-symbols/`. Runtime pending.
+Frozen diagnostic APK/symbols: `dirty-query-prof.apk`, `dirty-query-prof-symbols/`. Runtime results follow.
 APK SHA256: `b1d695fda6aef562790e1ec4feab45149571e4919989574f089e9c07fc340341`.
+
+Two focused off/on pairs, second reversed, same diagnostic APK on the Snapdragon 865-class
+Poco, Jetpack title. Sampler and perfmaps enabled; array cache on; other experiments, full
+accounting and live recorder off. All four screenshots confirm the title and recorder off;
+zero skipped frames. Each timing sum covers the last six explicitly bounded blocks, approximately
+30 s. Each FPS window below is a separate 35 s diagnostic capture. These are not ordinary
+FPS baselines and supply no sampler-overhead measurement.
+
+| Pair | Sampled mean ns/query off → on | Samples off → on | Queries/s off → on |
+| --- | --- | --- | --- |
+| 1 | 502.74 → 427.29 (−15.0%) | 12582 → 15404 | 107309.8 → 131411.9 |
+| 2 | 495.71 → 419.93 (−15.3%) | 11768 → 11544 | 100359.1 → 98474.2 |
+
+A repeatable local saving of about 75 ns/query, including timer overhead/descheduling in both
+arms. Call rates differ, so do not turn this into an end-to-end saving estimate. Ordinary game
+pairs above remain mixed, and the diagnostic windows also provide no FPS gain:
+
+| Pair | Diagnostic mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 54.54 → 53.14 | 58 → 58 | 56 → 54 | 50 → 48 | 28.29 → 28.32 | 5 (265.7 ms) → 5 (253.2 ms) |
+| 2 | 55.51 → 51.80 | 60 → 58 | 56 → 52 | 50 → 42 | 28.67 → 20.16 | 2 (117.2 ms) → 14 (969.0 ms) |
+
+Keep default off for ordinary use. This confirms a cheaper query, not a useful change in game
+pacing. It does not resolve the steady-60 goal.
+
+Exact query timing blocks (monotonic ns):
+
+| Pair | Off [begin, end] | On [begin, end] |
+| --- | --- | --- |
+| 1 | [427152179231634, 427182195048029] | [427371128798217, 427401136924716] |
+| 2 | [427764029390672, 427794047688004] | [427582389697043, 427612400233438] |
+
+Evidence: `build/perf-codex/poco-dirty-focused-{1,2}-{off,on}/` contains the raw six-block
+summaries, full logs, screenshots and 35 s frame logs. `dirty-query-focused-results.json` retains
+exact FPS boundaries and every hitch end/duration; `dirty-query-focused-analyze.py` regenerates it.
+Each arm of pair 1 additionally has a subsequent 15 s CPU profile and before/after guest maps.
 
 ### First runtime guest-PC attribution (2026-10-18, diagnostic)
 

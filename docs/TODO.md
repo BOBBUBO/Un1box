@@ -143,10 +143,18 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Ceiling 58/60/58 → 58/58/60, median 52/54/54 → 54/54/54, low 44/50/50 → 48/44/50,
   1% low 19.81/28.33/28.75 → 20.72/28.03/28.65. Hitches 16/5/4 → 10/11/3,
   durations 1152.3/256.1/217.3 → 621.6/701.9/153.3 ms per 30 s. LT Bench mixed too.
-  No repeatable game/pacing gain; keep off pending focused query costs.
+  No repeatable game/pacing gain; keep off. Focused sampler timings, two pairs with second
+  reversed: 502.74 → 427.29 and 495.71 → 419.93 ns/query (−15.0% / −15.3%).
+  A local saving only; diagnostic FPS also loses: 54.54/55.51 → 53.14/51.80 fps, ceiling
+  58/60 → 58/58, median 56/56 → 54/52, low 50/50 → 48/42, 1% low 28.29/28.67 →
+  28.32/20.16. Hitches 5/2 → 5/14, durations 265.7/117.2 → 253.2/969.0 ms per 35 s.
+  Sampler and perfmaps on in both modes; these are separate diagnostic windows, not ordinary
+  FPS baselines. Full query/FPS bounds and raw blocks in PERFORMANCE.md.
   `4d06b57f50` adds default-off `LT_DIRTY_QUERY_PROF`: CPU 0 directly times one in 256 combined
   queries, with exact block boundaries and query/sample counts. Linux/Android builds pass;
-  focused timing capture is pending and must be separate from uninstrumented FPS windows.
+  focused timing capture is complete above, separate from uninstrumented FPS windows.
+  Timings include timer overhead and descheduling; call rates vary, so do not infer an
+  end-to-end saving from the sampled mean alone.
 - [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint
   `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in
