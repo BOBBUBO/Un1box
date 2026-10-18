@@ -186,3 +186,22 @@ adds explicit `begin-ns` and `end-ns` fields to its blocks; older logs have no e
 Snapshot time includes bitmap copy/clear, the TLB reset and the TCG `run_on_cpu` ordering
 barrier. It does not isolate reset-loop time. Do not attribute its full duration to the scan or
 remove the ordering barrier based on this timing. Device measurements remain pending.
+
+
+## LCD snapshot stage timing
+
+`LT_LCD_SNAPSHOT_STAGES=on` (engine `9fd2a85805`, default off) enables the existing
+snapshot diagnostic and adds `[lcd-stages]` blocks with the same exact boundaries.
+`presync-ns` times listener synchronization; `setup-ns` address setup and allocation;
+`bitmap-ns` atomic bitmap copy/clear including RCU; `reset-ns` TLB dirty-write tracking
+reset including its lock; `clear-ns` dirty-clear listeners; `barrier-ns` the after-sync
+ordering hook (TCG waits for vCPU work). Timings include timer overhead and descheduling.
+Their sum excludes dirty-page counting and some wrapper bookkeeping; the enclosing
+`[lcd-snapshot] ns` includes these too. Logs are emitted after the LCD unlock.
+
+`dirty-pages` counts dirtied pages in the requested scanout range across snapshots;
+`empty` counts snapshots with zero such pages. Alignment padding is excluded from that
+count even though bitmap copying clears it as before. `n - skipped` is the denominator
+for stage means. No resets, clears or ordering barriers are skipped, including empty
+snapshots. Composed/rotated paths do not use this diagnostic. Keep forced-snapshot
+skipping off. Linux/Android builds succeeded; device capture is pending.

@@ -191,6 +191,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   The snapshot timing also includes the TCG after-sync `run_on_cpu` barrier, not just the scan.
   Split bitmap/reset/barrier costs before attributing the full ~0.5 ms or pursuing more changes;
   retain the ordering between dirty flag clearing and guest writes.
+  Engine `9fd2a85805` adds default-off `LT_LCD_SNAPSHOT_STAGES` to split presync,
+  allocation/setup, bitmap copy/clear, TLB reset, dirty-clear listeners and the TCG
+  ordering barrier; it also counts requested-range dirty pages and empty snapshots.
+  All operations/order are retained, logging follows the LCD unlock. Linux/Android
+  builds succeeded; focused device capture pending, no optimization gain claimed.
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second

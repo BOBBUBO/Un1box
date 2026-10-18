@@ -424,6 +424,22 @@ Linux/Android builds succeeded (`lcd-timestamps-build.txt`). No TLB scan code ch
 `42d50e5d2e`. The queued measurement has not started; no previous measurements are replaced.
 APK SHA256: `9d568d3fb0262661595912ac1641d9a84dff485ad93bc43f6dda03eca199fa24`.
 
+### LCD snapshot stages (diagnostic, runtime capture pending)
+
+Engine `9fd2a85805`, default-off `LT_LCD_SNAPSHOT_STAGES`, separately times presync,
+setup/allocation, atomic bitmap copy/clear, TLB reset, clear listeners and the TCG
+ordering barrier. It counts requested-range dirty pages and empty snapshots without
+skipping any work. Each block shares the enclosing snapshot's exact boundaries;
+output follows the LCD unlock. Timings include timer overhead and host descheduling.
+Summed stages exclude page counting and some wrapper bookkeeping, included in the
+outer duration. This distinguishes scan costs from the synchronous vCPU wait before
+considering another dirty-tracking change. See PROFILING.md for field definitions.
+
+Linux/Android builds succeeded (`build/perf-codex/lcd-stages-build.txt`). Frozen
+APK/symbols: `lcd-stages.apk`, `lcd-stages-symbols/` under `build/perf-codex/`.
+APK SHA256: `2dec4262f195fea2e356906be637016fbfe319f55e2ba0e6375cf6cf61f6f13d`.
+No runtime improvement or diagnostic overhead claimed; device capture is pending.
+
 ### Publisher notification preservation (experiment pending measurement)
 
 `Portable/src/Runtime.cpp` adds `LT_PUBLISH_WAKE_EARLY=on` (default off). The old loop snapshots
