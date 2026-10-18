@@ -77,6 +77,11 @@ Capturing the published frame (`ios_publish_bh`'s compare-and-copy, ~0.3 ms on t
 BQL was tried after the LCD change and dropped: JellyCar on the desktop went from 22–28 frames over 50 ms
 (two runs) to 220, at the same 30 fps mean, as its presents fell into a 50/16 ms alternation around the
 vsync instead of an even 33.
+Wider jump-cache entries (the lookup key and host code pointer copied into each entry, so a hit
+reads no TB) showed no gain on the Pixel 10 with ADPF off, Doodle Jump menu, three interleaved rounds:
+58.4/57.4/57.5 → 49.0/58.0/55.2 fps. That scene now runs near its 60 fps cap even without ADPF, so a
+throughput change needs the Poco's Flight Control to judge; the patch is parked
+(`perf/jump-cache-wide-entries.patch` in the development workspace) rather than shipped untested.
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
 A 2-way set-associative jump cache halved jump-cache misses in Flight Control (10.6% → 5.4% of
 lookups) but did not move frame rate: Poco 23.3/22.3/22.5 → 25.1/21.0/19.6 fps, Pixel JellyCar
