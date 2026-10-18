@@ -2,8 +2,8 @@
 """Game fps for an APK: install it, boot to the lock screen, unlock, open Home page 2, run a
 game's launch steps and measure delivered fps with gamefps.py.
 usage: fcbench.py APK [SECONDS] [GAME] (ANDROID_SERIAL set; the game installed in the guest)
-GAME: a preset below; each follows one phone's Home page 2 (Poco: Flight Control, Pocket God; Pixel:
-Doodle Jump, JellyCar). Check what was measured with FC_SHOT=file.png; FC_SERIES=1 prints fps per second.
+GAME: a preset below; each follows one phone's Home page 2 (Poco: Flight Control, Pocket God, JellyCar,
+Doodle Jump, Jetpack Joyride, LT Bench; Pixel: Doodle Jump, JellyCar). Check what was measured with FC_SHOT=file.png; FC_SERIES=1 prints fps per second.
 FC_FRAMES=chart.png also logs every guest frame (LT_FRAME_LOG) and reports framestats.py's ceiling,
 dips and hitches for the same window, with a chart.
 Guest coordinates are fractions of the guest screen, so they work on any phone."""
@@ -17,6 +17,8 @@ GAMES = {
     "jellycar": [(.397, .127), 20, (.294, .497), 8],       # icon, dismiss the push prompt (Pixel layout)
     "jetpack": [(.143, .310), 50],                        # Jetpack Joyride title (Poco layout, after OpenFeint was declined)
     "ltbench": [(.380, .312), 40],                        # LT Bench (docs/GUEST-BENCHMARKS.md), Poco layout: one pass
+    "doodlejump-poco": [(.857, .127), 22],                 # Doodle Jump main menu (Poco layout)
+    "jellycar-poco": [(.619, .127), 20, (.294, .497), 8],  # JellyCar, dismiss the push prompt (Poco layout)
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
 }
 apk = sys.argv[1]; secs = sys.argv[2] if len(sys.argv) > 2 else "30"

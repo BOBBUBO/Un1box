@@ -9,7 +9,8 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [ ] Android: steady target frame rate in common period games. Now (engine 4de4ae5ba1): Flight Control
   55.8 of 60 fps on the Poco (six runs 53.6–57.7; ceiling 60, median 56–60, ≥55 fps 58–86% of the
   time, 7–28 hitches per 30 s; 56.1 with 1997c1a488); Jetpack Joyride title 35 fps (ceiling 42–46,
-  guest-code bound: GL is ~12% of the vCPU); Doodle Jump menu 55.5 of 60 on the Pixel (a62f05bae3); JellyCar menu
+  guest-code bound: GL is ~12% of the vCPU; the desktop runs it at ~54); Poco, g3 = 64d111110b: Doodle
+  Jump menu 57.2 of 60 (median 58, 0 hitches), JellyCar menu 29.8 of 30; Doodle Jump menu 55.5 of 60 on the Pixel (a62f05bae3); JellyCar menu
   23 of 30 (974c213352, not re-measured).
 - [ ] Indirect branches with many targets (`objc_msgSend`'s final jump goes to every method): LT Bench
   `icall` is 3–6× a direct call, because a site's 2-entry cache misses and `helper_lookup_tb_ptr` runs
