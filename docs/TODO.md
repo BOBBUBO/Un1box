@@ -73,3 +73,21 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.
 - [ ] Some catalog apps marked compatible need iOS 4 APIs (Doodle Jump 3.x: GCD). Consider flagging
   apps that weak-link iOS 4 symbols, or surfacing Last crash automatically after a quick quit.
+
+## Guest graphics
+
+- [ ] Real Racing (Firemint) renders parts of its 3D scenes flat white or grey (user report on
+  Android, 2026-10-18, v0.0.3 build). In the menu the hero car is textured but the shadows under it,
+  the backdrop and the menu signs are white; in a race the cockpit and dashboard are textured but
+  opponent cars, track-side objects and the sky are untextured white/grey. Call of Duty: Zombies,
+  another 3D game, renders correctly, so it is something Real Racing uses that others do not, or
+  possibly the game misbehaving on iOS 3.1.3 itself. Not a missing PVRTC decoder: gles-host already
+  decodes PVRTC and paletted textures on the CPU. Steps:
+  1. Run it on Linux too: if it is white there as well, it is the engine's GLES path, not the
+     Android EGL host.
+  2. Run with `IT_GLES_VERBOSE=1` (and `IT_GLES_STRICT=1`) to log unsupported dispatch slots, GL
+     errors and the texture formats/sizes uploaded; look for failed `glTexImage2D` /
+     `glCompressedTexImage2D`, texture-combiner (`glTexEnv` `GL_COMBINE`) modes, multitexture,
+     `GL_GENERATE_MIPMAP` on non-power-of-two sizes, or the APPLE BGRA / 4444 / 5551 formats.
+  3. Dump frames with `IT_GLES_DUMP_DIR` to see which draws lose their texture.
+  This is likely to affect other 3D games of the era that use the same features.

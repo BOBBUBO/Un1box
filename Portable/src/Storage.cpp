@@ -912,10 +912,16 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         // in place (the engine's cross-page-chain property documents the assumption).
         // Interleaved A/B: Poco F3 Flight Control 19.8 -> 24.5 fps (6 pairs), Pixel 10
         // Doodle Jump menu 15.3 -> 18.0. LT_CROSS_PAGE_CHAIN=off turns it off for A/B runs.
+        // Indirect branches (returns, objc_msgSend) cache their last target in the TB, per
+        // address space, under the same no-remap condition. LT_INDIRECT_CACHE=off for A/B.
         const char *chain = getenv("LT_CROSS_PAGE_CHAIN");
-        if (!chain || strcmp(chain, "off") != 0) {
+        const char *indirect = getenv("LT_INDIRECT_CACHE");
+        std::string accel = "tcg";
+        if (!chain || strcmp(chain, "off") != 0) accel += ",cross-page-chain=on";
+        if (!indirect || strcmp(indirect, "off") != 0) accel += ",indirect-cache=on";
+        if (accel != "tcg") {
             d->args.push_back("-accel");
-            d->args.push_back("tcg,cross-page-chain=on");
+            d->args.push_back(accel);
         }
         if (n72) {
             d->args.push_back("-m");
