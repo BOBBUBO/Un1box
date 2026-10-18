@@ -112,6 +112,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
   lock and interrupt-mask instructions cheaper. Next to look at: how many exceptions and Mach messages
   the game makes per frame, and which of them the emulator makes expensive.
+  `42395839f3` adds a default-off `LT_EXCEPTION_PROF` diagnostic for exception counts, raw SVC
+  `r12`, short-descriptor fault statuses and Mach-message trap attempts, with host setup timings
+  separate from guest handlers. Linux/Android builds pass; phone capture and overhead are pending.
+  `tools/perf/exceptions.py LOG --last 30 [--frames FULL_FRAME_LOG]` summarizes complete snapshots.
+- [ ] Dirty-state query hot path: the fresh Poco Jetpack profile puts `physical_memory_is_clean`
+  at 1.25% inclusive and `physical_memory_get_dirty_flag` at 0.59% self / 0.89% inclusive.
+  It queries three one-bit flags through general bitmap-range scans, entering/exiting RCU three
+  times. Consider a single RCU guard and direct bit checks for this specific query; retain ordinary
+  coroutine TLS access elsewhere. This is an unimplemented lead, with no speedup claim.
 - [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint
   `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in

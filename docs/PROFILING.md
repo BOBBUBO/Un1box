@@ -86,3 +86,28 @@ Outside-vCPU time includes guest idle, queued work and waits; it should not all 
 stall time. These captures do not identify every guest function or measure GPU execution time.
 Use an attached simpleperf call-graph profile for a CPU-heavy scene, or a supported GPU/system trace
 when the remaining question is asynchronous GPU work or precise host scheduling.
+
+## Focused exception counts
+
+`LT_EXCEPTION_PROF=on` (engine `42395839f3`, default off) logs complete cumulative snapshots
+every five seconds from CPU 0 in AArch32 mode. It counts exceptions, raw SVC `r12` values and
+short-descriptor data-abort status codes. For iOS 3, SVC `r12=-31/-32` also counts Mach-message
+send/receive **attempts** from option bits; these are not successfully delivered messages.
+Counts cover every guest process. The switch does not enable full vCPU accounting.
+
+Host dispatch wall time is instrumented separately for each exception class. It includes
+diagnostic bookkeeping and host descheduling during dispatch, excludes the guest kernel handler,
+and excludes any BQL waits before `arm_cpu_do_interrupt`. Maximum durations are cumulative since
+the diagnostic started; they cannot be subtracted to obtain an interval maximum. Snapshot logging
+is outside these duration totals, and the diagnostic's recording overhead has not been measured.
+
+After pulling the record's engine log, summarize the last approximately 30 seconds:
+
+```sh
+python3 tools/perf/exceptions.py engine.log --last 30 --json exceptions.json
+```
+
+`--start S --end S` selects seconds since the first profiled exception. The report prints the
+actual snapshot boundaries used. Add `--frames frames.log` with a full `LT_FRAME_LOG` covering
+both boundaries for counts per published frame. Incomplete final snapshots are ignored.
+This is a focused diagnostic for finding the next optimization; no FPS improvement is implied.

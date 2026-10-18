@@ -299,6 +299,20 @@ driver waits; these are wall times, not GPU execution times. No optimization or 
 Screenshot verifies the Jetpack title; raw log and scene: `build/perf-codex/context-stages-*`.
 APK SHA256: `e534dd536d9c137d2515908ffeb675a76dce8101d68883a3454db8b585372d77`.
 
+### Exception and SVC diagnostics (pending phone capture)
+
+Engine `42395839f3` adds `LT_EXCEPTION_PROF=on` (default off): CPU 0 AArch32 exception counts,
+raw SVC `r12` counts, short-descriptor data-abort statuses, iOS 3 Mach-message trap send/receive
+attempts, and instrumented host dispatch time by exception type. Timings exclude guest handlers,
+earlier BQL waits and snapshot logging; counters cover all guest processes. Complete snapshots
+every five seconds can be matched to published-frame timestamps with `tools/perf/exceptions.py`.
+The next capture should quantify the open kernel-work lead before another optimization.
+
+Linux/Android builds succeeded (`build/perf-codex/exception-prof-final-build.txt`). Runtime capture
+and instrumentation overhead are not yet measured; no FPS gain is claimed. Frozen APK/symbols:
+`exception-prof.apk`, `exception-prof-symbols/` under `build/perf-codex/`. APK SHA256:
+`53ba5e44932a07c00b7a5908af3ded81b8c55712f7990a7f2eb79e8f9e131d9b`.
+
 ### TB lookup hit path (experiment pending measurement)
 
 Engine `164ec930cc` adds `LT_TB_LOOKUP_INLINE=on` (default off). A fresh Poco Jetpack profile
