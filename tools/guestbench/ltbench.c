@@ -102,6 +102,13 @@ static void putu(Line *l, u64 v)
     do { *--p = '0' + (char)(v % 10); v /= 10; } while (v);
     put(l, p);
 }
+static void putx(Line *l, u32 v)
+{
+    char t[11] = "0x", *p = t + 2;
+    for (int i = 7; i >= 0; i--) *p++ = "0123456789abcdef"[(v >> (i * 4)) & 15];
+    *p = 0;
+    put(l, t);
+}
 /* v in tenths, printed with one decimal */
 static void putd(Line *l, u64 tenths) { char d[2] = {(char)('0' + tenths % 10), 0}; putu(l, tenths / 10); put(l, "."); put(l, d); }
 
@@ -457,6 +464,28 @@ static void launched(Object self, Selector selector, Object application) {
         get_selector("addTarget:action:forControlEvents:"), self, get_selector("benchTapped:"), 1u << 6);
     call1(window, "addSubview:", button);
     call0(window, "makeKeyAndVisible");
+#ifdef SYMS   /* build.sh with LTB_CFLAGS='-DSYMS=0x33989a1c,0x3386699a': name guest addresses from a profile */
+    {
+        static const u32 addrs[] = { SYMS };
+        typedef struct { const char *fname; void *fbase; const char *sname; void *saddr; } DlInfo;
+        int (*dladdr_fn)(const void *, DlInfo *) = dlsym((void *)-2, "dladdr");   /* RTLD_DEFAULT */
+        for (u32 i = 0; dladdr_fn && i < sizeof(addrs) / sizeof(addrs[0]); i++) {
+            DlInfo info = {0};
+            Line l = {{0}, 0};
+            put(&l, "[ltbench] sym "); putx(&l, addrs[i]); put(&l, " ");
+            if (dladdr_fn((const void *)addrs[i], &info)) {
+                const char *f = info.fname ? info.fname : "?", *base = f;
+                for (const char *c = f; *c; c++) if (*c == '/') base = c + 1;
+                put(&l, base); put(&l, " "); put(&l, info.sname ? info.sname : "?");
+                put(&l, "+"); putx(&l, addrs[i] - (u32)info.saddr);
+            } else {
+                put(&l, "(none)");
+            }
+            put(&l, "\n");
+            emit(l.b);
+        }
+    }
+#endif
     start();
 }
 

@@ -41,6 +41,12 @@ A pass takes ~6 s on a Poco F3 and ~3 s on the desktop. To profile one test, bui
 runs only it, for many rounds: `LTB_CFLAGS='-DONLY="rpc" -DROUNDS=60' build.sh OUT_DIR` (same bundle
 id, so it replaces the full one when installed).
 
+Naming guest addresses from a profile: a build with `LTB_CFLAGS='-DSYMS=0x33989748,0x3398719d
+-DONLY="loop" -DROUNDS=1'` prints one `[ltbench] sym 0x33989748 libSystem.B.dylib regexec+0x…`
+line per address at launch (dladdr in the guest, so shared-cache addresses resolve to the exported
+symbol at or below them; a static function shows as the export before it). This is how the
+desktop's guest stack samples of Flight Control were put down to syslogd's regex time parsing.
+
 Writing the app: there is no iOS SDK; `ltbench.c` declares the libSystem and Objective-C runtime
 calls it makes with their ARM32 ABI, and the link stub lists exactly its imports. iPhone OS 3's
 libSystem does not export the compiler's division helpers (`__udivdi3` and friends live in its
