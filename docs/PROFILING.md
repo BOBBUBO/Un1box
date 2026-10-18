@@ -187,7 +187,10 @@ Keep forced-snapshot skipping off; that separate experiment worsened game pacing
 adds explicit `begin-ns` and `end-ns` fields to its blocks; older logs have no exact boundaries.
 Snapshot time includes bitmap copy/clear, the TLB reset and the TCG `run_on_cpu` ordering
 barrier. It does not isolate reset-loop time. Do not attribute its full duration to the scan or
-remove the ordering barrier based on this timing. Device measurements remain pending.
+remove the ordering barrier based on this timing. Three Poco Jetpack pairs found mixed
+throughput (52.38 → 53.00 fps) and unchanged enclosing snapshot cost (509.11 → 508.97 µs).
+The switch stays off; stage measurements are pending. Full pairs and boundaries are
+in [PERFORMANCE.md](PERFORMANCE.md).
 
 
 ## LCD snapshot stage timing

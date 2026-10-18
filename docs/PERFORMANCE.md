@@ -425,32 +425,56 @@ those stages before further changes; removing the TB barrier without equivalent 
 
 Linux/Android builds succeeded (`build/perf-codex/tlb-dirty-build.txt`). Android disassembly
 confirms the full-entry load follows the flag/range branches (`tlb-dirty-disassembly.txt`).
-Three same-APK Poco off/on pairs, reversing the second pair, are running with forced-snapshot
-skipping off and LCD snapshot timings on in both modes. The first pair is complete below;
-the remaining pairs are needed before a verdict.
+Three same-APK Poco off/on pairs, reversing the second pair, with forced-snapshot
+skipping off and LCD snapshot timings on in both modes are complete below.
 Frozen APK/symbols: `tlb-dirty.apk`, `tlb-dirty-symbols/` under `build/perf-codex/`.
 Frozen measured engine is `1cd3a771c3`, which also timestamps LCD snapshot blocks explicitly.
 Linux/Android builds succeeded (`lcd-timestamps-build.txt`). No TLB scan code changed after
 `42d50e5d2e`. No previous measurements are replaced.
 APK SHA256: `9d568d3fb0262661595912ac1641d9a84dff485ad93bc43f6dda03eca199fa24`.
 
-**Preliminary first pair only**, Snapdragon 865-class Poco, Jetpack title, 30 s per arm.
-Both screenshots reviewed: same title, manual recorder off, zero skipped frames.
+Snapdragon 865-class Poco, Jetpack title, 30 s per arm. All six final screenshots
+reviewed: same title, manual recorder off, zero skipped frames. Array cache on;
+other optimization experiments, full accounting and live recording off.
 
 | Pair | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 52.13 → 53.13 | 58 → 58 | 52 → 54 | 46 → 48 | 28.32 → 28.39 | 6 (302.9 ms) → 4 (221.5 ms) |
+| 2 (on first) | 53.43 → 52.37 | 58 → 56 | 54 → 52 | 50 → 48 | 28.43 → 28.26 | 4 (203.6 ms) → 2 (100.7 ms) |
+| 3 | 51.57 → 53.50 | 58 → 58 | 52 → 54 | 44 → 48 | 20.52 → 28.49 | 8 (568.7 ms) → 5 (271.4 ms) |
 
-The enclosing snapshot mean is **521.03 → 545.40 µs/update** across separate six-block
-timing windows (1804 updates each, forced 1566 → 1597, no skipping). The first pair's
-higher game rate is not corroborated by faster snapshots; keep off pending all pairs
-and the detailed stage diagnostic. No speedup established.
+Aggregate mean **52.38 → 53.00 fps (+1.2%)**, two of three pairs ahead, with the
+reversed pair losing 1.07 fps. Hitches total 18 → 11, duration 1075.1 → 593.5 ms
+over 90 s per mode. This is mixed throughput evidence within the session spread;
+the lower hitch counts alone do not establish a repeatable pacing improvement.
 
-Exact FPS [start, end) ns: off [428683212366415, 428713212366415),
-on [428847099057394, 428877099057394). Snapshot [begin, end] ns:
-off [428680026891676, 428710094953592], on [428847098134894, 428877163990247].
+The enclosing snapshot means are 521.03/511.41/494.90 → 545.40/473.65/507.85 µs/update
+across separate six-block timing windows. Weighted overall **509.11 → 508.97 µs/update**:
+no confirmed reduction in the targeted cost. There are 5411 → 5413 updates,
+4733 → 4775 forced, no skipping. Keep the switch **off** pending stage timing;
+no repeatable game or snapshot speedup established. The stage diagnostic follows the
+current-build lookup confirmation on the phone, using its preserved APK.
+
+Exact FPS [start, end) ns:
+
+| Pair | Off | On |
+| --- | --- | --- |
+| 1 | [428683212366415, 428713212366415) | [428847099057394, 428877099057394) |
+| 2 | [429195619038928, 429225619038928) | [429025941462430, 429055941462430) |
+| 3 | [429362738087926, 429392738087926) | [429534492208850, 429564492208850) |
+
+Separate snapshot [begin, end] ns:
+
+| Pair | Off | On |
+| --- | --- | --- |
+| 1 | [428680026891676, 428710094953592] | [428847098134894, 428877163990247] |
+| 2 | [429195018566063, 429225052105948] | [429026492203523, 429056558625960] |
+| 3 | [429359454210948, 429389537220624] | [429531624729476, 429561709085246] |
+
 Raw evidence: `build/perf-codex/poco-tlb-dirty-{1,2,3}-{off,on}/`;
 `tlb-dirty-analyze.py` and `tlb-dirty-results.json` retain exact windows and each hitch.
+Scene overview: `tlb-dirty-all-six-scenes.png`. The completed runner handed the phone
+to the existing lookup-confirmation runner; no historical commit was remeasured.
 
 Source follow-up (unimplemented): under the TLB lock, `cpu->neg.tlb.c.dirty` records
 which MMU modes can contain entries. It starts at zero, every insertion sets its bit,

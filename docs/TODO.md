@@ -192,11 +192,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Engine `42d50e5d2e` separately adds default-off `LT_TLB_DIRTY_FAST`: check compact-entry flags
   and host address range before reading full-entry metadata, retaining every reset and the same
   lock/flag semantics. Linux/Android builds pass; Android disassembly confirms the skipped loads.
-  Three off/on pairs (second reversed) with LCD snapshot timing are running. First pair:
-  mean 52.13 → 53.13 fps, ceiling 58 → 58, median 52 → 54, low 46 → 48,
-  1% low 28.32 → 28.39, hitches 6 (302.9 ms) → 4 (221.5 ms) per 30 s.
-  Enclosing snapshot mean 521.03 → 545.40 µs/update; no confirmed cost reduction.
-  First two scenes reviewed, zero skips. Keep off pending remaining pairs; no speedup claim.
+  Three off/on pairs complete (second reversed), LCD snapshot timing on in both modes:
+  mean 52.13/53.43/51.57 → 53.13/52.37/53.50 fps (52.38 → 53.00, +1.2%, mixed).
+  Ceiling 58/58/58 → 58/56/58, median 52/54/52 → 54/52/54, low 46/50/44 → 48/48/48,
+  1% low 28.32/28.43/20.52 → 28.39/28.26/28.49. Hitches 6/4/8 → 4/2/5,
+  durations 302.9/203.6/568.7 → 221.5/100.7/271.4 ms per 30 s.
+  Snapshot means 521.03/511.41/494.90 → 545.40/473.65/507.85 µs/update;
+  weighted 509.11 → 508.97 µs, no confirmed targeted cost reduction. All six scenes
+  reviewed, recorder off, zero skips. Keep off pending stage timings; no repeatable gain.
   The snapshot timing also includes the TCG after-sync `run_on_cpu` barrier, not just the scan.
   Split bitmap/reset/barrier costs before attributing the full ~0.5 ms or pursuing more changes;
   retain the ordering between dirty flag clearing and guest writes.
