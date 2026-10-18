@@ -299,7 +299,7 @@ driver waits; these are wall times, not GPU execution times. No optimization or 
 Screenshot verifies the Jetpack title; raw log and scene: `build/perf-codex/context-stages-*`.
 APK SHA256: `e534dd536d9c137d2515908ffeb675a76dce8101d68883a3454db8b585372d77`.
 
-### Exception and SVC diagnostics (pending phone capture)
+### Exception and SVC diagnostics (2026-10-18)
 
 Engine `42395839f3` adds `LT_EXCEPTION_PROF=on` (default off): CPU 0 AArch32 exception counts,
 raw SVC `r12` counts, short-descriptor data-abort statuses, iOS 3 Mach-message trap send/receive
@@ -308,12 +308,38 @@ earlier BQL waits and snapshot logging; counters cover all guest processes. Comp
 every five seconds can be matched to published-frame timestamps with `tools/perf/exceptions.py`.
 The next capture should quantify the open kernel-work lead before another optimization.
 
-Linux/Android builds succeeded (`build/perf-codex/exception-prof-final-build.txt`). Runtime capture
-and instrumentation overhead are not yet measured; no FPS gain is claimed. Frozen APK/symbols:
+Linux/Android builds succeeded (`build/perf-codex/exception-prof-final-build.txt`). Instrumentation
+overhead has not been measured; no FPS gain is claimed. Frozen exception-only APK/symbols:
 `exception-prof.apk`, `exception-prof-symbols/` under `build/perf-codex/`. APK SHA256:
 `53ba5e44932a07c00b7a5908af3ded81b8c55712f7990a7f2eb79e8f9e131d9b`.
 
-### LCD forced-repaint dirty snapshots (experiment pending measurement)
+Focused Poco Jetpack title capture using the later `9400ab1b68` APK below, with exception and LCD
+timing enabled, lookup inlining/forced-snapshot skipping off. The live recorder and full accounting
+were off. Complete exception snapshots at **424584902925270 → 424614912061404 ns** cover 30.009 s
+and 1,563 published frames. `exceptions.py` successfully parsed the real log and full frame log.
+
+| Exception | Entries/s | Entries/frame | Instrumented host mean µs | Host total ms |
+| --- | --- | --- | --- | --- |
+| SVC | 3368.7 | 64.68 | 1.063 | 107.51 |
+| Data abort | 3973.4 | 76.29 | 0.544 | 64.90 |
+| Undefined instruction | 772.4 | 14.83 | 1.062 | 24.62 |
+| FIQ | 455.1 | 8.74 | 1.491 | 20.36 |
+| IRQ | 115.8 | 2.22 | 1.264 | 4.39 |
+| Prefetch abort | 13.2 | 0.25 | 0.809 | 0.32 |
+
+Host dispatch totals about 222.1 ms / 30.009 s (0.74% of wall time), including diagnostic work
+and descheduling but excluding guest handlers and earlier BQL waits. Optimizing entry dispatch
+alone has limited headroom here. Raw SVC `r12=-31` occurs 1860.5/s, `-3` 838.3/s. Mach-message
+send/receive attempts are 1432.5/1597.9 per second (27.50/30.68 per frame); attempts can overlap
+within one trap and are not delivered-message counts. Alignment status 1 accounts for 3907.1
+data aborts/s; the earlier direct unaligned-LDM/STM experiment remains rejected.
+
+The separate 45 s diagnostic frame window is mean/ceiling/median/low/1% low **52.07/58/52/44/19.99**,
+25 hitches totaling 1793.7 ms, zero skipped frames. It has no matched uninstrumented arm and is not
+an optimization or overhead comparison. Evidence, screenshot, full/window frame logs and JSON:
+`build/perf-codex/poco-exception-lcd-diagnostic/`.
+
+### LCD forced-repaint dirty snapshots (focused timing; A/B pending)
 
 Engine `9400ab1b68` adds `LT_LCD_FORCED_SNAPSHOT_SKIP=on` (default off). The linear
 LCD path snapshots and clears dirty memory even when a forced repaint will read every row.
@@ -327,6 +353,14 @@ Diagnostic output follows the LCD unlock; timing includes host descheduling. Lin
 succeeded (`build/perf-codex/lcd-snapshot-build.txt`). No runtime timing or improvement claimed yet.
 Frozen APK/symbols: `lcd-snapshot.apk`, `lcd-snapshot-symbols/` under `build/perf-codex/`.
 APK SHA256: `8553650c03fbb563ccba39748f5ed3adda55b7b9e99befe30c2872cf0614a34c`.
+
+The exception/LCD diagnostic above confirms Jetpack uses this linear path. Its final six
+five-second timing blocks contain 1,803 updates, 1,566 forced repaints (86.9%), zero skips:
+882.20 ms total snapshot wall time, of which 760.40 ms is on forced repaints. Mean snapshot
+**489.29 µs**, forced mean **485.57 µs**, maximum **3216.35 µs**. These blocks are approximately
+30 s, have no explicit timestamp fields, and are not the exact exception or FPS window.
+This is measurable main-loop/BQL work (roughly 25 ms/s on forced snapshots). Same-APK skip
+off/on pairs must check whether retained dirty bits add work elsewhere before enabling it.
 
 ### Single-page dirty queries (experiment pending measurement)
 

@@ -120,7 +120,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   the game makes per frame, and which of them the emulator makes expensive.
   `42395839f3` adds a default-off `LT_EXCEPTION_PROF` diagnostic for exception counts, raw SVC
   `r12`, short-descriptor fault statuses and Mach-message trap attempts, with host setup timings
-  separate from guest handlers. Linux/Android builds pass; phone capture and overhead are pending.
+  separate from guest handlers. Poco Jetpack: 3368.7 SVC/s (64.68/frame), 3973.4 data aborts/s
+  (76.29/frame, 3907.1/s alignment), Mach send/receive attempts 1432.5/1597.9 per second.
+  All instrumented host dispatch totals 222.1 ms / 30.009 s (0.74% wall), excluding guest handlers.
+  Focus on guest handler work rather than host entry dispatch; do not retry the rejected alignment
+  shortcut. Full raw windows/counts in PERFORMANCE.md. Instrumentation overhead remains pending.
   `tools/perf/exceptions.py LOG --last 30 [--frames FULL_FRAME_LOG]` summarizes complete snapshots.
 - [ ] Dirty-state query hot path: the fresh Poco Jetpack profile puts `physical_memory_is_clean`
   at 1.25% inclusive and `physical_memory_get_dirty_flag` at 0.59% self / 0.89% inclusive.
@@ -144,7 +148,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Engine `9400ab1b68` adds default-off `LT_LCD_FORCED_SNAPSHOT_SKIP` and independent
   `LT_LCD_SNAPSHOT_PROF` timing. First establish linear-path/forced-update frequency in Jetpack;
   composed/rotated scanouts bypass it. Retained dirty bits may add subsequent repaint/uploads.
-  Linux/Android builds succeeded; focused runtime timings and same-APK FPS pairs are pending.
+  Linux/Android builds succeeded. Poco Jetpack uses the path: final six five-second diagnostic
+  blocks have 1803 updates / 1566 forced, 882.20 ms snapshot time / 760.40 ms forced time;
+  mean 489.29 µs (forced 485.57 µs), max 3216.35 µs. Same-APK skip off/on pairs remain pending.
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second
