@@ -120,6 +120,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   is 0.726/20.837/1049.176 µs (1625 calls). The viewport cost is largely before dispatch.
   Inspect context switching and explicit synchronization before changing viewport state forwarding.
   These are focused diagnostic timings; no before/after optimization or FPS gain is claimed.
+- [ ] Measure exact-zero single-precision VFP multiplication (`f43fbe4986`,
+  `LT_VFP_MUL_ZERO_FAST=on`, default off). The recent Poco profile includes `float32_mul`
+  1.07% self and software multiply 0.62%; the host-FPU underflow predicate also sends
+  mixed zero/normal multiplication to software. Return the exact XOR-signed zero
+  directly for zero times normal/zero; retain softfloat for all other operands and
+  preserve exception flags. Translation selects helpers; ordinary baseline unchanged.
+  `LT_VFP_MUL_ZERO_PROF=on` separately counts calls/eligible/mixed operations and samples
+  one in 256 mixed calls with exact five-second block bounds. Linux/Android builds pass;
+  frozen `vfp-mul-zero.apk`/symbols. Two focused 35 s pairs, second reversed, queued
+  after BQL captures/cleanup; all other diagnostics off, array cache on. Measure frequency
+  and local cost before ordinary FPS comparisons. No runtime saving established yet.
 - [ ] Texture upload on the Pixel: `gl-upload` (16 KiB `glTexSubImage2D`) is 51–57 µs against 12 µs on
   the Poco and 3–4 µs on the desktop. It looks like the Pixel's GL stack (ANGLE or the IMG driver).
   Profile it before testing a game that streams textures.

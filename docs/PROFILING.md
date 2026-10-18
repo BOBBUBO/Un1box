@@ -121,6 +121,27 @@ use their rounded timestamps. JSON retains the selected bounds and all sites. BQ
 diagnostics remain off for ordinary optimization FPS comparisons; separate interleaved
 off/on captures will measure diagnostic overhead and refresh the current wait breakdown.
 
+## Focused exact-zero VFP multiplication
+
+`LT_VFP_MUL_ZERO_FAST=on` enables the default-off AArch32 single-precision VFP
+zero-multiply experiment (engine `f43fbe4986`). `LT_VFP_MUL_ZERO_PROF=on` independently
+selects diagnostic helpers; ordinary off/on helpers contain no profiling clocks or
+counters, and the ordinary off path retains the original helper.
+
+`[vfp-mul-zero] fast=MODE` blocks report `begin-ns`, `end-ns`, `calls`, `eligible`,
+`mixed`, `samples`, `ns`, `max-ns`. CPU 0 owns the counters. Eligible operands are
+an exact zero and a normal finite value or another zero; mixed excludes two-zero
+pairs. Only mixed operations are timed, one in 256, including clock overhead and
+host descheduling. Mean sampled ns/call is `ns / samples`; frequency is `mixed`
+divided by the actual block interval. Select complete contiguous blocks inside
+the frame window and retain their separate bounds. These diagnostic FPS windows
+do not establish uninstrumented throughput or profiler overhead.
+
+The switch preserves softfloat for nonzero, subnormal, infinite and NaN operands.
+It does not change rounding/flush modes or cumulative exception flags. Both
+switches are fixed for the process and selected during translation; restart the
+engine after changing debug-env. No runtime measurement yet.
+
 ## Focused exception counts
 
 `LT_EXCEPTION_PROF=on` (engine `42395839f3`, default off) logs complete cumulative snapshots

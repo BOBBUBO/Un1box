@@ -299,6 +299,38 @@ driver waits; these are wall times, not GPU execution times. No optimization or 
 Screenshot verifies the Jetpack title; raw log and scene: `build/perf-codex/context-stages-*`.
 APK SHA256: `e534dd536d9c137d2515908ffeb675a76dce8101d68883a3454db8b585372d77`.
 
+### Exact-zero VFP multiplication (2026-10-18, experimental, default off)
+
+The recent Poco Jetpack native profile contains `float32_mul` at 1.07% self,
+`soft_f32_mul` at 0.62%, and `parts64_canonicalize` at 0.37%. These shares overlap
+other operations and are not a saving estimate. Source inspection found that even
+softfloat's host-FPU multiplication path falls back to software for a zero result
+when only one operand is zero; its underflow predicate is shared with addition.
+Calls without the cumulative inexact flag also use software.
+
+Engine `f43fbe4986` adds `LT_VFP_MUL_ZERO_FAST=on`, default off. AArch32 VFP
+single-precision multiplication of an exact zero by a normal finite value or
+another zero returns the XOR sign and zero magnitude, without changing exception
+flags. Nonzero pairs, subnormals, infinities and NaNs still use softfloat. Selection
+is during translation: the baseline generates the original helper, with no runtime
+switch/counter/clock overhead. Half/double precision and other translators are unchanged.
+
+Independent default-off `LT_VFP_MUL_ZERO_PROF=on` selects diagnostic helpers. CPU 0
+counts all calls, eligible zero operations, and mixed zero/normal operations, timing
+one in 256 mixed operations. Five-second blocks have exact monotonic bounds, sample
+counts and summed/max durations. Clock overhead and host descheduling are included;
+these diagnostic frame windows are not ordinary game baselines.
+
+Linux/Android builds succeeded (`build/perf-codex/vfp-mul-zero-build.txt`). Frozen
+APK/symbols: `vfp-mul-zero.apk`, `vfp-mul-zero-symbols/`; build identity retained in
+`vfp-mul-zero-build-identity.json`. APK SHA256:
+`6ebb6f5d72cb2820e5d8e62cc68a891b3e5af9fd696fe52f1a92e35956644577`.
+Two focused pairs (off/on, on/off), 35 s per arm, are queued after the existing BQL
+comparison and its clean stop. All other diagnostics/experiments off, array cache on,
+no live recorder/full accounting. Each arm selects complete contiguous timing blocks
+wholly inside its frame window. No runtime frequency, local timing saving, FPS gain
+or pacing result is claimed yet; keep off pending those measurements.
+
 ### BQL diagnostics without instruction accounting (2026-10-18)
 
 Engine `f64fb44e3c` adds default-off `LT_BQL_PROF=on`. It reuses the BQL wait/hold
