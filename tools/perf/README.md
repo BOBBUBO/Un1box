@@ -28,7 +28,7 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
 
 | Host | Original engine, unpinned | dev/perf, big cores |
 | --- | --- | --- |
-| Poco F3 (SD870) | 55 s / 18-22 | 36-40 s / 25-28 |
+| Poco F3 (Snapdragon 865-class) | 55 s / 18-22 | 36-40 s / 25-28 |
 | Pixel 10 (Tensor G5) | 57-74 s / 15-24 | 19-20 s / 27-29 |
 | Ryzen 3700X | 23-24 s / 40-42 | 21 s (19-20 s with LTO) |
 

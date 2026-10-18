@@ -24,6 +24,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `icall` is 3–6× a direct call, because a site's 2-entry cache misses and `helper_lookup_tb_ptr` runs
   (TB lookup is still ~12% of the vCPU in Flight Control on the Poco, ~4% in `qht` after jump-cache
   misses, 57% of them on empty slots). Candidates: probe the jump cache inline in the generated code.
+  Inline jump-cache probing was tried in three Poco pairs and removed: `icall` best / median
+  32.3 / 33.0 → 14.9 / 15.6 ns, but Jetpack mean 52.93 → 52.60 fps. Pairwise ceiling
+  58/56/56 → 56/58/56, median 54/54/52 → 52/54/52, low 48/48/46 → 46/48/48,
+  1% low 28.0/28.4/28.1 → 27.9/27.5/27.8; hitches 5/3/10 → 7/7/4 (full durations in
+  PERFORMANCE.md). Do not repeat the same probe. A possible new idea is promoting inline hits
+  into the site's two-entry cache; this version did not do that.
   What empties the slots (desktop, Flight Control play): 95% are one kernel routine's TLBIASID of the
   current ASID (~60/s, each empties the 16K-entry cache); revalidating entries instead cut misses 40%
   and lost 2% on the Poco (rejected, PERFORMANCE.md). Misses are not the cost any more.
@@ -67,6 +73,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   two of three ahead), ceiling 56–58 → 56–58, median 52 → 52–54, low 44–48 → 46–48,
   1% low 20.9–28.1 → 27.8–28.5, hitches 6–7 → 1–8. A useful local saving; game-level gain and
   pacing remain inconclusive (full pairs in PERFORMANCE.md). Strict pointer validation stays on.
+- [ ] Measure GL batch-buffer RAM copying in a game before changing its default.
+  `LT_GLES_BATCH_FAST=on` is experimental, default off. Pixel, two interleaved pairs: the direct
+  steady 12-byte batch copy is 0.206 → 0.043 µs and 0.199 → 0.044 µs (all RAM hits).
+  `gl-sprite` best / median: 4.34 / 4.40 → 3.96 / 4.21 µs and 4.14 / 4.23 → 3.93 / 4.31 µs;
+  end-to-end draw/upload medians do not improve. Game ceiling, median, low, 1% low and hitches
+  remain unmeasured for this switch. Keep it off for ordinary captures pending the game pairs.
 - [ ] Dynamic TLS in the engine. `libqemu-arm.so` is `dlopen`ed, so each `__thread` access in QEMU's
   hot paths (`current_cpu`, the RCU reader) goes through `tlsdesc_resolver_dynamic`: 1.2% of the vCPU
   in Jetpack, 3.2% in `gl-sprite` on the Poco. Find the hot accessors (a call-graph profile), then cache

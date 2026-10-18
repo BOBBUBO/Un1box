@@ -147,7 +147,50 @@ or a stutter fix. Raw windows and screenshots are retained under `build/perf-cod
 Linux and Android builds succeed; the ASan/UBSan production-slice regression covers refreshed data,
 disables, faults, scratch growth, fixed conversion, driver rejection/retry, context switches and VBOs.
 
+### Batch command-buffer reads (2026-10-18, experimental, default off)
+
+`LT_GLES_BATCH_FAST=on` tries the existing plain-RAM TLB copy for GL batch buffers, retaining
+`cpu_memory_rw_debug` as fallback. No guest faults are armed for batches. Two interleaved Pixel
+pairs used one APK (`batch-prof.apk`), array caching on, inline jump-cache probe off, and
+`IT_GLES_PROF=1`. Direct timings are means per 4,096 batches; the following are medians of the five
+steady 12-byte windows after LT Bench warmed up:
+
+| Pair | Batch copy off → on | RAM hit rate on | `gl-sprite` best / median off → on |
+| --- | --- | --- | --- |
+| 1 | 0.206 → 0.043 µs | 4096/4096 | 4.34 / 4.40 → 3.96 / 4.21 µs |
+| 2 | 0.199 → 0.044 µs | 4096/4096 | 4.14 / 4.23 → 3.93 / 4.31 µs |
+
+The copy itself is ~4.6–4.8× cheaper. End-to-end `gl-draw` medians were 2.34 → 2.42 and
+2.42 → 2.42 µs; `gl-upload` 62.34 → 63.66 and 64.18 → 65.35 µs. This is a small local saving;
+no game FPS or pacing claim is made. Ceiling, low, 1% low and hitches are not applicable to these
+individual-call timings; game measurements remain open before considering a default change.
+Linux and Android builds succeed. Raw results/logs: `build/perf-codex/pixel-batch-{1,2}-{off,on}*`.
+
 ### Measured and rejected
+
+**Inline jump-cache probe after the two-entry indirect-site cache** (2026-10-18,
+`LT_INLINE_JC=on`, patch retained locally as `build/perf-codex/inline-jc-rejected.patch`): generated
+TCG validates the existing jump-cache TB's PC, ASID/Thumb state, flags and cflags before jumping.
+Two interleaved Pixel pairs cut LT Bench `icall` best / median from 21.1 / 22.1 → 7.0 / 8.1 ns and
+20.4 / 20.7 → 7.0 / 8.5 ns. Poco pair 1: 32.3 / 33.0 → 14.9 / 15.6 ns; pair 2:
+32.0 / 32.7 → 14.0 / 14.6 ns. The three same-APK Poco Jetpack title pairs below used array caching
+on and `IT_GLES_PROF=0`; perf samples were taken only after the frame windows. Screenshots confirm
+the title. No skipped frames.
+
+| Pair | Mean off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 53.3 → 52.2 | 58 → 56 | 54 → 52 | 48 → 46 | 28.0 → 27.9 | 5 (269 ms) → 7 (389 ms) |
+| 2 | 53.5 → 53.2 | 56 → 58 | 54 → 54 | 48 → 48 | 28.4 → 27.5 | 3 (152 ms) → 7 (387 ms) |
+| 3 | 52.0 → 52.4 | 56 → 56 | 52 → 52 | 46 → 48 | 28.1 → 27.8 | 10 (526 ms) → 4 (216 ms) |
+
+Mean **52.93 → 52.60 fps (−0.6%)**; one pair ahead, no consistent pacing gain. Rejected for the
+current game workload and removed from the engine. The slice evaluator and Linux/Android builds
+had passed before removal. The probe did not promote successful global-cache hits into the site's
+two-entry cache; promotion is a distinct possible follow-up, not evidence for keeping this version.
+Raw windows/results: `build/perf-codex/poco-inline-{1,2,3}-{off,on}/`; Pixel results:
+`pixel-inline-{on,off}.txt` and `pixel-inline-2-{on,off}.txt`. The attempted DWARF attach profile
+produced zero samples and supplies no evidence about TLS call sites.
+
 
 **Per-address-space TLB banks** (patch kept as `perf/rejected-tlb-banks.patch`): the user TLB index
 set aside per ASID at a context switch and swapped back when that address space runs again (8 banks;
