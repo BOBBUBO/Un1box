@@ -15,6 +15,8 @@ GAMES = {
     "flightcontrol": [(.143, .127), 18, (.153, .629), 4],  # icon, PLAY! (Poco layout)
     "doodlejump": [(.143, .127), 22],                      # main menu (Pixel layout)
     "jellycar": [(.397, .127), 20, (.294, .497), 8],       # icon, dismiss the push prompt (Pixel layout)
+    "jetpack": [(.143, .310), 50],                        # Jetpack Joyride title (Poco layout, after OpenFeint was declined)
+    "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
 }
 apk = sys.argv[1]; secs = sys.argv[2] if len(sys.argv) > 2 else "30"
 steps = GAMES[sys.argv[3] if len(sys.argv) > 3 else "flightcontrol"]
