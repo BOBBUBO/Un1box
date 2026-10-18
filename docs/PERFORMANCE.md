@@ -14,6 +14,7 @@ The harness is in [`tools/perf/`](../tools/perf):
 | `inappfps.py` | In-app boot to lock screen, then Home ↔ Spotlight swipes; delivered fps from SurfaceFlinger `--timestats` for the guest SurfaceView (`--idle SECS` adds idle engine CPU). |
 | `gamefps.py SECS` | Delivered fps while a game runs on screen. |
 | `fcbench.py APK SECS [GAME]` | Installs an APK, boots, unlocks, starts a game from Home page 2; presets follow each phone's layout (Poco: `flightcontrol`; Pixel: `doodlejump`, `jellycar`; check with `FC_SHOT=file.png`) and runs `gamefps.py`. Debug builds read `files/debug-env` (`KEY=VALUE`), e.g. `LT_CROSS_PAGE_CHAIN=off` or `LT_ADPF=off`, for same-APK A/B runs. |
+| `framestats.py` | Frame pacing from a per-frame log: the **ceiling** (95th percentile of 500 ms windows: what the game sustains when nothing gets in the way), median, **low** (5th percentile: how deep the dips go), 1% low, **hitches** (frames over 50 ms), share of time at ≥55 / <30 fps, and a chart. `fcbench.py` with `FC_FRAMES=chart.png` turns on the runtime's `LT_FRAME_LOG` and reports it for the same window. Given the engine's `IT_FRAME_TRACE` (with `IT_VCPU_ACCT` and `IT_GLES_PROF`) it also splits each class of frame (on time / late / hitch) into guest code, GL, BQL wait, idle and off-CPU time. |
 | `gameprof.sh` / `inappprof.sh` | `simpleperf` of the `:engine` process during play / swipes: per-thread split, vCPU DSOs and symbols. |
 | `abtimer.sh`, `appab.py`, `scrollab.sh` | Interleaved A/B runs. |
 
@@ -47,6 +48,9 @@ treats the app's worker process differently, and that turned out to be the large
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| LCD: convert and compose frames without the BQL | `d7c4927685` | The 60 Hz vsync push converted (or composed and blitted) the whole scanout holding the BQL: 1.1 ms per refresh on the Poco, 5.7% of wall time, and the vCPU, which takes the BQL thousands of times a second for the timer, VIC and interrupts, kept landing behind it (its waits over 1 ms were 13% of wall). Now only the dirty snapshot and `dpy_gfx_update` hold the lock. Same app, engine before (`ad729e45fe`) vs the blit unlock alone, four interleaved 30 s rounds per phone, all 8 pairs won: **Poco, Flight Control 37.1/38.5/36.1/37.3 → 40.4/43.4/45.5/43.4 fps (37.3 → 43.2, +16%); ceiling 46 → 52, hitches 111 → 77 per 30 s. Pixel, Doodle Jump menu 32.8/30.6/34.3/33.2 → 38.7/40.8/36.9/37.7 (32.7 → 38.5, +18%); ceiling 45 → 51.** The same commit also unlocks plane composition (Doodle Jump's scanout is two composed planes) and copies opaque pixels instead of blending them; desktop vCPU BQL wait in Doodle Jump 6.9% → 1.4% of wall. With that and the PL080 change below (`a62f05bae3`) vs the blit unlock alone, four interleaved rounds per phone: **Pixel, Doodle Jump menu 36.1/39.6/40.8/35.2 → 52.6/58.0/51.7/59.5 fps (37.9 → 55.5, +46%, 4/4); frames over 50 ms ~94 → 0–3 per 30 s, low 26 → 44–56, up to 97% of the time at ≥ 55 fps. Poco, Flight Control 40.0/39.8/40.8/42.2 → 43.8/48.5/45.3/41.0 (40.7 → 44.7, +10%, 3/4).** |
+| PL080: move a paced FIFO's burst in one push | `a62f05bae3` | The I2S pacing timer (every 2 ms) let the PL080 DMA move audio one 4-byte element per MMIO dispatch: 129 µs a tick under the BQL on the Poco, 4.7% of wall while a game plays music. The DMA now reads the run from guest memory once and hands it to the I2S FIFO in one call (the last element still takes the normal path, which lowers the request line and finishes the descriptor). Desktop: the pacing callback 9.9 µs; the PCM tap still carries the audio. |
+| Keep the kernel's global TLB entries across an ASID switch | `ad729e45fe` | QEMU's TLB is not ASID-tagged, so each CONTEXTIDR write (~1.5K/s under iOS) flushed everything, including the kernel's global mappings: EL1 high-half refills were about half of all TLB fills. The short-descriptor walk now reports nG and the switch drops only the few non-global pages the EL1 index picked up. Desktop: kernel fills −79%, all fills −42%. Interleaved 30 s rounds: Poco, Flight Control 36.5/36.7/36.6/34.2 → 36.6/38.9/38.8/33.9 fps (36.0 → 37.1, +3%; 2 won, 2 even); Pixel, Doodle Jump menu 32.0/32.4/32.1 → 35.1/34.6/30.3 (32.2 → 33.3, +3.6%; 2 of 3). |
 | **Get the vCPU off the BQL** (four commits, below). The vCPU waited for QEMU's big lock ~26% of wall time in Flight Control on the Poco, ~80% of it in waits over 100 µs behind main-loop holds; it took the lock ~35K times/s. After: ~5K/s, 9% of wall. | engine `80c5b311f9`, `6622f7ab69`, `76ace3a65b`, `974c213352` | Same engine before/after (`256d81f9fb` vs `974c213352`), interleaved 30 s rounds. **Poco, Flight Control: 24.0/24.0/25.4/27.1/26.2 → 34.7/36.1/35.3/34.8/36.0 fps (25.3 → 35.4, +40%), 5/5 pairs. Pixel, Doodle Jump menu: 17.3/19.5/17.6 → 30.7/31.9/34.1 (18.1 → 32.2, +78%), 3/3.** **Pixel, JellyCar menu: 14.8/14.7/14.7 → 23.6/23.3/23.1 (14.7 → 23.3, +58%), 3/3** (its full speed is 30). Desktop full-speed runs still hold 60/60/30 fps (Flight Control/Doodle Jump/JellyCar) with no GL refusals. Per-fix split: one APK per commit, Poco Flight Control, two interleaved rounds: before 25.3 (the five rounds above) → exceptions 27.1/26.4 (+1.5) → tick counter 25.6/25.9 (±0, within noise; kept, as it removes ~18K lock takes/s) → GL calls 33.0/32.8 (+7.1, the big one) → audio clock 34.3/36.7 (+2.6). |
 | ↳ Exceptions and exception returns without the BQL | `80c5b311f9` | iOS takes an exception per syscall, page fault and IRQ. `cpsr_write_eret` locked twice per return for EL-change hooks the ARM1176 does not have; `cpu_handle_exception` locked for `do_interrupt`, which is CPU-local without hooks (new `TCGCPUOps.do_interrupt_needs_bql`); `cpu_handle_interrupt` locked only to clear the EXITTB every exception entry sets (now an atomic clear). |
 | ↳ Tick counter reads without the BQL | `6622f7ab69` | cputlb now honours `lockless_io` like physmem; timer1 opts in and only its TICKSHIGH/LOW reads (~18K/s) skip the lock. |
@@ -68,6 +72,10 @@ LTO for the Android engine, and the vCPU alone on the prime core. Unpinned, the 
 of a game on the Poco's 3.19 GHz prime core, which looks like a win to take, but pinned there
 (re-pinned each second, because core_ctl drops single-core masks) schedutil held the prime core
 at 1.6–1.9 GHz and Flight Control fell to 9 fps (Pixel animation was also worse earlier).
+Capturing the published frame (`ios_publish_bh`'s compare-and-copy, ~0.3 ms on the Poco) without the
+BQL was tried after the LCD change and dropped: JellyCar on the desktop went from 22–28 frames over 50 ms
+(two runs) to 220, at the same 30 fps mean, as its presents fell into a 50/16 ms alternation around the
+vsync instead of an even 33.
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
 A 2-way set-associative jump cache halved jump-cache misses in Flight Control (10.6% → 5.4% of
 lookups) but did not move frame rate: Poco 23.3/22.3/22.5 → 25.1/21.0/19.6 fps, Pixel JellyCar
@@ -93,23 +101,39 @@ in `files/debug-env` (debug builds read `KEY=VALUE` lines into the engine's envi
 with `tools/perf/gameprof.sh`, and map JIT samples to guest PCs with the perf map. In Flight Control
 the guest's time is ~50% kernel (IPC, scheduling, timers), ~41% shared cache, ~8.5% the game itself.
 
+**Ceiling versus dips.** A mean fps hides the shape: Flight Control's 37 fps on the Poco (engine
+`ad729e45fe`) was not a steady 37 but frames at a full 60 Hz (610 of 1119 at 16 ms) broken by stalls of
+3–8 refreshes (121 frames over 50 ms cost 8.9 of 30 s). The per-frame trace (`IT_FRAME_TRACE`, engine
+`983fb3e6e1`) split them: an on-time frame was 10.1 ms of guest code, 2.7 ms GL and 4.0 ms BQL wait; a
+hitch 51 ms guest code, 6.3 GL, 9.1 BQL wait. The vCPU was never idle (≤0.3 ms a frame) and never
+off-CPU, so slow frames were frames in which the guest did ~5× the work (~5.7× the instructions), not
+host preemption or the guest waiting on a device. Faster guest code and less BQL waiting lift both.
+`[acct] main-cb` lines (same commit) time every timer and bottom-half callback that holds the BQL;
+that is how the LCD refresh (5.7% of wall) and I2S pacing (4.7%) were found as the holders the vCPU
+waited behind.
+
 ## Current state and next targets
 
 Game frame rates, from the measurements above (full speed from the desktop runs; "—" was not
 measured at that point):
 
-| Game (scene) | Phone | Full speed | v0.0.2 | Before cross-page chaining | Before the BQL work | Now (engine `974c213352`) |
-| --- | --- | --- | --- | --- | --- | --- |
-| Flight Control 1.9.2 (first 30 s of play) | Poco F3 | 60 | ~18 | 19.8 | 25.3 | **35.4** |
-| Doodle Jump (animated main menu) | Pixel 10 | 60 | — | 15.3 | 18.1 | **32.2** |
-| JellyCar (live-physics main menu) | Pixel 10 | 30 | — (5.7 before ADPF) | 13.7 | 14.7 | **23.3** |
+| Game (scene) | Phone | Full speed | v0.0.2 | Before cross-page chaining | Before the BQL work | After it (`974c213352`) | LCD blit unlocked | Now (`a62f05bae3`) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Flight Control 1.9.2 (first 30 s of play) | Poco F3 | 60 | ~18 | 19.8 | 25.3 | 35.4 | 40.7–43.2 | **44.7** (ceiling 52–58) |
+| Doodle Jump (animated main menu) | Pixel 10 | 60 | — | 15.3 | 18.1 | 32.2 | 37.9–38.5 | **55.5** (ceiling 58–62, no hitches) |
+| JellyCar (live-physics main menu) | Pixel 10 | 30 | — (5.7 before ADPF) | 13.7 | 14.7 | 23.3 | — | — |
+
+Absolute rates drift a few fps between sessions (the LCD-blit column was 43.2 in one A/B and 40.7 in the
+next), which is why every change is judged by interleaved pairs.
 
 | Workload | Pixel 10 | Poco F3 |
 | --- | --- | --- |
 | Boot to lock screen (in app) | ~21 s | ~37–45 s |
 | Springboard Home ↔ Spotlight | ~50 fps | ~47–51 fps |
 
-The app shows the guest's fps next to the frame counter, and the Performance panel graphs the last
-60 s (`b11ef28b`); `fcbench.py` with `FC_SERIES=1` prints fps per second.
+Beside the frame counter the app draws the guest's fps on a fixed 0–60 scale for the last 60 s, a point
+per 500 ms so dips stay visible, with the current rate at the trace head and the 10 s average and low in
+the corner (`71624bd7`); `fcbench.py` with `FC_FRAMES=chart.png` gives the same view, with percentiles,
+from a measurement run.
 
 Games are the main gap; see [TODO.md](TODO.md).
