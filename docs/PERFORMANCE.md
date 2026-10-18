@@ -58,6 +58,9 @@ a direct measure of the work it removes (time per call, per frame) alongside the
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| GL calls that carry guest pointers copy through the TLB's host pointers instead of a page-table walk per page | `924e6839d5` | `gles_guest_rw` probed each page through the caller's TLB, then re-read it with `cpu_memory_rw_debug`, which walks the page tables again. Plain-RAM pages are now copied through the host pointers the probe returns. Poco, Jetpack Joyride title (232 client-array draws a frame): binding a draw's arrays 4.5 → 2.0 µs. Measured with the next row. |
+| ES hosts: skip the rectangle-texture setup per draw when no rectangle texture is in use | `1997c1a488` | Every ES1 draw re-read, re-bound and re-enabled `GL_TEXTURE_2D` on each fixed-function unit and restored it afterwards (~10 driver calls per unit), dirtying texture state the Adreno driver then revalidated. Host `glDrawArrays` 8.8 → 5.9 µs; with the row above a draw costs ~9.4 µs instead of ~14.7 (~1.2 ms less per Jetpack frame). **Poco, interleaved 30 s runs: Jetpack 34.3/34.7/34.1/34.6 → 30.8/37.3/34.2/38.2 fps (34.4 → 35.1, ceiling 40 → 42–46); Flight Control 54.5/56.9/52.1 → 56.8/56.2/55.3 (54.5 → 56.1, hitches 17–42 → 8–23 per 30 s).** |
+| ES hosts: cache texture name lookups | `64d111110b` | Each bind walked the list of every texture in the share group. Jetpack title, ~90 binds a frame: `glBindTexture` 4.5 → 1.6 µs. |
 | GLES on Android: render the drawable into an AHardwareBuffer and copy the present out of it (`LT_GLES_AHB=0` for A/B) | `4de4ae5ba1` | The Android counterpart of the iOS host's IOSurface path: the color texture gets gralloc BGRA storage through an EGLImage (RGBA plus a per-row byte swap where BGRA is refused), so a present waits for the GPU, locks the buffer and copies its rows, instead of `glReadPixels` into a staging buffer and copying that. **Poco, Flight Control, per present: glReadPixels ~0.85–1.0 ms + copy 0.34 ms → lock 0.14 ms + copy 0.37 ms (~1.3 → ~0.5 ms of vCPU time per frame).** Frame rate, four interleaved pairs: 53.4 → 53.8 fps (55.2/51.0/55.8/51.4 vs 51.0/55.8/54.4/53.9), inside the run-to-run spread. Not yet tried on the Pixel (Tensor G5); it falls back to the readback if its gralloc or EGL refuses. |
 | GLES on ES hosts: read the frame back as BGRA without a byte loop (`LT_GLES_BGRA_READ=0` for A/B) | `16c09e7fe3` | Every present read the drawable back by reading RGBA into a fresh 600 KB allocation and swizzling it a byte at a time (~2% of the vCPU in a game, plus first-touch faults on the new pages). Now `GL_EXT_read_format_bgra` straight into the destination, else a kept buffer swapped a word at a time. **Poco, Flight Control, same APK, 4 interleaved pairs: 51.9/54.7/51.7/54.3 vs 49.1/53.2/49.6/45.0 fps (53.2 vs 49.2, +8%, 4 of 4); ≥55 fps 48% vs 28% of windows; hitches 34 vs 53 per 30 s.** |
 | GLES on ES hosts: convert uploads whose internal format differs from the data's | `4ae00eaca8` | Not a speed change: the white/grey untextured geometry in Jetpack Joyride, Battle Bears and Real Racing on Android (opaque PVRTC uploaded as `GL_RGB` from RGBA data, refused by ES). |
@@ -79,6 +82,10 @@ a direct measure of the work it removes (time per call, per frame) alongside the
 | Android builds default to API 29 native ELF TLS | `5323ba7cfc` | Removes emulated-TLS calls from every TCG helper that touches thread-locals: ~5–8% faster boot. |
 | PKE: keep the Montgomery radix inverse for the loaded modulus | `a41eb8e07b` | The boot's RSA work recomputed it on every operation: ~7% faster boot. |
 | Already in the fork before this work (upstream adopted them later) | 909d3ccb62; cdbcff9724, 38642ff7a2, a4749f1ba6 | 4K target pages; learned per-TB I/O instruction limits (no re-translation after mid-block device reads). |
+
+Jetpack Joyride's title screen (Poco) is the heaviest scene measured so far: 863 GL calls and 232
+`glDrawArrays` a frame, host GL ~16–18% of wall time before the three GL rows above. Its best 500 ms
+windows reach 40–46 fps, so it is mostly bound by guest code, not GL.
 
 ### Measured and rejected
 
