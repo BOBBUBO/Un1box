@@ -12,9 +12,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   55.8 of 60 fps on the Poco (six runs 53.6–57.7; ceiling 60, median 56–60, ≥55 fps 58–86% of the
   time, 7–28 hitches per 30 s; 56.1 with 1997c1a488); Jetpack Joyride title 35 fps (ceiling 42–46,
   guest-code bound: GL is ~12% of the vCPU; the desktop runs it at ~54). With the quiet GL shim
-  (engine 7f744e80cc, guest package not rebuilt yet; measured with a patched binary): Flight Control
-  58.2 (low 52–56, 1–9 hitches per 30 s, ≥55 fps 85–97% of the time), Jetpack 50.3 (ceiling 54–56,
-  2–11 hitches), desktop Jetpack 59. Poco, g3 = 64d111110b: Doodle
+  (engine 7f744e80cc, real guest package serial 27, kept by the verdicts in 995ce258): Flight Control
+  59.0 (median 60, 1 hitch per 30 s, ≥55 fps 98–100% of the time: at its ceiling, dropped as a
+  benchmark), Jetpack 50.5 (ceiling 56, 1% low 21–28, 6–7 hitches per 30 s; was 39.4 with 114
+  hitches), desktop Jetpack 59. Jetpack is the Poco benchmark now; a game that holds a steady 60 on
+  both phones leaves the set (Flight Control, Doodle Jump). Pixel with serial 27: JellyCar menu 30.0
+  of 30 (8–45 hitches per 30 s), Doodle Jump menu 57.6–58.0. Poco, g3 = 64d111110b: Doodle
   Jump menu 57.2 of 60 (median 58, 0 hitches), JellyCar menu 29.8 of 30; Doodle Jump menu 55.5 of 60 on the Pixel (a62f05bae3); JellyCar menu
   23 of 30 (974c213352, not re-measured).
 - [ ] Indirect branches with many targets (`objc_msgSend`'s final jump goes to every method): LT Bench
