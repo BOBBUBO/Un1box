@@ -96,8 +96,10 @@ but leaves `it_acct_on` false unless `IT_VCPU_ACCT` is separately set. Guest ins
 TB lookup, context-switch and TLB-fill counters therefore stay disabled and their printed
 zeros must not be interpreted as measured rates. `[acct-mode] full=off bql=on` identifies
 this mode. Leave `IT_VCPU_ACCT` unset and the Android `files/debug-vcpu-accounting`
-marker absent for BQL-only captures. No manual recording is needed. Its overhead
-has not yet been measured.
+marker absent for BQL-only captures. No manual recording is needed. Two same-APK
+Poco Jetpack off/on pairs, second reversed, measured **53.32 → 50.18 fps (−5.9%)**;
+hitches over 50 ms rose 8 → 46 (418.8 → 3358.1 ms / 60 s per mode). This mode
+still materially perturbs pacing. Full metrics/settings are in PERFORMANCE.md.
 
 Engine `f9d7faec8c` scopes MMIO region attribution to each dispatch, restoring the previous
 region when a lockless callback never takes the BQL and clearing bypassed scopes after a
@@ -118,8 +120,33 @@ The tool prints the snapshots actually selected and divides by their actual inte
 it previously divided by the requested interval even when different snapshots were
 selected. New logs use exact nanosecond bounds and omit incomplete dumps; older logs
 use their rounded timestamps. JSON retains the selected bounds and all sites. BQL
-diagnostics remain off for ordinary optimization FPS comparisons; separate interleaved
-off/on captures will measure diagnostic overhead and refresh the current wait breakdown.
+diagnostics remain off for ordinary optimization FPS comparisons. The completed captures
+put actual vCPU waits at 9.08/8.74% wall, dominated by interrupt handling at
+6.09/5.84%; these are instrumented observations, not uninstrumented cost estimates.
+
+## Focused interrupt checks
+
+`LT_MASKED_IRQ_FAST=on` enables the default-off ARM physical IRQ/FIQ precheck
+(engine `e82b9e770b`). `LT_IRQ_CHECK_PROF=on` independently records CPU-0 checks;
+it does not enable full instruction accounting, BQL tables or the manual recorder.
+For focused off/on pairs, keep profiling on in both modes and other diagnostics off.
+For ordinary FPS comparisons, leave profiling off in both modes.
+
+`[irq-check] fast=MODE` blocks contain exact `begin-ns`/`end-ns` boundaries,
+`checks`, `masked` candidates, actual `skipped` checks, `delivered`, `unhandled`
+locked no-op outcomes, and `special` debug/halt/reset/replay checks. `masked-delivered`
+counts delivery after a masked snapshot; a newly arriving request before the lock
+can explain it. Only completed checks count; target longjmps bypass the record.
+
+`check-ns` sums completed check wall time from before the precheck through unlock
+(or the skip); `wait-ns` measures BQL acquisition, including mutex/timer overhead.
+`masked-ns` and `masked-wait-ns` are the corresponding masked-candidate subsets;
+`max-check-ns` is the largest completed check. Timings include descheduling and clock
+overhead, exclude logging and the outer interrupt-flag clear. Blocks are emitted
+after unlock at the first completed check at least five seconds after the previous
+boundary. Select contiguous complete blocks wholly inside each exact frame window.
+Instrumentation overhead must be measured separately; diagnostic FPS is not an
+ordinary baseline. No runtime benefit has been established yet.
 
 ## Focused exact-zero VFP multiplication
 

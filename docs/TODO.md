@@ -138,6 +138,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [ ] Texture upload on the Pixel: `gl-upload` (16 KiB `glTexSubImage2D`) is 51–57 µs against 12 µs on
   the Poco and 3–4 µs on the desktop. It looks like the Pixel's GL stack (ANGLE or the IMG driver).
   Profile it before testing a game that streams textures.
+- [ ] Measure masked physical-interrupt BQL avoidance (`e82b9e770b`,
+  `LT_MASKED_IRQ_FAST=on`, default off). The first two BQL-enabled captures place
+  6.1/5.8% wall wait at the interrupt handler, 2043/1691 acquisitions/s; not all
+  this time is recoverable. The precheck reuses ARM routing/mask rules, preserves
+  pending levels/EXITTB and bypasses replay/stepping/special events. Independent
+  `LT_IRQ_CHECK_PROF=on` counts/times CPU-0 masked candidates and actual no-op checks
+  without full accounting/BQL tables. Linux/Android builds succeeded; frozen
+  `masked-irq.apk`/symbols/identity retained. Two focused 35 s pairs off/on, on/off
+  queued after the combined cache+lookup baseline, varying only the fast switch;
+  IRQ profiling on both, other diagnostics/experiments off, array cache on. Runtime results pending;
+  no FPS or pacing saving established. Details/limits in PERFORMANCE/PROFILING.
 - [ ] The guest kernel is 22% of the vCPU in Jetpack on the Poco (half the time in translated code).
   It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
   lock and interrupt-mask instructions cheaper. Next to look at: how many exceptions and Mach messages
@@ -197,10 +208,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   separate. `f9d7faec8c` scopes MMIO attribution so lockless reads cannot mislabel later
   interrupt locks, and adds exact dump bounds/completion markers. `bqlsites.py` uses
   actual selected intervals, omits incomplete new dumps and saves all sites to JSON.
-  Runtime overhead/current wait split pending a separate off/on diagnostic comparison.
   Linux/Android builds pass; frozen `bql-prof.apk`/symbols, engine `f9d7faec8c`.
-  Two 30 s pairs (off/on, on/off) are queued after the LCD stage queue and cleanup,
-  all other diagnostics off; no live recording/full accounting. No FPS gain claimed.
+  Two 30 s pairs completed (off/on, on/off), all other diagnostics off; no live
+  recording/full accounting. Means 53.10/53.53 → 49.43/50.93 fps (53.32 → 50.18,
+  −5.9% diagnostic overhead). Ceiling 56/58 → 56/58, median 54/54 → 50/52,
+  low 50/50 → 36/40, 1% low 28.48/28.61 → 15.00/20.04; hitches 5/3 → 31/15,
+  durations 252.0/166.8 → 2370.6/987.5 ms per 30 s. First off has one publisher
+  skip; others zero. All four title/recorder-off scenes reviewed. Exact bounds
+  in PERFORMANCE.md and `bql-prof-results.json`; do not use enabled FPS as baseline.
+  BQL wait 9.08/8.74% wall, dominated by interrupt handler 6.09/5.84%,
+  2043/1691 acquisitions/s (29.8/34.5 µs mean wait). Real new logs parsed by
+  `bqlsites.py`; all sites/bounds retained. Runner stopped/restored baseline cleanly.
   Holder spans can include condition waits and callbacks can unlock internally; use
   actual vCPU waits before attributing those durations to lock stalls.
   Engine `9400ab1b68` adds default-off `LT_LCD_FORCED_SNAPSHOT_SKIP` and independent

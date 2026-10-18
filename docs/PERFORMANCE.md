@@ -346,9 +346,7 @@ exact nanosecond boundaries and a completion marker. `bqlsites.py` now uses the 
 selected interval instead of the requested one, ignores incomplete new dumps and can
 retain all sites/bounds in JSON. Legacy rounded timestamps remain readable.
 
-This is diagnostic work, not an optimization or FPS gain. Runtime overhead and the
-current wait split remain pending a same-APK interleaved off/on comparison after the
-existing lookup/LCD queue. Existing holder spans can include condition waits that
+This is diagnostic work, not an optimization or FPS gain. Existing holder spans can include condition waits that
 temporarily release the BQL, and callbacks can unlock it internally; those totals do
 not establish that the lock was held throughout. Actual vCPU waits are the stronger
 evidence. Full capture settings and limitations are in [PROFILING.md](PROFILING.md).
@@ -356,12 +354,80 @@ evidence. Full capture settings and limitations are in [PROFILING.md](PROFILING.
 Linux/Android builds succeeded (`build/perf-codex/bql-prof-final-build.txt`), engine
 `f9d7faec8c`. Frozen APK/symbols: `bql-prof.apk`, `bql-prof-symbols/`; SHA256:
 `a0c057076baac4494912df6d524cc26f8cd4a31b3126cf9adb98cbcad5a65c64`.
-Two 30 s off/on pairs, second reversed, are queued after the existing LCD stage
-runner and its clean-stop/environment restoration. All other diagnostics/experiments
-off, array cache on, no live recorder or full accounting. These measure instrumentation
-overhead, not an optimization. `poco-bql-prof-{1,2}-{off,on}/` will retain settings,
-screenshots, exact frame windows and engine logs; enabled arms select complete accounting
-snapshots inside the frame window and retain separate exact bounds in `bql-sites.json`.
+Two 30 s off/on pairs completed, second reversed, after the LCD stage runner's
+clean stop. Snapdragon 865-class Poco, Jetpack title; all other diagnostics/experiments
+off, array cache on, no live recorder or full accounting. All four final screenshots
+reviewed: correct title, recorder off. First off arm has one publisher skip; all
+others zero. Retain that arm and its skip. These measure diagnostic overhead.
+
+| Pair | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 53.10 → 49.43 | 56 → 56 | 54 → 50 | 50 → 36 | 28.48 → 15.00 | 5 (252.0 ms) → 31 (2370.6 ms) |
+| 2 (on first) | 53.53 → 50.93 | 58 → 58 | 54 → 52 | 50 → 40 | 28.61 → 20.04 | 3 (166.8 ms) → 15 (987.5 ms) |
+
+Mean **53.32 → 50.18 fps (−5.9%)**, both pairs slower with diagnostics on.
+Hitches **8 → 46**, total duration **418.8 → 3358.1 ms / 60 s per mode**.
+Even without instruction accounting, these diagnostics perturb throughput and pacing;
+never treat enabled-arm rates or wait percentages as uninstrumented baselines.
+
+Enabled-arm BQL waits total **9.08/8.74% wall**, 9199/7145 acquisitions/s.
+`accel/tcg/cpu-exec.c:1062` dominates at **6.09/5.84% wall**, 2043/1691 acquisitions/s,
+29.8/34.5 µs mean wait. Timer1 contributes 0.7/0.9%; main vCPU lock site
+`tcg-accel-ops-mttcg.c:401` 0.6/0.8%; anonymous region aggregate 0.6/0.6%;
+LCD 0.4/0.3%; VIC0 0.4/0.2%. These are actual acquisition waits in selected
+complete accounting intervals, not holder spans. `bqlsites.py` parsed the real new
+dumps successfully; results retain every site and exact actual bounds.
+
+| Pair / mode | FPS [start, end) ns | BQL [start, end] ns |
+| --- | --- | --- |
+| 1 off | [431451506228171, 431481506228171) | disabled |
+| 1 on | [431624396567480, 431654396567480) | [431625194257011, 431650202677731] |
+| 2 on | [431804392530797, 431834392530797) | [431808410405535, 431833417156984] |
+| 2 off | [431974598175732, 432004598175732) | disabled |
+
+Artifacts: `build/perf-codex/poco-bql-prof-{1,2}-{off,on}/`,
+`bql-prof-analyze.py`, `bql-prof-results.json`, `bql-prof-scenes.png`. Enabled
+arms retain `bql-sites.{txt,json}` separately from the FPS windows. The runner
+cleanly stopped/restored baseline before handing the phone to focused VFP captures.
+
+### Masked physical interrupt precheck (experimental, default off)
+
+The first two independent BQL-enabled Poco Jetpack captures attribute 6.1% and
+5.8% of wall time to `cpu_handle_interrupt` acquiring BQL (2043/1691 checks/s).
+These are instrumented observations, not an estimate of recoverable performance.
+The generic handler takes BQL before ARM determines whether a pending IRQ/FIQ is
+masked. Delivered interrupts were much less frequent in an earlier exception
+capture, motivating a direct count of these no-op acquisitions.
+
+Engine `e82b9e770b` adds default-off `LT_MASKED_IRQ_FAST=on`. An optional target
+precheck reuses ARM's existing physical-exception routing and unmask predicates,
+including SCR/HCR overrides. It only accepts snapshots containing IRQ/FIQ and
+optionally EXITTB. It preserves pending IRQ/FIQ levels and EXITTB chain invalidation;
+new requests retain their kicks. Debug, halt, reset, virtual/NMI/unknown requests,
+M-profile, replay and single stepping retain the locked path. Guest unmasking still
+ends/rechecks the TB, including with the existing PSR optimization enabled.
+
+Independent default-off `LT_IRQ_CHECK_PROF=on` times and counts CPU-0 checks without
+full instruction accounting, BQL tables or live recording. Exact approximately
+five-second blocks include candidate masked checks, actual skips, delivery/no-op
+outcomes, total check and acquisition wall times, and masked subsets. Timing includes
+clock overhead/descheduling. Only completed checks are included; target longjmps
+can bypass recording. A delivery after a masked precheck may reflect a new request
+arriving before BQL acquisition, so it is not alone proof of an incorrect predicate.
+Output follows BQL unlock. See PROFILING.md for fields.
+
+Linux/Android builds succeeded (`build/perf-codex/masked-irq-build.txt`), no tests
+added/run. Frozen APK/symbols: `masked-irq.apk`, `masked-irq-symbols/`; identity
+in `masked-irq-build-identity.json` (app `6281142f`, documentation edits only).
+APK SHA256: `9c431d362337a89400da8ba01fd3582ee61eec91ba282efca8b60dd20bb923af`.
+Library SHA256: `45040f4403d95401c1c0c94777dbcbdc2f0ef50f6db242ce1b1fca64f473f156`.
+Two focused 35 s pairs (off/on, on/off) are queued after the combined cache+lookup
+baseline and its clean stop. Vary only `LT_MASKED_IRQ_FAST`; IRQ profiling on both,
+array cache on, other experiments/diagnostics off, no live recorder/full accounting.
+Select at least four contiguous complete timing blocks wholly inside each frame
+window. Raw logs/settings/scenes: `poco-masked-irq-focused-{1,2}-{off,on}/`;
+runner `masked-irq-run.py`. No local saving, FPS gain or pacing result is claimed.
+Keep the experiment off pending results and an ordinary diagnostic-off comparison.
 
 ### Exception and SVC diagnostics (2026-10-18)
 
