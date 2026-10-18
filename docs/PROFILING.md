@@ -155,5 +155,34 @@ path), weights self samples by their event periods and reports guest instruction
 translation-buffer addresses with conflicting mappings are excluded. With `--before-map`, only
 the same unambiguous mapping in both snapshots is accepted. Incomplete final map lines are ignored.
 The remaining event weight includes native work and unmapped JIT code; it is not a native-only
-percentage. Guest PCs do not identify processes or unwind guest stacks. This reader is newly
-added; its first fresh mapped phone capture is pending.
+percentage. Guest PCs do not identify processes or unwind guest stacks. First real Poco captures
+completed successfully, mapping about 44% of vCPU event weight with stable before/after maps.
+Exact sample bounds, native reports and limitations are recorded in [PERFORMANCE.md](PERFORMANCE.md).
+
+## Publisher wake diagnostics
+
+`LT_PUBLISH_WAKE_EARLY=on` (default off) snapshots the engine notification count before the
+publisher's frame/listener/audio work. It then waits only if that count is unchanged, preserving
+notifications received during work. The 10 ms control/audio polling timeout remains.
+
+Independent `LT_PUBLISH_WAKE_PROF=on` (default off) emits `[publish-wake]` five-second blocks:
+`begin-ns`, `end-ns`, `loops`, `changed`, `changed-wait-ns`, `frames`, `age-ns`, `max-age-ns`.
+`changed` counts loops with a notification during work, and `changed-wait-ns` sums their
+subsequent waits. Some notifications may already have been consumed by acquisition, so these
+are not missed-frame counts. `age-ns / frames` is mean frame timestamp age at publication;
+it includes LCD/pacing work before capture and excludes later listener/audio work. It is not
+solely publisher latency. Compare interleaved arms with the diagnostic on in both; keep it
+off for ordinary FPS baselines. Runtime measurement is pending.
+
+## TLB dirty-reset experiment
+
+`LT_TLB_DIRTY_FAST=on` (engine `42d50e5d2e`, default off) checks compact TLB entry flags and
+host address range before fetching full-entry slow-write flags. The same entries and flags
+are checked under the same lock. Dirty snapshots are still cleared and every reset retained.
+Keep forced-snapshot skipping off; that separate experiment worsened game pacing.
+
+`LT_LCD_SNAPSHOT_PROF=on` measures the enclosing snapshot call in both arms. Engine `1cd3a771c3`
+adds explicit `begin-ns` and `end-ns` fields to its blocks; older logs have no exact boundaries.
+Snapshot time includes bitmap copy/clear, the TLB reset and the TCG `run_on_cpu` ordering
+barrier. It does not isolate reset-loop time. Do not attribute its full duration to the scan or
+remove the ordering barrier based on this timing. Device measurements remain pending.
