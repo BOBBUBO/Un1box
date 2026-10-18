@@ -10,7 +10,7 @@ for l in open(log,errors='replace'):
     if m and cur is not None: dumps[cur]['TOTAL']=(int(m.group(1)),int(m.group(2))); continue
     m=re.search(r"\[acct\]   bql-by-mr (\S+) n (\d+) wait-ns (\d+)",l)
     if m and cur is not None:
-        k=re.sub(r'^.*qemu-ios-android/','',m.group(1))
+        k=re.sub(r'^.*qemu-ios(?:-android)?/','',m.group(1))
         n,w=dumps[cur].get(k,(0,0)); dumps[cur][k]=(n+int(m.group(2)),w+int(m.group(3)))
 a=dumps[min(dumps,key=lambda t:abs(t-t0))]; b=dumps[min(dumps,key=lambda t:abs(t-t1))]; dt=t1-t0
 rows=[(k,(b[k][0]-a.get(k,(0,0))[0])/dt,(b[k][1]-a.get(k,(0,0))[1])/dt/1e7) for k in b]

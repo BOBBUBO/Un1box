@@ -18,7 +18,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second
   reaches 60, so ADPF is not causing it (it is worth 1.7× here). Next: per-frame gaps against the
   BQL hold log, to see whether the slow seconds line up with main-loop work (audio DMA, LCD).
-- [ ] Try the engine's upstream merge (`qemu-ios-android` `dev/upstream-sync`, 7ab545390b) on a phone;
+- [ ] Try the engine's upstream merge (`qemu-ios` `dev/upstream-sync`, 7ab545390b) on a phone;
   verified on Linux only.
 - [ ] Desktop frontends poll for frames (Linux 10 ms loop, Windows `SDL_Delay(8)`); move them to
   frame-published wakeups like Android.

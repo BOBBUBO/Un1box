@@ -46,7 +46,7 @@ treats the app's worker process differently, and that turned out to be the large
 | Keep engine threads on fast cores | `3509e0db` | Android parked the bursty vCPU thread on little cores. Engine threads now get affinity to CPUs with ≥ 50% of the maximum `cpu_capacity`. Standalone boot: Pixel 57–74 s → 19–20 s; Poco 55 s → 36–40 s. |
 | Cheaper presenter scaling | `3509e0db` | The Android presenter's per-pixel nearest-neighbour upscale was rewritten to copy runs per source pixel and duplicate rows. |
 
-### Engine (`qemu-ios-android`, branch `dev/perf`)
+### Engine (`qemu-ios`, branch `dev/perf`)
 
 | Change | Commit | Effect |
 | --- | --- | --- |
