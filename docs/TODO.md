@@ -6,18 +6,25 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 ## Performance (current focus)
 
 - [ ] Android: steady ~60 Hz guest UI (Springboard animations measure 45–51 fps on Pixel 10 / Poco F3).
-- [ ] Android: steady target frame rate in common period games. Now (engine 16c09e7fe3): Flight Control
-  55.5 of 60 fps on the Poco (ceiling 60, ≥55 fps 61–76% of the time); Doodle Jump menu 55.5 of 60 on
-  the Pixel (a62f05bae3); JellyCar menu 23 of 30 (974c213352, not re-measured).
+- [ ] Android: steady target frame rate in common period games. Now (engine 4de4ae5ba1): Flight Control
+  55.8 of 60 fps on the Poco (six runs 53.6–57.7; ceiling 60, median 56–60, ≥55 fps 58–86% of the
+  time, 7–28 hitches per 30 s); Doodle Jump menu 55.5 of 60 on the Pixel (a62f05bae3); JellyCar menu
+  23 of 30 (974c213352, not re-measured).
 - [ ] Indirect branches with many targets (`objc_msgSend`'s final jump goes to every method): LT Bench
   `icall` is 3–6× a direct call, because a site's 2-entry cache misses and `helper_lookup_tb_ptr` runs
   (TB lookup is still ~12% of the vCPU in Flight Control on the Poco, ~4% in `qht` after jump-cache
-  misses, 57% of them on empty slots). Candidates: probe the jump cache inline in the generated code;
-  find what keeps emptying jump-cache slots.
+  misses, 57% of them on empty slots). Candidates: probe the jump cache inline in the generated code.
+  What empties the slots (desktop, Flight Control play): 95% are one kernel routine's TLBIASID of the
+  current ASID (~60/s, each empties the 16K-entry cache); revalidating entries instead cut misses 40%
+  and lost 2% on the Poco (rejected, PERFORMANCE.md). Misses are not the cost any more.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
-  the desktop), 4× a Mach RPC to another process. Find out where the time goes (guest scheduler path,
-  idle/WFI, timer); threads hand off work all the time in games (audio, main, render).
+  the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
+  the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
+  kernel work: four BSD syscalls and two scheduler switches per round trip, against two Mach traps
+  with a direct handoff for the RPC. Left open only to compare with a real device.
 - [ ] LT Bench: add GL tests (draw calls, texture upload, present) and run it on the Pixel.
+- [ ] Pixel: check the AHardwareBuffer present (engine 4de4ae5ba1) renders correctly and which path
+  it takes (the GL init line in the engine log names `IOSurface` or `readback`).
 - [ ] The vCPU still waits ~9% of wall time for the BQL, behind main-loop holds. What the main loop
   does under it: the PL080 moves audio to the I2S FIFO one 4-byte element per full
   `address_space_read`/`write` dispatch (~44K/s); the LCD converts lines and resets TLB dirty

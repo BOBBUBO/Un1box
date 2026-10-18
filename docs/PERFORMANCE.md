@@ -33,6 +33,13 @@ Control 1.9.2 holds **60 fps** throughout play, so it targets 60: the phones' ~1
 Measure in-app (not the standalone engine): the Android scheduler
 treats the app's worker process differently, and that turned out to be the largest effect.
 
+**Run-to-run spread on the Poco.** Identical runs of Flight Control land anywhere from ~51 to
+~56 fps. It is not core placement: sampling the vCPU thread every 250 ms over six runs found it on
+the prime core (cpu7) 95–100% of the time in every run. That core's clock, chosen by schedutil
+under the ROM's 2.75 GHz cap, averaged 2.42–2.51 GHz from run to run, and fps roughly follows it
+(2.51 GHz: 55.0 fps; 2.42 GHz: 53.1). A change worth less than ~3% needs many interleaved pairs, or
+a direct measure of the work it removes (time per call, per frame) alongside the frame rate.
+
 ## Android
 
 | Change | Commit | Before → after |
@@ -51,6 +58,7 @@ treats the app's worker process differently, and that turned out to be the large
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| GLES on Android: render the drawable into an AHardwareBuffer and copy the present out of it (`LT_GLES_AHB=0` for A/B) | `4de4ae5ba1` | The Android counterpart of the iOS host's IOSurface path: the color texture gets gralloc BGRA storage through an EGLImage (RGBA plus a per-row byte swap where BGRA is refused), so a present waits for the GPU, locks the buffer and copies its rows, instead of `glReadPixels` into a staging buffer and copying that. **Poco, Flight Control, per present: glReadPixels ~0.85–1.0 ms + copy 0.34 ms → lock 0.14 ms + copy 0.37 ms (~1.3 → ~0.5 ms of vCPU time per frame).** Frame rate, four interleaved pairs: 53.4 → 53.8 fps (55.2/51.0/55.8/51.4 vs 51.0/55.8/54.4/53.9), inside the run-to-run spread. Not yet tried on the Pixel (Tensor G5); it falls back to the readback if its gralloc or EGL refuses. |
 | GLES on ES hosts: read the frame back as BGRA without a byte loop (`LT_GLES_BGRA_READ=0` for A/B) | `16c09e7fe3` | Every present read the drawable back by reading RGBA into a fresh 600 KB allocation and swizzling it a byte at a time (~2% of the vCPU in a game, plus first-touch faults on the new pages). Now `GL_EXT_read_format_bgra` straight into the destination, else a kept buffer swapped a word at a time. **Poco, Flight Control, same APK, 4 interleaved pairs: 51.9/54.7/51.7/54.3 vs 49.1/53.2/49.6/45.0 fps (53.2 vs 49.2, +8%, 4 of 4); ≥55 fps 48% vs 28% of windows; hitches 34 vs 53 per 30 s.** |
 | GLES on ES hosts: convert uploads whose internal format differs from the data's | `4ae00eaca8` | Not a speed change: the white/grey untextured geometry in Jetpack Joyride, Battle Bears and Real Racing on Android (opaque PVRTC uploaded as `GL_RGB` from RGBA data, refused by ES). |
 | LCD: convert and compose frames without the BQL | `d7c4927685` | The 60 Hz vsync push converted (or composed and blitted) the whole scanout holding the BQL: 1.1 ms per refresh on the Poco, 5.7% of wall time, and the vCPU, which takes the BQL thousands of times a second for the timer, VIC and interrupts, kept landing behind it (its waits over 1 ms were 13% of wall). Now only the dirty snapshot and `dpy_gfx_update` hold the lock. Same app, engine before (`ad729e45fe`) vs the blit unlock alone, four interleaved 30 s rounds per phone, all 8 pairs won: **Poco, Flight Control 37.1/38.5/36.1/37.3 → 40.4/43.4/45.5/43.4 fps (37.3 → 43.2, +16%); ceiling 46 → 52, hitches 111 → 77 per 30 s. Pixel, Doodle Jump menu 32.8/30.6/34.3/33.2 → 38.7/40.8/36.9/37.7 (32.7 → 38.5, +18%); ceiling 45 → 51.** The same commit also unlocks plane composition (Doodle Jump's scanout is two composed planes) and copies opaque pixels instead of blending them; desktop vCPU BQL wait in Doodle Jump 6.9% → 1.4% of wall. With that and the PL080 change below (`a62f05bae3`) vs the blit unlock alone, four interleaved rounds per phone: **Pixel, Doodle Jump menu 36.1/39.6/40.8/35.2 → 52.6/58.0/51.7/59.5 fps (37.9 → 55.5, +46%, 4/4); frames over 50 ms ~94 → 0–3 per 30 s, low 26 → 44–56, up to 97% of the time at ≥ 55 fps. Poco, Flight Control 40.0/39.8/40.8/42.2 → 43.8/48.5/45.3/41.0 (40.7 → 44.7, +10%, 3/4).** |
@@ -100,6 +108,20 @@ reads no TB) showed no gain on the Pixel 10 with ADPF off, Doodle Jump menu, thr
 58.4/57.4/57.5 → 49.0/58.0/55.2 fps. That scene now runs near its 60 fps cap even without ADPF, so a
 throughput change needs the Poco's Flight Control to judge; the patch is parked
 (`perf/jump-cache-wide-entries.patch` in the development workspace) rather than shipped untested.
+Keeping the jump cache when a CF_PCREL TB is invalidated (upstream empties every jump cache;
+`tb_lookup` already rejects a stale entry by its `CF_INVALID` cflags, so only the indirect-branch
+caches would be renewed) cut whole-cache flushes ~5 500 → ~1 200 over a desktop Flight Control run,
+nearly all during loading, but lost on the Poco: 52.3/51.2/52.9/51.9 vs 53.6/53.2/54.6/54.8 fps with
+the flush (52.1 vs 54.1, −3.7%, 4 of 4 pairs), with fewer windows at ≥ 55 fps (36–40% vs 48–63%).
+Keeping the jump cache across a TLBIASID of the running process (patch kept as
+`perf/rejected-jc-asid-revalidate.patch`): iOS 3 issues one ~60 times a second from a single
+kernel routine, and on the desktop it accounted for 95% of jump-cache misses on empty slots in
+Flight Control play. Each entry carried a generation in the unused upper half of its 32-bit PC and
+was checked against the PC's current physical page(s) on its next hit instead of being dropped.
+Desktop jump-cache misses in play fell 40% (8.3M → 5.0M per 50 s; an unsafe no-flush upper bound
+gave the same). The Poco did not gain: interleaved, flush 57.7/57.0/53.6/56.5/53.7/56.3 vs
+revalidate 54.3/54.1/57.4/51.9/55.6/55.0 fps (55.8 vs 54.7, behind in 4 of 6). Like the 2-way
+cache, fewer misses do not show up in frame rate; a miss now costs about what the page check does.
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
 A 2-way set-associative jump cache halved jump-cache misses in Flight Control (10.6% → 5.4% of
 lookups) but did not move frame rate: Poco 23.3/22.3/22.5 → 25.1/21.0/19.6 fps, Pixel JellyCar
@@ -150,7 +172,7 @@ operation). Baselines, engine `16c09e7fe3` (Poco: ic8 APK with `LT_TLB_BANKS=off
 | `memcpy` (per KiB) | 612 | 441 | 1.6 / 2.3 GB/s |
 | `syscall` (`getppid`) | 972 | 937 | |
 | `time` (`mach_absolute_time`) | 975 | 715 | a trap on this OS |
-| `thread-switch` (pipe round trip) | 65 600 | 26 600 | 4× a Mach RPC to another process: unexplained (TODO) |
+| `thread-switch` (pipe round trip) | 65 600 | 26 600 | 4× a Mach RPC to another process; the vCPU is busy (~95%, <1% halted) and the profile flat, so guest kernel work (TODO) |
 | `rpc` (Mach RPC to launchd) | 13 200–16 600 | 5 700 | two address-space switches |
 | `rpc-64p` minus `rpc` | ~600–800 | ~1 350 | refilling 64 pages after the switches (desktop with the rejected TLB banks: ~120) |
 | `touch-64p` (per 64 pages) | 345 | 218 | the same pages with a warm TLB |

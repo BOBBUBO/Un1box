@@ -94,6 +94,8 @@ What it has shown so far:
 - Translated straight-line code is as fast on a Poco F3 as on a desktop (`loop` ~4 ns); what separates
   them is everything around it (system calls, switches, faults: 1.5–3× slower on the phone).
 - An indirect call with more targets than the per-site branch cache holds costs 3–6× a direct one.
-- A thread round trip over pipes costs 4× a Mach RPC to another process (unexplained, see TODO).
+- A thread round trip over pipes costs 4× a Mach RPC to another process. The vCPU is busy, not
+  waiting, through it, and no emulator path stands out, so it looks like the guest kernel's own cost
+  (four BSD syscalls and two scheduler switches against two Mach traps with a direct handoff).
 - Keeping the user TLB per address space (rejected, PERFORMANCE.md) cut `rpc-64p`'s refill cost
   ~10× on the desktop, but cost Flight Control 3% on the Poco.
