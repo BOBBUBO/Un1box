@@ -61,7 +61,7 @@ Install and read on Android (guest running, APK with the USB bridge):
 ```sh
 export ANDROID_SERIAL=...
 tools/guestbench/android.sh install OUT_DIR/LTBench.ipa
-# tap the "LT Bench" icon in the guest: it runs at launch and again on each tap (~30 s on a phone)
+# tap the "LT Bench" icon in the guest: it runs at launch and again on each tap (~6 s on a Poco F3)
 tools/guestbench/android.sh results          # the newest pass's lines from the engine log
 ```
 
