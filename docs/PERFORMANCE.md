@@ -491,6 +491,33 @@ from the ordinary FPS pairs. Linux/Android builds succeeded (`dirty-query-prof-b
 Frozen diagnostic APK/symbols: `dirty-query-prof.apk`, `dirty-query-prof-symbols/`. Runtime pending.
 APK SHA256: `b1d695fda6aef562790e1ec4feab45149571e4919989574f089e9c07fc340341`.
 
+### First runtime guest-PC attribution (2026-10-18, diagnostic)
+
+`tools/perf/guestpc.py` completed its first real mapped profile on the Snapdragon 865-class
+Poco: Jetpack title, dirty-query fast path off, sampler and perfmaps on, recorder/full accounting
+off. Exact 15 s profile sample bounds: **427193086575160 → 427208091264998 ns**.
+Worker PID 11991; matching before/after maps required. 18,721 total samples, zero lost;
+13,355 vCPU self samples. Guest instructions map **44.44% of vCPU event weight** (5,942 samples),
+with 7,413 unmapped samples, zero ambiguous or unstable sampled mappings. Unmapped includes
+native work and absent JIT mappings, not just native code. No guest process/stack attribution.
+
+A local symbol cache was built from the exact frozen `dirty-query-prof-symbols/libqemu-arm.so`
+and previously cached matching host libraries, with no device reads during the next benchmark.
+Native self costs: `tb_lookup_legacy` 4.95%, `do_ld4_mmu` 2.70%, `qht_lookup_custom` 1.56%,
+TLS dynamic resolver 1.03%, dirty-flag queries 0.59%, bitmap scanning 0.48%.
+Call-chain unwinding errors: **46.13%**; incomplete caller attribution cannot establish absence
+of a cost. This is a diagnostic baseline, not an FPS or overhead comparison.
+
+Raw guest address bands account for 17.01% of vCPU event weight in 0xc0000000–0xcfffffff,
+13.94% in 0x30000000–0x3fffffff and 13.44% below 0x10000000. The hottest 4 KiB instruction
+page is 0x001b1000 (1.72% of vCPU weight). These ranges/pages are not resolved function names
+or process identities. Preserve that distinction until matching guest symbols are available.
+
+Evidence: `build/perf-codex/poco-dirty-focused-1-off/` (`cpu-profile/`, before/after maps,
+`guest-pcs.{txt,json}`, `symbolized/{self,callgraph}.txt`). Reader command:
+`guestpc.py cpu-profile/perf.data perf-11991-after.map --before-map perf-11991-before.map`.
+Local symbolization recipe: `build/perf-codex/symbolize-focused.py`.
+
 ### TB lookup hit path (2026-10-18, default off pending confirmation)
 
 Engine `164ec930cc` adds `LT_TB_LOOKUP_INLINE=on` (default off). A fresh Poco Jetpack profile

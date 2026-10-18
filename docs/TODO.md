@@ -128,7 +128,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `tools/perf/exceptions.py LOG --last 30 [--frames FULL_FRAME_LOG]` summarizes complete snapshots.
   `tools/perf/guestpc.py` now reads self samples against the same worker's before/after perfmaps
   to rank guest instruction PCs. It excludes ambiguous/reused mappings and has no process or
-  guest-stack attribution. A fresh mapped capture and first runtime use of this reader are pending.
+  guest-stack attribution. First real runtime use succeeded: Poco Jetpack diagnostic, 13,355 vCPU samples,
+  44.44% of event weight mapped (5,942 samples), zero ambiguous/unstable sampled mappings;
+  7,413 unmapped samples include native work and missing JIT mappings. Native lookup remains
+  prominent (`tb_lookup_legacy` 4.95% self); 46.13% call-chain unwind errors. Matching guest
+  symbols and an enabled-arm comparison remain pending. Full bounds/evidence in PERFORMANCE.md.
 - [ ] Dirty-state query hot path: the fresh Poco Jetpack profile puts `physical_memory_is_clean`
   at 1.25% inclusive and `physical_memory_get_dirty_flag` at 0.59% self / 0.89% inclusive.
   It queries three one-bit flags through general bitmap-range scans, entering/exiting RCU three
