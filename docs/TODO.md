@@ -15,7 +15,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   (engine 7f744e80cc, real guest package serial 27, kept by the verdicts in 995ce258): Flight Control
   59.0 (median 60, 1 hitch per 30 s, ≥55 fps 98–100% of the time: at its ceiling, dropped as a
   benchmark), Jetpack 50.5 (ceiling 56, 1% low 21–28, 6–7 hitches per 30 s; was 39.4 with 114
-  hitches), desktop Jetpack 59. Jetpack is the Poco benchmark now; a game that holds a steady 60 on
+  hitches), desktop Jetpack 59; 52.2 with engine 0addc3e156 + 2df170ca78 (+6%, three pairs). Jetpack is the Poco benchmark now; a game that holds a steady 60 on
   both phones leaves the set (Flight Control, Doodle Jump). Pixel with serial 27: JellyCar menu 30.0
   of 30 (8–45 hitches per 30 s), Doodle Jump menu 57.6–58.0. Poco, g3 = 64d111110b: Doodle
   Jump menu 57.2 of 60 (median 58, 0 hitches), JellyCar menu 29.8 of 30; Doodle Jump menu 55.5 of 60 on the Pixel (a62f05bae3); JellyCar menu
