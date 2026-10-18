@@ -203,7 +203,7 @@ import LightTouchSharedDesktopMac
         config.storageProof = proof
         // Chain TCG jumps across guest pages, as the Android and Linux ports do
         // (Portable/src/Storage.cpp has the measurements).
-        config.argv += ["-accel", "tcg,cross-page-chain=on"]
+        config.argv += ["-accel", "tcg,cross-page-chain=on,indirect-cache=on"]
         return config
     }
 
