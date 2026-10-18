@@ -15,6 +15,7 @@ The harness is in [`tools/perf/`](../tools/perf):
 | `gamefps.py SECS` | Delivered fps while a game runs on screen. |
 | `fcbench.py APK SECS [GAME]` | Installs an APK, boots, unlocks, starts a game from Home page 2; presets follow each phone's layout (Poco: `flightcontrol`; Pixel: `doodlejump`, `jellycar`; check with `FC_SHOT=file.png`) and runs `gamefps.py`. Debug builds read `files/debug-env` (`KEY=VALUE`), e.g. `LT_CROSS_PAGE_CHAIN=off` or `LT_ADPF=off`, for same-APK A/B runs. |
 | `framestats.py` | Frame pacing from a per-frame log: the **ceiling** (95th percentile of 500 ms windows: what the game sustains when nothing gets in the way), median, **low** (5th percentile: how deep the dips go), 1% low, **hitches** (frames over 50 ms), share of time at ≥55 / <30 fps, and a chart. `fcbench.py` with `FC_FRAMES=chart.png` turns on the runtime's `LT_FRAME_LOG` and reports it for the same window. Given the engine's `IT_FRAME_TRACE` (with `IT_VCPU_ACCT` and `IT_GLES_PROF`) it also splits each class of frame (on time / late / hitch) into guest code, GL, BQL wait, idle and off-CPU time. |
+| `guestsyslog.py` | Desktop: the guest's syslog during a headless run (through the app's USB bridge), counted by sender and text. Every line an app writes to stderr becomes a syslogd message the guest has to relay and parse. |
 | `gameprof.sh` / `inappprof.sh` | `simpleperf` of the `:engine` process during play / swipes: per-thread split, vCPU DSOs and symbols. |
 | `abtimer.sh`, `appab.py`, `scrollab.sh` | Interleaved A/B runs. |
 
@@ -58,6 +59,7 @@ a direct measure of the work it removes (time per call, per frame) alongside the
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| Guest GL shim: report each CoreAnimation surface once instead of on every frame (guest package serial 27) | `7f744e80cc` | `surface_capture` in the guest's OpenGLES logged two lines per surface CA handed out, and CA rotates its buffers, so every frame cost ~12 `write(2)`s plus ~12 `GLES_OP_LOG` traps, and launchd relayed each write to syslogd as a message of its own, which syslogd parsed with regexes (`asl_parse_time` → `regexec`: the top shared-cache page in a Poco Flight Control profile). Found by sampling guest stacks at IRQs, naming the addresses with LT Bench `-DSYMS`, and reading the guest syslog through `syslog_relay` (6348 lines in 66 s of Flight Control, all but ~300 these). Measured with the shipped OpenGLES binary-patched to skip the lines vs unpatched, each installed into a copy of the same record. **Desktop, Flight Control at 57.4–57.8 fps either way: vCPU busy 72.2/69.3/71.3/73.5% → 50.9/54.3/52.1% of wall (~3.3 ms less guest work per frame). Desktop, Jetpack title: 55.7/56.9/53.6/56.0 → 59.2/58.9/58.8/58.9 fps (vCPU 90–94% → 73–77%). Poco, Flight Control, four interleaved pairs: 55.4/57.5/56.1/57.1 → 59.0/57.2/58.6/58.1 fps (56.5 → 58.2); low 46–48 → 52–56, hitches 9–16 → 1–9 per 30 s, ≥55 fps 63–83% → 85–97% of the time.** **Poco, Jetpack title, three interleaved pairs: 39.6/36.1/35.5 → 51.3/50.9/48.6 fps (37.1 → 50.3, +36%); ceiling 44–48 → 54–56, low 26–32 → 42–46, hitches 117–121 → 2–11 per 30 s** (screenshots: the same title scene). Jetpack draws more and presents the same, so the fixed per-frame cost was a larger share of its frame, and its hitches were the syslog work bunching up. Not shipped yet: the guest package needs a rebuild (TODO). |
 | GL calls that carry guest pointers copy through the TLB's host pointers instead of a page-table walk per page | `924e6839d5` | `gles_guest_rw` probed each page through the caller's TLB, then re-read it with `cpu_memory_rw_debug`, which walks the page tables again. Plain-RAM pages are now copied through the host pointers the probe returns. Poco, Jetpack Joyride title (232 client-array draws a frame): binding a draw's arrays 4.5 → 2.0 µs. Measured with the next row. |
 | ES hosts: skip the rectangle-texture setup per draw when no rectangle texture is in use | `1997c1a488` | Every ES1 draw re-read, re-bound and re-enabled `GL_TEXTURE_2D` on each fixed-function unit and restored it afterwards (~10 driver calls per unit), dirtying texture state the Adreno driver then revalidated. Host `glDrawArrays` 8.8 → 5.9 µs; with the row above a draw costs ~9.4 µs instead of ~14.7 (~1.2 ms less per Jetpack frame). **Poco, interleaved 30 s runs: Jetpack 34.3/34.7/34.1/34.6 → 30.8/37.3/34.2/38.2 fps (34.4 → 35.1, ceiling 40 → 42–46); Flight Control 54.5/56.9/52.1 → 56.8/56.2/55.3 (54.5 → 56.1, hitches 17–42 → 8–23 per 30 s).** |
 | ES hosts: cache texture name lookups | `64d111110b` | Each bind walked the list of every texture in the share group. Jetpack title, ~90 binds a frame: `glBindTexture` 4.5 → 1.6 µs. |
@@ -164,6 +166,10 @@ flushes; `68d4df35e4` was found this way. Guest-side attribution: put `QEMU_PERF
 in `files/debug-env` (debug builds read `KEY=VALUE` lines into the engine's environment), profile
 with `tools/perf/gameprof.sh`, and map JIT samples to guest PCs with the perf map. In Flight Control
 the guest's time is ~50% kernel (IPC, scheduling, timers), ~41% shared cache, ~8.5% the game itself.
+That split was taken while the GL shim still wrote to syslog on every frame (fixed in `7f744e80cc`,
+above): a share of that kernel IPC and shared-cache time was syslogd and launchd handling the shim's
+log. **Check the guest syslog when a profile shows system daemons**: `tools/perf/guestsyslog.py`
+reads it through the app-services bridge on the desktop and counts lines by sender; look for per-frame lines.
 
 **Ceiling versus dips.** A mean fps hides the shape: Flight Control's 37 fps on the Poco (engine
 `ad729e45fe`) was not a steady 37 but frames at a full 60 Hz (610 of 1119 at 16 ms) broken by stalls of
@@ -212,6 +218,11 @@ measured at that point):
 | Flight Control 1.9.2 (first 30 s of play) | Poco F3 | 60 | ~18 | 19.8 | 25.3 | 35.4 | 40.7–43.2 | 44.7 (ceiling 52–58) | **55.5** (55.0–56.5; ceiling 60, median 56–58, ≥55 fps 61–76% of windows, 13–22 hitches per 30 s) |
 | Doodle Jump (animated main menu) | Pixel 10 | 60 | — | 15.3 | 18.1 | 32.2 | 37.9–38.5 | 55.5 (ceiling 58–62, no hitches) | — |
 | JellyCar (live-physics main menu) | Pixel 10 | 30 | — (5.7 before ADPF) | 13.7 | 14.7 | 23.3 | — | — | — |
+
+With the quiet GL shim (`7f744e80cc`, measured on the Poco with the shipped shim binary-patched,
+engine `64d111110b`): **Flight Control 58.2** (low 52–56, 1–9 hitches per 30 s, ≥55 fps 85–97% of the
+time) and **Jetpack Joyride's title 50.3 of 60** (was 37.1; ceiling 54–56, 2–11 hitches). Doodle Jump
+and JellyCar on the Poco were already 57.2 of 60 and 29.8 of 30 before it.
 
 Absolute rates drift a few fps between sessions (the LCD-blit column was 43.2 in one A/B and 40.7 in the
 next), which is why every change is judged by interleaved pairs.

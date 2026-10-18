@@ -11,7 +11,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [ ] Android: steady target frame rate in common period games. Now (engine 4de4ae5ba1): Flight Control
   55.8 of 60 fps on the Poco (six runs 53.6–57.7; ceiling 60, median 56–60, ≥55 fps 58–86% of the
   time, 7–28 hitches per 30 s; 56.1 with 1997c1a488); Jetpack Joyride title 35 fps (ceiling 42–46,
-  guest-code bound: GL is ~12% of the vCPU; the desktop runs it at ~54); Poco, g3 = 64d111110b: Doodle
+  guest-code bound: GL is ~12% of the vCPU; the desktop runs it at ~54). With the quiet GL shim
+  (engine 7f744e80cc, guest package not rebuilt yet; measured with a patched binary): Flight Control
+  58.2 (low 52–56, 1–9 hitches per 30 s, ≥55 fps 85–97% of the time), Jetpack 50.3 (ceiling 54–56,
+  2–11 hitches), desktop Jetpack 59. Poco, g3 = 64d111110b: Doodle
   Jump menu 57.2 of 60 (median 58, 0 hitches), JellyCar menu 29.8 of 30; Doodle Jump menu 55.5 of 60 on the Pixel (a62f05bae3); JellyCar menu
   23 of 30 (974c213352, not re-measured).
 - [ ] Indirect branches with many targets (`objc_msgSend`'s final jump goes to every method): LT Bench
@@ -26,6 +29,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
   kernel work: four BSD syscalls and two scheduler switches per round trip, against two Mach traps
   with a direct handoff for the RPC. Left open only to compare with a real device.
+- [ ] Ship the quiet GL shim (engine `7f744e80cc`, guest package serial 27): build the guest package
+  on the Mac with the usual Xcode and put it in the next APK/AppImage. The measurements used the
+  shipped OpenGLES binary-patched to skip the per-frame lines. The Mac at 192.168.1.54 has only Command
+  Line Tools 26.6, whose `ld` (ld-1267) cannot make the legacy armv6 links: it emits lazy stubs
+  (`__picsymbolstub4` + `__stub_helper`) and, for dylibs, shared-cache split info. `-bind_at_load`
+  gets past machotool's check, but the result crashes SpringBoard (bus error), so don't use it.
 - [ ] LT Bench: add GL tests (draw calls, texture upload, present) and run it on the Pixel.
 - [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint

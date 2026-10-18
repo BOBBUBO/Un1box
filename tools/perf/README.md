@@ -18,6 +18,9 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
 - `gamefps.py SECS` reads delivered guest fps while a game is on screen;
   `fcbench.py APK SECS` installs an APK, boots, unlocks, starts Flight Control
   (first icon on Home page 2) and measures it. See docs/PERFORMANCE.md.
+- `guestsyslog.py` (desktop) runs a headless guest and reads its syslog through the
+  app's USB bridge, then counts messages by sender: a guest that logs every frame pays
+  for launchd and syslogd handling each line (found this way: engine `7f744e80cc`).
 - `build-apk.sh ENGINE_DIR NAME` builds an arm64-only debug APK from this
   working tree. Paths are this workstation's; adjust before reuse.
 
