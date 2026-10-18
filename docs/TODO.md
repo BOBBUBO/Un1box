@@ -134,8 +134,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   It queries three one-bit flags through general bitmap-range scans, entering/exiting RCU three
   times. Engine `cc6063a40f` implements direct bit checks and one guard for the combined query,
   behind default-off `LT_DIRTY_QUERY_FAST`. Bitmap/RCU lifetimes are retained; no coroutine TLS
-  pointer is cached. Linux/Android builds pass. Focused LT Bench timings and same-APK Jetpack
-  pairs are pending; no speedup claim.
+  pointer is cached. Linux/Android builds pass. Three same-APK Poco Jetpack pairs:
+  mean 51.47/54.10/54.43 → 53.30/52.80/54.90 fps (53.33 → 53.67, +0.6%, within drift).
+  Ceiling 58/60/58 → 58/58/60, median 52/54/54 → 54/54/54, low 44/50/50 → 48/44/50,
+  1% low 19.81/28.33/28.75 → 20.72/28.03/28.65. Hitches 16/5/4 → 10/11/3,
+  durations 1152.3/256.1/217.3 → 621.6/701.9/153.3 ms per 30 s. LT Bench mixed too.
+  No repeatable game/pacing gain; keep off pending focused query costs.
   `4d06b57f50` adds default-off `LT_DIRTY_QUERY_PROF`: CPU 0 directly times one in 256 combined
   queries, with exact block boundaries and query/sample counts. Linux/Android builds pass;
   focused timing capture is pending and must be separate from uninstrumented FPS windows.
@@ -157,6 +161,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Linux/Android builds succeeded. Poco Jetpack uses the path: final six five-second diagnostic
   blocks have 1803 updates / 1566 forced, 882.20 ms snapshot time / 760.40 ms forced time;
   mean 489.29 µs (forced 485.57 µs), max 3216.35 µs. Same-APK skip off/on pairs remain pending.
+  A separate follow-up: `physical_memory_snapshot_and_clear_dirty` resets TLB write tracking
+  unconditionally, even for an empty snapshot. `physical_memory_test_and_clear_dirty` already
+  resets only when it actually cleared bits. Count empty snapshots; consider retaining the clear
+  but skipping only empty-snapshot TLB resets, avoiding retained-dirty-bit side effects. Unimplemented.
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second

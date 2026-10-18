@@ -371,9 +371,36 @@ range scan; the combined three-client query shares one RCU guard. All bitmap poi
 inside their RCU lifetime, including concurrent growth. No coroutine TLS pointer is cached.
 
 Linux/Android builds succeeded (`build/perf-codex/dirty-query-build.txt`). Frozen APK/symbols:
-`dirty-query.apk`, `dirty-query-symbols/` under `build/perf-codex/`. Focused timings and interleaved
-same-APK game pairs are pending; no speedup claimed. Keep other experiments off when measuring.
+`dirty-query.apk`, `dirty-query-symbols/` under `build/perf-codex/`. The three ordinary same-APK pairs below are complete; focused host timings remain pending.
+Keep other experiments off when measuring.
 APK SHA256: `6c92d049a1f724ce4667b8cd86f370f910093cd3dca0e3ec008674ab35f9ea37`.
+
+Three interleaved off/on pairs on the Snapdragon 865-class Poco, Jetpack title, 30 s per arm.
+Array cache on; all other experiments, live recorder and full accounting off. All six screenshots
+confirm the title and recorder off, with zero skipped frames. The profiler below was absent.
+
+| Pair | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 51.47 → 53.30 | 58 → 58 | 52 → 54 | 44 → 48 | 19.81 → 20.72 | 16 (1152.3 ms) → 10 (621.6 ms) |
+| 2 | 54.10 → 52.80 | 60 → 58 | 54 → 54 | 50 → 44 | 28.33 → 28.03 | 5 (256.1 ms) → 11 (701.9 ms) |
+| 3 | 54.43 → 54.90 | 58 → 60 | 54 → 54 | 50 → 50 | 28.75 → 28.65 | 4 (217.3 ms) → 3 (153.3 ms) |
+
+Aggregate mean **53.33 → 53.67 fps (+0.6%)**, within session drift; one pair loses 1.30 fps.
+Hitches total 25 → 24, duration 1625.7 → 1476.8 ms over 90 s per mode. No repeatable game or
+pacing gain; keep default off pending focused query costs. LT Bench results are mixed too:
+`icall` best/median ns 30.1/34.3, 30.3/31.9, 30.2/32.0 → 30.5/33.2, 30.0/30.7, 30.7/30.8.
+
+Exact half-open frame windows (monotonic ns):
+
+| Pair | Off [start, end) | On [start, end) |
+| --- | --- | --- |
+| 1 | [424814735180807, 424844735180807) | [425029575935256, 425059575935256) |
+| 2 | [425246966154965, 425276966154965) | [425473577875816, 425503577875816) |
+| 3 | [425699973660209, 425729973660209) | [425918197469605, 425948197469605) |
+
+Evidence: `build/perf-codex/poco-dirty-query-{1,2,3}-{off,on}/` contains frame logs,
+LT Bench output, engine logs and scene screenshots. `dirty-query-results.json` retains metrics,
+individual hitch end times/durations and full LT Bench results; `dirty-query-analyze.py` regenerates it.
 
 Engine `4d06b57f50` separately adds `LT_DIRTY_QUERY_PROF=on` (default off) for focused host timings:
 CPU 0 samples one in 256 combined queries, with explicit five-second block boundaries, query/sample
