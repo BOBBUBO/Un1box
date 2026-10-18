@@ -373,7 +373,10 @@ confirms the full-entry load follows the flag/range branches (`tlb-dirty-disasse
 Three same-APK Poco off/on pairs, reversing the second pair, are queued with forced-snapshot
 skipping off and LCD snapshot timings on in both modes. No improvement claimed before capture.
 Frozen APK/symbols: `tlb-dirty.apk`, `tlb-dirty-symbols/` under `build/perf-codex/`.
-APK SHA256: `691a6260922c5bbbad5f4a40d899c4637cafcf8be4af7c804a76a7006f5a8fcc`.
+Frozen measured engine is `1cd3a771c3`, which also timestamps LCD snapshot blocks explicitly.
+Linux/Android builds succeeded (`lcd-timestamps-build.txt`). No TLB scan code changed after
+`42d50e5d2e`. The queued measurement has not started; no previous measurements are replaced.
+APK SHA256: `9d568d3fb0262661595912ac1641d9a84dff485ad93bc43f6dda03eca199fa24`.
 
 ### Publisher notification preservation (experiment pending measurement)
 
