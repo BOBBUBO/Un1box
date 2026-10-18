@@ -20,6 +20,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <dlfcn.h>
+#include "frame_pacer.h"
 #include <optional>
 #include "presentation_lifetime.h"
 #include "display_lease.h"
@@ -61,6 +62,19 @@ std::condition_variable frame_wake;
 uint64_t frame_wake_sequence=0;
 VcpuPerformanceHint vcpu_hint;  // frame publisher thread only
 uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
+// The guest is 60 Hz content. Saying so (API 30+) lets SurfaceFlinger run the panel at 60 Hz, or
+// at 120 with each frame held for exactly two refreshes, instead of treating it as free-running.
+void request_guest_frame_rate(ANativeWindow *window) {
+    using SetFrameRate=int32_t(*)(ANativeWindow *,float,int8_t);
+    static const auto set=reinterpret_cast<SetFrameRate>(dlsym(RTLD_DEFAULT,"ANativeWindow_setFrameRate"));
+    constexpr int8_t fixed_source=1;  // ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE
+    if(set)set(window,60.0f,fixed_source);
+}
+// LT_FRAME_PACING=off (debug-env) posts frames on arrival, for A/B runs.
+bool frame_pacing_enabled() {
+    static const bool enabled=[] { const char *v=getenv("LT_FRAME_PACING"); return !v || strcmp(v,"off")!=0; }();
+    return enabled;
+}
 // Guest frames per 250 ms for the UI's fps graph: the 500 ms status poll alone
 // would average away the dips it is there to show. Written by the publisher
 // thread only; a reader may see a bucket mid-update, which costs one frame.
@@ -246,6 +260,7 @@ void present() {
                 geometry_height=ANativeWindow_getHeight(target_window);
                 geometry_format=ANativeWindow_getFormat(target_window);
                 geometry_code=ANativeWindow_setBuffersGeometry(target_window,0,0,WINDOW_FORMAT_RGBA_8888);
+                request_guest_frame_rate(target_window);
                 configured_generation=snapshot->generation();
             }
             ANativeWindow_Buffer target{};
@@ -298,6 +313,18 @@ void present() {
                             row[x]=uint32_t(p[2])|(uint32_t(p[1])<<8)|(uint32_t(p[0])<<16)|0xff000000u;
                         }
                         previous=row;previous_sy=sy;
+                    }
+                }
+                if(valid_buffer && frame_pacing_enabled()) {
+                    static FramePacer pacer;  // this thread only
+                    static DisplayVsync display_vsync;
+                    static const bool display_vsync_started=(display_vsync.start(),true);
+                    (void)display_vsync_started;
+                    const uint64_t ready=monotonic_ns();
+                    const auto [vsync,period]=display_vsync.get(ready);
+                    if(const uint64_t at=pacer.post_at(source.timestamp_ns,ready,vsync,period)) {
+                        const timespec until{time_t(at/1000000000ull),long(at%1000000000ull)};
+                        clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,&until,nullptr);
                     }
                 }
                 // Exactly one post for every successful lock, including invalid

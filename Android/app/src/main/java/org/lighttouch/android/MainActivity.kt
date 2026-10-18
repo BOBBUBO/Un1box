@@ -263,6 +263,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var assetName = "bootrom.bin"
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A touch raises the panel to its top rate for a while (Android 15+). The guest is 60 Hz
+        // content: at 120 Hz each of its frames has to land on the right one of two refreshes,
+        // and touch is constant in a game, so keep the rate the guest surface asks for.
+        if (Build.VERSION.SDK_INT >= 35) window.setFrameRateBoostOnTouchEnabled(false)
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
