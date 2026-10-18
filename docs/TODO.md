@@ -171,6 +171,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   (`d7c4927685`) are already implemented. Inspect the remaining LCD dirty tracking,
   interrupt delivery (cpu-exec.c), timer IRQ ack writes, VIC and LCD register access.
   Measure with the capture's BQL wait/hold intervals, `[acct]` tables and `tools/perf/bqlsites.py`.
+  Engine `f64fb44e3c` adds default-off `LT_BQL_PROF` to collect lock tables and outer vCPU
+  timings without per-TB instruction/lookup/TLB-fill accounting; full accounting remains
+  separate. `f9d7faec8c` scopes MMIO attribution so lockless reads cannot mislabel later
+  interrupt locks, and adds exact dump bounds/completion markers. `bqlsites.py` uses
+  actual selected intervals, omits incomplete new dumps and saves all sites to JSON.
+  Runtime overhead/current wait split pending a separate off/on diagnostic comparison.
+  Linux/Android builds pass; frozen `bql-prof.apk`/symbols, engine `f9d7faec8c`.
+  Two 30 s pairs (off/on, on/off) are queued after the LCD stage queue and cleanup,
+  all other diagnostics off; no live recording/full accounting. No FPS gain claimed.
+  Holder spans can include condition waits and callbacks can unlock internally; use
+  actual vCPU waits before attributing those durations to lock stalls.
   Engine `9400ab1b68` adds default-off `LT_LCD_FORCED_SNAPSHOT_SKIP` and independent
   `LT_LCD_SNAPSHOT_PROF` timing. First establish linear-path/forced-update frequency in Jetpack;
   composed/rotated scanouts bypass it. Retained dirty bits may add subsequent repaint/uploads.

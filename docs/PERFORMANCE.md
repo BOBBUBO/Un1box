@@ -299,6 +299,38 @@ driver waits; these are wall times, not GPU execution times. No optimization or 
 Screenshot verifies the Jetpack title; raw log and scene: `build/perf-codex/context-stages-*`.
 APK SHA256: `e534dd536d9c137d2515908ffeb675a76dce8101d68883a3454db8b585372d77`.
 
+### BQL diagnostics without instruction accounting (2026-10-18)
+
+Engine `f64fb44e3c` adds default-off `LT_BQL_PROF=on`. It reuses the BQL wait/hold
+tables, main-loop callback timing and outer vCPU execution/idle timing without enabling
+per-TB instruction, lookup, context-switch or TLB-fill accounting. Full `IT_VCPU_ACCT`
+still enables both. `[acct-mode]` labels full versus BQL-only mode; zero instruction
+and lookup counters in the latter are unmeasured, not a workload finding.
+
+Engine `f9d7faec8c` scopes the MMIO attribution pointer to each dispatch and clears it
+after longjmp cleanup. A lockless counter read previously could leave its region to be
+misattributed to the next unrelated BQL acquisition. New cumulative dumps also retain
+exact nanosecond boundaries and a completion marker. `bqlsites.py` now uses the actual
+selected interval instead of the requested one, ignores incomplete new dumps and can
+retain all sites/bounds in JSON. Legacy rounded timestamps remain readable.
+
+This is diagnostic work, not an optimization or FPS gain. Runtime overhead and the
+current wait split remain pending a same-APK interleaved off/on comparison after the
+existing lookup/LCD queue. Existing holder spans can include condition waits that
+temporarily release the BQL, and callbacks can unlock it internally; those totals do
+not establish that the lock was held throughout. Actual vCPU waits are the stronger
+evidence. Full capture settings and limitations are in [PROFILING.md](PROFILING.md).
+
+Linux/Android builds succeeded (`build/perf-codex/bql-prof-final-build.txt`), engine
+`f9d7faec8c`. Frozen APK/symbols: `bql-prof.apk`, `bql-prof-symbols/`; SHA256:
+`a0c057076baac4494912df6d524cc26f8cd4a31b3126cf9adb98cbcad5a65c64`.
+Two 30 s off/on pairs, second reversed, are queued after the existing LCD stage
+runner and its clean-stop/environment restoration. All other diagnostics/experiments
+off, array cache on, no live recorder or full accounting. These measure instrumentation
+overhead, not an optimization. `poco-bql-prof-{1,2}-{off,on}/` will retain settings,
+screenshots, exact frame windows and engine logs; enabled arms select complete accounting
+snapshots inside the frame window and retain separate exact bounds in `bql-sites.json`.
+
 ### Exception and SVC diagnostics (2026-10-18)
 
 Engine `42395839f3` adds `LT_EXCEPTION_PROF=on` (default off): CPU 0 AArch32 exception counts,

@@ -87,6 +87,40 @@ stall time. These captures do not identify every guest function or measure GPU e
 Use an attached simpleperf call-graph profile for a CPU-heavy scene, or a supported GPU/system trace
 when the remaining question is asynchronous GPU work or precise host scheduling.
 
+## Lock diagnostics without instruction accounting
+
+`LT_BQL_PROF=on` (engine `f64fb44e3c`, default off) enables the existing cumulative
+`[acct]` vCPU lock totals, per-region/call-site waits, wait/hold histograms and main-loop
+callback timings every five seconds. It also times vCPU execution/halt/queued-work windows,
+but leaves `it_acct_on` false unless `IT_VCPU_ACCT` is separately set. Guest instruction,
+TB lookup, context-switch and TLB-fill counters therefore stay disabled and their printed
+zeros must not be interpreted as measured rates. `[acct-mode] full=off bql=on` identifies
+this mode. Leave `IT_VCPU_ACCT` unset and the Android `files/debug-vcpu-accounting`
+marker absent for BQL-only captures. No manual recording is needed. Its overhead
+has not yet been measured.
+
+Engine `f9d7faec8c` scopes MMIO region attribution to each dispatch, restoring the previous
+region when a lockless callback never takes the BQL and clearing bypassed scopes after a
+vCPU longjmp. Previously a counter read could leave a stale region for a later interrupt
+lock. Waits include mutex acquisition overhead and descheduling. Existing holder spans
+can include a condition wait that temporarily releases the BQL; callback timings can
+include sections that unlock it. Correlate actual vCPU waits before attributing stalls
+to either table. This mode does not correct those existing hold/callback limitations.
+
+New dumps include exact cumulative `bounds` and an `end-ns` completion marker. Summarize
+two snapshots (seconds since accounting began):
+
+```sh
+python3 tools/perf/bqlsites.py engine.log 90 120 --json bql-sites.json
+```
+
+The tool prints the snapshots actually selected and divides by their actual interval;
+it previously divided by the requested interval even when different snapshots were
+selected. New logs use exact nanosecond bounds and omit incomplete dumps; older logs
+use their rounded timestamps. JSON retains the selected bounds and all sites. BQL
+diagnostics remain off for ordinary optimization FPS comparisons; separate interleaved
+off/on captures will measure diagnostic overhead and refresh the current wait breakdown.
+
 ## Focused exception counts
 
 `LT_EXCEPTION_PROF=on` (engine `42395839f3`, default off) logs complete cumulative snapshots
