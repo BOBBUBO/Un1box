@@ -362,6 +362,19 @@ five-second timing blocks contain 1,803 updates, 1,566 forced repaints (86.9%), 
 This is measurable main-loop/BQL work (roughly 25 ms/s on forced snapshots). Same-APK skip
 off/on pairs must check whether retained dirty bits add work elsewhere before enabling it.
 
+Separate experiment, engine `42d50e5d2e`: `LT_TLB_DIRTY_FAST=on` (default off) preserves dirty
+snapshot clearing and TLB locking, but checks the compact entry's flags and host address range
+before fetching the full entry's slow-write flags. Invalid, already tracked and out-of-range
+entries avoid that metadata fetch. Both paths check the same flags and update the same entries;
+the experiment is selected outside the loops. This does not retain dirty bits or skip resets.
+
+Linux/Android builds succeeded (`build/perf-codex/tlb-dirty-build.txt`). Android disassembly
+confirms the full-entry load follows the flag/range branches (`tlb-dirty-disassembly.txt`).
+Three same-APK Poco off/on pairs, reversing the second pair, are queued with forced-snapshot
+skipping off and LCD snapshot timings on in both modes. No improvement claimed before capture.
+Frozen APK/symbols: `tlb-dirty.apk`, `tlb-dirty-symbols/` under `build/perf-codex/`.
+APK SHA256: `691a6260922c5bbbad5f4a40d899c4637cafcf8be4af7c804a76a7006f5a8fcc`.
+
 ### Publisher notification preservation (experiment pending measurement)
 
 `Portable/src/Runtime.cpp` adds `LT_PUBLISH_WAKE_EARLY=on` (default off). The old loop snapshots

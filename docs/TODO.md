@@ -165,6 +165,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   unconditionally, even for an empty snapshot. `physical_memory_test_and_clear_dirty` already
   resets only when it actually cleared bits. Count empty snapshots; consider retaining the clear
   but skipping only empty-snapshot TLB resets, avoiding retained-dirty-bit side effects. Unimplemented.
+  Engine `42d50e5d2e` separately adds default-off `LT_TLB_DIRTY_FAST`: check compact-entry flags
+  and host address range before reading full-entry metadata, retaining every reset and the same
+  lock/flag semantics. Linux/Android builds pass; Android disassembly confirms the skipped loads.
+  Three off/on pairs (second reversed) with LCD snapshot timing are queued; no speedup claim.
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second
