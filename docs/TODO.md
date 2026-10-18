@@ -62,6 +62,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   All six final scenes reviewed, recorder off, zero skips. Six of six pairs across
   both sets favor throughput; no consistent pacing gain. Combined baseline remains
   outstanding before enabling by default. LCD stage diagnostics now follow.
+  Combined cache+lookup baseline now queued after BQL and focused VFP captures on
+  current engine `f43fbe4986` / frozen `vfp-mul-zero.apk`: three 30 s pairs, second
+  reversed, both switches off versus both on; all diagnostics and other experiments
+  off (including VFP). Exact windows/screenshots/settings retained; no result yet.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest

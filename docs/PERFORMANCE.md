@@ -845,6 +845,16 @@ stutter fix established. The completed runner handed the phone to LCD stage capt
 Artifacts: `build/perf-codex/poco-tb-confirm-{1,2,3}-{off,on}/`, summarized by
 `tb-confirm-analyze.py` / `tb-confirm-results.json`, with exact frame windows and hitches.
 
+The combined baseline is now queued after the independent BQL comparison and focused
+VFP captures/cleanups. It uses current engine `f43fbe4986` in frozen `vfp-mul-zero.apk`
+(identity/SHA256 in the VFP section), three 30 s pairs off/on, on/off, off/on. Both
+`LT_GLES_ARRAY_CACHE` and `LT_TB_LOOKUP_INLINE` vary together; all diagnostics, other
+experiments and the live recorder/full accounting are off, including both VFP switches.
+This measures their combined effect rather than adding the earlier percentages.
+Raw results will be `poco-combined-baseline-{1,2,3}-{off,on}/`, with exact windows,
+scenes and settings; analyzer `combined-baseline-analyze.py`. No result yet; default
+lookup remains off. The runner ends with a clean stop and baseline readback.
+
 Evidence: `build/perf-codex/poco-tb-lookup-inline-{1,2,3}-{off,on}/` contains exact frame logs,
 screenshots, environment, LT Bench and engine logs. `tb-lookup-inline-results.json` records exact
 half-open 30 s boundaries and individual hitch durations. A 15 s attached call-graph profile
