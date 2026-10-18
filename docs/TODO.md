@@ -160,7 +160,13 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   composed/rotated scanouts bypass it. Retained dirty bits may add subsequent repaint/uploads.
   Linux/Android builds succeeded. Poco Jetpack uses the path: final six five-second diagnostic
   blocks have 1803 updates / 1566 forced, 882.20 ms snapshot time / 760.40 ms forced time;
-  mean 489.29 µs (forced 485.57 µs), max 3216.35 µs. Same-APK skip off/on pairs remain pending.
+  mean 489.29 µs (forced 485.57 µs), max 3216.35 µs. Three same-APK Jetpack pairs, second reversed, reject the skip: means
+  51.33/54.03/52.83 → 48.90/54.63/51.77 fps (52.73 → 51.77, −1.8%). Ceiling 56/58/58 →
+  58/60/58, median 52/54/52 → 52/54/52, low 44/50/48 → 34/50/42, 1% low
+  20.01/28.66/28.58 → 14.89/29.18/20.40. Hitches 15/4/4 → 36/5/13; duration
+  1086.8/219.3/202.7 → 2747.4/302.5/1017.8 ms per 30 s. Aggregate snapshot mean
+  512.46 → 76.42 µs/update across separate approximate timing blocks, but pacing worsens.
+  Keep off; do not retry unchanged. Full windows and timings in PERFORMANCE.md.
   A separate follow-up: `physical_memory_snapshot_and_clear_dirty` resets TLB write tracking
   unconditionally, even for an empty snapshot. `physical_memory_test_and_clear_dirty` already
   resets only when it actually cleared bits. Count empty snapshots; consider retaining the clear
@@ -169,6 +175,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   and host address range before reading full-entry metadata, retaining every reset and the same
   lock/flag semantics. Linux/Android builds pass; Android disassembly confirms the skipped loads.
   Three off/on pairs (second reversed) with LCD snapshot timing are queued; no speedup claim.
+  The snapshot timing also includes the TCG after-sync `run_on_cpu` barrier, not just the scan.
+  Split bitmap/reset/barrier costs before attributing the full ~0.5 ms or pursuing more changes;
+  retain the ordering between dirty flag clearing and guest writes.
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second

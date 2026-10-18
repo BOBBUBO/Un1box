@@ -339,7 +339,7 @@ The separate 45 s diagnostic frame window is mean/ceiling/median/low/1% low **52
 an optimization or overhead comparison. Evidence, screenshot, full/window frame logs and JSON:
 `build/perf-codex/poco-exception-lcd-diagnostic/`.
 
-### LCD forced-repaint dirty snapshots (focused timing; A/B pending)
+### LCD forced-repaint dirty snapshots (skip rejected)
 
 Engine `9400ab1b68` adds `LT_LCD_FORCED_SNAPSHOT_SKIP=on` (default off). The linear
 LCD path snapshots and clears dirty memory even when a forced repaint will read every row.
@@ -350,7 +350,7 @@ scanouts bypass this path; establish whether the game uses it before measuring F
 Independent `LT_LCD_SNAPSHOT_PROF=on` (default off) counts linear updates, forced repaints and
 skips, with summed/max snapshot wall times in five-second blocks. Skipped work has zero duration.
 Diagnostic output follows the LCD unlock; timing includes host descheduling. Linux/Android builds
-succeeded (`build/perf-codex/lcd-snapshot-build.txt`). No runtime timing or improvement claimed yet.
+succeeded (`build/perf-codex/lcd-snapshot-build.txt`). Runtime results follow.
 Frozen APK/symbols: `lcd-snapshot.apk`, `lcd-snapshot-symbols/` under `build/perf-codex/`.
 APK SHA256: `8553650c03fbb563ccba39748f5ed3adda55b7b9e99befe30c2872cf0614a34c`.
 
@@ -362,11 +362,57 @@ five-second timing blocks contain 1,803 updates, 1,566 forced repaints (86.9%), 
 This is measurable main-loop/BQL work (roughly 25 ms/s on forced snapshots). Same-APK skip
 off/on pairs must check whether retained dirty bits add work elsewhere before enabling it.
 
+Three same-APK pairs on the Snapdragon 865-class Poco, Jetpack title, 30 s per arm.
+Order off/on, **on/off**, off/on. Array cache on; lookup inlining, dirty-query fast path,
+exception/full accounting and the live recorder off. LCD timing is enabled in both modes.
+All six screenshots confirm the title and recorder off; zero skipped frames.
+
+| Pair | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 51.33 → 48.90 | 56 → 58 | 52 → 52 | 44 → 34 | 20.01 → 14.89 | 15 (1086.8 ms) → 36 (2747.4 ms) |
+| 2 | 54.03 → 54.63 | 58 → 60 | 54 → 54 | 50 → 50 | 28.66 → 29.18 | 4 (219.3 ms) → 5 (302.5 ms) |
+| 3 | 52.83 → 51.77 | 58 → 58 | 52 → 52 | 48 → 42 | 28.58 → 20.40 | 4 (202.7 ms) → 13 (1017.8 ms) |
+
+Aggregate mean **52.73 → 51.77 fps (−1.8%)**; two pairs lose. Hitches increase in all three:
+23 → 54 total, duration **1508.9 → 4067.8 ms** over 90 s per mode. Reject this version and
+keep it off; a saving in the snapshot stage did not translate to useful frame pacing. The
+measurements do not establish which retained-dirty-bit side effect caused the regressions.
+
+Last six five-second timing blocks per arm (approximately 30 s, not the exact FPS windows):
+
+| Pair | Snapshot mean µs/update off → on | Forced / total updates off → on | Skipped snapshots off → on |
+| --- | --- | --- | --- |
+| 1 | 521.84 → 98.47 | 1547 / 1803 → 1472 / 1804 | 0 → 1472 |
+| 2 | 517.22 → 48.09 | 1621 / 1803 → 1641 / 1803 | 0 → 1641 |
+| 3 | 498.32 → 82.69 | 1587 / 1803 → 1558 / 1801 | 0 → 1558 |
+
+The aggregate snapshot mean is 512.46 → 76.42 µs/update, total 2771.91 → 413.27 ms across
+those blocks. Skipped work is recorded as zero; this excludes branch/timer overhead on a skip.
+Each skipped forced repaint leaves dirty bits set, so this is not an isolated TLB-reset saving.
+
+Exact half-open frame windows (monotonic ns):
+
+| Pair | Off [start, end) | On [start, end) |
+| --- | --- | --- |
+| 1 | [426101847474170, 426131847474170) | [426281864197070, 426311864197070) |
+| 2 | [426623018924180, 426653018924180) | [426451400211589, 426481400211589) |
+| 3 | [426798180816040, 426828180816040) | [426976255640243, 427006255640243) |
+
+Evidence: `build/perf-codex/poco-lcd-snapshot-{1,2,3}-{off,on}/` (frames, scene screenshots,
+engine logs, timing blocks). `lcd-snapshot-results.json` retains individual hitch times/durations;
+`lcd-snapshot-analyze.py` regenerates it. Do not repeat this skip unchanged.
+
 Separate experiment, engine `42d50e5d2e`: `LT_TLB_DIRTY_FAST=on` (default off) preserves dirty
 snapshot clearing and TLB locking, but checks the compact entry's flags and host address range
 before fetching the full entry's slow-write flags. Invalid, already tracked and out-of-range
 entries avoid that metadata fetch. Both paths check the same flags and update the same entries;
 the experiment is selected outside the loops. This does not retain dirty bits or skip resets.
+
+The LCD timing includes the bitmap copy/clear, TLB reset and
+`memory_global_after_dirty_log_sync()`. TCG's after-sync hook synchronously calls `run_on_cpu`
+to wait for the current TB to finish, preserving dirty-write ordering. The full ~0.5 ms snapshot
+cost cannot be attributed to the TLB scan alone. If the scan experiment is inconclusive, split
+those stages before further changes; removing the TB barrier without equivalent ordering is unsafe.
 
 Linux/Android builds succeeded (`build/perf-codex/tlb-dirty-build.txt`). Android disassembly
 confirms the full-entry load follows the flag/range branches (`tlb-dirty-disassembly.txt`).
