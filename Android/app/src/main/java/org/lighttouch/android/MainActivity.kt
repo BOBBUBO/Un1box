@@ -261,12 +261,30 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (uri != null) copyAsset(uri)
     }
     private var assetName = "bootrom.bin"
+    /**
+     * Run the panel at 60 Hz while LightTouch is in front, the way Google Maps does. The guest is a
+     * 60 Hz device: at 120 Hz each of its frames must also land on the right one of two refreshes,
+     * which the presenter can only keep by tracking the display's phase (frame_pacer.h), and the
+     * Pixel 10 kept 120 Hz despite the guest surface's 60 Hz fixed-source request. A preferred
+     * display mode is the window's own request, which the system grants the foreground window
+     * whatever the Smooth Display setting. Only a 60 Hz mode at the current resolution is taken.
+     */
+    private fun preferSixtyHertz() {
+        val current = (if (Build.VERSION.SDK_INT >= 30) display else @Suppress("DEPRECATION") windowManager.defaultDisplay) ?: return
+        val size = current.mode
+        val sixty = current.supportedModes
+            .filter { it.physicalWidth == size.physicalWidth && it.physicalHeight == size.physicalHeight }
+            .minByOrNull { kotlin.math.abs(it.refreshRate - 60f) }
+            ?.takeIf { kotlin.math.abs(it.refreshRate - 60f) < 1f } ?: return
+        window.attributes = window.attributes.apply { preferredDisplayModeId = sixty.modeId }
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // A touch raises the panel to its top rate for a while (Android 15+). The guest is 60 Hz
         // content: at 120 Hz each of its frames has to land on the right one of two refreshes,
         // and touch is constant in a game, so keep the rate the guest surface asks for.
         if (Build.VERSION.SDK_INT >= 35) window.setFrameRateBoostOnTouchEnabled(false)
+        preferSixtyHertz()
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
