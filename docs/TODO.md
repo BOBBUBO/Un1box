@@ -5,7 +5,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
-- [ ] Android: steady ~60 Hz guest UI (Springboard animations measure 45–51 fps on Pixel 10 / Poco F3).
+- [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
+  (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
+  44.8–49.2). Pixel not re-measured.
 - [ ] Android: steady target frame rate in common period games. Now (engine 4de4ae5ba1): Flight Control
   55.8 of 60 fps on the Poco (six runs 53.6–57.7; ceiling 60, median 56–60, ≥55 fps 58–86% of the
   time, 7–28 hitches per 30 s; 56.1 with 1997c1a488); Jetpack Joyride title 35 fps (ceiling 42–46,
