@@ -82,7 +82,8 @@ tools/guestbench/android.sh install OUT_DIR/LTBench.ipa
 tools/guestbench/android.sh results          # the newest pass's lines from the engine log
 ```
 
-Poco F3 layout preset: `tools/perf/fcbench.py APK 1 ltbench` boots, unlocks and taps the icon.
+Poco F3 layout preset: `python3 tools/perf/fcbench.py APK 0 ltbench` boots, unlocks and taps the icon
+without sampling fps on the static results screen.
 
 On the desktop, install the IPA through the app's Install IPA path (or headless: start the guest
 with the app-services bridge, `app_services.bridge.Bridge`, and run `python -m app_services.helper

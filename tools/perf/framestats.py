@@ -2,7 +2,7 @@
 """Guest frame pacing from the runtime's per-frame log (LT_FRAME_LOG): separates the rate a game
 reaches (its ceiling) from the dips under it, which one mean fps figure hides.
 
-usage: framestats.py --device SECONDS [--chart out.png] [--label NAME]
+usage: framestats.py --device SECONDS [--chart out.png] [--label NAME] [--save LOG]
          measure live play on the phone (ANDROID_SERIAL set; the engine started with
          LT_FRAME_LOG=<files>/frames.log in files/debug-env, which fcbench.py FC_FRAMES=1 arranges)
        framestats.py LOG [LOG...] [--skip S | --last S] [--secs N] [--chart out.png]
@@ -150,10 +150,13 @@ def main():
         if name in args:
             i = args.index(name); v = args[i + 1]; del args[i:i + 2]; return v
         return default
-    out = opt("--chart"); label = opt("--label"); skip = float(opt("--skip", 0)); secs = opt("--secs")
+    out = opt("--chart"); label = opt("--label"); save = opt("--save")
+    skip = float(opt("--skip", 0)); secs = opt("--secs")
     last = opt("--last")
     secs = float(secs) if secs else None
     dev = opt("--device")
+    if save and not dev:
+        sys.exit("--save requires --device")
     runs = []
     if dev:
         size = adb("stat", "-c", "%s", DEVICE_LOG, text=True).stdout.strip()
@@ -162,6 +165,9 @@ def main():
                      "to files/debug-env and restart the guest")
         time.sleep(float(dev))
         text = adb("tail", "-c", f"+{int(size) + 1}", DEVICE_LOG).stdout.decode(errors="replace")
+        if save:
+            with open(save, "w") as f:
+                f.write(text)
         rows = parse(text)
         s = analyse(rows, secs=float(dev))
         if not s: sys.exit("fewer than 2 frames in the window (static screen?)")

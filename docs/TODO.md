@@ -16,7 +16,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   59.0 (median 60, 1 hitch per 30 s, ≥55 fps 98–100% of the time: at its ceiling, dropped as a
   benchmark), Jetpack 50.5 (ceiling 56, 1% low 21–28, 6–7 hitches per 30 s; was 39.4 with 114
   hitches), desktop Jetpack 59; 52.2 with engine 0addc3e156 + 2df170ca78 (+6%, three pairs). Jetpack is the Poco benchmark now; a game that holds a steady 60 on
-  both phones leaves the set (Flight Control, Doodle Jump). Pixel with serial 27: JellyCar menu 30.0
+  both phones leaves the set (Flight Control, Doodle Jump, JellyCar). Pixel with serial 27: JellyCar menu 30.0
   of 30 (8–45 hitches per 30 s), Doodle Jump menu 57.6–58.0. Poco, g3 = 64d111110b: Doodle
   Jump menu 57.2 of 60 (median 58, 0 hitches), JellyCar menu 29.8 of 30; Doodle Jump menu 55.5 of 60 on the Pixel (a62f05bae3); JellyCar menu
   23 of 30 (974c213352, not re-measured).
@@ -32,12 +32,13 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
   kernel work: four BSD syscalls and two scheduler switches per round trip, against two Mach traps
   with a direct handoff for the RPC. Left open only to compare with a real device.
-- [ ] Ship the quiet GL shim (engine `7f744e80cc`, guest package serial 27). Built 2026-10-18 on the Mac
-  with Xcode 27.1 (`~/Documents/LightTouch-Development/guest-package-27/`, not uploaded; how: qemu-ios
-  `contrib/armv6-toolchain/README.md`, "Setting up a Mac to build the guest package"). The apps do not
-  bundle guest tools: a record keeps the `armv6.itpack` it was imported with (pinned by
-  `guest_package_sha256` in `record.json`), so users get it only through a new Guest tools file and the
-  update below. Installed by hand on the Poco and Pixel records (backups in `files/pkg-backup-*`).
+- [x] Install the quiet GL shim in place (engine `7f744e80cc`, guest tools serial 27).
+  Serial 27 is installed on both benchmark phones. Linux supports
+  `lighttouch-linux --library LIB --record ID --set-guest-package ITPACK`; Android has "Guest tools"
+  on a stopped device (details below). A new record is not required.
+- [ ] Prepare guest tools for public distribution. Serial 27 remains private:
+  `contrib/appsync/appsync_cert.h` embeds an Apple certificate, and the `contrib/` guest sources
+  lack license headers. Do not publish the package or firmware before resolving those issues.
 - [x] Guest package verdicts on Android and Linux. The portable runtime never told the guest's loader
   (qemu-ios `contrib/it-boot`) that a package was good, so `it_boot` reverted any package newer than
   the record's after two boots (`MAX_TRIES`) and refused that serial from then on. That is why serial
@@ -57,13 +58,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   installed serial), and add the action to the Windows and macOS apps.
 - [x] LT Bench GL tests (`gl-get`, `gl-state`, `gl-draw`, `gl-sprite`, `gl-upload`, `gl-present`), run on
   the desktop, the Poco and the Pixel (docs/GUEST-BENCHMARKS.md, PERFORMANCE.md).
-- [ ] Fewer host GL calls per draw (the next lead for Jetpack on the Poco). For each draw,
-  `gles_bind_all_arrays` enables and points every client array, and `gles_unbind_arrays` disables them
-  again. Strict mode adds 4–5 `glGetError` checks. A two-array sprite is ~12 host GL calls, and on Adreno
-  each pays `validateShadowState` plus a context lookup (`pthread_getspecific`). These were ~8% of the
-  vCPU in a Poco `gl-sprite` profile, with `glGetError` alone ~4%. Idea: track the host's
-  client-array enables and pointers and skip calls that change nothing. Strict mode off alone did not
-  move Jetpack (PERFORMANCE.md, rejected), so measure `gl-sprite` first.
+- [x] Cache host client-array enables, pointers and client-active texture unit (engine `6762325419`,
+  `LT_GLES_ARRAY_CACHE=off` restores the old path). Guest array contents still refresh every draw;
+  failed or disabled arrays cannot leave stale host enables. Poco `gl-draw` best µs, three pairs:
+  7.81/8.92/7.93 → 7.49/7.38/7.05; Pixel 1.40/1.49 → 1.28/1.32. `gl-sprite` stays within the spread.
+  Direct Pixel setup plus cleanup: 0.619 → 0.228 µs/draw; host pointer/enable/unit calls
+  2/4/4 → approximately 0/0/0 per draw. Poco Jetpack, three 30 s pairs: mean 51.6 → 52.5 (+1.7%,
+  two of three ahead), ceiling 56–58 → 56–58, median 52 → 52–54, low 44–48 → 46–48,
+  1% low 20.9–28.1 → 27.8–28.5, hitches 6–7 → 1–8. A useful local saving; game-level gain and
+  pacing remain inconclusive (full pairs in PERFORMANCE.md). Strict pointer validation stays on.
 - [ ] Dynamic TLS in the engine. `libqemu-arm.so` is `dlopen`ed, so each `__thread` access in QEMU's
   hot paths (`current_cpu`, the RCU reader) goes through `tlsdesc_resolver_dynamic`: 1.2% of the vCPU
   in Jetpack, 3.2% in `gl-sprite` on the Poco. Find the hot accessors (a call-graph profile), then cache
@@ -79,8 +82,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint
   `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in
   directory ... and header ... differ"). Skip or tolerate such entries like the Android installer.
-- [ ] Pixel: check the AHardwareBuffer present (engine 4de4ae5ba1) renders correctly and which path
-  it takes (the GL init line in the engine log names `IOSurface` or `readback`).
+- [x] Pixel AHardwareBuffer present uses `IOSurface`: confirmed in the debug engine GL init log
+  during the client-array A/B runs (PowerVR D-Series DXT-48-1536, guest-api=1). LT Bench renders
+  correctly through that path.
 - [ ] The vCPU still waits ~9% of wall time for the BQL, behind main-loop holds. What the main loop
   does under it: the PL080 moves audio to the I2S FIFO one 4-byte element per full
   `address_space_read`/`write` dispatch (~44K/s); the LCD converts lines and resets TLB dirty
