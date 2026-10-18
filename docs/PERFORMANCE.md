@@ -547,7 +547,7 @@ could conservatively skip modes with a clear bit. Do not infer emptiness merely 
 `n_used_entries` without accounting for victims. Measure the reset stage's share and
 active-mode counts before implementing another scan experiment.
 
-### LCD snapshot stages (diagnostic, runtime capture pending)
+### LCD snapshot stages (diagnostic, captures complete)
 
 Engine `9fd2a85805`, default-off `LT_LCD_SNAPSHOT_STAGES`, separately times presync,
 setup/allocation, atomic bitmap copy/clear, TLB reset, clear listeners and the TCG
@@ -561,11 +561,58 @@ considering another dirty-tracking change. See PROFILING.md for field definition
 Linux/Android builds succeeded (`build/perf-codex/lcd-stages-build.txt`). Frozen
 APK/symbols: `lcd-stages.apk`, `lcd-stages-symbols/` under `build/perf-codex/`.
 APK SHA256: `2dec4262f195fea2e356906be637016fbfe319f55e2ba0e6375cf6cf61f6f13d`.
-No runtime improvement or diagnostic overhead claimed; device capture is pending.
-Four focused stage arms (TLB fast off/on/on/off) are queued after the ordinary TB lookup
-confirmation; both stages of this queue verify all predecessor completion markers before
-changing the phone. `lcd-stages-analyze.py` will report exact matched block bounds,
-each stage's mean, empty-snapshot counts and complete diagnostic frame metrics.
+Four focused stage arms (TLB fast off/on/on/off) completed after the ordinary TB
+lookup confirmation. Snapdragon 865-class Poco, Jetpack title, 30 s per arm;
+array cache on, other experiments/diagnostics, live recorder and full accounting
+off. All four final scenes reviewed: correct title, recorder off, zero skips.
+Stage timing is on in both modes; these are diagnostic FPS windows and do not
+measure diagnostic overhead.
+
+| Pair | Diagnostic mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 52.80 → 53.17 | 56 → 58 | 54 → 54 | 48 → 48 | 28.78 → 28.35 | 5 (286.4 ms) → 3 (151.8 ms) |
+| 2 (on first) | 48.23 → 54.57 | 58 → 58 | 50 → 54 | 32 → 48 | 11.93 → 28.49 | 44 (3513.6 ms) → 3 (168.8 ms) |
+
+The second off window has substantial hitching; retain it, with cause unknown.
+The ordinary three-pair result above remains mixed. Do not treat these diagnostic
+rates as proof of a repeatable throughput or pacing gain.
+
+Stage means below use the last six complete five-second blocks per arm, approximately
+30 s, separately bounded from each FPS window. All means are µs/snapshot.
+
+| Pair / mode | Updates / empty | Presync | Setup | Bitmap | Reset | Clear listeners | Barrier | Outer total |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 off | 1805 / 213 | 1.543 | 2.196 | 1.400 | 82.294 | 0.855 | 443.317 | 535.666 |
+| 1 on | 1803 / 208 | 1.689 | 2.266 | 1.459 | 56.034 | 0.805 | 477.121 | 543.516 |
+| 2 off | 1804 / 358 | 1.561 | 2.375 | 1.648 | 108.221 | 0.937 | 444.988 | 564.205 |
+| 2 on | 1803 / 163 | 1.474 | 2.093 | 1.494 | 56.233 | 0.770 | 445.990 | 512.152 |
+
+The fast scan reduces the measured reset stage in both pairs, by 26.3 and 52.0 µs.
+The synchronous vCPU ordering barrier dominates at **443–477 µs**, about 79–88%
+of the outer total. The first pair's enclosing total does not improve despite
+the cheaper reset. Keep fast reset off for ordinary use pending a repeatable game
+benefit; the stage saving alone does not resolve the 60 fps goal.
+
+Requested-range empty snapshots are **571/3609 (15.8%) off, 371/3606 (10.3%) on**.
+These counts vary with delivered work; they are not an optimization result. They
+exclude aligned bitmap padding. A zero requested-range count alone cannot justify
+skipping tracking resets for the entire copied/cleared bitmap or the ordering barrier.
+No empty-snapshot skipping has been implemented.
+
+Exact bounds (monotonic ns; FPS is half-open, stage bounds are logged block endpoints):
+
+| Pair / mode | FPS [start, end) | Stage [begin, end] |
+| --- | --- | --- |
+| 1 off | [430748371824533, 430778371824533) | [430747237959377, 430777322421397] |
+| 1 on | [430921829982332, 430951829982332) | [430922795527071, 430952846896330] |
+| 2 off | [431264035025743, 431294035025743) | [431263068462149, 431293134085679] |
+| 2 on | [431088954182216, 431118954182216) | [431086203683258, 431116254624497] |
+
+Evidence: `build/perf-codex/poco-lcd-stages-{1,2}-{off,on}/`, analyzer
+`lcd-stages-analyze.py`, `lcd-stages-results.json`, and `lcd-stages-all-four-scenes.png`.
+Each arm retains its raw logs and matching inner/outer stage blocks. The queue
+stopped the guest cleanly, verified no qemu engines and restored baseline debug-env
+before handing the phone to the separate BQL diagnostic comparison.
 
 ### Publisher notification preservation (no repeatable throughput gain)
 

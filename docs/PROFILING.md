@@ -244,7 +244,7 @@ Snapshot time includes bitmap copy/clear, the TLB reset and the TCG `run_on_cpu`
 barrier. It does not isolate reset-loop time. Do not attribute its full duration to the scan or
 remove the ordering barrier based on this timing. Three Poco Jetpack pairs found mixed
 throughput (52.38 → 53.00 fps) and unchanged enclosing snapshot cost (509.11 → 508.97 µs).
-The switch stays off; stage measurements are pending. Full pairs and boundaries are
+The switch stays off; stage measurements below isolate a local reset saving. Full pairs and boundaries are
 in [PERFORMANCE.md](PERFORMANCE.md).
 
 
@@ -264,4 +264,9 @@ Their sum excludes dirty-page counting and some wrapper bookkeeping; the enclosi
 count even though bitmap copying clears it as before. `n - skipped` is the denominator
 for stage means. No resets, clears or ordering barriers are skipped, including empty
 snapshots. Composed/rotated paths do not use this diagnostic. Keep forced-snapshot
-skipping off. Linux/Android builds succeeded; device capture is pending.
+skipping off. Four Poco Jetpack diagnostic captures completed: reset means
+82.29/108.22 → 56.03/56.23 µs/update, but the TCG ordering barrier dominates at
+443–477 µs. Requested-range empties are 10–20% of snapshots per arm; their count
+excludes cleared alignment padding and cannot alone authorize skipping whole-bitmap
+resets/barriers. One off arm is hitch-heavy; no repeatable ordinary game gain or
+diagnostic overhead established. Full metrics/bounds in PERFORMANCE.md.

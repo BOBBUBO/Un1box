@@ -227,7 +227,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   durations 302.9/203.6/568.7 → 221.5/100.7/271.4 ms per 30 s.
   Snapshot means 521.03/511.41/494.90 → 545.40/473.65/507.85 µs/update;
   weighted 509.11 → 508.97 µs, no confirmed targeted cost reduction. All six scenes
-  reviewed, recorder off, zero skips. Keep off pending stage timings; no repeatable gain.
+  reviewed, recorder off, zero skips. Keep off; no repeatable ordinary game gain.
   The snapshot timing also includes the TCG after-sync `run_on_cpu` barrier, not just the scan.
   Split bitmap/reset/barrier costs before attributing the full ~0.5 ms or pursuing more changes;
   retain the ordering between dirty flag clearing and guest writes.
@@ -235,8 +235,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   allocation/setup, bitmap copy/clear, TLB reset, dirty-clear listeners and the TCG
   ordering barrier; it also counts requested-range dirty pages and empty snapshots.
   All operations/order are retained, logging follows the LCD unlock. Linux/Android
-  builds succeeded; four focused stage arms queued after ordinary TB lookup confirmation,
-  no optimization gain claimed. Stage analyzer is prepared locally.
+  builds succeeded; four focused stage arms complete, second pair reversed. Reset µs/update
+  82.29/108.22 → 56.03/56.23, but the ordering barrier dominates at 443–477 µs;
+  outer means 535.67/564.20 → 543.52/512.15. Empty requested-range snapshots
+  213/358 of 1805/1804 off, 208/163 of 1803/1803 on. This excludes alignment padding;
+  a zero requested-range count does not alone justify skipping full bitmap resets/barriers.
+  Diagnostic FPS 52.80/48.23 → 53.17/54.57; ceiling 56/58 → 58/58, median 54/50 →
+  54/54, low 48/32 → 48/48, 1% low 28.78/11.93 → 28.35/28.49; hitches 5/44 →
+  3/3, durations 286.4/3513.6 → 151.8/168.8 ms per 30 s. The second off arm is
+  hitch-heavy, cause unknown; retain it. No repeatable ordinary game benefit or diagnostic
+  overhead established. All four scenes reviewed, zero skips. Full separate stage/FPS
+  bounds and timing breakdown in PERFORMANCE.md. Queue clean-stop/env restoration succeeded.
   Another source lead, unimplemented: under the TLB lock, a clear `tlb.c.dirty` MMU-mode
   bit guarantees that its main/victim tables were flushed and no insertion has occurred.
   Count active modes and measure reset cost before considering skipping these empty modes;
