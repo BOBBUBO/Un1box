@@ -544,6 +544,14 @@ TLS dynamic resolver 1.03%, dirty-flag queries 0.59%, bitmap scanning 0.48%.
 Call-chain unwinding errors: **46.13%**; incomplete caller attribution cannot establish absence
 of a cost. This is a diagnostic baseline, not an FPS or overhead comparison.
 
+The subsequent enabled-arm profile also resolves successfully: worker 12925, exact sample
+bounds **427409397840078 → 427424407670801 ns**, 18,678 total samples / zero lost,
+13,428 vCPU samples. Stable before/after maps resolve **44.11%** of vCPU event weight
+(5,919 mapped / 7,509 unmapped), with zero ambiguous/unstable sampled mappings. Native self
+costs include lookup 4.73%, `do_ld4_mmu` 3.12%, TLS resolver 0.92%; call-chain unwind errors
+46.08%. Call rates differ between arms, so these normalized shares are diagnostic context,
+not absolute CPU-time savings. Evidence is in the matching `poco-dirty-focused-1-on/` directory.
+
 Raw guest address bands account for 17.01% of vCPU event weight in 0xc0000000–0xcfffffff,
 13.94% in 0x30000000–0x3fffffff and 13.44% below 0x10000000. The hottest 4 KiB instruction
 page is 0x001b1000 (1.72% of vCPU weight). These ranges/pages are not resolved function names

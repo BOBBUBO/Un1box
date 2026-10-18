@@ -131,8 +131,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   guest-stack attribution. First real runtime use succeeded: Poco Jetpack diagnostic, 13,355 vCPU samples,
   44.44% of event weight mapped (5,942 samples), zero ambiguous/unstable sampled mappings;
   7,413 unmapped samples include native work and missing JIT mappings. Native lookup remains
-  prominent (`tb_lookup_legacy` 4.95% self); 46.13% call-chain unwind errors. Matching guest
-  symbols and an enabled-arm comparison remain pending. Full bounds/evidence in PERFORMANCE.md.
+  prominent (`tb_lookup_legacy` 4.95% self); 46.13% call-chain unwind errors. The enabled-arm profile also resolves: 13,428 vCPU samples, 44.11% of event weight mapped,
+  zero ambiguous/unstable sampled mappings; 46.08% unwind errors. Matching guest symbols
+  remain pending. Full bounds/evidence in PERFORMANCE.md.
 - [ ] Dirty-state query hot path: the fresh Poco Jetpack profile puts `physical_memory_is_clean`
   at 1.25% inclusive and `physical_memory_get_dirty_flag` at 0.59% self / 0.89% inclusive.
   It queries three one-bit flags through general bitmap-range scans, entering/exiting RCU three
@@ -219,6 +220,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   52.7/52.0 → 48.6/49.6 (−6.2%), ceiling 58/58 → 54/56, median 54/54 → 50/50,
   low 46/44 → 38/40, 1% low 20.6/20.7 → 20.0/20.1, hitches 11/13 → 17/14
   (917/1038 → 1255/1124 ms). Recording overhead remains significant; reducing it is still open.
+- [ ] Evaluate Android API 35 `ProfilingManager` system traces alongside manual recordings to
+  distinguish host scheduling delays from blocking in long frames. The API is in the current
+  compile SDK; cancellation stops a continuous capture and returns available data. Requests can
+  be delayed or rate limited, so retain actual trace timing/results separately from engine logs
+  and handle callbacks asynchronously. No integration or device capture yet; source/API inspection only.
 - [ ] Investigate the user's Pixel audio looping during recording. Capture file writes are now off
   the BQL and Android PCM-read lock (engine `9b38a2ffd3`); new metadata retains start/end audio
   underrun and PCM drop counters. Underrun warnings also occurred between captures, so the cause
