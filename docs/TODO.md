@@ -95,3 +95,13 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   flat white while other background tiles, the coins, characters and smoke draw correctly, so it is
   not 3D-specific. That points at particular textures failing (format, size or upload path) rather
   than at state: compare the textures that do and do not appear in an `IT_GLES_VERBOSE` log.
+  BATTLE BEARS: Zombies! (Unity iPhone) too: in play the zombies draw as flat grey silhouettes (they
+  should be pink and textured) while the player's bear, the grass and the sky are textured; the main
+  menu loses its whole background (the "BATTLE BEARS ZOMBIES!" title art and silhouette) and shows a
+  flat brown fill with a stray "Gui Text" label, while the side buttons draw. Three games now, all
+  losing some textures and keeping others. The Pixel's engine log for that session (Pixel 10 host
+  GPU: PowerVR D-Series DXT-48-1536) has render-to-texture draws with `tex2d=0` on the active unit
+  but texture-coordinate arrays on units 0 and 1 (`texunits=0x03`), white color: worth checking
+  the bridge's per-unit state (`glActiveTexture` / `glClientActiveTexture`, `GL_TEXTURE_2D` enable
+  per unit, `glTexEnv` combiners). Reproduce on Linux with a copy of the Pixel's record (record
+  19019965e56bd5941a246eda1759fd3d has all three games), with the guest stopped first.
