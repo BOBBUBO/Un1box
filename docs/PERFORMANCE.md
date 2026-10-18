@@ -328,34 +328,45 @@ APK/symbols: `vfp-mul-zero.apk`, `vfp-mul-zero-symbols/`; build identity retaine
 Two focused pairs (off/on, on/off), 35 s per arm, follow the completed BQL
 comparison and its clean stop. All other diagnostics/experiments off, array cache on,
 no live recorder/full accounting. Each arm selects complete contiguous timing blocks
-wholly inside its frame window. **First pair complete; reverse-order pair running.**
-Both first-pair final scenes reviewed: correct Jetpack title, recorder off, zero skips.
+wholly inside its frame window. **Both pairs complete, second reversed.** All four
+final scenes reviewed: correct Jetpack title, recorder off, zero skips.
 
 | Pair | Sample mean ns, off → on | Median of block means ns | Mixed zero/normal calls/s | Eligible share |
 | --- | --- | --- | --- | --- |
 | 1 | 357.05 → 343.42 | 356.20 → 336.83 | 271253 → 273027 | 41.95% → 42.04% |
+| 2 (on first) | 368.14 → 333.79 | 368.63 → 333.71 | 280130 → 268513 | 42.38% → 41.83% |
 
 These are timings of the mixed zero/normal subset, including clocks/descheduling,
-not all multiplication calls. Six complete blocks per arm contain 31823 → 32027
-samples; maximum individual sample 25.938 → 284.011 µs. Retain all samples and
-blocks, including the enabled arm's outlier. The first pair suggests a small local
-saving (3.8% of the instrumented sample mean); do not extrapolate timer-inclusive
-costs to whole-game gains. Reverse-order confirmation remains necessary.
+not all multiplication calls. Six complete blocks per arm contain 31823/32853 →
+32027/31492 samples; maximum individual sample 25.938/23.125 → 284.011/3.959 µs.
+Retain all samples and blocks, including the first enabled arm's outlier. Both
+pairs favor the shortcut locally (3.8% and 9.3% of the instrumented sample mean).
+Mixed zero/normal operations are about 30.4–30.9% of all measured multiplies;
+the rest still execute the helper's eligibility checks. Do not extrapolate these
+timer-inclusive subset costs or variable call rates to whole-game gains.
 
 | Pair | Diagnostic mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 52.94 → 54.03 | 58 → 60 | 54 → 54 | 46 → 48 | 20.17 → 28.49 | 16 (1077.4 ms) → 5 (300.5 ms) |
+| 2 (on first) | 53.77 → 52.09 | 58 → 58 | 54 → 52 | 48 → 44 | 28.22 → 20.28 | 7 (356.0 ms) → 15 (1004.2 ms) |
 
-This is one diagnostic pair, not ordinary game throughput/pacing evidence or a
-profiler-overhead measurement. Keep off pending the reversed pair and, if justified,
-an ordinary diagnostic-off comparison. Evidence: `poco-vfp-mul-zero-focused-*`,
+Diagnostic mean **53.36 → 53.06 fps (−0.6%)**, one pair ahead, one behind;
+hitches **23 → 20**, total **1433.4 → 1304.7 ms / 70 s per mode**. No consistent
+pacing or throughput gain in these instrumented windows. These are not ordinary
+game baselines or profiler-overhead measurements. Keep off; an ordinary
+diagnostic-off comparison remains open after the higher-priority combined and
+masked-interrupt work. Evidence: `poco-vfp-mul-zero-focused-*`,
 `vfp-mul-zero-analyze.py`, `vfp-mul-zero-results.json`; per-arm `timings.json`
-retains contiguous exact blocks and separate enclosing frame bounds.
+retains contiguous exact blocks and separate enclosing frame bounds. Reviewed
+montage: `vfp-mul-zero-scenes.png`. The runner cleanly stopped, checked no qemu
+engine remained, restored baseline, and handed the phone to the combined comparison.
 
 | Pair / mode | FPS [start, end) ns | Timing [begin, end] ns |
 | --- | --- | --- |
 | 1 off | [432157727997589, 432192727997589) | [432160337647119, 432190375657577] |
 | 1 on | [432328054983201, 432363054983201) | [432330742600596, 432360774786053] |
+| 2 on | [432510495258444, 432545495258444) | [432513336802141, 432543364201869] |
+| 2 off | [432689830961501, 432724830961501) | [432692467838479, 432722492903311] |
 
 ### BQL diagnostics without instruction accounting (2026-10-18)
 
