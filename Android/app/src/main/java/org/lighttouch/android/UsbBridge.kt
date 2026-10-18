@@ -28,6 +28,8 @@ internal class UsbBridge(private val context: Context) {
         val pairing = File(context.filesDir, "usb-pairing/" + recordId.filter { it.isLetterOrDigit() })
         val logs = File(context.filesDir, "service-logs")
         for (dir in listOf(runRoot, directory, pairing, logs)) { dir.mkdirs(); Os.chmod(dir.absolutePath, 0x1c0) } // 0700
+        // One log per bridge start, never removed before (185 on one phone): keep the newest few.
+        logs.listFiles { f -> f.name.startsWith("usbmuxd-") }?.sortedByDescending { it.lastModified() }?.drop(7)?.forEach { it.delete() }
         val mux = File(directory, "mux.sock"); val qemu = File(directory, "qemu.sock")
         mux.delete(); qemu.delete()
         val builder = ProcessBuilder(daemonBinary.absolutePath, "-f", "-S", mux.absolutePath, "-C", pairing.absolutePath,

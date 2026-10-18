@@ -20,6 +20,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <dirent.h>
 #include "frame_pacer.h"
 #include <optional>
 #include "presentation_lifetime.h"
@@ -123,6 +124,27 @@ std::string graphics_provider_failure;
 void *angle_provider_handles[3]={};
 const char *graphics_provider_name() { return graphics_provider_choice==1?"angle-gl":"platform"; }
 std::string engine_log_path;
+
+// Each guest session writes engine-PID.log into the record's state, and nothing removed
+// them: 137 (41 MB) on one phone, 271 on another. Keep the newest few for diagnosis.
+static void prune_engine_logs(const char *state_path)
+{
+    constexpr size_t keep=7;  // plus the one this session opens
+    std::vector<std::pair<time_t,std::string>> logs;
+    if(DIR *dir=opendir(state_path)) {
+        while(dirent *entry=readdir(dir)) {
+            const std::string name=entry->d_name;
+            if(name.rfind("engine-",0)!=0 || name.size()<5 || name.compare(name.size()-4,4,".log")!=0)continue;
+            struct stat st;
+            const std::string path=std::string(state_path)+"/"+name;
+            if(stat(path.c_str(),&st)==0 && S_ISREG(st.st_mode))logs.emplace_back(st.st_mtime,path);
+        }
+        closedir(dir);
+    }
+    if(logs.size()<=keep)return;
+    std::sort(logs.begin(),logs.end());
+    for(size_t i=0;i+keep<logs.size();i++)unlink(logs[i].second.c_str());
+}
 std::string debug_qmp_path;
 bool debug_qmp_armed=false;
 bool debug_touch_trace_armed=false,debug_touch_trace_closed=false,debug_touch_trace_configured=false;
@@ -468,6 +490,7 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     }
     if(status==LT_OK)status=lt_library_device_open(library,record.value,allow_dirty?1u:0u,&prepared_device,&error);
     if(status==LT_OK) {
+        prune_engine_logs(selected.state_path);
         const std::string path=std::string(selected.state_path)+"/engine-"+std::to_string(getpid())+".log";
         const int log_fd=open(path.c_str(),O_CREAT|O_WRONLY|O_APPEND|O_CLOEXEC,0600);
         if(log_fd<0 || fchmod(log_fd,0600)!=0 || dup2(log_fd,STDOUT_FILENO)<0 || dup2(log_fd,STDERR_FILENO)<0) {
