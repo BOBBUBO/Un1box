@@ -83,4 +83,4 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `REFUSED upload-error:0xde1:0x502`) and the texture stayed empty. Desktop GL converts, which is
   why Linux and macOS never showed it. The upload now does the conversion itself. Confirmed on the
   Poco F3 (Jetpack: white before, correct after, same NAND) and by the user on the Pixel 10
-  (Jetpack, Battle Bears). Real Racing still to be checked.
+  (Jetpack, Battle Bears, Real Racing).
