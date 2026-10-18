@@ -143,6 +143,9 @@ cannot tell; dropping `MO_ALIGN` for EL0 LDM/STM removed every fault (0/s). Fram
 follow: Poco, interleaved, faults 37.5/31.6/37.4/38.2 vs direct 38.4/32.8/34.7/36.2 fps (36.2 vs
 35.5). Each fault costs only a few µs here, so not worth departing from the hardware.
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
+Turning off the GL bridge's `glGetError` checks (`IT_GLES_STRICT=0`: up to nine per draw, a sync point
+in some drivers): Poco, Jetpack title with guest package serial 27, three interleaved pairs, on
+47.4/52.1/50.6 vs off 49.2/49.7/47.9 fps (50.0 vs 48.9). No gain on the Adreno driver, so the checks stay.
 A 2-way set-associative jump cache halved jump-cache misses in Flight Control (10.6% → 5.4% of
 lookups) but did not move frame rate: Poco 23.3/22.3/22.5 → 25.1/21.0/19.6 fps, Pixel JellyCar
 14.0/13.8/14.9 → 13.7/14.3/13.0. Misses are no longer where lookup time goes: at ~2M lookups/s

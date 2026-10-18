@@ -18,4 +18,6 @@ docs/*
 !docs/PERFORMANCE.md
 !docs/TODO.md
 !docs/GUEST-BENCHMARKS.md
+!docs/BUILDING.md
+scripts/build.env
 *.profraw

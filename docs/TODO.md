@@ -55,7 +55,26 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   itpack has a family for the record's board/build and a serial not older than the current one,
   stage and swap the asset and `record.json` atomically) and a "Guest tools" action on an existing
   record in the Android and Linux UIs.
-- [ ] LT Bench: add GL tests (draw calls, texture upload, present) and run it on the Pixel.
+- [x] LT Bench GL tests (`gl-get`, `gl-state`, `gl-draw`, `gl-sprite`, `gl-upload`, `gl-present`), run on
+  the desktop, the Poco and the Pixel (docs/GUEST-BENCHMARKS.md, PERFORMANCE.md).
+- [ ] Fewer host GL calls per draw (the next lead for Jetpack on the Poco). For each draw,
+  `gles_bind_all_arrays` enables and points every client array, and `gles_unbind_arrays` disables them
+  again. Strict mode adds 4–5 `glGetError` checks. A two-array sprite is ~12 host GL calls, and on Adreno
+  each pays `validateShadowState` plus a context lookup (`pthread_getspecific`). These were ~8% of the
+  vCPU in a Poco `gl-sprite` profile, with `glGetError` alone ~4%. Idea: track the host's
+  client-array enables and pointers and skip calls that change nothing. Strict mode off alone did not
+  move Jetpack (PERFORMANCE.md, rejected), so measure `gl-sprite` first.
+- [ ] Dynamic TLS in the engine. `libqemu-arm.so` is `dlopen`ed, so each `__thread` access in QEMU's
+  hot paths (`current_cpu`, the RCU reader) goes through `tlsdesc_resolver_dynamic`: 1.2% of the vCPU
+  in Jetpack, 3.2% in `gl-sprite` on the Poco. Find the hot accessors (a call-graph profile), then cache
+  them or move them out of TLS.
+- [ ] Texture upload on the Pixel: `gl-upload` (16 KiB `glTexSubImage2D`) is 51–57 µs against 12 µs on
+  the Poco and 3–4 µs on the desktop. It looks like the Pixel's GL stack (ANGLE or the IMG driver).
+  Profile it before testing a game that streams textures.
+- [ ] The guest kernel is 22% of the vCPU in Jetpack on the Poco (half the time in translated code).
+  It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
+  lock and interrupt-mask instructions cheaper. Next to look at: how many exceptions and Mach messages
+  the game makes per frame, and which of them the emulator makes expensive.
 - [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint
   `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in

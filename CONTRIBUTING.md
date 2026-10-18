@@ -48,6 +48,10 @@ Catalog availability is distinct from measured acceptance.
 
 ## Building
 
+For development, `scripts/build.sh` builds the engine, the Linux frontend, the Android APK, and (on a
+Mac) the guest package and LT Bench, with outputs saved in `build/`: see [docs/BUILDING.md](docs/BUILDING.md).
+The per-platform routes below are the full recipes.
+
 Each port has its own recipe; none needs Xcode.
 
 - **Linux**: `cmake -S Linux -B BUILD -DLIGHTTOUCH_QEMU_SOURCE=/path/to/qemu-ios && cmake --build BUILD -j2`; AppImage packaging is in `Linux/packaging/README.md`.
