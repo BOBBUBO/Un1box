@@ -43,6 +43,31 @@ class MobileLoadingTests(unittest.TestCase):
         self.assertEqual(value.plist.plist_mem_free.argtypes, [mobile.P])
         self.assertIsNone(value.plist.plist_mem_free.restype)
 
+    def test_service_start_retries_with_a_fresh_handshake_after_a_mux_error(self):
+        value, *_ = self.load("linux")
+        lib = value.lib
+        starts = iter([-8, 0])  # lockdownd dropped the idle client, then the new one works
+
+        def start(lockdown, name, descriptor):
+            code = next(starts)
+            if code == 0:
+                C.cast(descriptor, C.POINTER(mobile.P))[0] = 0x1234
+            return code
+        lib.lockdownd_start_service.side_effect = start
+        lib.instproxy_client_new.return_value = 0
+        with mock.patch.object(mobile.time, "sleep"):
+            value.service("com.apple.mobile.installation_proxy", "instproxy")
+        self.assertEqual(lib.lockdownd_start_service.call_count, 2)
+        self.assertEqual(lib.lockdownd_client_new_with_handshake.call_count, 2)  # Mobile() and the retry
+
+    def test_service_start_reports_the_error_after_three_attempts(self):
+        value, *_ = self.load("linux")
+        value.lib.lockdownd_start_service.return_value = -8
+        with mock.patch.object(mobile.time, "sleep"):
+            with self.assertRaisesRegex(InstallError, r"start com.apple.afc failed \(device error -8\)"):
+                value.service("com.apple.afc", "afc")
+        self.assertEqual(value.lib.lockdownd_start_service.call_count, 3)
+
     def test_windows_registers_both_provider_directories(self):
         value, _, add_directory, handles, library, plist = self.load(separate_dirs=True)
         self.assertEqual(add_directory.call_args_list,

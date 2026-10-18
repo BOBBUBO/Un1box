@@ -125,11 +125,34 @@ class Mobile:
             raise InstallError("IPA installation currently supports n72/n81 guest contracts only.")
         return Target(product, ios, arch)
 
+    def start_service(self, name, descriptor):
+        """lockdownd drops a client left idle, as the first one is across a long AFC upload: starting
+        installation_proxy after it then fails with a mux error (-8). A fresh handshake recovers it, as
+        the Android app service and the macOS pipeline's transient-connect retry do."""
+        code = -1
+        for attempt in range(3):
+            if attempt:
+                if self.lockdown:
+                    self.lib.lockdownd_client_free(self.lockdown)
+                    self.lockdown = P()
+                time.sleep(0.5 * attempt)
+                code = self.lib.lockdownd_client_new_with_handshake(self.device, C.byref(self.lockdown),
+                                                                   b"LightTouchLinux")
+                if code != 0:
+                    self.lockdown = P()
+                    continue
+            code = self.lib.lockdownd_start_service(self.lockdown, name.encode(), C.byref(descriptor))
+            if code == 0 and descriptor:
+                return
+            if descriptor:
+                self.lib.lockdownd_service_descriptor_free(descriptor)
+                descriptor.value = None
+        self.check(code, "start " + name)
+
     def service(self, name, prefix):
         descriptor, client = P(), P()
         try:
-            self.check(self.lib.lockdownd_start_service(self.lockdown, name.encode(), C.byref(descriptor)),
-                       "start " + name)
+            self.start_service(name, descriptor)
             self.check(getattr(self.lib, prefix + "_client_new")(self.device, descriptor, C.byref(client)),
                        "connect " + name)
             return client
