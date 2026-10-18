@@ -51,6 +51,8 @@ treats the app's worker process differently, and that turned out to be the large
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| GLES on ES hosts: read the frame back as BGRA without a byte loop (`LT_GLES_BGRA_READ=0` for A/B) | `16c09e7fe3` | Every present read the drawable back by reading RGBA into a fresh 600 KB allocation and swizzling it a byte at a time (~2% of the vCPU in a game, plus first-touch faults on the new pages). Now `GL_EXT_read_format_bgra` straight into the destination, else a kept buffer swapped a word at a time. **Poco, Flight Control, same APK, 4 interleaved pairs: 51.9/54.7/51.7/54.3 vs 49.1/53.2/49.6/45.0 fps (53.2 vs 49.2, +8%, 4 of 4); ≥55 fps 48% vs 28% of windows; hitches 34 vs 53 per 30 s.** |
+| GLES on ES hosts: convert uploads whose internal format differs from the data's | `4ae00eaca8` | Not a speed change: the white/grey untextured geometry in Jetpack Joyride, Battle Bears and Real Racing on Android (opaque PVRTC uploaded as `GL_RGB` from RGBA data, refused by ES). |
 | LCD: convert and compose frames without the BQL | `d7c4927685` | The 60 Hz vsync push converted (or composed and blitted) the whole scanout holding the BQL: 1.1 ms per refresh on the Poco, 5.7% of wall time, and the vCPU, which takes the BQL thousands of times a second for the timer, VIC and interrupts, kept landing behind it (its waits over 1 ms were 13% of wall). Now only the dirty snapshot and `dpy_gfx_update` hold the lock. Same app, engine before (`ad729e45fe`) vs the blit unlock alone, four interleaved 30 s rounds per phone, all 8 pairs won: **Poco, Flight Control 37.1/38.5/36.1/37.3 → 40.4/43.4/45.5/43.4 fps (37.3 → 43.2, +16%); ceiling 46 → 52, hitches 111 → 77 per 30 s. Pixel, Doodle Jump menu 32.8/30.6/34.3/33.2 → 38.7/40.8/36.9/37.7 (32.7 → 38.5, +18%); ceiling 45 → 51.** The same commit also unlocks plane composition (Doodle Jump's scanout is two composed planes) and copies opaque pixels instead of blending them; desktop vCPU BQL wait in Doodle Jump 6.9% → 1.4% of wall. With that and the PL080 change below (`a62f05bae3`) vs the blit unlock alone, four interleaved rounds per phone: **Pixel, Doodle Jump menu 36.1/39.6/40.8/35.2 → 52.6/58.0/51.7/59.5 fps (37.9 → 55.5, +46%, 4/4); frames over 50 ms ~94 → 0–3 per 30 s, low 26 → 44–56, up to 97% of the time at ≥ 55 fps. Poco, Flight Control 40.0/39.8/40.8/42.2 → 43.8/48.5/45.3/41.0 (40.7 → 44.7, +10%, 3/4).** |
 | PL080: move a paced FIFO's burst in one push | `a62f05bae3` | The I2S pacing timer (every 2 ms) let the PL080 DMA move audio one 4-byte element per MMIO dispatch: 129 µs a tick under the BQL on the Poco, 4.7% of wall while a game plays music. The DMA now reads the run from guest memory once and hands it to the I2S FIFO in one call (the last element still takes the normal path, which lowers the request line and finishes the descriptor). Desktop: the pacing callback 9.9 µs; the PCM tap still carries the audio. |
 | Keep the kernel's global TLB entries across an ASID switch | `ad729e45fe` | QEMU's TLB is not ASID-tagged, so each CONTEXTIDR write (~1.5K/s under iOS) flushed everything, including the kernel's global mappings: EL1 high-half refills were about half of all TLB fills. The short-descriptor walk now reports nG and the switch drops only the few non-global pages the EL1 index picked up. Desktop: kernel fills −79%, all fills −42%. Interleaved 30 s rounds: Poco, Flight Control 36.5/36.7/36.6/34.2 → 36.6/38.9/38.8/33.9 fps (36.0 → 37.1, +3%; 2 won, 2 even); Pixel, Doodle Jump menu 32.0/32.4/32.1 → 35.1/34.6/30.3 (32.2 → 33.3, +3.6%; 2 of 3). |
@@ -71,6 +73,17 @@ treats the app's worker process differently, and that turned out to be the large
 | Already in the fork before this work (upstream adopted them later) | 909d3ccb62; cdbcff9724, 38642ff7a2, a4749f1ba6 | 4K target pages; learned per-TB I/O instruction limits (no re-translation after mid-block device reads). |
 
 ### Measured and rejected
+
+**Per-address-space TLB banks** (patch kept as `perf/rejected-tlb-banks.patch`): the user TLB index
+set aside per ASID at a context switch and swapped back when that address space runs again (8 banks;
+every invalidation also applied to the inactive banks). On the desktop it cut user TLB fills per
+switch from 82 to 58 in Flight Control (77% of switches found their bank), and LT Bench's `rpc-64p`
+refill cost from ~730 to ~430 ns. But Flight Control on the Poco lost: banks off 55.7/56.5/54.7/55.0
+vs on 53.2/54.9/53.1/54.3 fps (55.5 vs 53.9, −3%, 4 of 4 pairs), with lower medians and more hitches. Each LCD frame's
+dirty-tracking reset (`tlb_reset_dirty`) walks every TLB entry under the TLB lock, and with banks
+that is nine tables instead of one (2.6% of the main loop on the desktop), contending with the vCPU.
+QEMU also sizes a TLB only when it is emptied, so a bank that keeps coming back stayed at its first
+size and thrashed until it was flushed once on return over 70% full.
 
 No gain, so not kept: skipping the jump-cache clear on a single-page TLB flush (`tb_jmp_cache_clear_page`;
 Poco, Flight Control 48.3 → 47.3 fps), a 64K-entry TB jump cache (slower than 4K in play), a lockless timer counter,
@@ -123,16 +136,42 @@ host preemption or the guest waiting on a device. Faster guest code and less BQL
 that is how the LCD refresh (5.7% of wall) and I2S pacing (4.7%) were found as the holders the vCPU
 waited behind.
 
+### Guest benchmarks
+
+[LT Bench](GUEST-BENCHMARKS.md) times one guest path at a time inside iOS (best of 5 rounds, ns per
+operation). Baselines, engine `16c09e7fe3` (Poco: ic8 APK with `LT_TLB_BANKS=off`; desktop: Ryzen 7
+3700X VM, headless):
+
+| Test | Poco F3 | Desktop | Note |
+| --- | --- | --- | --- |
+| `loop` | 4.1 | 3.5 | translated code baseline: about as fast on the phone as on the desktop |
+| `fib` (call + return) | 9.6 | 7.8 | |
+| `icall` (indirect call + return) | 30.7–62.7 | 28.2 | 3–6× a direct call: a site with more targets than the 2-entry branch cache misses to `helper_lookup_tb_ptr` |
+| `memcpy` (per KiB) | 612 | 441 | 1.6 / 2.3 GB/s |
+| `syscall` (`getppid`) | 972 | 937 | |
+| `time` (`mach_absolute_time`) | 975 | 715 | a trap on this OS |
+| `thread-switch` (pipe round trip) | 65 600 | 26 600 | 4× a Mach RPC to another process: unexplained (TODO) |
+| `rpc` (Mach RPC to launchd) | 13 200–16 600 | 5 700 | two address-space switches |
+| `rpc-64p` minus `rpc` | ~600–800 | ~1 350 | refilling 64 pages after the switches (desktop with the rejected TLB banks: ~120) |
+| `touch-64p` (per 64 pages) | 345 | 218 | the same pages with a warm TLB |
+| `fault` (anonymous page) | 17 500 | 11 100 | |
+| `mmap` + `munmap` | 11 800 | 4 700 | |
+| `tlb-32p` / `tlb-1024p` | 5.8 / 11.3 | 5.7 / 12.7 | |
+| `sleep` (`usleep(1000)`) | 1.56 ms | 1.15 ms | |
+
+The same Poco and APK measured 13.2 µs and 16.6 µs `rpc` on two boots, and `icall` 31 and 63 ns:
+absolute numbers move between boots, so compare interleaved runs as with games.
+
 ## Current state and next targets
 
 Game frame rates, from the measurements above (full speed from the desktop runs; "—" was not
 measured at that point):
 
-| Game (scene) | Phone | Full speed | v0.0.2 | Before cross-page chaining | Before the BQL work | After it (`974c213352`) | LCD blit unlocked | Now (`a62f05bae3`) |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Flight Control 1.9.2 (first 30 s of play) | Poco F3 | 60 | ~18 | 19.8 | 25.3 | 35.4 | 40.7–43.2 | **44.7** (ceiling 52–58) |
-| Doodle Jump (animated main menu) | Pixel 10 | 60 | — | 15.3 | 18.1 | 32.2 | 37.9–38.5 | **55.5** (ceiling 58–62, no hitches) |
-| JellyCar (live-physics main menu) | Pixel 10 | 30 | — (5.7 before ADPF) | 13.7 | 14.7 | 23.3 | — | — |
+| Game (scene) | Phone | Full speed | v0.0.2 | Before cross-page chaining | Before the BQL work | After it (`974c213352`) | LCD blit unlocked | `a62f05bae3` | Now (`16c09e7fe3`) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Flight Control 1.9.2 (first 30 s of play) | Poco F3 | 60 | ~18 | 19.8 | 25.3 | 35.4 | 40.7–43.2 | 44.7 (ceiling 52–58) | **55.5** (55.0–56.5; ceiling 60, median 56–58, ≥55 fps 61–76% of windows, 13–22 hitches per 30 s) |
+| Doodle Jump (animated main menu) | Pixel 10 | 60 | — | 15.3 | 18.1 | 32.2 | 37.9–38.5 | 55.5 (ceiling 58–62, no hitches) | — |
+| JellyCar (live-physics main menu) | Pixel 10 | 30 | — (5.7 before ADPF) | 13.7 | 14.7 | 23.3 | — | — | — |
 
 Absolute rates drift a few fps between sessions (the LCD-blit column was 43.2 in one A/B and 40.7 in the
 next), which is why every change is judged by interleaved pairs.

@@ -17,4 +17,5 @@ docs/*
 !docs/ASSETS.md
 !docs/PERFORMANCE.md
 !docs/TODO.md
+!docs/GUEST-BENCHMARKS.md
 *.profraw

@@ -16,6 +16,7 @@ GAMES = {
     "doodlejump": [(.143, .127), 22],                      # main menu (Pixel layout)
     "jellycar": [(.397, .127), 20, (.294, .497), 8],       # icon, dismiss the push prompt (Pixel layout)
     "jetpack": [(.143, .310), 50],                        # Jetpack Joyride title (Poco layout, after OpenFeint was declined)
+    "ltbench": [(.380, .312), 40],                        # LT Bench (docs/GUEST-BENCHMARKS.md), Poco layout: one pass
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
 }
 apk = sys.argv[1]; secs = sys.argv[2] if len(sys.argv) > 2 else "30"

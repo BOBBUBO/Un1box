@@ -1,0 +1,99 @@
+# Guest benchmarks (LT Bench)
+
+A game's frame rate mixes everything the emulator does. LT Bench is a small iOS 3.1.3 app that
+times one guest path at a time, so a change to the engine can be measured against the path it
+targets: the same test, run before and after, in nanoseconds per operation.
+
+Why it exists: Geekbench 2 in the guest on a Pixel 10 scored **1201** where a real iPod touch
+2G scores about **193**, so straight-line guest code already runs ~6× faster than the
+hardware, yet games miss 60 fps on the same phone. What costs time is everything around the
+translated code: exceptions and system calls, address-space switches (QEMU's TLB is not
+ASID-tagged), TLB refills, indirect branches that leave a translation block, the GL bridge.
+LT Bench measures those paths; the `loop` test is the compute baseline they are compared with.
+
+## The tests
+
+Each runs 5 rounds; the app reports the best and the median ns per operation (the best is the
+repeatable figure, a median well above it means interference).
+
+| Test | One operation | Path it exercises |
+| --- | --- | --- |
+| `loop` | an integer LCG step | translated straight-line code (baseline) |
+| `icall` | an indirect call through a 4-entry table, and its return | indirect branches: TB exits, the per-site branch cache, `helper_lookup_tb_ptr` |
+| `fib` | a recursive call and return | returns to many sites |
+| `memcpy` | 1 KiB copied (libSystem `memcpy`, 256 KiB blocks) | guest loads/stores through the softmmu TLB fast path |
+| `syscall` | `getppid()` | SWI, exception entry and return, kernel entry/exit |
+| `time` | `mach_absolute_time()` | the guest time base (a Mach trap, plus the timer read) |
+| `thread-switch` | a pipe round trip between two threads | two kernel context switches in one address space |
+| `thread-switch-64p` | the same, each side writing 64 pages per turn | TLB refills without an address-space switch |
+| `rpc` | a Mach RPC to launchd and back (`bootstrap_look_up`) | two address-space (ASID) switches: TLB and jump-cache switching, Mach IPC |
+| `rpc-64p` | the same, writing 64 of this process's pages between calls | what an address-space switch costs this process in TLB refills (QEMU's TLB is not ASID-tagged): compare with `touch-64p` |
+| `touch-64p` | writing 64 pages, no switch | the warm-TLB cost of the same writes |
+| `fault` | an anonymous page fault (map 256 pages, write each, unmap) | data abort, page-table update, TLB invalidation |
+| `mmap` | `mmap` + `munmap` of one untouched page | VM system calls and their TLB maintenance |
+| `tlb-32p` / `tlb-1024p` | a dependent load chasing a pointer through 32 / 1024 pages in scrambled order | softmmu TLB hits vs. a working set beyond its reach |
+| `fork` | `fork` + `_exit` + `waitpid` | address-space creation; reports `unavailable` in an app, whose sandbox denies `fork` |
+| `sleep` | `usleep(1000)`, actual time | timer interrupt and wakeup latency |
+
+Not covered yet: GL (draw calls, texture upload, present/readback), audio, touch input.
+
+A pass takes ~6 s on a Poco F3 and ~3 s on the desktop. To profile one test, build a variant that
+runs only it, for many rounds: `LTB_CFLAGS='-DONLY="rpc" -DROUNDS=60' build.sh OUT_DIR` (same bundle
+id, so it replaces the full one when installed).
+
+Writing the app: there is no iOS SDK; `ltbench.c` declares the libSystem and Objective-C runtime
+calls it makes with their ARM32 ABI, and the link stub lists exactly its imports. iPhone OS 3's
+libSystem does not export the compiler's division helpers (`__udivdi3` and friends live in its
+libgcc_s), so `ltbench.c` defines them; a new import that fails to bind shows up as the app
+vanishing at the first call.
+
+## Running it
+
+Build (needs a Mac with Xcode and `ldid` for the armv6 link; no iOS SDK needed, the link stub
+is generated from the imports):
+
+```sh
+LT_MAC=user@mac tools/guestbench/build.sh OUT_DIR     # from Linux; on a Mac just build.sh OUT_DIR
+```
+
+Install and read on Android (guest running, APK with the USB bridge):
+
+```sh
+export ANDROID_SERIAL=...
+tools/guestbench/android.sh install OUT_DIR/LTBench.ipa
+# tap the "LT Bench" icon in the guest: it runs at launch and again on each tap (~30 s on a phone)
+tools/guestbench/android.sh results          # the newest pass's lines from the engine log
+```
+
+Poco F3 layout preset: `tools/perf/fcbench.py APK 1 ltbench` boots, unlocks and taps the icon.
+
+On the desktop, install the IPA through the app's Install IPA path (or headless: start the guest
+with the app-services bridge, `app_services.bridge.Bridge`, and run `python -m app_services.helper
+install --socket … --ipa LTBench.ipa`), tap the icon, and read the `[ltbench]` lines from the engine
+log (`lighttouch-linux --headless` prints it to the console).
+
+Results go to the engine log through the QEMU_CALL log channel (the same one the GLES shim
+uses), one line per test:
+
+```
+[ltbench] syscall best 1234.5 median 1301.2 ns/op (getppid(), n=50000)
+```
+
+and the app's screen shows the best figure of each test when the pass is done.
+
+Compare runs of the same engine build on the same phone, interleaved, as with games
+(`docs/PERFORMANCE.md`); absolute numbers drift a little between boots.
+
+## Results
+
+Baselines for the Poco F3 and the desktop are in
+[PERFORMANCE.md](PERFORMANCE.md#guest-benchmarks), and each engine change that targets one of these
+paths records its before → after there.
+
+What it has shown so far:
+- Translated straight-line code is as fast on a Poco F3 as on a desktop (`loop` ~4 ns); what separates
+  them is everything around it (system calls, switches, faults: 1.5–3× slower on the phone).
+- An indirect call with more targets than the per-site branch cache holds costs 3–6× a direct one.
+- A thread round trip over pipes costs 4× a Mach RPC to another process (unexplained, see TODO).
+- Keeping the user TLB per address space (rejected, PERFORMANCE.md) cut `rpc-64p`'s refill cost
+  ~10× on the desktop, but cost Flight Control 3% on the Poco.

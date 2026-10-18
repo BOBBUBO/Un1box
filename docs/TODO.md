@@ -6,8 +6,18 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 ## Performance (current focus)
 
 - [ ] Android: steady ~60 Hz guest UI (Springboard animations measure 45–51 fps on Pixel 10 / Poco F3).
-- [ ] Android: steady target frame rate in common period games. Now (engine 974c213352): Flight Control
-  35 of 60 fps on the Poco, Doodle Jump menu 32 of 60 and JellyCar menu 23 of 30 on the Pixel.
+- [ ] Android: steady target frame rate in common period games. Now (engine 16c09e7fe3): Flight Control
+  55.5 of 60 fps on the Poco (ceiling 60, ≥55 fps 61–76% of the time); Doodle Jump menu 55.5 of 60 on
+  the Pixel (a62f05bae3); JellyCar menu 23 of 30 (974c213352, not re-measured).
+- [ ] Indirect branches with many targets (`objc_msgSend`'s final jump goes to every method): LT Bench
+  `icall` is 3–6× a direct call, because a site's 2-entry cache misses and `helper_lookup_tb_ptr` runs
+  (TB lookup is still ~12% of the vCPU in Flight Control on the Poco, ~4% in `qht` after jump-cache
+  misses, 57% of them on empty slots). Candidates: probe the jump cache inline in the generated code;
+  find what keeps emptying jump-cache slots.
+- [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
+  the desktop), 4× a Mach RPC to another process. Find out where the time goes (guest scheduler path,
+  idle/WFI, timer); threads hand off work all the time in games (audio, main, render).
+- [ ] LT Bench: add GL tests (draw calls, texture upload, present) and run it on the Pixel.
 - [ ] The vCPU still waits ~9% of wall time for the BQL, behind main-loop holds. What the main loop
   does under it: the PL080 moves audio to the I2S FIFO one 4-byte element per full
   `address_space_read`/`write` dispatch (~44K/s); the LCD converts lines and resets TLB dirty
