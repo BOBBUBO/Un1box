@@ -123,9 +123,253 @@ static u64 now_ns(void) { return mach_absolute_time() * tb[0] / tb[1]; }
 typedef u64 (*Bench)(u32 n);   /* runs n operations, returns elapsed ns */
 typedef struct { const char *name, *what; Bench run; u32 n; } Test;
 
-/* ----------------------------------------------------------- benchmarks --- */
-
 static volatile u32 sink;
+
+/* ------------------------------------------------------------- objc/UIKit --- */
+
+static Object (*get_class)(const char *);
+static Selector (*get_selector)(const char *);
+static void *send;
+static Object window, label, delegate_object;
+
+static Object call0(Object object, const char *name) {
+    return ((Object (*)(Object, Selector))send)(object, get_selector(name));
+}
+static Object call1(Object object, const char *name, Object value) {
+    return ((Object (*)(Object, Selector, Object))send)(object, get_selector(name), value);
+}
+
+/* ------------------------------------------------------------------- GL --- */
+
+/* The GL tests draw through OpenGLES.framework as a game does: an EAGLContext on a full-screen
+ * CAEAGLLayer (set up at launch on the main thread, made current on the bench thread), ES 1.1,
+ * client-side vertex arrays. Each run ends with glFinish, so calls the guest shim queues are
+ * counted when they are done, not when they are queued. The entry points come through dlsym, like
+ * everything else here (contrib/it-gles/glapp.c in qemu-ios does the same setup). */
+#define GL_TRIANGLE_STRIP 5
+#define GL_FLOAT 0x1406
+#define GL_UNSIGNED_BYTE 0x1401
+#define GL_RGBA 0x1908
+#define GL_BLEND 0x0BE2
+#define GL_TEXTURE_2D 0x0DE1
+#define GL_VERTEX_ARRAY 0x8074
+#define GL_TEXTURE_COORD_ARRAY 0x8078
+#define GL_COLOR_BUFFER_BIT 0x4000
+#define GL_PROJECTION 0x1701
+#define GL_MODELVIEW 0x1700
+#define GL_TEXTURE_MIN_FILTER 0x2801
+#define GL_TEXTURE_MAG_FILTER 0x2800
+#define GL_LINEAR 0x2601
+#define GL_SRC_ALPHA 0x0302
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_RENDERBUFFER_OES 0x8D41
+#define GL_FRAMEBUFFER_OES 0x8D40
+#define GL_COLOR_ATTACHMENT0_OES 0x8CE0
+#define GL_FRAMEBUFFER_COMPLETE_OES 0x8CD5
+#define GL_W 320
+#define GL_H 480
+#define SPRITES 64      /* distinct quads, cycled: 8 x 8 grid of 32 x 32 sprites */
+#define UPLOAD_SIDE 64  /* gl-upload: a 64 x 64 RGBA sub-image, 16 KiB */
+
+static struct {
+    void (*Finish)(void), (*Flush)(void);
+    unsigned (*GetError)(void);
+    void (*Enable)(unsigned), (*Disable)(unsigned), (*EnableClientState)(unsigned);
+    void (*BlendFunc)(unsigned, unsigned);
+    void (*Viewport)(int, int, int, int), (*MatrixMode)(unsigned), (*LoadIdentity)(void);
+    void (*Orthof)(float, float, float, float, float, float);
+    void (*ClearColor)(float, float, float, float), (*Clear)(unsigned);
+    void (*VertexPointer)(int, unsigned, int, const void *), (*TexCoordPointer)(int, unsigned, int, const void *);
+    void (*DrawArrays)(unsigned, int, int);
+    void (*GenTextures)(int, unsigned *), (*BindTexture)(unsigned, unsigned);
+    void (*TexParameteri)(unsigned, unsigned, int);
+    void (*TexImage2D)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *);
+    void (*TexSubImage2D)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *);
+    void (*GenRenderbuffersOES)(int, unsigned *), (*BindRenderbufferOES)(unsigned, unsigned);
+    void (*GenFramebuffersOES)(int, unsigned *), (*BindFramebufferOES)(unsigned, unsigned);
+    void (*FramebufferRenderbufferOES)(unsigned, unsigned, unsigned, unsigned);
+    unsigned (*CheckFramebufferStatusOES)(unsigned);
+} gl;
+static Object gl_view, gl_context;
+static void *objc_runtime;
+static unsigned gl_texture[2], gl_framebuffer, gl_renderbuffer;
+static float sprite_xy[SPRITES][8], sprite_uv[8] = {0, 0, 1, 0, 0, 1, 1, 1};
+static unsigned char upload_pixels[UPLOAD_SIDE * UPLOAD_SIDE * 4];
+static const char *gl_problem = "not set up";
+
+/* +[EAGLContext setCurrentContext:] (BOOL): per thread. */
+static int make_current(Object context)
+{
+    return ((signed char (*)(Object, Selector, Object))send)(get_class("EAGLContext"),
+            get_selector("setCurrentContext:"), context) != 0;
+}
+
+/* +layerClass of the GL view: UIView asks for it while building the view's layer. */
+static Object gl_layer_class(Object self, Selector selector) { (void)self; (void)selector; return get_class("CAEAGLLayer"); }
+
+/* Main thread, at launch: the view (under the label), the context, the drawable and the textures.
+ * Leaves gl_problem set (and the GL tests unavailable) if any of it fails. */
+static void gl_setup(Object under)
+{
+    void *runtime = objc_runtime;
+    void *h = dlopen("/System/Library/Frameworks/OpenGLES.framework/OpenGLES", 2);
+    if (!h) { gl_problem = "no OpenGLES"; return; }
+#define GLSYM(name) if (!(*(void **)&gl.name = dlsym(h, "gl" #name))) { gl_problem = "missing gl" #name; return; }
+    GLSYM(Finish) GLSYM(Flush) GLSYM(GetError) GLSYM(Enable) GLSYM(Disable) GLSYM(EnableClientState)
+    GLSYM(BlendFunc) GLSYM(Viewport) GLSYM(MatrixMode) GLSYM(LoadIdentity) GLSYM(Orthof) GLSYM(ClearColor)
+    GLSYM(Clear) GLSYM(VertexPointer) GLSYM(TexCoordPointer) GLSYM(DrawArrays) GLSYM(GenTextures)
+    GLSYM(BindTexture) GLSYM(TexParameteri) GLSYM(TexImage2D) GLSYM(TexSubImage2D) GLSYM(GenRenderbuffersOES)
+    GLSYM(BindRenderbufferOES) GLSYM(GenFramebuffersOES) GLSYM(BindFramebufferOES)
+    GLSYM(FramebufferRenderbufferOES) GLSYM(CheckFramebufferStatusOES)
+#undef GLSYM
+    Object (*allocate_class)(Object, const char *, u32) = dlsym(runtime, "objc_allocateClassPair");
+    int (*add_method)(Object, Selector, void *, const char *) = dlsym(runtime, "class_addMethod");
+    void (*register_class)(Object) = dlsym(runtime, "objc_registerClassPair");
+    Object (*class_of)(Object) = dlsym(runtime, "object_getClass");
+    Object view_class = allocate_class(get_class("UIView"), "LTBenchGLView", 0);
+    if (!class_of || !view_class || !add_method(class_of(view_class), get_selector("layerClass"), gl_layer_class, "#@:")) {
+        gl_problem = "no GL view class";
+        return;
+    }
+    register_class(view_class);
+    Rect full = {{0, 0}, {GL_W, GL_H}};
+    gl_view = ((Object (*)(Object, Selector, Rect))send)(call0(get_class("LTBenchGLView"), "alloc"),
+              get_selector("initWithFrame:"), full);
+    ((void (*)(Object, Selector, int))send)(gl_view, get_selector("setOpaque:"), 1);
+    call1(under, "addSubview:", gl_view);
+    gl_context = ((Object (*)(Object, Selector, u32))send)(call0(get_class("EAGLContext"), "alloc"),
+                 get_selector("initWithAPI:"), 1);
+    if (!gl_context || !make_current(gl_context)) { gl_problem = "no EAGL context"; return; }
+    gl.GenRenderbuffersOES(1, &gl_renderbuffer);
+    gl.BindRenderbufferOES(GL_RENDERBUFFER_OES, gl_renderbuffer);
+    if (!((signed char (*)(Object, Selector, u32, Object))send)(gl_context, get_selector("renderbufferStorage:fromDrawable:"),
+                                                        GL_RENDERBUFFER_OES, call0(gl_view, "layer"))) {
+        gl_problem = "no drawable";
+        return;
+    }
+    gl.GenFramebuffersOES(1, &gl_framebuffer);
+    gl.BindFramebufferOES(GL_FRAMEBUFFER_OES, gl_framebuffer);
+    gl.FramebufferRenderbufferOES(GL_FRAMEBUFFER_OES, GL_COLOR_ATTACHMENT0_OES, GL_RENDERBUFFER_OES, gl_renderbuffer);
+    if (gl.CheckFramebufferStatusOES(GL_FRAMEBUFFER_OES) != GL_FRAMEBUFFER_COMPLETE_OES) { gl_problem = "framebuffer incomplete"; return; }
+    for (u32 i = 0; i < SPRITES; i++) {
+        float x = (float)(i % 8) * 40 + 0, y = (float)(i / 8) * 40 + 80;
+        float q[8] = {x, y, x + 32, y, x, y + 32, x + 32, y + 32};
+        for (u32 k = 0; k < 8; k++) sprite_xy[i][k] = q[k];
+    }
+    for (u32 i = 0; i < sizeof(upload_pixels); i++) upload_pixels[i] = (unsigned char)(i * 7);
+    gl.GenTextures(2, gl_texture);
+    for (u32 t = 0; t < 2; t++) {
+        gl.BindTexture(GL_TEXTURE_2D, gl_texture[t]);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, UPLOAD_SIDE, UPLOAD_SIDE, 0, GL_RGBA, GL_UNSIGNED_BYTE, upload_pixels);
+    }
+    gl.Viewport(0, 0, GL_W, GL_H);
+    gl.MatrixMode(GL_PROJECTION); gl.LoadIdentity(); gl.Orthof(0, GL_W, 0, GL_H, -1, 1);
+    gl.MatrixMode(GL_MODELVIEW); gl.LoadIdentity();
+    gl.EnableClientState(GL_VERTEX_ARRAY); gl.EnableClientState(GL_TEXTURE_COORD_ARRAY);
+    gl.Enable(GL_TEXTURE_2D); gl.Enable(GL_BLEND); gl.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    gl.Finish();
+    make_current(0);
+    gl_problem = 0;
+}
+
+static int gl_present(void)
+{
+    gl.BindRenderbufferOES(GL_RENDERBUFFER_OES, gl_renderbuffer);
+    return ((signed char (*)(Object, Selector, u32))send)(gl_context, get_selector("presentRenderbuffer:"), GL_RENDERBUFFER_OES) != 0;
+}
+/* The bench thread, before and after the GL tests. After: a plain frame, so the results label
+ * (over the GL view) reads as it does without GL. */
+static int gl_begin(void)
+{
+    return !gl_problem && make_current(gl_context);
+}
+static void gl_end(void)
+{
+    if (gl_problem) return;
+    gl.ClearColor(0.25f, 0.25f, 0.25f, 1); gl.Clear(GL_COLOR_BUFFER_BIT);
+    gl_present();
+    gl.Finish();
+    make_current(0);
+}
+
+/* glGetError: a call that returns a value, so the guest waits for the host each time. */
+static u64 b_gl_get(u32 n)
+{
+    if (!gl_begin()) return 0;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) sink += gl.GetError();
+    return now_ns() - t;
+}
+/* A state change with no reply (the shim may queue it): glEnable/glDisable(GL_BLEND) in turn. */
+static u64 b_gl_state(u32 n)
+{
+    if (!gl_begin()) return 0;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) (i & 1 ? gl.Enable : gl.Disable)(GL_BLEND);
+    gl.Enable(GL_BLEND);
+    gl.Finish();
+    return now_ns() - t;
+}
+/* The same textured 32 x 32 quad drawn again: the draw call alone. */
+static u64 b_gl_draw(u32 n)
+{
+    if (!gl_begin()) return 0;
+    gl.BindTexture(GL_TEXTURE_2D, gl_texture[0]);
+    gl.VertexPointer(2, GL_FLOAT, 0, sprite_xy[0]);
+    gl.TexCoordPointer(2, GL_FLOAT, 0, sprite_uv);
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    gl.Finish();
+    return now_ns() - t;
+}
+/* One sprite as a 2D game of the era draws it: bind its texture, point at its vertices and
+ * texture coordinates, draw (Jetpack Joyride's title makes ~230 such draws a frame). */
+static u64 b_gl_sprite(u32 n)
+{
+    if (!gl_begin()) return 0;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) {
+        gl.BindTexture(GL_TEXTURE_2D, gl_texture[i & 1]);
+        gl.VertexPointer(2, GL_FLOAT, 0, sprite_xy[i % SPRITES]);
+        gl.TexCoordPointer(2, GL_FLOAT, 0, sprite_uv);
+        gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+    gl.Finish();
+    return now_ns() - t;
+}
+/* glTexSubImage2D of 16 KiB: texture streaming (guest memory to a host texture). */
+static u64 b_gl_upload(u32 n)
+{
+    if (!gl_begin()) return 0;
+    gl.BindTexture(GL_TEXTURE_2D, gl_texture[1]);
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) {
+        upload_pixels[i & 4095] = (unsigned char)i;
+        gl.TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, UPLOAD_SIDE, UPLOAD_SIDE, GL_RGBA, GL_UNSIGNED_BYTE, upload_pixels);
+    }
+    gl.Finish();
+    return now_ns() - t;
+}
+/* A full-screen frame: clear, then -presentRenderbuffer: (the host reads the frame back and
+ * hands it to CoreAnimation). Includes any wait for the display, which a game pays too. */
+static u64 b_gl_present(u32 n)
+{
+    if (!gl_begin()) return 0;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) {
+        gl.ClearColor((float)(i & 1), 0.2f, 0.4f, 1);
+        gl.Clear(GL_COLOR_BUFFER_BIT);
+        if (!gl_present()) return 0;
+    }
+    gl.Finish();
+    u64 ns = now_ns() - t;
+    gl_end();
+    return ns;
+}
+
+/* ----------------------------------------------------------- benchmarks --- */
 
 /* Plain integer work: the translated-code baseline everything else is measured against. */
 static u64 b_loop(u32 n)
@@ -342,6 +586,12 @@ static const Test tests[] = {
     {"tlb-1024p", "dependent load, 1024-page working set", b_tlb1024, 2000000},
     {"fork", "fork + exit + wait", b_fork, 40},
     {"sleep", "usleep(1000), actual", b_sleep, 100},
+    {"gl-get", "glGetError()", b_gl_get, 2000},
+    {"gl-state", "glEnable/glDisable", b_gl_state, 20000},
+    {"gl-draw", "glDrawArrays, same 32x32 textured quad", b_gl_draw, 5000},
+    {"gl-sprite", "bind texture + 2 array pointers + draw", b_gl_sprite, 5000},
+    {"gl-upload", "glTexSubImage2D 64x64 RGBA (16 KiB)", b_gl_upload, 400},
+    {"gl-present", "full-screen clear + presentRenderbuffer", b_gl_present, 60},
 };
 #define NTESTS (sizeof(tests) / sizeof(tests[0]))
 
@@ -396,17 +646,6 @@ static void run_all(void)
 
 /* ------------------------------------------------------------------ app --- */
 
-static Object (*get_class)(const char *);
-static Selector (*get_selector)(const char *);
-static void *send;
-static Object window, label, delegate_object;
-
-static Object call0(Object object, const char *name) {
-    return ((Object (*)(Object, Selector))send)(object, get_selector(name));
-}
-static Object call1(Object object, const char *name, Object value) {
-    return ((Object (*)(Object, Selector, Object))send)(object, get_selector(name), value);
-}
 static Object string(const char *text) {
     return ((Object (*)(Object, Selector, const char *))send)(get_class("NSString"),
             get_selector("stringWithUTF8String:"), text);
@@ -457,6 +696,8 @@ static void launched(Object self, Selector selector, Object application) {
     Object font = ((Object (*)(Object, Selector, float))send)(get_class("UIFont"),
                   get_selector("systemFontOfSize:"), 14.0f);
     call1(label, "setFont:", font);
+    gl_setup(window);   /* under the label */
+    if (gl_problem) { Line g = {{0}, 0}; put(&g, "[ltbench] gl: "); put(&g, gl_problem); put(&g, "\n"); emit(g.b); }
     call1(window, "addSubview:", label);
     Object button = ((Object (*)(Object, Selector, Rect))send)(call0(get_class("UIControl"), "alloc"),
                     get_selector("initWithFrame:"), full);
@@ -497,7 +738,7 @@ int bench_main(int argc, char **argv) {
     if (!buffer_a || !buffer_b || touch_area == (char *)-1 || chase_area == (char *)-1) { emit("[ltbench] exit: no memory\n"); _exit(10); }
     memset(buffer_a, 1, COPY_BYTES); memset(touch_area, 0, 64 * 4096); memset(chase_area, 0, 1024 * 4096);
 
-    void *runtime = dlopen("/usr/lib/libobjc.A.dylib", 2);
+    void *runtime = objc_runtime = dlopen("/usr/lib/libobjc.A.dylib", 2);
     void *ui = dlopen("/System/Library/Frameworks/UIKit.framework/UIKit", 2);
     if (!runtime || !ui) { emit("[ltbench] exit: no objc/UIKit\n"); _exit(11); }
     get_class = dlsym(runtime, "objc_getClass");

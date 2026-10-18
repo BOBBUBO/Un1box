@@ -34,8 +34,19 @@ repeatable figure, a median well above it means interference).
 | `tlb-32p` / `tlb-1024p` | a dependent load chasing a pointer through 32 / 1024 pages in scrambled order | softmmu TLB hits vs. a working set beyond its reach |
 | `fork` | `fork` + `_exit` + `waitpid` | address-space creation; reports `unavailable` in an app, whose sandbox denies `fork` |
 | `sleep` | `usleep(1000)`, actual time | timer interrupt and wakeup latency |
+| `gl-get` | `glGetError()` | a GL call that returns a value: the guest waits for the host each time (QEMU_CALL round trip plus the host driver) |
+| `gl-state` | `glEnable` / `glDisable(GL_BLEND)` in turn | a GL call with no reply, which the guest shim may queue |
+| `gl-draw` | `glDrawArrays` of the same 32×32 textured quad | the draw call alone: fetching the client arrays from guest memory, the host draw |
+| `gl-sprite` | bind a texture, set the vertex and texture-coordinate pointers, draw | one sprite as a 2D game of the era draws it (Jetpack Joyride's title: ~230 a frame) |
+| `gl-upload` | `glTexSubImage2D` of 64×64 RGBA (16 KiB) | texture streaming from guest memory |
+| `gl-present` | full-screen clear + `-presentRenderbuffer:` | the frame's way out; paced by the display, so ~16.7 ms means it kept up with 60 Hz, not what a present costs |
 
-Not covered yet: GL (draw calls, texture upload, present/readback), audio, touch input.
+The GL tests draw as a game does: an `EAGLContext` (ES 1.1) on a full-screen `CAEAGLLayer` under the
+results label, client-side vertex arrays, the entry points from `dlsym`. Each run ends with `glFinish`,
+so queued calls are counted when the host has done them. If the setup fails, the GL tests report
+`unavailable` and the log has a `[ltbench] gl: <reason>` line.
+
+Not covered yet: audio, touch input.
 
 A pass takes ~6 s on a Poco F3 and ~3 s on the desktop. To profile one test, build a variant that
 runs only it, for many rounds: `LTB_CFLAGS='-DONLY="rpc" -DROUNDS=60' build.sh OUT_DIR` (same bundle
