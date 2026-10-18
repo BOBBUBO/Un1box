@@ -24,6 +24,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   kernel work: four BSD syscalls and two scheduler switches per round trip, against two Mach traps
   with a direct handoff for the RPC. Left open only to compare with a real device.
 - [ ] LT Bench: add GL tests (draw calls, texture upload, present) and run it on the Pixel.
+- [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
+  5997) has an entry whose central-directory name differs from its local header (an OpenFeint
+  `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in
+  directory ... and header ... differ"). Skip or tolerate such entries like the Android installer.
 - [ ] Pixel: check the AHardwareBuffer present (engine 4de4ae5ba1) renders correctly and which path
   it takes (the GL init line in the engine log names `IOSurface` or `readback`).
 - [ ] The vCPU still waits ~9% of wall time for the BQL, behind main-loop holds. What the main loop

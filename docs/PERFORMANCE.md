@@ -85,7 +85,11 @@ a direct measure of the work it removes (time per call, per frame) alongside the
 
 Jetpack Joyride's title screen (Poco) is the heaviest scene measured so far: 863 GL calls and 232
 `glDrawArrays` a frame, host GL ~16–18% of wall time before the three GL rows above. Its best 500 ms
-windows reach 40–46 fps, so it is mostly bound by guest code, not GL.
+windows reach 40–46 fps, so it is mostly bound by guest code, not GL. It does not hold 60 on the
+desktop either: the headless Linux frontend on the Ryzen 7 3700X VM runs the same title screen
+(Legacy Store copy 5997, version 1.3.5) at ~54 fps, so the Poco's ~35–36 is about two thirds of that.
+In it the guest kernel is 21% of the vCPU (44% of the time in translated code): Mach IPC, the
+scheduler and locks, ~5 300 syscalls a second.
 
 ### Measured and rejected
 
@@ -129,6 +133,14 @@ Desktop jump-cache misses in play fell 40% (8.3M → 5.0M per 50 s; an unsafe no
 gave the same). The Poco did not gain: interleaved, flush 57.7/57.0/53.6/56.5/53.7/56.3 vs
 revalidate 54.3/54.1/57.4/51.9/55.6/55.0 fps (55.8 vs 54.7, behind in 4 of 6). Like the 2-way
 cache, fewer misses do not show up in frame rate; a miss now costs about what the page check does.
+Doing user-mode LDM/STM to unaligned addresses directly (patch `perf/rejected-user-unaligned-ldm.patch`):
+Jetpack Joyride takes 3 300–5 100 alignment faults a second, all from one `STMIA r1!, {r8, r9}` in
+the shared cache writing to a 2-byte-aligned heap address. An ARM1176 faults on that too (U=1 only
+covers single loads and stores) and iOS's `sleh_alignment` performs the store, so the program
+cannot tell; dropping `MO_ALIGN` for EL0 LDM/STM removed every fault (0/s). Frame rate did not
+follow: Poco, interleaved, faults 37.5/31.6/37.4/38.2 vs direct 38.4/32.8/34.7/36.2 fps (36.2 vs
+35.5); desktop 54.6 vs 53.8. Each fault costs only a few µs here, so not worth departing from the
+hardware.
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
 A 2-way set-associative jump cache halved jump-cache misses in Flight Control (10.6% → 5.4% of
 lookups) but did not move frame rate: Poco 23.3/22.3/22.5 → 25.1/21.0/19.6 fps, Pixel JellyCar
