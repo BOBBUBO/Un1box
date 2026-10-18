@@ -268,23 +268,29 @@ class MainActivity : ComponentActivity(), SensorEventListener {
      * Pixel 10 kept 120 Hz despite the guest surface's 60 Hz fixed-source request. A preferred
      * display mode is the window's own request, which the system grants the foreground window
      * whatever the Smooth Display setting. Only a 60 Hz mode at the current resolution is taken.
+     *
+     * Touch boost (Android 15+) is off for the same reason: touch is constant in a game, and a boost
+     * would raise the panel to its top rate. Both apply only while the guest is what is on screen;
+     * the Store and the dialogs over it are ordinary scrolling UI, which at a fixed 60 Hz with no
+     * boost looked choppy beside the rest of a 120 Hz phone, so they get the system's own choice.
      */
-    private fun preferSixtyHertz() {
-        val current = (if (Build.VERSION.SDK_INT >= 30) display else @Suppress("DEPRECATION") windowManager.defaultDisplay) ?: return
-        val size = current.mode
-        val sixty = current.supportedModes
-            .filter { it.physicalWidth == size.physicalWidth && it.physicalHeight == size.physicalHeight }
-            .minByOrNull { kotlin.math.abs(it.refreshRate - 60f) }
-            ?.takeIf { kotlin.math.abs(it.refreshRate - 60f) < 1f } ?: return
-        window.attributes = window.attributes.apply { preferredDisplayModeId = sixty.modeId }
+    private var sixtyHertzMode = -1
+    private fun preferSixtyHertz(guestInFront: Boolean) {
+        if (sixtyHertzMode < 0) {
+            val current = (if (Build.VERSION.SDK_INT >= 30) display else @Suppress("DEPRECATION") windowManager.defaultDisplay) ?: return
+            val size = current.mode
+            sixtyHertzMode = current.supportedModes
+                .filter { it.physicalWidth == size.physicalWidth && it.physicalHeight == size.physicalHeight }
+                .minByOrNull { kotlin.math.abs(it.refreshRate - 60f) }
+                ?.takeIf { kotlin.math.abs(it.refreshRate - 60f) < 1f }?.modeId ?: 0
+        }
+        val mode = if (guestInFront) sixtyHertzMode else 0
+        if (window.attributes.preferredDisplayModeId != mode) window.attributes = window.attributes.apply { preferredDisplayModeId = mode }
+        if (Build.VERSION.SDK_INT >= 35) window.setFrameRateBoostOnTouchEnabled(!guestInFront)
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // A touch raises the panel to its top rate for a while (Android 15+). The guest is 60 Hz
-        // content: at 120 Hz each of its frames has to land on the right one of two refreshes,
-        // and touch is constant in a game, so keep the rate the guest surface asks for.
-        if (Build.VERSION.SDK_INT >= 35) window.setFrameRateBoostOnTouchEnabled(false)
-        preferSixtyHertz()
+        preferSixtyHertz(guestInFront = true)
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
@@ -312,6 +318,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }, "store-targets").start()
         bindWorker()
         setContent {
+            val guestInFront = !(storeOpen || licensesOpen || preparationOpen)
+            LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF71DCC8))) {
                 // One SurfaceView moves between the windowed and device layouts, keeping its display lease.
                 val guestSurface = remember { movableContentOf { modifier: Modifier ->
