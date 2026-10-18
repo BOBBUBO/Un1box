@@ -139,8 +139,7 @@ the shared cache writing to a 2-byte-aligned heap address. An ARM1176 faults on 
 covers single loads and stores) and iOS's `sleh_alignment` performs the store, so the program
 cannot tell; dropping `MO_ALIGN` for EL0 LDM/STM removed every fault (0/s). Frame rate did not
 follow: Poco, interleaved, faults 37.5/31.6/37.4/38.2 vs direct 38.4/32.8/34.7/36.2 fps (36.2 vs
-35.5); desktop 54.6 vs 53.8. Each fault costs only a few µs here, so not worth departing from the
-hardware.
+35.5). Each fault costs only a few µs here, so not worth departing from the hardware.
 The upstream qemu-ios merge brings no speed by itself (its two TCG wins were already here).
 A 2-way set-associative jump cache halved jump-cache misses in Flight Control (10.6% → 5.4% of
 lookups) but did not move frame rate: Poco 23.3/22.3/22.5 → 25.1/21.0/19.6 fps, Pixel JellyCar
