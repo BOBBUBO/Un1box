@@ -111,3 +111,15 @@ python3 tools/perf/exceptions.py engine.log --last 30 --json exceptions.json
 actual snapshot boundaries used. Add `--frames frames.log` with a full `LT_FRAME_LOG` covering
 both boundaries for counts per published frame. Incomplete final snapshots are ignored.
 This is a focused diagnostic for finding the next optimization; no FPS improvement is implied.
+
+## Focused LCD dirty snapshots
+
+`LT_LCD_SNAPSHOT_PROF=on` (engine `9400ab1b68`, default off) emits `[lcd-snapshot]` five-second
+blocks: `n`, `forced`, `skipped`, summed `ns`, `forced-ns` and `max-ns`. Divide summed times by
+their respective counts for means. Timing covers the dirty snapshot stage of linear scanout;
+composed/rotated paths bypass it. Log output follows the LCD unlock. Host descheduling is included.
+
+`LT_LCD_FORCED_SNAPSHOT_SKIP=on` independently skips this work when all rows must be repainted
+(default off). It leaves dirty bits set, which can add later redundant repaint or surface uploads.
+Measure that cost as well as the saved snapshot time before enabling it. Skipped work contributes
+zero nanoseconds to the diagnostic. Neither switch enables the live recorder or full accounting.

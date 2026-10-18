@@ -119,8 +119,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [ ] Dirty-state query hot path: the fresh Poco Jetpack profile puts `physical_memory_is_clean`
   at 1.25% inclusive and `physical_memory_get_dirty_flag` at 0.59% self / 0.89% inclusive.
   It queries three one-bit flags through general bitmap-range scans, entering/exiting RCU three
-  times. Consider a single RCU guard and direct bit checks for this specific query; retain ordinary
-  coroutine TLS access elsewhere. This is an unimplemented lead, with no speedup claim.
+  times. Engine `cc6063a40f` implements direct bit checks and one guard for the combined query,
+  behind default-off `LT_DIRTY_QUERY_FAST`. Bitmap/RCU lifetimes are retained; no coroutine TLS
+  pointer is cached. Linux/Android builds pass. Focused LT Bench timings and same-APK Jetpack
+  pairs are pending; no speedup claim.
 - [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint
   `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in
@@ -133,6 +135,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   (`d7c4927685`) are already implemented. Inspect the remaining LCD dirty tracking,
   interrupt delivery (cpu-exec.c), timer IRQ ack writes, VIC and LCD register access.
   Measure with the capture's BQL wait/hold intervals, `[acct]` tables and `tools/perf/bqlsites.py`.
+  Engine `9400ab1b68` adds default-off `LT_LCD_FORCED_SNAPSHOT_SKIP` and independent
+  `LT_LCD_SNAPSHOT_PROF` timing. First establish linear-path/forced-update frequency in Jetpack;
+  composed/rotated scanouts bypass it. Retained dirty bits may add subsequent repaint/uploads.
+  Linux/Android builds succeeded; focused runtime timings and same-APK FPS pairs are pending.
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second

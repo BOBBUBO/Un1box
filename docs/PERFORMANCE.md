@@ -313,6 +313,34 @@ and instrumentation overhead are not yet measured; no FPS gain is claimed. Froze
 `exception-prof.apk`, `exception-prof-symbols/` under `build/perf-codex/`. APK SHA256:
 `53ba5e44932a07c00b7a5908af3ded81b8c55712f7990a7f2eb79e8f9e131d9b`.
 
+### LCD forced-repaint dirty snapshots (experiment pending measurement)
+
+Engine `9400ab1b68` adds `LT_LCD_FORCED_SNAPSHOT_SKIP=on` (default off). The linear
+LCD path snapshots and clears dirty memory even when a forced repaint will read every row.
+The experiment skips that snapshot on forced repaints and retains the dirty bits. This cannot
+hide writes, but can cause later redundant repaint or GL surface upload work. Composed/rotated
+scanouts bypass this path; establish whether the game uses it before measuring FPS pairs.
+
+Independent `LT_LCD_SNAPSHOT_PROF=on` (default off) counts linear updates, forced repaints and
+skips, with summed/max snapshot wall times in five-second blocks. Skipped work has zero duration.
+Diagnostic output follows the LCD unlock; timing includes host descheduling. Linux/Android builds
+succeeded (`build/perf-codex/lcd-snapshot-build.txt`). No runtime timing or improvement claimed yet.
+Frozen APK/symbols: `lcd-snapshot.apk`, `lcd-snapshot-symbols/` under `build/perf-codex/`.
+APK SHA256: `8553650c03fbb563ccba39748f5ed3adda55b7b9e99befe30c2872cf0614a34c`.
+
+### Single-page dirty queries (experiment pending measurement)
+
+Engine `cc6063a40f` adds `LT_DIRTY_QUERY_FAST=on` (default off). A fresh Poco Jetpack profile
+put `physical_memory_is_clean` at 1.25% inclusive and `physical_memory_get_dirty_flag` at
+0.59% self / 0.89% inclusive. Single-page flags now use a direct bit read instead of a generic
+range scan; the combined three-client query shares one RCU guard. All bitmap pointers remain
+inside their RCU lifetime, including concurrent growth. No coroutine TLS pointer is cached.
+
+Linux/Android builds succeeded (`build/perf-codex/dirty-query-build.txt`). Frozen APK/symbols:
+`dirty-query.apk`, `dirty-query-symbols/` under `build/perf-codex/`. Focused timings and interleaved
+same-APK game pairs are pending; no speedup claimed. Keep other experiments off when measuring.
+APK SHA256: `6c92d049a1f724ce4667b8cd86f370f910093cd3dca0e3ec008674ab35f9ea37`.
+
 ### TB lookup hit path (experiment pending measurement)
 
 Engine `164ec930cc` adds `LT_TB_LOOKUP_INLINE=on` (default off). A fresh Poco Jetpack profile
