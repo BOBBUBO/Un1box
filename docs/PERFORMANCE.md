@@ -275,8 +275,10 @@ These are manual scenes, not an A/B optimization comparison. New Jetpack: mean 5
 gap at 6.30 s is 214 ms: 206 ms inside vCPU execution, 83 ms of vCPU CPU, 3 ms completed GL and
 4 ms BQL waits. The remaining time requires a host scheduling/blocking trace; it cannot all be
 called guest CPU work. Gravity Guy's 1.55/1.22 s early gaps consume 1.44/1.16 s of vCPU CPU;
-another 201 ms gap near 15.37 s consumes 191 ms CPU. Scene annotations and focused CPU profiles
-are the next evidence needed. The analyzer now prints execution wall time alongside CPU time.
+the user identified these as loading/menu transitions, so they are not evidence of active-play
+stutters. Another 201 ms gap near 15.37 s consumes 191 ms CPU, with its scene still unknown.
+A focused CPU profile of a confirmed gameplay hitch is the next useful evidence. The analyzer
+now prints execution wall time alongside CPU time.
 
 ### Focused GL context timing (2026-10-18)
 

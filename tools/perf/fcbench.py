@@ -31,7 +31,8 @@ if os.environ.get("FC_FRAMES"):  # read by the engine at start; kept beside any 
 subprocess.run([sys.executable, os.path.join(D, "inappfps.py"), "--boot-only"], check=True)
 # One Power tap wakes the guest to the lock screen, which re-sleeps within ~5 s, so poll for it and
 # swipe at once; tapping Power again before the wake shows (slow on the Poco) puts it back to sleep.
-# The guest view no longer moves when it wakes, so the layout is read once.
+# Read the wake layout here, then refresh before taps: status/profile controls
+# can reflow while the guest starts or changes orientation.
 rect = guest_rect(); _, power = find(ui(), "Power")
 def unlocked():
     for _ in range(3):
@@ -46,7 +47,9 @@ def unlocked():
 if not unlocked(): sys.exit("could not unlock the guest")
 sh("input", "swipe", *gpt(rect, .9, .5), *gpt(rect, .15, .5), "300"); time.sleep(3)  # Home page 1 -> 2
 for step in steps:
-    if isinstance(step, tuple): sh("input", "tap", *gpt(rect, *step))
+    if isinstance(step, tuple):
+        rect = guest_rect()
+        sh("input", "tap", *gpt(rect, *step))
     else: time.sleep(step)
 def save_shot():
     if os.environ.get("FC_SHOT"):

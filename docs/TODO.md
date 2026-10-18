@@ -147,7 +147,8 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Detailed charts/text/JSON: `build/perf-codex/pixel-new-reports/README.md`. Jetpack's 214 ms gap
   near 6.30 s includes 206 ms execution wall time but only 83 ms vCPU CPU; obtain host scheduling
   or blocking evidence. Gravity Guy's early 1.55/1.22 s gaps consume 1.44/1.16 s vCPU CPU;
-  relate them to loading/scene transitions and profile the same scene before attributing them.
+  the user identified them as loading/menu transitions, not active-play stutters. Its later
+  201 ms gap at 15.37 s uses 191 ms CPU; identify that scene and profile a confirmed gameplay hitch.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Guest fps readout and 60 s graph in the Android app (b11ef28b).
 
