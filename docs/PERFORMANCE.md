@@ -362,7 +362,26 @@ five-second timing blocks contain 1,803 updates, 1,566 forced repaints (86.9%), 
 This is measurable main-loop/BQL work (roughly 25 ms/s on forced snapshots). Same-APK skip
 off/on pairs must check whether retained dirty bits add work elsewhere before enabling it.
 
-### Single-page dirty queries (experiment pending measurement)
+### Publisher notification preservation (experiment pending measurement)
+
+`Portable/src/Runtime.cpp` adds `LT_PUBLISH_WAKE_EARLY=on` (default off). The old loop snapshots
+the engine notification count after frame copying, listener callbacks and audio draining. A
+notification during that work is then treated as already handled by its 10 ms wait. The experiment
+snapshots before work and waits only if that count is unchanged. Control/audio polling retains
+the 10 ms timeout. There is no lock held across engine calls or callbacks.
+
+Independent `LT_PUBLISH_WAKE_PROF=on` (default off) logs exact five-second block boundaries,
+loop counts, notifications during work, subsequent wait duration and frame timestamp age at
+publication. A notification during work may already have been consumed by the frame acquisition;
+it is not evidence of a missed frame by itself. Timestamp age includes engine LCD/pacing work
+before capture, rather than measuring only publisher latency. Focused A/B captures are queued
+separately from ordinary FPS baselines; no improvement claimed.
+
+Linux/Android builds succeeded (`build/perf-codex/publish-wake-build.txt`). Frozen APK/symbols:
+`publish-wake.apk`, `publish-wake-symbols/` under `build/perf-codex/`, engine `4d06b57f50`.
+APK SHA256: `ca730421e1c3f1e213f433b774130c35c9c977616e19fdc0404ba7610e814578`.
+
+### Single-page dirty queries (no repeatable game gain; focused timing pending)
 
 Engine `cc6063a40f` adds `LT_DIRTY_QUERY_FAST=on` (default off). A fresh Poco Jetpack profile
 put `physical_memory_is_clean` at 1.25% inclusive and `physical_memory_get_dirty_flag` at

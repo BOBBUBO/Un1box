@@ -174,6 +174,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   verified on Linux only.
 - [ ] Desktop frontends poll for frames (Linux 10 ms loop, Windows `SDL_Delay(8)`); move them to
   frame-published wakeups like Android.
+- [ ] Measure publisher notification preservation (`LT_PUBLISH_WAKE_EARLY=on`, default off).
+  The old wait snapshots notifications after copy/listener/audio work, potentially overlooking a
+  new frame during that work until another notification or its 10 ms timeout. The experiment
+  snapshots before work. Independent `LT_PUBLISH_WAKE_PROF` counts notifications during work,
+  subsequent waits and frame timestamp age (including LCD/pacing work). Linux/Android builds
+  pass; focused same-APK off/on/on/off captures are queued. No speedup claimed.
 - [x] Manual Start/Stop scene profiling above the Android FPS graph (engine `50a08eb2d2`).
   Saves the frontmost app name/bundle ID, per-frame GL totals and slow calls, BQL wait/hold intervals,
   vCPU wall/CPU counters and Android buffer/scale/pacing/post stages. Pixel Battle Bears identity,

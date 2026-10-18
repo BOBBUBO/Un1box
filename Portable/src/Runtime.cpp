@@ -321,7 +321,19 @@ struct lt_runtime {
         bool quit_sent = false;
         lt::GuestShutdownAdmission shutdown_admission;
         lt::GuestPackageJudge package_judge;
+        const char *wake_env = getenv("LT_PUBLISH_WAKE_EARLY");
+        const bool early_wake = wake_env && !strcmp(wake_env, "on");
+        const char *prof_env = getenv("LT_PUBLISH_WAKE_PROF");
+        const bool wake_prof = prof_env && !strcmp(prof_env, "on");
+        uint64_t prof_begin = wake_prof ? lt::now_ns() : 0;
+        uint64_t prof_loops = 0, prof_changed = 0, prof_wait_ns = 0;
+        uint64_t prof_frames = 0, prof_age_ns = 0, prof_max_age_ns = 0;
         while (!done) {
+            uint64_t seen_before_work = 0;
+            if (early_wake || wake_prof) {
+                std::lock_guard<std::mutex> lock(wake_mutex);
+                seen_before_work = engine_frames;
+            }
             try {
                 if (engine->ready()) {
                     const bool actual_paused = engine->paused();
@@ -429,6 +441,12 @@ struct lt_runtime {
                         frame_timestamp = f.timestamp_ns;
                         frame_published = lt::now_ns();
                         frame_count++;
+                        if (wake_prof && frame_published >= f.timestamp_ns && f.timestamp_ns) {
+                            const uint64_t age = frame_published.load() - f.timestamp_ns;
+                            prof_frames++;
+                            prof_age_ns += age;
+                            prof_max_age_ns = std::max(prof_max_age_ns, age);
+                        }
                         if (frame_log) {
                             fprintf(frame_log, "%llu %llu\n", (unsigned long long)frame_published.load(),
                                     (unsigned long long)f.sequence);
@@ -501,8 +519,36 @@ struct lt_runtime {
             }
             {
                 std::unique_lock<std::mutex> lock(wake_mutex);
-                const uint64_t seen = engine_frames;
+                // A frame can arrive during acquisition, the listener or PCM
+                // work. Preserve that notification until the next acquisition.
+                const uint64_t seen = early_wake ? seen_before_work : engine_frames;
+                const bool changed = wake_prof && engine_frames != seen_before_work;
+                const uint64_t wait_begin = changed ? lt::now_ns() : 0;
                 wake.wait_for(lock, std::chrono::milliseconds(10), [&] { return engine_frames != seen; });
+                if (wake_prof) {
+                    prof_loops++;
+                    if (changed) {
+                        prof_changed++;
+                        prof_wait_ns += lt::now_ns() - wait_begin;
+                    }
+                }
+            }
+            if (wake_prof) {
+                const uint64_t now = lt::now_ns();
+                if (now - prof_begin >= 5000000000ull) {
+                    // "changed" includes notifications whose frame acquisition
+                    // already consumed; it is not a count of missed frames.
+                    fprintf(stderr, "[publish-wake] early=%s begin-ns %llu end-ns %llu loops %llu "
+                            "changed %llu changed-wait-ns %llu frames %llu age-ns %llu max-age-ns %llu\n",
+                            early_wake ? "on" : "off", (unsigned long long)prof_begin,
+                            (unsigned long long)now, (unsigned long long)prof_loops,
+                            (unsigned long long)prof_changed, (unsigned long long)prof_wait_ns,
+                            (unsigned long long)prof_frames, (unsigned long long)prof_age_ns,
+                            (unsigned long long)prof_max_age_ns);
+                    prof_begin = now;
+                    prof_loops = prof_changed = prof_wait_ns = 0;
+                    prof_frames = prof_age_ns = prof_max_age_ns = 0;
+                }
             }
         }
         if (shutdown_admission.wake_down() && engine->ready())
