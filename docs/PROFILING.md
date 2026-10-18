@@ -38,6 +38,7 @@ BQL waits/holds for the longest frames. `--top 30` increases the number of detai
 
 - `metadata.json`: frontmost iOS app response, localized name, bundle ID, start/end timestamps,
   Android model/build, LightTouch version, worker PID and performance environment switches.
+  New captures also include audio underrun, PCM queue/drop and output counters at start/end.
 - `engine-*-manifest.json`: the APK's build and engine notice/identity manifests.
 - `engine-start.log`: the first 64 KiB of engine setup diagnostics, including graphics initialization.
 - `engine.log`: up to 8 MiB of engine diagnostics produced during the capture.
@@ -52,6 +53,13 @@ require `IT_VCPU_ACCT` or `IT_GLES_PROF`, and does not enable per-instruction in
 `LT_PROFILE=off` (or `0`) disables the engine recording API for comparison. The additional timers and
 buffered writes run during a capture, so captures are diagnostic runs, not uninstrumented performance
 baselines. Compare changes with interleaved A/B pairs using the same capture settings.
+
+Capture records now pass through bounded memory queues to background file writers (8 MiB for
+engine events, 1 MiB for Android presentation). Storage writes during recording do not hold the
+BQL or the JNI lock used by audio reads. If a writer falls behind and fills its queue, recording
+fails with an explicit error instead of blocking playback. Presentation output is capped at
+16 MiB in addition to the engine's approximate 128 MiB cap. `LT_PROFILE_SYNC=on` restores
+synchronous writes for controlled comparisons. Stop drains the queues before reporting Saved.
 
 ## Reading the timings
 

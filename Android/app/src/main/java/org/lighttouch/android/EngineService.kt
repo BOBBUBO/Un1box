@@ -35,7 +35,7 @@ class EngineService : Service() {
         requestNativeStop = { Native.stop() }, cancelNativeContacts = { Native.cancelInput() },
         nativeStatus = { Native.status() }, dispose = { receipt -> disposeAfterShutdown(receipt) },
         persistTerminal = { receipt -> persistTerminalReceipt(receipt) })
-    private val profileCapture by lazy { ProfileCapture(applicationContext) }
+    private val profileCapture by lazy { ProfileCapture(applicationContext, ::observations) }
     private val performanceSampler by lazy { WorkerPerformanceSampler(applicationContext) }
     private val usb by lazy { UsbBridge(applicationContext) }
     // The daemon's parent-death signal follows the thread that forked it, so fork from one that never exits.

@@ -12,6 +12,7 @@ identifies candidates; overlapping counters must not be added as disjoint time.
 import argparse
 from collections import defaultdict
 import json
+import re
 from pathlib import Path
 import subprocess
 import tarfile
@@ -102,8 +103,21 @@ def summarize(directory, top):
     host_stats = analyse([(p[0],p[1]) for p in presented])
     # Keep all interval samples in optional JSON for further analysis, excluding
     # framestats' redundant derived arrays in the textual summary.
-    complete = events_path.exists() and "# end " in events_path.read_text(errors="replace")[-256:]
+    footer = events_path.read_text(errors="replace")[-512:] if events_path.exists() else ""
+    complete = "# end " in footer
+    errors = [int(code) for code in re.findall(r"# end \d+ error (\d+)", footer) if int(code)]
+    before, after = meta.get("observationsAtStart"), meta.get("observationsAtEnd")
+    audio = None
+    if before and after:
+        ab, ae = before.get("audio", {}), after.get("audio", {})
+        audio = {key: ae[key]-ab[key] for key in
+                 ("underruns", "nativePullFailures", "writeFailures", "discardedReadSamples", "trackGenerations")
+                 if key in ab and key in ae}
+        audio.update({key: after[key]-before[key] for key in
+                      ("pcmCapturedFrames", "pcmPulledFrames", "sharedPcmDroppedFrames", "pcmDroppedFrames")
+                      if key in before and key in after})
     return dict(metadata=meta, complete=complete, discardedRows=discarded,
+                recorderErrors=errors, audio=audio,
                 engine=stats, presentation=host_stats, gl=ranking, worstFrames=worst,
                 worstPresentationFrames=host_worst)
 
@@ -157,9 +171,14 @@ def main():
     meta=data["metadata"]
     print(f"{meta.get('appName','Unknown app')} ({meta.get('bundleId','unknown')}) · {meta.get('model','unknown device')}")
     if not data["complete"]: print("Partial capture: missing stop footer; buffered final events may be absent.")
+    if meta.get("error") or data["recorderErrors"]:
+        print(f"Capture error: {meta.get('error') or data['recorderErrors']}")
     if data["discardedRows"]: print(f"Ignored {data['discardedRows']} incomplete/unrecognized rows.")
     for label,key in (("Engine publication","engine"),("Android post completion","presentation")):
         if data[key]: report(label,data[key])
+    if data["audio"] is not None:
+        print("\nAudio counter changes during capture:")
+        for key,value in data["audio"].items(): print(f"  {key}: {value}")
     print("\nGL service wall time: count, total ms, max ms")
     for row in data["gl"][:args.top]:
         print(f"  {row['name']:<28} {row['count']:9d} {row['totalMs']:10.2f} {row['maxMs']:9.3f}")
@@ -169,6 +188,8 @@ def main():
               f"BQL {row['bqlOutsideMs']+row['bqlInsideMs']:.2f} vCPU CPU {row['vcpuCpuMs']:.2f} "
               f"outside {row['vcpuOutsideMs']:.2f} main CPU {row['mainCpuMs']:.2f}")
         for call in row["calls"][:3]: print(f"      {call['name']}: {call['totalMs']:.2f}ms / {call['count']} calls; max {call['maxMs']:.2f}ms")
+        for call in sorted(row["slowCalls"],key=lambda item:item['overlapMs'],reverse=True)[:3]:
+            print(f"      Slow {call['name']}: {call['totalMs']:.2f}ms total; {call['overlapMs']:.2f}ms overlap")
         for lock in sorted(row["locks"],key=lambda item:item['overlapMs'],reverse=True)[:3]:
             print(f"      BQL {lock['kind']} {lock['site']}: {lock['overlapMs']:.2f}ms overlap")
     print("\nLongest Android post gaps:")

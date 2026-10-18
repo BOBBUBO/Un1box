@@ -209,6 +209,59 @@ is not GPU execution time. See [PROFILING.md](PROFILING.md) for retrieval and in
 Linux and Android builds succeed. Captures and generated reports remain local under
 `build/perf-codex/profile-captures/` and `build/perf-codex/profile-battlebears*`.
 
+The user's Pixel captures of DoodleJump, COD Zombies, Jetpack, Gravity Guy and Bike or Die are
+saved under `build/perf-codex/pixel-user-captures/`, with histogram/timeline PNGs, detailed text,
+JSON and an index under `pixel-user-reports/`. These cover manual play and transitions, so they
+are not controlled game benchmarks. All five have stop footers and no discarded rows.
+COD Zombies' 83–84 ms gaps consume ~78–79 ms of vCPU CPU; several Jetpack 0.36–0.42 s gaps
+have only 0.2–7 ms of completed GL. Gravity Guy has long intervals with substantial time outside
+vCPU execution. Scene annotations and focused CPU profiles are needed to distinguish game
+pauses/loading from emulator stalls. The longest Android post gaps largely track the engine gaps;
+their buffer/scale/post stages do not account for hundreds of milliseconds.
+
+### Recorder overhead and audio investigation (2026-10-18)
+
+The user reported intermittent repeating audio on the Pixel while recording. Two AudioTrack
+restart warnings confirm underruns in the session, but their timestamps (phone-local
+15:17:11.870 and 15:18:34.510) fall between saved captures, so they do not prove recorder causation.
+The original recorder could flush buffered event data under the BQL, and presentation data under
+the JNI lock used by PCM reads. Engine `9b38a2ffd3` queues records to a background writer without
+holding its queue mutex during I/O. Android presentation uses the same approach. Queue limits
+fail the capture explicitly instead of blocking playback; `LT_PROFILE_SYNC=on` restores
+synchronous writes for comparison. Live captures also skip detailed accounting table scans and
+allocations. Metadata now retains native PCM and AudioTrack counters before and after recording.
+This removes a source of recording-induced stalls; audible recovery on the Pixel remains to be
+confirmed and the looping report is not marked resolved.
+
+Original recorder (`50a08eb2d2`), Poco Jetpack title, two same-boot interleaved 30 s recording
+off/on pairs, batch-copy and array-cache switches on, no full instruction accounting:
+
+| Pair | Mean off → recording | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 54.0 → 50.0 | 58 → 56 | 54 → 50 | 50 → 46 | 28.3 → 26.9 | 6 (303 ms) → 8 (459 ms) |
+| 2 | 53.8 → 50.2 | 58 → 54 | 54 → 50 | 50 → 46 | 28.3 → 20.8 | 3 (189 ms) → 8 (420 ms) |
+
+Mean **53.88 → 50.07 fps (−7.1%)**: recording has measurable overhead and its frame rate must not
+be treated as an uninstrumented baseline. Raw exact windows and charts:
+`build/perf-codex/poco-recording-{1,2}-{off,on}*`.
+
+Updated recorder (`9b38a2ffd3`), same settings and two new same-boot off/on pairs:
+
+| Pair | Mean off → recording | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 52.7 → 48.6 | 58 → 54 | 54 → 50 | 46 → 38 | 20.6 → 20.0 | 11 (917 ms) → 17 (1255 ms) |
+| 2 | 52.0 → 49.6 | 58 → 56 | 54 → 50 | 44 → 40 | 20.7 → 20.1 | 13 (1038 ms) → 14 (1124 ms) |
+
+Mean **52.33 → 49.07 fps (−6.2%)**. The new session's unrecorded pacing was also worse; do not
+compare absolute rates across these builds as an interleaved optimization result. Recording still
+has significant overhead, and asynchronous writes have not demonstrated a pacing improvement.
+Both new captures saved complete files with no discarded rows; their start/end counters showed
+zero AudioTrack underruns, PCM drops, native pull failures and output write failures on the Poco.
+That checks the new recording path, not audible correctness on the Pixel. Linux/Android builds
+succeeded. APK SHA256: `45dd9f125bb0bae51202e80cee52512eb0290dc1c52e893424734e03176c0292`.
+Raw windows/charts: `build/perf-codex/poco-recording-async-{1,2}-{off,on}*`; captures:
+`build/perf-codex/poco-profile-captures/`.
+
 ### Measured and rejected
 
 **Inline jump-cache probe after the two-entry indirect-site cache** (2026-10-18,

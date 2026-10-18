@@ -29,6 +29,8 @@
 #include "touch_mapping_result.h"
 #include "experimental_tcg_cache.h"
 #include "performance_hint.h"
+#include "profile_writer.h"
+#include <memory>
 
 namespace {
 std::mutex guard;
@@ -48,7 +50,7 @@ uint64_t presentation_epoch = 0, surface_request = 0;
 DisplayLease display_lease;
 constexpr const char *retired_display="Display ownership retired";
 uint64_t presented_frames=0,first_present_ns=0,last_present_ns=0,previous_present_ns=0,max_present_gap_ns=0;
-FILE *profile_presentation=nullptr; // guard owns this buffered stream.
+std::unique_ptr<ProfileWriter> profile_presentation; // guard owns the producer handle.
 uint64_t profile_presentation_started=0;
 uint64_t max_present_work_ns=0,window_failures=0,frame_copy_failures=0,surface_generation=0,pcm_failures=0;
 uint64_t present_intervals[6]={};
@@ -385,7 +387,7 @@ void present() {
                         } else if(post_code==0) {
                             if(profile_presentation && observe_begin>=profile_presentation_started) {
                                 // Post completion is observable here; physical scanout is not.
-                                fprintf(profile_presentation,"P %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+                                profile_presentation->append("P %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
                                     (unsigned long long)now,(unsigned long long)source.sequence,
                                     (unsigned long long)source.timestamp_ns,(unsigned long long)observe_begin,
                                     (unsigned long long)guard_acquired,(unsigned long long)copy_begin,
@@ -888,31 +890,40 @@ JNI(audioInfo) jintArray JNICALL Java_org_lighttouch_android_Native_audioInfo(JN
 }
 
 JNI(profile) jstring JNICALL Java_org_lighttouch_android_Native_profile(JNIEnv *env,jobject,jstring path) {
-    std::lock_guard<std::mutex> lock(guard);Utf text(env,path);lt_error error=LT_INIT(lt_error);
+    std::unique_ptr<ProfileWriter> stopped;
+    std::unique_lock<std::mutex> lock(guard);Utf text(env,path);lt_error error=LT_INIT(lt_error);
     const bool start=text.value && *text.value;
     auto status=runtime?lt_runtime_profile(runtime,text.value,&error):LT_AGAIN;
     if(status==LT_OK && start) {
         const std::string capture_path=text.value;
         const std::string present_path=capture_path.substr(0,capture_path.find_last_of('/')+1)+"presentation.tsv";
-        profile_presentation=fopen(present_path.c_str(),"wx");
-        if(!profile_presentation) {
+        FILE *output=fopen(present_path.c_str(),"wx");
+        if(!output) {
             lt_error stop_error=LT_INIT(lt_error);lt_runtime_profile(runtime,"",&stop_error);
             return string(env,"Could not create Android presentation capture");
         }
-        setvbuf(profile_presentation,nullptr,_IOFBF,65536);
-        profile_presentation_started=monotonic_ns();
-        fprintf(profile_presentation,"# P post-complete-ns serial guest-due-ns observe-begin guard-acquired copy-begin copy-end lock-begin lock-end scale-end post-begin post-end commit-ns\n");
-    }
-    if(!start && profile_presentation) {
-        if(fclose(profile_presentation) && status==LT_OK) {
-            profile_presentation=nullptr;return string(env,"Could not flush Android presentation capture");
+        setvbuf(output,nullptr,_IOFBF,65536);
+        const char *sync=getenv("LT_PROFILE_SYNC");
+        const bool synchronous=sync && strcmp(sync,"off") && strcmp(sync,"0");
+        try { profile_presentation=std::make_unique<ProfileWriter>(output,synchronous); }
+        catch(...) {
+            fclose(output);
+            lt_error stop_error=LT_INIT(lt_error);lt_runtime_profile(runtime,"",&stop_error);
+            return string(env,"Could not start Android presentation writer");
         }
-        profile_presentation=nullptr;
+        profile_presentation_started=monotonic_ns();
+        profile_presentation->append("# P post-complete-ns serial guest-due-ns observe-begin guard-acquired copy-begin copy-end lock-begin lock-end scale-end post-begin post-end commit-ns\n");
     }
-    return string(env,result(status,error));
+    if(!start) stopped=std::move(profile_presentation);
+    const auto message=result(status,error);
+    lock.unlock();
+    if(stopped && !stopped->finish() && status==LT_OK)
+        return string(env,"Could not finish Android presentation capture (storage or capture limit)");
+    return string(env,message);
 }
 JNI(profileStatus) jint JNICALL Java_org_lighttouch_android_Native_profileStatus(JNIEnv *,jobject) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);int32_t state=0;
+    if(profile_presentation && profile_presentation->failed())return -1;
     if(!runtime || lt_runtime_profile_status(runtime,&state,&error)!=LT_OK)return 0;
     return state;
 }

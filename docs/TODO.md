@@ -121,6 +121,20 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [ ] Characterize recording overhead with interleaved on/off pairs before treating a captured rate
   as an uninstrumented baseline. Use manual recordings from the user's hitching scenes to rank
   slow calls and correlate engine gaps, BQL intervals and Android presentation stalls.
+  Original recorder, two Poco Jetpack pairs: mean 54.0/53.8 → 50.0/50.2 (−7.1%), ceiling
+  58/58 → 56/54, median 54/54 → 50/50, low 50/50 → 46/46, 1% low 28.3/28.3 → 26.9/20.8,
+  hitches 6/3 → 8/8 (303/189 → 459/420 ms). Updated writer, two new pairs: mean
+  52.7/52.0 → 48.6/49.6 (−6.2%), ceiling 58/58 → 54/56, median 54/54 → 50/50,
+  low 46/44 → 38/40, 1% low 20.6/20.7 → 20.0/20.1, hitches 11/13 → 17/14
+  (917/1038 → 1255/1124 ms). Recording overhead remains significant; reducing it is still open.
+- [ ] Investigate the user's Pixel audio looping during recording. Capture file writes are now off
+  the BQL and Android PCM-read lock (engine `9b38a2ffd3`); new metadata retains start/end audio
+  underrun and PCM drop counters. Underrun warnings also occurred between captures, so the cause
+  and audible recovery remain unconfirmed. User recordings and detailed reports for five games
+  are local under `build/perf-codex/pixel-user-{captures,reports}/`; use their scene timestamps
+  to guide focused profiles, particularly COD Zombies' vCPU-heavy long frames.
+  Two updated Poco Jetpack captures saved complete files, no discarded rows, zero AudioTrack
+  underruns, PCM drops and read/write failures. This does not establish audible Pixel recovery.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Guest fps readout and 60 s graph in the Android app (b11ef28b).
 

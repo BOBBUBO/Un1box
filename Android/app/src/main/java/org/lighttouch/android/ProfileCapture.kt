@@ -10,7 +10,7 @@ import java.io.RandomAccessFile
 import java.util.UUID
 
 /** Worker-owned captures survive Activity recreation and display reattachment. */
-internal class ProfileCapture(private val context: android.content.Context) {
+internal class ProfileCapture(private val context: android.content.Context, private val observations: () -> Bundle) {
     private val filesDir = context.filesDir
     private var directory: File? = null
     private var metadata: JSONObject? = null
@@ -18,6 +18,13 @@ internal class ProfileCapture(private val context: android.content.Context) {
     private var logOffset = 0L
     private var notice = ""
     private var lastError = ""
+
+    private fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
+        for (key in bundle.keySet()) {
+            val value = bundle.get(key)
+            put(key, if (value is Bundle) encode(value) else JSONObject.wrap(value))
+        }
+    }
 
     @Synchronized fun snapshot(guestState: String): Bundle {
         if (directory != null && SystemClock.elapsedRealtimeNanos() - (metadata?.optLong("startedElapsedRealtimeNs") ?: 0) >= 900_000_000_000L) finish("duration-limit")
@@ -76,6 +83,7 @@ internal class ProfileCapture(private val context: android.content.Context) {
                             .forEach { (key, value) -> put(key, value) }
                     })
                     put("state", "recording")
+                    put("observationsAtStart", encode(observations()))
                 }
                 // Preserve build and engine identity manifests shipped with this APK.
                 context.assets.list("licenses")?.filter { it != "firmware" }?.forEach { group ->
@@ -137,6 +145,7 @@ internal class ProfileCapture(private val context: android.content.Context) {
                 put("stopReason", reason); put("endedAtMs", System.currentTimeMillis())
                 put("endedElapsedRealtimeNs", SystemClock.elapsedRealtimeNanos())
                 put("endedMonotonicNs", System.nanoTime()); put("error", lastError)
+                put("observationsAtEnd", encode(observations()))
                 File(dir, "metadata.json").writeText(toString(2))
             }
             notice = "Saved profile: ${metadata?.optString("appName") ?: "iOS app"}"
