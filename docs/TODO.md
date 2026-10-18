@@ -76,32 +76,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Guest graphics
 
-- [ ] Real Racing (Firemint) renders parts of its 3D scenes flat white or grey (user report on
-  Android, 2026-10-18, v0.0.3 build). In the menu the hero car is textured but the shadows under it,
-  the backdrop and the menu signs are white; in a race the cockpit and dashboard are textured but
-  opponent cars, track-side objects and the sky are untextured white/grey. Call of Duty: Zombies,
-  another 3D game, renders correctly, so it is something Real Racing uses that others do not, or
-  possibly the game misbehaving on iOS 3.1.3 itself. Not a missing PVRTC decoder: gles-host already
-  decodes PVRTC and paletted textures on the CPU. Steps:
-  1. Run it on Linux too: if it is white there as well, it is the engine's GLES path, not the
-     Android EGL host.
-  2. Run with `IT_GLES_VERBOSE=1` (and `IT_GLES_STRICT=1`) to log unsupported dispatch slots, GL
-     errors and the texture formats/sizes uploaded; look for failed `glTexImage2D` /
-     `glCompressedTexImage2D`, texture-combiner (`glTexEnv` `GL_COMBINE`) modes, multitexture,
-     `GL_GENERATE_MIPMAP` on non-power-of-two sizes, or the APPLE BGRA / 4444 / 5551 formats.
-  3. Dump frames with `IT_GLES_DUMP_DIR` to see which draws lose their texture.
-  This is likely to affect other 3D games of the era that use the same features.
-  Jetpack Joyride (2D) shows the same kind of fault: large stretches of the lab background draw
-  flat white while other background tiles, the coins, characters and smoke draw correctly, so it is
-  not 3D-specific. That points at particular textures failing (format, size or upload path) rather
-  than at state: compare the textures that do and do not appear in an `IT_GLES_VERBOSE` log.
-  BATTLE BEARS: Zombies! (Unity iPhone) too: in play the zombies draw as flat grey silhouettes (they
-  should be pink and textured) while the player's bear, the grass and the sky are textured; the main
-  menu loses its whole background (the "BATTLE BEARS ZOMBIES!" title art and silhouette) and shows a
-  flat brown fill with a stray "Gui Text" label, while the side buttons draw. Three games now, all
-  losing some textures and keeping others. The Pixel's engine log for that session (Pixel 10 host
-  GPU: PowerVR D-Series DXT-48-1536) has render-to-texture draws with `tex2d=0` on the active unit
-  but texture-coordinate arrays on units 0 and 1 (`texunits=0x03`), white color: worth checking
-  the bridge's per-unit state (`glActiveTexture` / `glClientActiveTexture`, `GL_TEXTURE_2D` enable
-  per unit, `glTexEnv` combiners). Reproduce on Linux with a copy of the Pixel's record (record
-  19019965e56bd5941a246eda1759fd3d has all three games), with the guest stopped first.
+- [x] Untextured white or grey geometry on Android (engine 4ae00eaca8): Jetpack Joyride's lab
+  background, Battle Bears' zombies and menu art, Real Racing's opponent cars and scenery. Cause:
+  ES `glTexImage2D` does not convert between formats, and the bridge uploaded opaque PVRTC (decoded
+  to RGBA) as `GL_RGB`, so each such upload failed with `GL_INVALID_OPERATION` (engine log:
+  `REFUSED upload-error:0xde1:0x502`) and the texture stayed empty. Desktop GL converts, which is
+  why Linux and macOS never showed it. The upload now does the conversion itself. Confirmed on the
+  Poco F3 (Jetpack: white before, correct after, same NAND) and by the user on the Pixel 10
+  (Jetpack, Battle Bears). Real Racing still to be checked.
