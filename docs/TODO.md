@@ -53,6 +53,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `icall` best/median 27.1/28.8, 31.2/33.0, 31.6/32.7 → 26.8/28.5, 26.8/27.5, 26.5/27.1 ns.
   Useful throughput candidate, no consistent pacing gain. Keep off pending reverse-order
   confirmation and a combined baseline. Exact windows/screenshots in PERFORMANCE.md and local results.
+  Confirmation is now queued on current engine `9fd2a85805` / `lcd-stages.apk`, with
+  all diagnostics off, order on/off, off/on, on/off. It follows the TLB comparison and
+  precedes LCD stage diagnostics. No confirmation result yet.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
@@ -187,7 +190,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Engine `42d50e5d2e` separately adds default-off `LT_TLB_DIRTY_FAST`: check compact-entry flags
   and host address range before reading full-entry metadata, retaining every reset and the same
   lock/flag semantics. Linux/Android builds pass; Android disassembly confirms the skipped loads.
-  Three off/on pairs (second reversed) with LCD snapshot timing are queued; no speedup claim.
+  Three off/on pairs (second reversed) with LCD snapshot timing are running. First pair:
+  mean 52.13 → 53.13 fps, ceiling 58 → 58, median 52 → 54, low 46 → 48,
+  1% low 28.32 → 28.39, hitches 6 (302.9 ms) → 4 (221.5 ms) per 30 s.
+  Enclosing snapshot mean 521.03 → 545.40 µs/update; no confirmed cost reduction.
+  First two scenes reviewed, zero skips. Keep off pending remaining pairs; no speedup claim.
   The snapshot timing also includes the TCG after-sync `run_on_cpu` barrier, not just the scan.
   Split bitmap/reset/barrier costs before attributing the full ~0.5 ms or pursuing more changes;
   retain the ordering between dirty flag clearing and guest writes.
@@ -195,7 +202,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   allocation/setup, bitmap copy/clear, TLB reset, dirty-clear listeners and the TCG
   ordering barrier; it also counts requested-range dirty pages and empty snapshots.
   All operations/order are retained, logging follows the LCD unlock. Linux/Android
-  builds succeeded; focused device capture pending, no optimization gain claimed.
+  builds succeeded; four focused stage arms queued after ordinary TB lookup confirmation,
+  no optimization gain claimed. Stage analyzer is prepared locally.
+  Another source lead, unimplemented: under the TLB lock, a clear `tlb.c.dirty` MMU-mode
+  bit guarantees that its main/victim tables were flushed and no insertion has occurred.
+  Count active modes and measure reset cost before considering skipping these empty modes;
+  do not use `n_used_entries` alone to infer emptiness without accounting for victims.
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second

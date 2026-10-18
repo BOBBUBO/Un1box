@@ -416,13 +416,39 @@ those stages before further changes; removing the TB barrier without equivalent 
 
 Linux/Android builds succeeded (`build/perf-codex/tlb-dirty-build.txt`). Android disassembly
 confirms the full-entry load follows the flag/range branches (`tlb-dirty-disassembly.txt`).
-Three same-APK Poco off/on pairs, reversing the second pair, are queued with forced-snapshot
-skipping off and LCD snapshot timings on in both modes. No improvement claimed before capture.
+Three same-APK Poco off/on pairs, reversing the second pair, are running with forced-snapshot
+skipping off and LCD snapshot timings on in both modes. The first pair is complete below;
+the remaining pairs are needed before a verdict.
 Frozen APK/symbols: `tlb-dirty.apk`, `tlb-dirty-symbols/` under `build/perf-codex/`.
 Frozen measured engine is `1cd3a771c3`, which also timestamps LCD snapshot blocks explicitly.
 Linux/Android builds succeeded (`lcd-timestamps-build.txt`). No TLB scan code changed after
-`42d50e5d2e`. The queued measurement has not started; no previous measurements are replaced.
+`42d50e5d2e`. No previous measurements are replaced.
 APK SHA256: `9d568d3fb0262661595912ac1641d9a84dff485ad93bc43f6dda03eca199fa24`.
+
+**Preliminary first pair only**, Snapdragon 865-class Poco, Jetpack title, 30 s per arm.
+Both screenshots reviewed: same title, manual recorder off, zero skipped frames.
+
+| Pair | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 52.13 → 53.13 | 58 → 58 | 52 → 54 | 46 → 48 | 28.32 → 28.39 | 6 (302.9 ms) → 4 (221.5 ms) |
+
+The enclosing snapshot mean is **521.03 → 545.40 µs/update** across separate six-block
+timing windows (1804 updates each, forced 1566 → 1597, no skipping). The first pair's
+higher game rate is not corroborated by faster snapshots; keep off pending all pairs
+and the detailed stage diagnostic. No speedup established.
+
+Exact FPS [start, end) ns: off [428683212366415, 428713212366415),
+on [428847099057394, 428877099057394). Snapshot [begin, end] ns:
+off [428680026891676, 428710094953592], on [428847098134894, 428877163990247].
+Raw evidence: `build/perf-codex/poco-tlb-dirty-{1,2,3}-{off,on}/`;
+`tlb-dirty-analyze.py` and `tlb-dirty-results.json` retain exact windows and each hitch.
+
+Source follow-up (unimplemented): under the TLB lock, `cpu->neg.tlb.c.dirty` records
+which MMU modes can contain entries. It starts at zero, every insertion sets its bit,
+and clearing a bit accompanies flushing that mode's main and victim tables. A reset
+could conservatively skip modes with a clear bit. Do not infer emptiness merely from
+`n_used_entries` without accounting for victims. Measure the reset stage's share and
+active-mode counts before implementing another scan experiment.
 
 ### LCD snapshot stages (diagnostic, runtime capture pending)
 
@@ -439,6 +465,10 @@ Linux/Android builds succeeded (`build/perf-codex/lcd-stages-build.txt`). Frozen
 APK/symbols: `lcd-stages.apk`, `lcd-stages-symbols/` under `build/perf-codex/`.
 APK SHA256: `2dec4262f195fea2e356906be637016fbfe319f55e2ba0e6375cf6cf61f6f13d`.
 No runtime improvement or diagnostic overhead claimed; device capture is pending.
+Four focused stage arms (TLB fast off/on/on/off) are queued after the ordinary TB lookup
+confirmation; both stages of this queue verify all predecessor completion markers before
+changing the phone. `lcd-stages-analyze.py` will report exact matched block bounds,
+each stage's mean, empty-snapshot counts and complete diagnostic frame metrics.
 
 ### Publisher notification preservation (no repeatable throughput gain)
 
@@ -651,6 +681,12 @@ gain; no consistent pacing improvement: hitches total 16 → 16, duration 874.3 
 90 s per mode, 1% lows remain ~28 fps. `icall` improves clearly in pairs 2/3; other LT Bench
 costs are mixed with frequency variation. Keep the default off until a reverse-order confirmation
 and a combined baseline; this is not steady 60 fps.
+A fresh same-APK confirmation is now queued using current engine `9fd2a85805`
+(`lcd-stages.apk`, SHA256 above), order on/off, off/on, on/off, 30 s per arm.
+All diagnostic switches and other experiments are off, array caching on. It follows
+the complete TLB comparison and precedes LCD stage captures; no confirmation result yet.
+Artifacts will be `build/perf-codex/poco-tb-confirm-{1,2,3}-{off,on}/`, summarized by
+`tb-confirm-analyze.py` / `tb-confirm-results.json`.
 
 Evidence: `build/perf-codex/poco-tb-lookup-inline-{1,2,3}-{off,on}/` contains exact frame logs,
 screenshots, environment, LT Bench and engine logs. `tb-lookup-inline-results.json` records exact
