@@ -185,7 +185,7 @@ def main():
     print("\nLongest engine frames (overlapping timing counters; GL booked on completion):")
     for row in data["worstFrames"]:
         print(f"  {row['atSeconds']:8.3f}s {row['frameMs']:8.2f}ms | GL {row['completedGlMs']:.2f} "
-              f"BQL {row['bqlOutsideMs']+row['bqlInsideMs']:.2f} vCPU CPU {row['vcpuCpuMs']:.2f} "
+              f"BQL {row['bqlOutsideMs']+row['bqlInsideMs']:.2f} vCPU run {row['vcpuRunMs']:.2f} CPU {row['vcpuCpuMs']:.2f} "
               f"outside {row['vcpuOutsideMs']:.2f} main CPU {row['mainCpuMs']:.2f}")
         for call in row["calls"][:3]: print(f"      {call['name']}: {call['totalMs']:.2f}ms / {call['count']} calls; max {call['maxMs']:.2f}ms")
         for call in sorted(row["slowCalls"],key=lambda item:item['overlapMs'],reverse=True)[:3]:

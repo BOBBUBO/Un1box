@@ -85,6 +85,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   hot paths (`current_cpu`, the RCU reader) goes through `tlsdesc_resolver_dynamic`: 1.2% of the vCPU
   in Jetpack, 3.2% in `gl-sprite` on the Poco. Find the hot accessors (a call-graph profile), then cache
   them or move them out of TLS.
+- [ ] GL context selection: focused timing (`c2e06923de`, `LT_GLES_CONTEXT_PROF=on`, default off)
+  on the Poco Jetpack title puts viewport init/make-current/dispatch at 0.565/110.474/4.039 µs
+  per call (3396 calls, 1752 selected-context changes over six five-second blocks); present surface
+  is 0.726/20.837/1049.176 µs (1625 calls). The viewport cost is largely before dispatch.
+  Inspect context switching and explicit synchronization before changing viewport state forwarding.
+  These are focused diagnostic timings; no before/after optimization or FPS gain is claimed.
 - [ ] Texture upload on the Pixel: `gl-upload` (16 KiB `glTexSubImage2D`) is 51–57 µs against 12 µs on
   the Poco and 3–4 µs on the desktop. It looks like the Pixel's GL stack (ANGLE or the IMG driver).
   Profile it before testing a game that streams textures.
@@ -135,6 +141,13 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   to guide focused profiles, particularly COD Zombies' vCPU-heavy long frames.
   Two updated Poco Jetpack captures saved complete files, no discarded rows, zero AudioTrack
   underruns, PCM drops and read/write failures. This does not establish audible Pixel recovery.
+  Five new Pixel captures on the updated recorder also saved complete files without recorder errors.
+  The user reports no audible looping this time. AudioTrack underruns increased by 0/1/0/1/5 in
+  DoodleJump/Home Screen/Bike or Die!/Jetpack/Gravity Guy; PCM drops and read/write failures are zero.
+  Detailed charts/text/JSON: `build/perf-codex/pixel-new-reports/README.md`. Jetpack's 214 ms gap
+  near 6.30 s includes 206 ms execution wall time but only 83 ms vCPU CPU; obtain host scheduling
+  or blocking evidence. Gravity Guy's early 1.55/1.22 s gaps consume 1.44/1.16 s vCPU CPU;
+  relate them to loading/scene transitions and profile the same scene before attributing them.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Guest fps readout and 60 s graph in the Android app (b11ef28b).
 

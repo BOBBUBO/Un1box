@@ -262,6 +262,41 @@ succeeded. APK SHA256: `45dd9f125bb0bae51202e80cee52512eb0290dc1c52e893424734e03
 Raw windows/charts: `build/perf-codex/poco-recording-async-{1,2}-{off,on}*`; captures:
 `build/perf-codex/poco-profile-captures/`.
 
+Five further Pixel captures on the updated recorder (DoodleJump, Home Screen, Bike or Die!,
+Jetpack and Gravity Guy) are retained under `build/perf-codex/pixel-new-captures/`; charts,
+text/JSON and a detailed index are under `pixel-new-reports/`. All have complete footers,
+zero recorder errors and zero discarded rows. The user reported **no audible looping this time**.
+AudioTrack underruns increased by 0/1/0/1/5 respectively, with zero PCM drops, native pull failures,
+output write failures or discarded read samples. Underruns alone do not prove audible looping.
+The original regression remains open pending broader confirmation.
+
+These are manual scenes, not an A/B optimization comparison. New Jetpack: mean 58.2 fps, ceiling
+60, median 58, low 56, 1% low 30.0, two >50 ms engine gaps totaling 265 ms over 31.6 s. Its largest
+gap at 6.30 s is 214 ms: 206 ms inside vCPU execution, 83 ms of vCPU CPU, 3 ms completed GL and
+4 ms BQL waits. The remaining time requires a host scheduling/blocking trace; it cannot all be
+called guest CPU work. Gravity Guy's 1.55/1.22 s early gaps consume 1.44/1.16 s of vCPU CPU;
+another 201 ms gap near 15.37 s consumes 191 ms CPU. Scene annotations and focused CPU profiles
+are the next evidence needed. The analyzer now prints execution wall time alongside CPU time.
+
+### Focused GL context timing (2026-10-18)
+
+Engine `c2e06923de` adds `LT_GLES_CONTEXT_PROF=on` (default off). It times only viewport,
+framebuffer bind and surface present setup, make-current and dispatch, logging totals and maxima
+every five seconds. No live recorder, `IT_GLES_PROF` or instruction accounting was active.
+On the Snapdragon 865-class Poco, Jetpack title, six steady five-second blocks:
+
+| Call | Count | Selected-context changes | Init µs/call | Make-current µs/call | Dispatch µs/call |
+| --- | --- | --- | --- | --- | --- |
+| Viewport | 3396 | 1752 | 0.565 | 110.474 | 4.039 |
+| Present surface | 1625 | 1008 | 0.726 | 20.837 | 1049.176 |
+
+The expensive viewport service in the live captures has a context-selection lead: the host viewport
+operation itself is small on the Poco. Selected-context changes count engine state selections,
+not driver-internal switches. Dispatch includes strict error checks and can include synchronous
+driver waits; these are wall times, not GPU execution times. No optimization or FPS gain is claimed.
+Screenshot verifies the Jetpack title; raw log and scene: `build/perf-codex/context-stages-*`.
+APK SHA256: `e534dd536d9c137d2515908ffeb675a76dce8101d68883a3454db8b585372d77`.
+
 ### Measured and rejected
 
 **Inline jump-cache probe after the two-entry indirect-site cache** (2026-10-18,

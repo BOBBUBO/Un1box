@@ -54,6 +54,12 @@ require `IT_VCPU_ACCT` or `IT_GLES_PROF`, and does not enable per-instruction in
 buffered writes run during a capture, so captures are diagnostic runs, not uninstrumented performance
 baselines. Compare changes with interleaved A/B pairs using the same capture settings.
 
+For a focused context-switch investigation, `LT_GLES_CONTEXT_PROF=on` (default off) writes
+`[gles-context]` totals/maxima to the engine log every five seconds. It separately times initialization,
+make-current and dispatch for viewport, framebuffer bind and surface present calls, without requiring
+Start profile. `switches` counts changes in the engine's selected context, not driver-internal work.
+Dispatch includes strict error checks. Divide summed nanoseconds by `n` for the mean per call.
+
 Capture records now pass through bounded memory queues to background file writers (8 MiB for
 engine events, 1 MiB for Android presentation). Storage writes during recording do not hold the
 BQL or the JNI lock used by audio reads. If a writer falls behind and fills its queue, recording
@@ -72,6 +78,8 @@ Counters overlap: GL runs inside vCPU execution, and GL wall time includes host 
 synchronous driver waits. GL totals are charged when a call finishes; a call crossing a frame boundary
 can exceed that frame's duration. Individual slow-call intervals allow overlap to be calculated.
 The vCPU snapshots are approximate, sampled from another thread, and can lag by one execution slice.
+The text report prints vCPU execution wall time and CPU time separately. Their difference can include
+host descheduling or blocking inside execution; it does not identify a cause by itself.
 BQL wait intervals are stronger evidence than a lock hold alone; correlate their timestamps.
 Static screens and game pauses also produce long gaps; interpret them using the scene you recorded.
 Outside-vCPU time includes guest idle, queued work and waits; it should not all be called scheduler
