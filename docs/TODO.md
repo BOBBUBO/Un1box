@@ -132,9 +132,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   preserve exception flags. Translation selects helpers; ordinary baseline unchanged.
   `LT_VFP_MUL_ZERO_PROF=on` separately counts calls/eligible/mixed operations and samples
   one in 256 mixed calls with exact five-second block bounds. Linux/Android builds pass;
-  frozen `vfp-mul-zero.apk`/symbols. Two focused 35 s pairs, second reversed, queued
-  after BQL captures/cleanup; all other diagnostics off, array cache on. Measure frequency
-  and local cost before ordinary FPS comparisons. No runtime saving established yet.
+  frozen `vfp-mul-zero.apk`/symbols. First focused 35 s pair complete, reverse-order
+  pair running; other diagnostics off, array cache on. Mixed zero/normal ~271–273K/s;
+  sample mean 357.05 → 343.42 ns, median block means 356.20 → 336.83 ns, including
+  clocks/descheduling (enabled max 284 µs retained). Diagnostic FPS 52.94 → 54.03,
+  ceiling 58 → 60, median 54 → 54, low 46 → 48, 1% low 20.17 → 28.49;
+  hitches 16 (1077.4 ms) → 5 (300.5 ms). Both title/recorder-off scenes reviewed,
+  zero skips. Small first-pair local saving; do not extrapolate to game gain.
+  Complete the reversed pair before deciding on ordinary diagnostic-off FPS pairs.
 - [ ] Texture upload on the Pixel: `gl-upload` (16 KiB `glTexSubImage2D`) is 51–57 µs against 12 µs on
   the Poco and 3–4 µs on the desktop. It looks like the Pixel's GL stack (ANGLE or the IMG driver).
   Profile it before testing a game that streams textures.

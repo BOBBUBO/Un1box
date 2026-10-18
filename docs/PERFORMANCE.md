@@ -325,11 +325,37 @@ Linux/Android builds succeeded (`build/perf-codex/vfp-mul-zero-build.txt`). Froz
 APK/symbols: `vfp-mul-zero.apk`, `vfp-mul-zero-symbols/`; build identity retained in
 `vfp-mul-zero-build-identity.json`. APK SHA256:
 `6ebb6f5d72cb2820e5d8e62cc68a891b3e5af9fd696fe52f1a92e35956644577`.
-Two focused pairs (off/on, on/off), 35 s per arm, are queued after the existing BQL
+Two focused pairs (off/on, on/off), 35 s per arm, follow the completed BQL
 comparison and its clean stop. All other diagnostics/experiments off, array cache on,
 no live recorder/full accounting. Each arm selects complete contiguous timing blocks
-wholly inside its frame window. No runtime frequency, local timing saving, FPS gain
-or pacing result is claimed yet; keep off pending those measurements.
+wholly inside its frame window. **First pair complete; reverse-order pair running.**
+Both first-pair final scenes reviewed: correct Jetpack title, recorder off, zero skips.
+
+| Pair | Sample mean ns, off → on | Median of block means ns | Mixed zero/normal calls/s | Eligible share |
+| --- | --- | --- | --- | --- |
+| 1 | 357.05 → 343.42 | 356.20 → 336.83 | 271253 → 273027 | 41.95% → 42.04% |
+
+These are timings of the mixed zero/normal subset, including clocks/descheduling,
+not all multiplication calls. Six complete blocks per arm contain 31823 → 32027
+samples; maximum individual sample 25.938 → 284.011 µs. Retain all samples and
+blocks, including the enabled arm's outlier. The first pair suggests a small local
+saving (3.8% of the instrumented sample mean); do not extrapolate timer-inclusive
+costs to whole-game gains. Reverse-order confirmation remains necessary.
+
+| Pair | Diagnostic mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 52.94 → 54.03 | 58 → 60 | 54 → 54 | 46 → 48 | 20.17 → 28.49 | 16 (1077.4 ms) → 5 (300.5 ms) |
+
+This is one diagnostic pair, not ordinary game throughput/pacing evidence or a
+profiler-overhead measurement. Keep off pending the reversed pair and, if justified,
+an ordinary diagnostic-off comparison. Evidence: `poco-vfp-mul-zero-focused-*`,
+`vfp-mul-zero-analyze.py`, `vfp-mul-zero-results.json`; per-arm `timings.json`
+retains contiguous exact blocks and separate enclosing frame bounds.
+
+| Pair / mode | FPS [start, end) ns | Timing [begin, end] ns |
+| --- | --- | --- |
+| 1 off | [432157727997589, 432192727997589) | [432160337647119, 432190375657577] |
+| 1 on | [432328054983201, 432363054983201) | [432330742600596, 432360774786053] |
 
 ### BQL diagnostics without instruction accounting (2026-10-18)
 
