@@ -91,3 +91,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
      `GL_GENERATE_MIPMAP` on non-power-of-two sizes, or the APPLE BGRA / 4444 / 5551 formats.
   3. Dump frames with `IT_GLES_DUMP_DIR` to see which draws lose their texture.
   This is likely to affect other 3D games of the era that use the same features.
+  Jetpack Joyride (2D) shows the same kind of fault: large stretches of the lab background draw
+  flat white while other background tiles, the coins, characters and smoke draw correctly, so it is
+  not 3D-specific. That points at particular textures failing (format, size or upload path) rather
+  than at state: compare the textures that do and do not appear in an `IT_GLES_VERBOSE` log.
