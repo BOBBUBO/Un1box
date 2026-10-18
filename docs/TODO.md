@@ -126,6 +126,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Focus on guest handler work rather than host entry dispatch; do not retry the rejected alignment
   shortcut. Full raw windows/counts in PERFORMANCE.md. Instrumentation overhead remains pending.
   `tools/perf/exceptions.py LOG --last 30 [--frames FULL_FRAME_LOG]` summarizes complete snapshots.
+  `tools/perf/guestpc.py` now reads self samples against the same worker's before/after perfmaps
+  to rank guest instruction PCs. It excludes ambiguous/reused mappings and has no process or
+  guest-stack attribution. A fresh mapped capture and first runtime use of this reader are pending.
 - [ ] Dirty-state query hot path: the fresh Poco Jetpack profile puts `physical_memory_is_clean`
   at 1.25% inclusive and `physical_memory_get_dirty_flag` at 0.59% self / 0.89% inclusive.
   It queries three one-bit flags through general bitmap-range scans, entering/exiting RCU three

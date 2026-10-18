@@ -135,3 +135,25 @@ they exclude diagnostic output and counter bookkeeping. Non-vCPU/other-CPU queri
 Compare interleaved `LT_DIRTY_QUERY_FAST=off/on` runs with this diagnostic enabled in both.
 The diagnostic can perturb scheduling, so keep it off for ordinary FPS comparisons. It does
 not enable the live recorder, full accounting or exception/LCD diagnostics.
+
+## Guest PCs in an attached CPU profile
+
+For a focused run, set `QEMU_PERFMAP_DIR=/data/user/0/org.lighttouch.android/files` in
+`files/debug-env` before starting the guest. This enables per-instruction translation maps and
+can add work while new code is translated; use it separately from ordinary FPS comparisons.
+Attach with `tools/perf/gameprof.sh OUT 15`. Pull `files/perf-PID.map` from that same worker before
+and after recording, retaining the PID in the filenames. Map output is buffered; the newest
+entries may be missing. Do not use a map from a different worker.
+
+```sh
+python3 tools/perf/guestpc.py OUT/perf.data OUT/perf-PID-after.map \
+    --before-map OUT/perf-PID-before.map --json OUT/guest-pcs.json
+```
+
+The tool uses the NDK simpleperf Python reader (`--simpleperf-dir` overrides the default SDK
+path), weights self samples by their event periods and reports guest instruction PCs. Reused
+translation-buffer addresses with conflicting mappings are excluded. With `--before-map`, only
+the same unambiguous mapping in both snapshots is accepted. Incomplete final map lines are ignored.
+The remaining event weight includes native work and unmapped JIT code; it is not a native-only
+percentage. Guest PCs do not identify processes or unwind guest stacks. This reader is newly
+added; its first fresh mapped phone capture is pending.

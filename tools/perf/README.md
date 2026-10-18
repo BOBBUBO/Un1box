@@ -23,6 +23,10 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   `SP_CALLGRAPH=fp` or `dwarf` adds call stacks; `SP_FREQ=1000` changes the sampling
   frequency (default 4000 Hz). It retains recorder diagnostics and rejects empty
   recordings. Resolve samples with the exact matching unstripped engine library.
+- `guestpc.py PERF_DATA perf-PID-after.map [--before-map perf-PID-before.map]` maps attached
+  self samples to guest instruction PCs, using the NDK's simpleperf reader. Conflicting/stale
+  mappings are excluded; unmapped samples include native work and missing JIT map entries.
+  See PROFILING.md for capture setup and limitations; first mapped runtime capture is pending.
 - `guestsyslog.py` (desktop) runs a headless guest and reads its syslog through the
   app's USB bridge, then counts messages by sender: a guest that logs every frame pays
   for launchd and syslogd handling each line (found this way: engine `7f744e80cc`).
