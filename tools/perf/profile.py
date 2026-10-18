@@ -117,11 +117,11 @@ def plot(data, target):
         s=data[key]
         if not s: continue
         axes[0,0].plot(s["ts"][1:],s["gaps"],lw=.6,label=label,color=color)
-        axes[0,1].hist(s["gaps"],bins=[0,8,16.67,20,25,33.34,40,50,67,100,150,250,500,1000],
+        axes[0,1].hist([min(g,999.999) for g in s["gaps"]],bins=[0,8,16.67,20,25,33.34,40,50,67,100,150,250,500,1000],
                        histtype="step",label=label,color=color)
     axes[0,0].axhline(50,color="tab:red",ls="--",lw=.7)
     axes[0,0].set(xlabel="Seconds",ylabel="Frame interval (ms)")
-    axes[0,0].legend();axes[0,1].legend();axes[0,1].set(xlabel="Frame interval (ms)",ylabel="Count",yscale="log")
+    axes[0,0].legend();axes[0,1].legend();axes[0,1].set(xlabel="Frame interval (ms; last bin includes all >=500)",ylabel="Count",yscale="log")
     rows=data["gl"][:10]
     axes[1,0].barh([r["name"] for r in rows][::-1],[r["totalMs"] for r in rows][::-1])
     axes[1,0].set(xlabel="Total GL service wall time (ms)")
