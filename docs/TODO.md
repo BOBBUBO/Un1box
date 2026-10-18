@@ -205,12 +205,18 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   verified on Linux only.
 - [ ] Desktop frontends poll for frames (Linux 10 ms loop, Windows `SDL_Delay(8)`); move them to
   frame-published wakeups like Android.
-- [ ] Measure publisher notification preservation (`LT_PUBLISH_WAKE_EARLY=on`, default off).
+- [x] Measure publisher notification preservation (`LT_PUBLISH_WAKE_EARLY=on`, default off).
   The old wait snapshots notifications after copy/listener/audio work, potentially overlooking a
   new frame during that work until another notification or its 10 ms timeout. The experiment
   snapshots before work. Independent `LT_PUBLISH_WAKE_PROF` counts notifications during work,
   subsequent waits and frame timestamp age (including LCD/pacing work). Linux/Android builds
-  pass; focused same-APK off/on/on/off captures are queued. No speedup claimed.
+  pass. Two diagnostic off/on/on/off pairs: mean 52.51/54.46 → 53.71/53.06 fps
+  (53.49 → 53.39, −0.2%), ceiling 58/58 → 58/56, median 54/54 → 54/54,
+  low 46/50 → 48/48, 1% low 20.53/28.61 → 28.15/28.53. Hitches 16/6 → 6/3,
+  duration 1037.4/305.0 → 338.0/153.0 ms per 35 s. Mean frame age 1.987/2.047 →
+  1.959/2.031 ms. No throughput/age gain; fewer hitches do not yet establish pacing
+  improvement. Keep off. Final off had extra settling after runner interruption;
+  full evidence, exact bounds and this limitation are in PERFORMANCE.md.
 - [x] Manual Start/Stop scene profiling above the Android FPS graph (engine `50a08eb2d2`).
   Saves the frontmost app name/bundle ID, per-frame GL totals and slow calls, BQL wait/hold intervals,
   vCPU wall/CPU counters and Android buffer/scale/pacing/post stages. Pixel Battle Bears identity,

@@ -172,7 +172,8 @@ subsequent waits. Some notifications may already have been consumed by acquisiti
 are not missed-frame counts. `age-ns / frames` is mean frame timestamp age at publication;
 it includes LCD/pacing work before capture and excludes later listener/audio work. It is not
 solely publisher latency. Compare interleaved arms with the diagnostic on in both; keep it
-off for ordinary FPS baselines. Runtime measurement is pending.
+off for ordinary FPS baselines. Two diagnostic pairs found no throughput or frame-age
+gain; the switch remains off. Full measurements and limits are in PERFORMANCE.md.
 
 ## TLB dirty-reset experiment
 

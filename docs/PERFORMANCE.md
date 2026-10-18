@@ -440,7 +440,7 @@ APK/symbols: `lcd-stages.apk`, `lcd-stages-symbols/` under `build/perf-codex/`.
 APK SHA256: `2dec4262f195fea2e356906be637016fbfe319f55e2ba0e6375cf6cf61f6f13d`.
 No runtime improvement or diagnostic overhead claimed; device capture is pending.
 
-### Publisher notification preservation (experiment pending measurement)
+### Publisher notification preservation (no repeatable throughput gain)
 
 `Portable/src/Runtime.cpp` adds `LT_PUBLISH_WAKE_EARLY=on` (default off). The old loop snapshots
 the engine notification count after frame copying, listener callbacks and audio draining. A
@@ -452,12 +452,52 @@ Independent `LT_PUBLISH_WAKE_PROF=on` (default off) logs exact five-second block
 loop counts, notifications during work, subsequent wait duration and frame timestamp age at
 publication. A notification during work may already have been consumed by the frame acquisition;
 it is not evidence of a missed frame by itself. Timestamp age includes engine LCD/pacing work
-before capture, rather than measuring only publisher latency. Focused A/B captures are queued
-separately from ordinary FPS baselines; no improvement claimed.
+before capture, rather than measuring only publisher latency. Focused A/B captures below
+are separate from ordinary FPS baselines; no throughput improvement is established.
 
 Linux/Android builds succeeded (`build/perf-codex/publish-wake-build.txt`). Frozen APK/symbols:
 `publish-wake.apk`, `publish-wake-symbols/` under `build/perf-codex/`, engine `4d06b57f50`.
 APK SHA256: `ca730421e1c3f1e213f433b774130c35c9c977616e19fdc0404ba7610e814578`.
+
+Two same-APK diagnostic pairs on the Snapdragon 865-class Poco, Jetpack title, 35 s
+per arm, order off/on/on/off. Publisher timing on in both; array cache on; other
+experiments, full accounting and manual recorder off. All four final screenshots
+confirm the title and recorder off; zero skipped frames. The runner received SIGTERM
+during the final off launch, after which the guest remained running at the correct
+title. That arm was captured after another 40 s settling without relaunching; no
+completed window was repeated. This additional settling is a comparison limitation.
+
+| Pair | Diagnostic mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 52.51 → 53.71 | 58 → 58 | 54 → 54 | 46 → 48 | 20.53 → 28.15 | 16 (1037.4 ms) → 6 (338.0 ms) |
+| 2, reversed | 54.46 → 53.06 | 58 → 56 | 54 → 54 | 50 → 48 | 28.61 → 28.53 | 6 (305.0 ms) → 3 (153.0 ms) |
+
+Aggregate mean **53.49 → 53.39 fps (−0.2%)**, one pair ahead and one behind. Hitches
+22 → 9, total duration 1342.3 → 491.1 ms over 70 s per mode, but frame age barely
+changes and fewer diagnostic hitches do not establish a repeatable pacing gain.
+Keep default off; no steady-60 improvement demonstrated.
+
+| Pair | Frame age mean ms off → on | Max ms off → on | Notifications during work off → on | Subsequent waits ms off → on |
+| --- | --- | --- | --- | --- |
+| 1 | 1.987 → 1.959 | 13.102 → 13.792 | 1 → 4 | 10.273 → 0.004 |
+| 2 | 2.047 → 2.031 | 11.328 → 8.038 | 7 → 3 | 70.702 → 0.006 |
+
+These timing summaries cover six five-second blocks, separately from FPS bounds.
+They confirm that the switch avoids waiting after notifications during work, but
+those notifications may have already been consumed; they do not count delayed frames.
+
+Exact half-open FPS windows and timing bounds (monotonic ns):
+
+| Pair / mode | FPS [start, end) | Six timing blocks [begin, end] |
+| --- | --- | --- |
+| 1 off | [427949592197632, 427984592197632) | [427954990878359, 427985007655431] |
+| 1 on | [428124689861107, 428159689861107) | [428128441541887, 428158473281250] |
+| 2 on | [428307779336350, 428342779336350) | [428313373858118, 428343406784461] |
+| 2 off | [428511138843147, 428546138843147) | [428517238666947, 428547266432664] |
+
+Evidence: `build/perf-codex/poco-publish-wake-{1,2}-{off,on}/` contains frame logs,
+scenes, engine logs and raw timing blocks. `publish-wake-results.json` retains each
+hitch end/duration and exact windows; `publish-wake-analyze.py` regenerates it.
 
 ### Single-page dirty queries (local saving; no repeatable game gain)
 
