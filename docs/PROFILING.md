@@ -149,8 +149,8 @@ enable full accounting, BQL tables or the manual recorder.
 Compare hit rate and direct helper costs in interleaved off/on pairs with profiling
 on in both, then use separate diagnostic-off ordinary FPS pairs. Do not extrapolate
 sample timings to whole-game savings or treat diagnostic FPS as an ordinary baseline.
-Runtime measurement is pending; the local runner is queued behind the exact live
-IRQ-delivery PID/starttime plus its successful clean-stop marker.
+Runtime measurement is pending; the local runner started its first off arm after
+IRQ-delivery process exit plus its successful clean-stop marker.
 
 ## Focused GL presentation stages
 
@@ -219,11 +219,15 @@ now includes eligible unlocked no-ops too; `fast=MODE` still names the masked
 precheck switch, so use the separate `[tcg] irq-delivery-fast=MODE` init line and
 saved environment to identify delivery mode. Compare with IRQ profiling on both,
 masked fast/L2/other diagnostics off; then use separate profiler-off ordinary
-FPS pairs. Both optimizations remain default off. First delivery pair: delivered
-check/wait 87.205/83.265 → 1.946/0 µs, all check/wait wall 5.765/5.448% →
-0.293/0%, but deliveries 552 → 969/s and diagnostic FPS 53.06 → 49.54 with
-worse pacing. Reverse pair is running. Guest device MMIO still locks; removed
-check wait need not be recovered time. Ordinary comparisons are prepared only.
+FPS pairs. Both optimizations remain default off. Both focused delivery pairs are
+complete, second reversed: delivered check 87.205/74.900 → 1.946/2.168 µs and
+wait 83.265/71.263 → 0/0 µs. All check/wait wall 5.765/5.448% and 5.135/4.829%
+→ 0.293/0% and 0.189/0%. Diagnostic mean 53.74 → 51.69 fps; hitches 12 → 50
+(920.8 → 3999.6 ms/70 s). First on arm has two interrupt-spike blocks; reverse
+on arm has normal frequency but also loses. Removed check wait need not be
+recovered total time: device MMIO still locks. Keep off; no game/pacing benefit
+or ordinary FPS baseline established. Profiler-off ordinary runner is prepared
+only, deferred, and needs a new serialized dependency before any later launch.
 
 ## Focused exact-zero VFP multiplication
 

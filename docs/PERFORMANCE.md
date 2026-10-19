@@ -569,34 +569,57 @@ other experiments/diagnostics and live recorder/full accounting off; array cache
 on. `irq-delivery-run.py` / `irq-delivery-analyze.py` preserve exact frame/timing
 bounds and all hitches under `poco-irq-delivery-focused-*`.
 
-First pair complete; reverse pair is still running. Both final screenshots
-reviewed: correct Jetpack title, recorder off, zero skips. Six contiguous complete
-five-second blocks per arm, wholly inside the exact 35 s frame windows:
+Both focused pairs complete (second on/off). All four final screenshots reviewed:
+correct Jetpack title, recorder off, zero skips. Six contiguous complete five-second
+blocks per arm, wholly inside each exact 35 s frame window:
 
-| First pair metric | Off → on |
-| --- | --- |
-| Mean delivered check / acquisition wait | 87.205 / 83.265 → 1.946 / 0 µs |
-| All check / acquisition wall | 5.765 / 5.448% → 0.293 / 0% |
-| Delivered interrupts | 551.97 → 969.10/s |
-| All checks / unlocked fraction | 1690.79 / 0% → 2928.25/s / 100% |
-| Max completed check | 4150.68 → 61.93 µs |
-| Diagnostic mean / ceiling / median / low fps | 53.06 / 58 / 54 / 46 → 49.54 / 58 / 52 / 34 |
-| Diagnostic 1% low | 28.25 → 14.85 fps |
-| Hitches (>50 ms) | 10 (819.4 ms) → 42 (3234.8 ms) per 35 s |
+| Direct timing metric | Pair 1 off → on | Pair 2 off → on (on first) |
+| --- | --- | --- |
+| Mean delivered check / acquisition wait (µs) | 87.205 / 83.265 → 1.946 / 0 | 74.900 / 71.263 → 2.168 / 0 |
+| All check / acquisition wall (%) | 5.765 / 5.448 → 0.293 / 0 | 5.135 / 4.829 → 0.189 / 0 |
+| Delivered interrupts/s | 551.97 → 969.10 | 557.75 → 567.91 |
+| All checks/s | 1690.79 → 2928.25 | 1703.61 → 1678.05 |
+| Unlocked completed checks | 0 → 87872 (100%) | 0 → 50358 (100%) |
+| Max completed check (µs) | 4150.68 → 61.93 | 4483.49 → 68.85 |
 
-The direct wait disappears but interrupt frequency rises sharply and diagnostic
-pacing worsens. Do not equate the removed check wait with recovered vCPU time:
-guest device MMIO acknowledgements still lock and waits may move there. Increased
-delivery/guest-handler work is another possible cost; neither explanation is yet
-proved. Keep off. Profiler-off ordinary pairs are prepared, not queued; reconsider
-their value after the reverse pair rather than assume a throughput gain.
+| Diagnostic pacing metric | Pair 1 off → on | Pair 2 off → on (on first) |
+| --- | --- | --- |
+| Mean fps | 53.06 → 49.54 | 54.43 → 53.83 |
+| Ceiling | 58 → 58 | 60 → 58 |
+| Median | 54 → 52 | 54 → 54 |
+| Low | 46 → 34 | 50 → 48 |
+| 1% low fps | 28.25 → 14.85 | 28.78 → 28.61 |
+| Hitches (>50 ms) per 35 s | 10 (819.4 ms) → 42 (3234.8 ms) | 2 (101.4 ms) → 8 (764.8 ms) |
 
-First-pair exact half-open frame windows (monotonic ns): off
-`[434650140183826, 434685140183826)`, on
-`[434833235134798, 434868235134798)`. Selected timing windows: off
-`[434653684393825, 434683693384594]`, on
-`[434834350906568, 434864359308432]`. `irq-delivery-results.json` retains all
-blocks and every hitch; no ordinary FPS or pacing gain established.
+Aggregate diagnostic mean **53.74 → 51.69 fps (−3.8%)**. Hitches **12 → 50**,
+total duration **920.8 → 3999.6 ms** over 70 s per mode. The first enabled arm's
+interrupt spike is concentrated in two contiguous five-second blocks: 1906.57 /
+1665.69 deliveries/s with 38.40 / 45.34 diagnostic fps; its other blocks stay
+551–569/s. The reverse enabled arm stays 557–585/s, yet also loses throughput
+and pacing. Retain the outlier; it is not a repeatable steady frequency increase.
+
+The direct wait disappears, but that is not recovered vCPU time: guest device
+MMIO acknowledgements still lock and waits may move there. More interrupt/guest
+handler work coincides with the first spike; causation and wait migration are not
+proved. **Keep off: no game/pacing benefit established.** Profiler-off ordinary
+pairs remain prepared only and are deferred behind the unmeasured L2 candidate;
+these diagnostic FPS values are not ordinary baselines or an overhead estimate.
+
+Exact half-open frame windows and selected complete timing windows (monotonic ns):
+
+| Arm | Frame [begin, end) | Timing [begin, end] |
+| --- | --- | --- |
+| 1 off | [434650140183826, 434685140183826) | [434653684393825, 434683693384594] |
+| 1 on | [434833235134798, 434868235134798) | [434834350906568, 434864359308432] |
+| 2 on | [435016923205509, 435051923205509) | [435017459224832, 435047469036591] |
+| 2 off | [435201041681116, 435236041681116) | [435205902778614, 435235910834228] |
+
+`irq-delivery-results.json` retains all blocks and every hitch;
+`irq-delivery-analysis.txt` and reviewed `irq-delivery-scenes.png` retain summaries
+and all four scenes. Runner session ended exit 0 with clean Stop, no qemu engine,
+and baseline environment readback; `irq-delivery-focused-finished` then allowed
+the serialized L2 runner to start. Ordinary delivery runner must be reserialized
+before any later launch; its old dependency would overlap L2.
 
 ### Exception and SVC diagnostics (2026-10-18)
 

@@ -82,9 +82,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   accounting/breakpoints/execution logging retain full lookup. Independent
   `LT_IBTC_L2_PROF` counts hits/attempts and samples one in 256 helper calls.
   Linux/Android builds pass, frozen `ibtc-l2-pcrel.apk`/symbols/identity retained. Focused
-  runner/analyzer queued behind exact live IRQ-delivery PID/starttime and its
-  successful clean-stop marker; only one phone runner may proceed. No runtime
-  results yet; delivery's first pair is locally cheaper but game pacing worsens.
+  runner/analyzer started after exact IRQ-delivery process exit and successful
+  clean-stop marker. First off arm launching; only one phone runner may proceed.
+  No runtime results yet; completed delivery comparison has no diagnostic pacing win.
   No measured hit rate/local/FPS/pacing saving yet. Details in PERFORMANCE/PROFILING.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
@@ -195,17 +195,21 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Atomic request snapshot preserves levels, EXITTB and new-request kicks. Independent
   `LT_IRQ_CHECK_PROF` adds unlocked counts and delivered-check time/wait subsets.
   Linux/Android builds succeeded; clean frozen `irq-delivery.apk`/symbols/identity.
-  Two focused 35 s off/on,on/off pairs starting after masked-check cleanup, ahead
-  of L2. Array cache on; masked-fast/L2/other diagnostics off, IRQ profiler on both,
-  no recorder/full accounting. First pair complete, both title scenes reviewed,
-  zero skips: delivered check/wait 87.205/83.265 → 1.946/0 µs; all check/wait
-  wall 5.765/5.448% → 0.293/0%. Deliveries rise 552 → 969/s. Diagnostic mean
-  53.06 → 49.54 fps, ceiling 58 → 58, median 54 → 52, low 46 → 34,
-  1% low 28.25 → 14.85; hitches 10 → 42, 819.4 → 3234.8 ms per 35 s.
-  Reverse pair running. Direct wait removal does not prove recovered vCPU time:
-  guest MMIO still locks; interrupt/guest-handler frequency changes too. Keep
-  off; ordinary runner prepared only, reconsider after reverse evidence.
-  Exact frame/timing bounds and raw evidence in PERFORMANCE.md.
+  Both focused 35 s off/on,on/off pairs completed, all four title scenes reviewed,
+  zero skips, six complete contiguous timing blocks per arm. Array cache on;
+  masked-fast/L2/other diagnostics off, IRQ profiler on both, no recorder/accounting.
+  Delivered check µs 87.205/74.900 → 1.946/2.168; wait 83.265/71.263 → 0/0.
+  All check/wait wall 5.765/5.448% and 5.135/4.829% → 0.293/0% and 0.189/0%.
+  Diagnostic means 53.06/54.43 → 49.54/53.83 fps; ceiling 58/60 → 58/58,
+  median 54/54 → 52/54, low 46/50 → 34/48, 1% low 28.25/28.78 → 14.85/28.61.
+  Hitches 10/2 → 42/8, durations 819.4/101.4 → 3234.8/764.8 ms per 35 s.
+  Aggregate 53.74 → 51.69 (−3.8%), hitches 12 → 50 (920.8 → 3999.6 ms/70 s).
+  First enabled arm has two IRQ-spike blocks (~1907/1666 deliveries/s), other
+  enabled blocks normal; reverse pair also loses. Retain all outliers. No proved
+  recovered total vCPU time: device MMIO still locks, more guest-handler work can
+  offset local savings. Keep off; ordinary comparison deferred, prepared only.
+  Exact bounds in PERFORMANCE.md, raw/analyzer/results/montage retained. Runner
+  clean Stop/no-qemu/baseline confirmed; serialized L2 runner has now started.
 - [ ] The guest kernel is 22% of the vCPU in Jetpack on the Poco (half the time in translated code).
   It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
   lock and interrupt-mask instructions cheaper. Next to look at: how many exceptions and Mach messages
