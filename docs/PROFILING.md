@@ -228,6 +228,15 @@ trace establishes blocking but cannot name the wait, narrow the next diagnostic
 to that interval and capture the relevant native wait entry/return stack.
 Keep Start profile off during ordinary A/B performance measurements.
 
+`LT_VCPU_DISPLAY_PRIORITY=on` (engine `6971278387`, default off) is a separate
+Android scheduling experiment. At vCPU startup it requests ordinary display
+nice -4 on that thread, retaining CFS and the existing CPU mask; an existing
+higher priority is preserved. `[vcpu-priority]` records before/after nice values
+and get/set errors in both modes. Confirm the effective priority during the
+frame window, not just the requested switch. Failed requests supply no priority
+A/B. This cannot directly remove guest decoder work or identify a sleeping
+thread's wait. Keep other optimization switches fixed and use one frozen APK.
+
 #### Map the same worker
 
 Address-space values can change between boots. Use a snapshot from the same

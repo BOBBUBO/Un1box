@@ -2424,7 +2424,7 @@ claim. The selected-thread association includes guest kernel/native work;
 enqueue intervals are not exact run-queue timers. See PROFILING.md for the
 approach. Pixel user-capture causes remain unproven by these Poco examples.
 
-#### ARMv6 hflags specialization (focused timing pending)
+#### ARMv6 hflags specialization (focused timings complete, game pending)
 
 The preserved-STM profile above nominates generic flag rebuilding, including
 ARMv8 exception-level and control-register helpers. Engine `e414b9d74a` adds
@@ -2440,10 +2440,10 @@ which the guarded CPU class lacks.
 Independent default-off `LT_HFLAGS_V6_VERIFY=on` compares both flag words
 against the generic builder at every eligible rebuild and reports every
 1,048,576 comparisons. This diagnostic is for a separate runtime capture;
-ordinary measurements keep it off. Linux/Android builds pass. Focused timing
-and game A/B remain pending. No speedup claimed;
-game ceiling/median/low/1%low/hitches/durations are unmeasured. The concurrent
-host-PC cache comparisons use their earlier frozen APK, not this new code.
+ordinary measurements keep it off. Linux/Android builds pass. Focused results
+follow below; game ceiling/median/low/1%low/hitches/durations remain unmeasured.
+The completed host-PC cache comparisons used their earlier frozen APK, not
+this new code.
 
 A separate 90 s Linux headless capture on a copy of an idle prepared n72ap/7E18
 record completed with fast/verify on and host-PC cache off. At least 1,048,576
@@ -2471,6 +2471,58 @@ executed in that capture, not every possible control-register value. Its
 benchmark values include verification overhead and are not an optimization
 timing result. Evidence: `build/perf-codex/poco-hflags-v6-reference/`, including
 the completed engine log, mode/identity, benchmark passes, result and scenes.
+
+**Focused timing, verification off:** the same frozen APK/package completed
+two reversed pairs on the Snapdragon 865-class Poco F3, off/on/on/off. Each arm
+ran three short LT Bench passes of five rounds. Host-PC caching, verification,
+the user recorder, accounting and other diagnostics were off. All byte/guard/
+writeback checks passed; four result scenes reviewed with Start profile off.
+Values below are median of three pass bests / median of three pass medians,
+in ns/op, not pooled round percentiles. All individual passes are retained.
+
+| Focused timing, off → on | Pair 1 | Pair 2 (reversed) |
+| --- | --- | --- |
+| Syscall best / median | 867.8 / 946.2 → 763.9 / 787.7 | 856.2 / 872.4 → 775.5 / 840.6 |
+| Fault best / median | 18033.5 / 18159.7 → 18653.2 / 19246.4 | 17539.0 / 18126.7 → 17545.6 / 18630.9 |
+| STM aligned best / median | 6.6 / 6.6 → 6.5 / 6.6 | 6.6 / 6.6 → 6.5 / 6.6 |
+| STM unaligned best / median | 1553.8 / 1578.9 → 1421.3 / 1460.2 | 1615.8 / 1733.8 → 1377.4 / 1419.6 |
+
+Syscall best improves 11.97/9.43%, medians 16.75/3.65%. Preserved misaligned
+STM best improves 8.53/14.75%, medians 7.52/18.12%. Aligned-store median stays
+6.6 ns. Page-fault timing does not improve: best is 3.44/0.04% worse, medians
+5.98/2.78% worse. Retain the first on pass's 24615.3/25856.5 ns page-fault
+best/median; no pass was discarded. These are focused path results, not proof
+of a Jetpack improvement. Game ceiling/median/low/1%low/hitch count/duration
+are not applicable to the static result screens; ordinary game A/B follows.
+Keep the fast calculation default off pending that comparison.
+
+Evidence: `build/perf-codex/poco-hflags-v6-{1,2}-{off,on}/`,
+`hflags-v6-focused-results.json` (all passes), reviewed
+`hflags-v6-focused-scenes.png`, runner `hflags-v6-phone-run.py` and parser
+`hflags-v6-phone-analyze.py`. Clean Stop/no-qemu/exact baseline restoration
+confirmed; short LT Bench remains installed, serial28 verdict good. No tests
+added/run. Pixel disconnected and untouched.
+
+#### Android vCPU display priority (runtime measurements pending)
+
+The scheduler captures above include host runnable delay, including 8.620 ms
+in the delayed-PC capture's decoder-free 50.057 ms gap. This is distinct from
+guest decoding work and sleeping/blocked intervals. Engine `6971278387` adds
+default-off `LT_VCPU_DISPLAY_PRIORITY=on`: once at vCPU startup, Android asks
+for nice -4, the normal display priority, using `setpriority` on the calling
+thread. Existing higher priorities are preserved; CFS and affinity remain.
+The original priority remains if setting it fails. Before/after values and
+get/set errors are logged in both modes, with no per-frame priority calls.
+
+Linux/Android builds pass. Frozen `vcpu-display.apk` is app `7312beec` /
+engine `6971278387`, SHA-256
+`7e841c9c96f5f1ec8c256b99dd9e78e7a6630a8df959ef8b279b1c6e8d4b9071`;
+identity and symbols in `build/perf-codex/vcpu-display-build-identity.json`.
+No phone runtime effectiveness or performance comparison yet; game ceiling,
+median, low, 1%low, hitch count and duration are unmeasured. Do not treat a
+requested but ineffective nice change as an optimization A/B. Measure this
+separately with hflags/cache switches fixed. Current focused flags measurements
+continue using their original frozen APK, without this change. No tests added/run.
 
 ### Measured and rejected
 

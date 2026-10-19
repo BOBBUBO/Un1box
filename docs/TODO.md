@@ -5,9 +5,28 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
-- [ ] Time the guarded ARMv6 hflags calculation (`e414b9d74a`, default-off
-  `LT_HFLAGS_V6_FAST=on`) in focused syscall/fault/STM paths with verification
-  off before game A/B. Independent `LT_HFLAGS_V6_VERIFY=on` completed a 90 s
+- [ ] Measure Android vCPU display priority (`6971278387`, default-off
+  `LT_VCPU_DISPLAY_PRIORITY=on`). Existing Poco traces show host runnable
+  delay in some hitches; this requests nice -4 on each vCPU thread at startup,
+  retaining CFS and the existing affinity. It preserves an already higher
+  priority and logs before/after values and errors. Linux/Android builds pass;
+  frozen `vcpu-display.apk` and identity retained. Runtime effectiveness and
+  before/after ceiling/median/low/1%low/hitches/durations remain unmeasured.
+  Check actual nice values during capture; an unsuccessful request is not a
+  priority comparison. Keep hflags/cache experiments fixed when measuring.
+
+- [ ] Measure ordinary Jetpack with the guarded ARMv6 hflags calculation
+  (`e414b9d74a`, default-off `LT_HFLAGS_V6_FAST=on`). Focused timing complete
+  with verification off, two reversed pairs, three five-round passes per arm.
+  Median of pass best/median, ns: syscall867.8/946.2→763.9/787.7 and
+  856.2/872.4→775.5/840.6; unaligned STM1553.8/1578.9→1421.3/1460.2 and
+  1615.8/1733.8→1377.4/1419.6. Best savings syscall11.97/9.43%,STM8.53/14.75%;
+  medians improve16.75/3.65% and7.52/18.12%. Aligned median6.6ns throughout.
+  Page fault best/median worse:18033.5/18159.7→18653.2/19246.4 and
+  17539.0/18126.7→17545.6/18630.9. All passes retained, no failed byte/guard/
+  writeback checks, four scenes reviewed, recorder/all diagnostics off,
+  clean Stop/no-qemu/exact baseline restored. No ordinary FPS/hitch gain
+  established; keep default off. Independent `LT_HFLAGS_V6_VERIFY=on` completed a 90 s
   desktop copied-record capture: at least 1,048,576 matching rebuilds, clean
   Stop/worker/frontend exit 0; end screenshot asleep, no active-UI claim. This
   covers executed states, not all possible register values. Scratch record
@@ -17,7 +36,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   verification overhead and are not a speed result. Original faults/guest
   handler remain.
   Pre-v7 VMSA only, no EL2/EL3/M/PMSA/AArch64; Linux/Android builds pass.
-  No measured speedup or game ceiling/median/low/1%low/hitch/duration result.
+  Focused results above; game ceiling/median/low/1%low/hitch/duration pending.
 
 - [x] Measure exact host-PC lookup caching (`c146d54fad`, default-off
   `LT_HOST_PC_CACHE=on`) in the preserved alignment-fault path. One 1200-round
