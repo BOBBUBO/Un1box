@@ -2971,6 +2971,60 @@ intervals), plus summary.json. Runner guest-spin-run.py, existing guest-PC
 report scripts and new guest-flip-report.py retain reproduction. All real
 analyzers passed. No tests added/run; Pixel untouched. No new performance gain.
 
+#### Bluetooth owner capture (complete; retry pattern not reproduced)
+
+Fresh same-worker capture `poco-guest-bluetooth-1/` uses the frozen extended APK
+above, original50us BQL spin on/extended off, six selected guest PCs plus
+context/scheduler/IRQ/idle tracing, and a concurrent65s guest syslog relay.
+Idle spin, native/AHB/fault/arithmetic diagnostics, accounting and user recorder
+are off. Worker23185/vCPU23341, sameTID/nice0/CFS, good28; both scenes reviewed
+as Jetpack title/Startprofileoff. Clean Stop/no-qemu/exact baseline restored;
+own phone trace/milestone files removed after pull. Runner exits0.
+
+App `49c2d2bd` optional task-thread enumeration is exercised successfully:
+matching-kernel pinned layout0x28,0x30,0x1c4,19tasks/139live threads, all139
+direct thread/task/BSD-process matches, current-thread membership confirmed,
+same-worker debugger detached after timing. Ownership is observed after the
+window; earlier thread/task lifetime and pointer reuse remain unproven.
+All1,136,449 milestones complete with no loss/incomplete/writeerror;267,476
+valid PC triplets,157,968 in complete frame intervals, switch continuity passes.
+Scheduler has full coverage/no error/loss/initial-state exception, clock
+spread677ns. All seven real analyzers complete; no tests added/run.
+
+Diagnostic mean55.850,ceiling60,median56,low50,1%low28.454,6hitches/330.616ms,
+zero skips. This is neither an A/B gain nor an estimate of tracing overhead.
+Hitch durations:52.987,65.413,50.875,50.128,50.252,60.960ms. The earlier
+100–131ms periodic pattern is not reproduced. Relay preserves33,682bytes/
+30chunks over65s including boot backlog: BTServerPID26 finishes initialization,
+enters its message loop, and remainsPID26 in the live snapshot. No boot-script
+timeout/relaunch appears in the retained text; BlueTool has exited. The two
+live BTServer-owned threads have no observed scheduled execution in the timed
+window. Do not transfer this healthy boot's owners to the older failing run.
+
+The six hitches contain230.193ms running,16.485msR,0.089msR+,8.471msS and
+75.377msD. At4.303/4.369/48.408s, gaps52.987/65.413/60.960ms include
+32.632/11.283/29.164ms uninterruptible sleep. All selected>=1msD spans are
+outside host surface presents; the trace has no blocked-function attribution.
+This does not identify storage/page faults or establish diagnostic overhead.
+The11.444/18.361s gaps include14.619/9.861ms of converter-thread execution.
+1857converter calls still handle1024scalars/scale1.0: aligned versus2mod4
+median selected-thread running26.042 versus473.178us (1053/804calls).
+
+Next evidence: time NAND load/store/erase and nested fsync calls directly.
+Source inspection finds synchronous file persistence in FMSS MMIO handling;
+it is a candidate for D-state waits, not a confirmed cause. Engine `bb5132a264`
+adds default-off `LT_FMSS_PATH=on` boundaries in the bounded deferred frame
+trace. It preserves each fsync/flush/rename and error path, including errno
+across the fsync marker. Linux/Android build and a real capture are pending.
+No new performance gain from this diagnostic. Keep the Bluetooth lead open
+for fresh same-worker logs/owners when the periodic failure recurs.
+
+Evidence retains raw traces/frames/logs/identity, exact windows and input hashes,
+process enumeration/detach log, reviewed scenes, syslog raw/JSONL/text/receive
+bounds, hitches/milestones/guest-points, decode/flip/owner reports and summary.
+Scripts guest-bluetooth-run.py/analyze.py/summary.py and guest-owner-report.py
+are in build/perf-codex. Pixel untouched and its largest hitch still unresolved.
+
 #### Extended BQL spin budget (ordinary comparison complete)
 
 The residual fallback capture above finds 153 of 163 selected BQL wake delays

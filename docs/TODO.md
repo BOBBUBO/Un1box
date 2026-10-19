@@ -52,6 +52,18 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   largest gameplay hitch still needs its own matching scheduler trace.
 
 - [ ] Confirm Bluetooth-related work in the longest guest flip cycles.
+  Follow-up poco-guest-bluetooth-1 complete: fresh same-worker65s relay,
+  19tasks/139live threads all direct-owner matches, detached after timing.
+  Healthy boot: BTServer26 completes init/no retained retry and remains26;
+  its threads have no scheduled execution in the window. Earlier periodic
+  100–131ms pattern not reproduced; this does not disprove the earlier lead.
+  1,136,449 complete records/267,476 validtriplets, full scheduler coverage,
+  no loss/initial exception,clockspread677ns; all7analyzers pass. Bothscenes
+  title/profileoff,sameTID/nice0/CFS,good28,cleanStop/exactbaseline verified.
+  Diagnostic mean55.850,ceiling60,median56,low50,1%low28.454,
+  6hitches/330.616ms (52.987/65.413/50.875/50.128/50.252/60.960),0skips;
+  not A/B or overhead evidence. Capture owners/logs again when failures recur.
+  Thread lifetime/reuse still limits post-window ownership joins.
   New spin-on guest-thread capture complete, worker14580/vCPU14750:
   1,687,113 complete records, 447,102 valid PC triplets, full scheduler coverage,
   no loss/initial exception, clock spread104ns. Both scenes title/profile off,
@@ -67,6 +79,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   bring-up if retries are confirmed. Prior-worker syslog backlog is insufficient.
   Audio converter remains a separate contributor; do not bypass guest faults.
   Full evidence and limits: PERFORMANCE.md / poco-guest-spin-1/guest-flips.json.
+
+- [ ] Attribute uninterruptible host sleeps to NAND or another path.
+  Fresh owner capture contains75.377msD across six hitches; three gaps contain
+  32.632/11.283/29.164msD. All selected>=1msD spans are outside host presents;
+  no blocked-function attribution. Source has synchronous FMSS persistence
+  in MMIO handling. Enginebb5132a264 adds default-off LT_FMSS_PATH=on to
+  time loads/stores/erases and nested fsyncs with no persistence changes.
+  Build and direct call/scheduler capture pending; no cause or gain proven.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
   The latest Poco capture's three >50 ms gaps contain 129.017 ms running

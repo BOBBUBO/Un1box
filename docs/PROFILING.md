@@ -329,8 +329,9 @@ retains raw pointers, owner candidates and an explicit match/unreadable/mismatch
 status. A matched task owner is stronger evidence than the currently installed
 pmap, which a kernel thread may borrow. Ownership is observed at snapshot time;
 applying it to earlier events requires that thread to have remained alive.
-Keep unknown and mismatched rows. This optional lookup is prepared for the next
-diagnostic capture; it has not yet been exercised in a phone attachment.
+Keep unknown and mismatched rows. The optional lookup and enumeration below
+were exercised on the Poco in `poco-guest-bluetooth-1`:139live threads across
+19tasks all matched, with current-thread membership and detach confirmed.
 
 To enumerate live threads when their addresses are not known before attachment,
 append `--task-thread-layout HEAD,COUNT,NEXT` and
@@ -342,8 +343,24 @@ threads, rejects repeated/unreadable pointers and task-owner disagreements,
 and requires the current thread in the resulting lists. JSON retains the
 layout, each task's list and every thread's owner lookup. These are post-window
 observations; exited/reused threads remain a limitation when joining earlier
-events. Enumeration is prepared for the next phone capture and has not yet
-been exercised at runtime.
+events. A successful post-window enumeration does not validate earlier owners
+from another worker or recover threads that exited before attachment.
+
+#### Time NAND operations within host sleeps
+
+Engine `bb5132a264` adds default-off `LT_FMSS_PATH=on`, requiring `LT_FRAME_PATH`.
+The trace uses the existing40MiB diagnostic capacity and deferred output after
+clean Stop. `fmss-begin`/`fmss-end` fields are: call ID; operation in the upper
+32bits plus chip select in the lower32bits; page number (block for erase).
+Operations1/2/3/4 are load/store/erase/fsync. Fsync spans are nested in their
+store/erase; do not add overlapping durations. End means the call returned,
+not that I/O succeeded. Require balanced IDs/coordinates, the full trace footer
+and no I/O errors before joining calls to scheduler D/S/R/running intervals.
+Off takes no diagnostic clocks; flush/sync/rename/error behavior is preserved.
+Build/device exercise pending. This tests a storage lead; a D-state interval
+alone does not identify storage or page faults. Keep guest PC/context/native/
+user profiling off unless independently required, and confirm any later
+optimization in ordinary interleaved comparisons.
 
 Generate framepath JSON with `--residency-intervals` and context tracing, then
 add these options to the `hitchcpu.py` command above:
