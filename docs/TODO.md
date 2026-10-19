@@ -84,8 +84,13 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   no FPS or hitch improvement claimed. Keep default off; ordinary Jetpack
   comparison remains open.
 
-- [ ] Identify messages behind the separate decoder-free pauses. Android
-  helper `syslog --seconds 1..600` and `tools/perf/androidsyslog.py` now add
+- [ ] Identify messages behind the separate decoder-free pauses.
+  Optional `guestprocs.py --thread 0xADDRESS` now prepares direct task-owner
+  snapshots for selected thread IDs from the same worker, cross-checking the
+  task's BSD process pointer instead of relying on borrowed pmaps. Raw/mismatch
+  rows retained; phone attachment with this option remains pending. See
+  PROFILING.md; a later snapshot requires thread-lifetime confirmation.
+  Android helper `syslog --seconds 1..600` and `tools/perf/androidsyslog.py` now add
   bounded raw relay capture with monotonic receive bounds, byte/count/footer
   validation and worker identity. Native helper/Android builds pass; real
   capture completed:34,632bytes/25chunks/70s,316 lines including startup

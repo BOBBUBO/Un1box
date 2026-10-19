@@ -22,8 +22,13 @@ def snapshot(debugger, command, context, result, internal_dict):
     ap.add_argument("--xnu", type=Path, required=True)
     ap.add_argument("--connect", required=True)
     ap.add_argument("--json", type=Path, required=True)
+    ap.add_argument("--thread", type=lambda s: int(s, 0), action="append", default=[],
+                    help="also read this guest thread's task owner (repeatable, accepts hex)")
     try:
         args = ap.parse_args(shlex.split(command))
+        if len(args.thread) > 4096 or any(t <= 0 or t > 0xffffffff or t & 3
+                                          for t in args.thread):
+            ap.error("thread addresses must be aligned ARM32 pointers, at most 4096")
     except SystemExit:
         result.SetError("invalid guest snapshot arguments")
         return
@@ -60,11 +65,30 @@ def snapshot(debugger, command, context, result, internal_dict):
         if not any(row[2] == "kernel_task" and
                    row[5] & ~0x3fff == registers["TTBR1_EL1"] & ~0x3fff for row in rows):
             raise ValueError("kernel pmap does not match TTBR1")
+        owners = {}
+        for p, pid, name, task, pmap, ttb in rows:
+            owners.setdefault(task, []).append(dict(proc=p, pid=pid, name=name))
+        threads = []
+        if args.thread:
+            if "thread_task" not in xnu.OFF or "task_proc" not in xnu.OFF:
+                raise ValueError("matching kernel did not supply thread/task offsets")
+            for thread in sorted(set(args.thread)):
+                task = xnu._u32(thread + xnu.OFF["thread_task"])
+                bsd_proc = xnu._u32(task + xnu.OFF["task_proc"]) if task else None
+                candidates = owners.get(task, [])
+                matches = [p for p in candidates if p["proc"] == bsd_proc]
+                owner = matches[0] if len(matches) == 1 else None
+                status = ("matched" if owner else
+                          "bsd-proc-mismatch" if candidates else
+                          "task-not-in-proc-snapshot" if task else "unreadable-task")
+                threads.append(dict(thread=thread, task=task, bsd_proc=bsd_proc,
+                                    owner=owner, owner_candidates=candidates, status=status))
         report = dict(kernel_sha256=hashlib.sha256(args.kernel.read_bytes()).hexdigest(),
                       xnu_helper_sha256=hashlib.sha256(args.xnu.read_bytes()).hexdigest(),
                       offsets=xnu.OFF, registers=registers, ttbr0_alignment_bits=14 - n,
                       processes=[dict(proc=p, pid=pid, name=name, task=task, pmap=pmap, ttbr0=ttb)
-                                 for p, pid, name, task, pmap, ttb in rows])
+                                 for p, pid, name, task, pmap, ttb in rows],
+                      threads=threads)
     except Exception as error:
         failure = str(error)
     finally:
@@ -83,6 +107,9 @@ def snapshot(debugger, command, context, result, internal_dict):
             output.write("\n")
         for row in report["processes"]:
             result.AppendMessage(f"{row['pid']:5} {row['name']:18} ttbr0=0x{row['ttbr0']:08x}")
+        for row in report["threads"]:
+            label = row["owner"]["name"] if row["status"] == "matched" else row["status"]
+            result.AppendMessage(f"thread 0x{row['thread']:08x}: {label}")
         result.AppendMessage("SNAPSHOT_COMPLETE; guest detached")
     except OSError as error:
         result.SetError(str(error))

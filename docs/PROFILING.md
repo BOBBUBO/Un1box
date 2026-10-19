@@ -236,6 +236,9 @@ and get/set errors in both modes. Confirm the effective priority during the
 frame window, not just the requested switch. Failed requests supply no priority
 A/B. This cannot directly remove guest decoder work or identify a sleeping
 thread's wait. Keep other optimization switches fixed and use one frozen APK.
+Retain the engine's complete thread/nice listing too: driver workers can inherit
+the vCPU name and newly created threads can inherit its nice value. Select the
+active vCPU by CPU time and confirm its TID and policy at both window boundaries.
 
 #### Map the same worker
 
@@ -260,6 +263,17 @@ even on failure. Require `detached:true` before Stop; preserve the command log.
 The guest cannot supply the Android host PID: add `engine_pid` to the JSON
 from the capture's retained worker identity, recording how it was bound.
 Remove forwards and the debugger environment setting after clean Stop.
+
+For selected guest thread addresses observed in that same worker, append
+repeatable `--thread 0xADDRESS` arguments to `lt-guest-procs`. The helper reads
+`thread->task` using the matching kernel accessor's offset, reads that task's
+BSD process pointer, and checks it against the process/task snapshot. The JSON
+retains raw pointers, owner candidates and an explicit match/unreadable/mismatch
+status. A matched task owner is stronger evidence than the currently installed
+pmap, which a kernel thread may borrow. Ownership is observed at snapshot time;
+applying it to earlier events requires that thread to have remained alive.
+Keep unknown and mismatched rows. This optional lookup is prepared for the next
+diagnostic capture; it has not yet been exercised in a phone attachment.
 
 Generate framepath JSON with `--residency-intervals` and context tracing, then
 add these options to the `hitchcpu.py` command above:

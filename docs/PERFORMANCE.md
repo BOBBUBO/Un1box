@@ -18,6 +18,7 @@ The harness is in [`tools/perf/`](../tools/perf):
 | `guestsyslog.py` | Desktop: the guest's syslog during a headless run (through the app's USB bridge), counted by sender and text. Every line an app writes to stderr becomes a syslogd message the guest has to relay and parse. |
 | `androidsyslog.py` | Android: bounded guest `syslog_relay` capture through the private USB bridge (`--seconds 1..600`). Preserves raw bytes/NULs, receive bounds in Android monotonic time, target/worker identity and completion counts. Message arrival can lag execution or include backlog; receive/frame overlap alone does not establish causation. |
 | `tallypath.py` | Direct `shim-tally` markers within a complete sparse frame-path capture: compares periodic tally post-present intervals with other intervals and lists hitch overlaps. These intervals include guest work and scheduling; they do not time stderr writes alone. |
+| `guestprocs.py` | LLDB snapshot of guest process/task/pmap pointers from the matching kernel, detached after capture. Optional repeatable `--thread 0xADDRESS` reads a selected thread's task and cross-checks its BSD process owner. This optional ownership lookup is prepared but its first phone attachment remains pending; see PROFILING.md for interpretation and lifetime limits. No performance result is attributed to it. |
 | `gameprof.sh` / `inappprof.sh` | `simpleperf` of the `:engine` process during play / swipes: per-thread split, vCPU DSOs and symbols. |
 | `abtimer.sh`, `appab.py`, `scrollab.sh` | Interleaved A/B runs. |
 
