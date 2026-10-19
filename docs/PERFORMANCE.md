@@ -1658,9 +1658,81 @@ rounding/flush settings and a read-only unwound instruction PC in the deferred
 milestone buffer. It records each CPU 0 AArch32 alignment fault's instruction
 PC/address/access/MMU index and retains architectural fault handling. Ordinary
 arithmetic helpers remain unchanged with the switch off. No guest package update.
-Linux/Android builds passed (`audio-path-build.txt`); no tests added/run.
-`audiopath.py` compares the same-worker samples/faults across frame classes.
-Capture/analysis pending; no new optimization or measured speedup.
+Engine `6b9bca678a` reserves 2,097,152 records (80 MiB) only with this diagnostic
+enabled. Linux/Android clean final builds passed (`audio-path-build-final.txt`);
+no tests added/run. Frozen `audio-path.apk` / matching symbols / identity:
+app `27b2da6e`, engine `6b9bca678a`, both clean at freeze; APK SHA-256
+`737170d7946004e59f3806450b181e810c2b2d54c1d8becda79bbe553706c84e`.
+
+One completed 60 s Poco Jetpack title capture, recorder/full accounting/perfmaps
+off, audio and array caching on, other experiments off. Exact monotonic window
+`[448770150215315,448830150215315)`, engine 22846 / vCPU 23005. Same-worker
+post-window debugger snapshot confirms guest PID 14 mediaserverd at CIDR 0xf /
+TTBR0 0xac5d018. Both scenes reviewed, debugger detached, clean Stop/no-qemu/
+baseline restoration confirmed; phone capture data removed after successful pull.
+
+| Mean fps | Ceiling | Median | Low | 1% low | Hitches >50 ms | Skipped |
+| --- | --- | --- | --- | --- | --- | --- |
+| 52.150 | 56 | 52 | 46 | 20.050 | 30 / 1742.444 ms | 0 |
+
+This is a focused diagnostic, **not** an A/B improvement, regression or overhead
+measurement. Arithmetic counters and fault markers can perturb the long-frame
+tail. 1,098,662 complete records, zero dropped/incomplete/write errors, zero late
+publication markers. Perfetto has no error/loss counters, complete state
+coverage, clock-offset spread 261 ns; no initial-state exception needed.
+All 3,187 explicit presents succeed; max overlapping tick lateness 0.692109 ms.
+
+**Conversion bursts:** all **227,042 alignment faults** in the window occur under
+mediaserverd's pmap, all stores to addresses congruent to 2 mod 4 from EL0.
+**223,494** are PC `0x303f4e2c`, with 887 each at `0x303f4e7c`, `0x303f4ec0`,
+`0x303f4ef4`, `0x303f4f18`. Matching local cache symbols name all five as
+AudioCodecs `convertScaledFloatToS16`. The main instruction is `0xe8a10300`,
+`STMIA r1!, {r8,r9}`; local disassembly confirms the preceding packed-PCM steps.
+This identifies the process/function for the previously known alignment-store
+pattern. It does **not** justify repeating the rejected direct unaligned-store
+bypass, which departed from ARM1176 fault behavior and lost throughput.
+
+| Frame class | Frames | mediaserverd running | Share of class execution | Its alignment faults | Its sampled f32 calls |
+| --- | --- | --- | --- | --- | --- |
+| Normal <=20 ms | 2699 | 5113.735 ms | 14.37% | 26,719 | 18,233 |
+| Late 20–50 ms | 399 | 1934.330 ms | 17.60% | 82,400 | 16,324 |
+| Hitch >50 ms | 30 | 860.827 ms | 55.48% | 117,923 | 16,689 |
+
+23 of 30 hitches contain alignment faults. Grouping faults separated by at most
+10 ms yields **41 conversion bursts**, with median start-to-start spacing
+**1494.644 ms**. This grouping is a diagnostic heuristic, not a guest audio
+buffer boundary. Examples span 24–53 ms and contain roughly 4,000–7,000 faults;
+span includes other execution and host waits, not just fault handling time.
+The 97.788 ms hitch ending 10.299930 s contains 6,400 faults and 50.158 ms
+running under mediaserverd. Its latest completed present → flip spans 61.152 ms,
+including 46.920 ms running under that pmap. As before, proximity alone does
+not establish the present's frame identity or a guest scheduler dependency.
+
+**No exceptional-float spike found:** all 51,246 sampled mediaserverd operations
+have zero/normal operands; none have NaN, infinity or subnormal inputs. Only
+7 lack the sticky-inexact/RNE status eligibility check used by hardfloat;
+all seven are multiplies, only one in a hitch. Normal → hitch timer-inclusive
+means: add **178.26 → 184.90 ns**, sub **175.31 → 181.62 ns**, mul
+**203.38 → 208.33 ns**. These compare frame classes, not optimization modes.
+Largest in-hitch sampled call is 1.198 µs. PC unwind succeeds for every sample.
+Hot audio instruction PCs name DCT-IV pre/post-modulation and libvDSP work.
+The observed difference is concentrated batches of work; no sampled individual
+arithmetic call explains a tens-of-ms hitch. Timers dominate such short calls,
+so do not multiply these means by an inferred call count to estimate CPU cost.
+
+All hitch gaps contain 1551.639 ms running, 132.456 ms runnable and 58.349 ms
+sleeping. Audio is a recurring contributor, not a complete explanation for
+every hitch. Next: confirm conversion-burst overlap with lighter fault-only
+tracing, then measure the full architectural alignment-handler round trip and
+the guest scheduling/IO reason for these batches. Preserve sound and faults;
+do not pursue fresh-status/exceptional-float shortcuts on these observations.
+
+Evidence: `build/perf-codex/poco-audio-path-1/` retains raw trace/milestones,
+same-worker process snapshot, `audio.json/txt`, scheduler/residency reports,
+`summary.json`, private converter disassembly and `audio-bursts.png` timeline.
+`audio-path-run.py` and `audio-path-report.py` retain capture/report recipes.
+`audiopath.py` processed the actual complete capture; no tests added/run, no
+new optimization or speedup. Pixel untouched. Stable 60 fps remains unmet.
 
 ### Measured and rejected
 

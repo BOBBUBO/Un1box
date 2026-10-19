@@ -249,6 +249,13 @@ faulting virtual address, access type and MMU index. The architectural fault and
 guest handler still run. Ordinary arithmetic uses the original helpers when
 the switch is off. Half/double precision and other translators are not sampled.
 The deferred milestone buffer remains bounded: reject any dropped records.
+Engine `6b9bca678a` uses 2,097,152 entries (80 MiB) only for this diagnostic,
+enough for boot plus a minute of fault bursts in the completed Poco capture.
+`vfp-sample` packs pre-call metadata/PC in `a`, two operands in `b`, duration
+in `c`; the following `vfp-result` has PC, post-flags/result and measured begin
+time. Both records are appended after the measured call. The analyzer uses
+that explicit interval, not the later append timestamps. Alignment records
+contain PC, virtual address and access-type/MMU index.
 
 After clean Stop, process the same-worker snapshot and complete milestone trace:
 
@@ -268,6 +275,11 @@ include clocks and host descheduling. Sampling is systematic, so preserve
 sample counts and do not treat samples × 1021 as exact per-PC call counts or
 extrapolate these durations into a proven whole-game saving. Use the scheduler
 trace to distinguish descheduling in a slow sampled call.
+The first completed Poco capture identifies fault bursts in mediaserverd's
+`convertScaledFloatToS16` alongside AAC transform work, without exceptional
+FP operands or a large per-call arithmetic delay. See PERFORMANCE.md for
+counts/timings and diagnostic limits; this is not a speedup or justification
+to bypass architectural faults.
 
 ## Sparse frame milestones
 

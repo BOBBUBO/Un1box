@@ -65,7 +65,20 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   f32 add/sub/mul operands/status/call timing with instruction PCs, and all
   CPU 0 AArch32 alignment fault PCs. Linux/Android builds pass. Use the
   same-worker process snapshot and `audiopath.py` to compare frame classes;
-  runtime capture/analysis pending. No new optimization or gain claimed.
+  one real capture/analysis complete on `6b9bca678a`, which provides a bounded
+  80 MiB diagnostic buffer. All 227,042 faults belong to mediaserverd's
+  `convertScaledFloatToS16`; 223,494 at `STMIA r1!, {r8,r9}` PC0x303f4e2c.
+  41 fault bursts (10 ms grouping gap), median spacing 1494.644 ms; 23/30
+  hitches overlap faults. Media normal/hitch execution share 14.37/55.48%.
+  Its 51,246 sampled FP operations have no special inputs, only seven fail
+  status eligibility, largest hitch sample 1.198 us. Concentrated conversion/
+  AAC transform work is the stronger lead than a rare slow FP operation.
+  Diagnostic FPS52.150, ceiling56, median52, low46, 1%low20.050;
+  30 hitches/1742.444 ms, zero skips. This is not an A/B or overhead result.
+  Next: lighter fault-only confirmation, full architectural handler round-trip
+  timing and guest scheduling/IO cause of batching. Keep audio/exception
+  semantics; do not repeat the rejected store bypass. Full exact evidence and
+  timeline in PERFORMANCE.md. No new optimization or gain claimed.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
