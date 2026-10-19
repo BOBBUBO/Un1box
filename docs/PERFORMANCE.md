@@ -1853,9 +1853,44 @@ beginnings additionally record R0–R3, LR, SP and raw CIDR. No guest reads or
 debugger are required. These are fault-time registers, not entry arguments.
 `alignmentlatency.py` validates/retains paired snapshots and preserves old
 captures with zero snapshots. Linux/Android builds pass on app `fb7d8823` /
-engine `950a664438`; runtime confirmation pending. Frozen `alignment-args.apk`
-SHA-256 `96441e68ac637aa834319e447b4b7b6e30b959051541ccf70e3691d016002bd0`.
-Ordinary VFP A/B uses the separate frozen `vfp-mla.apk`, without these probes.
+engine `950a664438`. One completed 60 s Poco capture now confirms the register
+hook: frozen `alignment-args.apk` SHA-256
+`96441e68ac637aa834319e447b4b7b6e30b959051541ccf70e3691d016002bd0`, worker4253 /
+vCPU4557. Same-worker post-window debugger mapping detached successfully and
+identifies mediaserverd PID14, CIDR0x19 / TTBR0 0xb4c1018. Both scenes reviewed as
+Jetpack title with Start profile off; MLA, full accounting and FP diagnostics off.
+Clean Stop/no-qemu/baseline verified. Window `[451807950198739,451867950198739)`
+host monotonic ns;741,558 records, zero drops/incomplete/late publication markers.
+Scheduler validation passes with complete coverage and208ns clock-offset spread.
+
+Diagnostic metrics: mean51.950fps, ceiling58, median52, low46,1%low20.049,
+28 hitches/1570.464ms, zero skipped publications. This is not an optimization
+or instrumentation-overhead A/B. All237,803 faults are again the audio converter;
+41 bursts, median spacing1504.614ms,26/28 hitches overlap faults. Media normal/
+hitch execution share14.70/53.60%. The hitch intervals contain1414.364ms running,
+97.288ms runnable and58.812ms sleeping. No VFP samples/counters.
+
+All1670 sampled handler beginnings/returns match (926 inside the window,
+744 outside), with paired registers and no abandoned/pending/cross-frame samples.
+All926 inside-window snapshots have LR0x303ddc60: matching local disassembly
+confirms `ACMP4AACBaseDecoder::ProduceOutputPackets` called
+`convertScaledFloatToS16`; they share thread0xe02c4220. R2 is always0x3f800000
+(scale1.0); fault-time signed R3 ranges−4..1004, median480. This is a changing
+loop remainder, not an entry buffer length. The caller sets that length from
+decoder fields before the call, so measure actual entries next rather than
+infer packet sizes from fault-time snapshots.
+
+Normal/hitch handler medians are both3.281us; p99 12.865/8.594us. The largest
+sample is1.760052ms and spans multiple installed address spaces:1.185730ms
+running under the media pmap,0.502448ms elsewhere,0.045417ms runnable,
+0.026457ms sleeping. Pmap residency includes kernel/other threads; this is not
+proof that one fault's body became millisecond-scale. Guest thread scheduling
+markers are needed to separate that interruption. Raw/reports:
+`build/perf-codex/poco-alignment-args-1/`, including `callers.json/txt`,
+`alignment-latency.json/txt`, complete frame/scheduler/process data and reviewed
+scenes. No tests run or optimization gain claimed. The selected-PC probe below
+will observe actual decode/convert entries and scheduler boundaries with both
+fault and arithmetic tracing off.
 
 #### Non-fused VFP multiply/add helper experiment (rejected)
 

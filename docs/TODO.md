@@ -114,8 +114,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   or cadence evidence. Next cadence probe must confirm that its entry hook runs.
   Instead, the existing sampled alignment hook now records fault-time R0–R3,
   LR/SP/CIDR without debugger or guest memory reads. The analyzer validates and
-  retains paired snapshots. Linux/Android builds pass; capture pending. VFP A/B remains
-  completed on its frozen APK with diagnostics off.
+  retains paired snapshots. Linux/Android builds pass; one capture confirms
+  1670/1670 matched pairs,926 window samples all with paired registers from
+  one thread and AAC `ProduceOutputPackets` caller. Scale is1.0; fault-time R3
+  is a changing remainder, not entry buffer length.237,803 faults /41 bursts,
+  median spacing1504.614ms;26/28 hitches overlap. Media normal/hitch share
+  14.70/53.60%. Handler medians3.281/3.281us; max1.760052ms includes execution
+  across several pmaps, so guest thread scheduling attribution is still needed.
+  Diagnostic mean51.950,ceiling58,median52,low46,1%low20.049;
+  hitches28/1570.464ms,zero skips. Complete scheduler/events, scenes and clean
+  Stop/baseline verified. No optimization gain claimed. VFP A/B completed
+  separately on its frozen APK with diagnostics off.
   Next approach: selected guest PC snapshots (`ab08a5d277`, default-off
   `LT_GUEST_TRACE_PC`), observing scheduler transitions and decode boundaries
   with faults/arithmetic diagnostics off. Initial and clean final Linux/Android
