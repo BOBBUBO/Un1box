@@ -13,7 +13,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Linux/Android builds pass; first phone capture/analyzer exercise pending.
   No speedup or exact driver-call cause claimed; ordinary comparisons keep off.
 
-- [ ] Measure bounded vCPU0 BQL spin (`23041226e7`, default-off LT_BQL_SPIN=on).
+- [x] Measure bounded vCPU0 BQL spin (`23041226e7`, default-off LT_BQL_SPIN=on).
   Short observed sleeps preceding long idle wakes justify trying a50us spin
   on contended acquisition before the original blocking call. Uncontended
   path has no clock reads; other threads keep blocking; off keeps the original
@@ -22,8 +22,18 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   and outcomes. Linux/Android builds pass; frozen bql-spin.apk/identity retained.
   Ordinary three60s pairs launched on/off,off/on,on/off, native attribution /
   other diagnostics/accounting/user recorder off, flags/cacheoff,arrayson.
-  Ceiling/median/low/1%low/hitches/durations and benefit not yet established;
-  keep default off. Source and full provenance in PERFORMANCE.md.
+  Three pairs complete. Mean53.617/53.300/53.350→57.567/57.683/57.167fps;
+  ceiling58→60 and median54→58 throughout;low48/48/50→52/54/52;
+  1%low28.129/27.959/28.221→29.247/29.033/28.997;
+  hitches9/8/13→0/1/7;full durations476.106/403.070/690.576→0/50.311/360.425ms.
+  Aggregate53.422→57.472fps(+7.58%),30→8hitches,
+  1569.752→410.736ms/180s/mode. Every pair improves throughput and hitching;
+  1%lows still reflect~34ms frames, stable60 remains unmet. All12scenes reviewed,
+  nice0/CFS/sameTID confirmed,zero skippedpublications,serial28good,
+  cleanStop/no-qemu/exactbaseline restored. Hook unchanged in all on arms;
+  93.73–94.41% whole-worker contentions acquired during spin (not window counts).
+  Keep experimental default off pending remaining pacing/broader behavior.
+  Source, exact windows and every hitch in PERFORMANCE.md / bql-spin-game-results.json.
 
 - [x] Attribute the native waits preceding delayed host wakes. Engine
   `bd8af24c10` adds default-off `LT_NATIVE_WAIT_PROF=on`, requiring LT_FRAME_PATH.
@@ -60,7 +70,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Example successful wake13.594us,IPI entry1662.292us,idle exit1663.958us,
   vCPUexecution1668.594us after sched_waking. Strong host wake/idle-exit lead,
   exact kernel/firmware mechanism unproven; IPI masks/reasons not decoded.
-  Identify the originating native waits next before a bounded mitigation.
+  Native attribution above now identifies the originating waits; the bounded
+  BQL comparison improves mean53.422→57.472fps and hitches30→8/180s per mode.
+  Exact host wake mechanism and remaining guest/present delays remain open.
   Diagnostic mean54.183,ceiling58,median54,low50,1%low28.426,hitches4/203.097ms,
   zero skips, no trace loss, clockspread156ns. Both scenes reviewed, clean
   Stop/no-qemu/exact baseline restored. Artifacts poco-hitch-wake-1/.

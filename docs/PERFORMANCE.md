@@ -2722,7 +2722,7 @@ ceiling/median/low/1%low/hitch count/duration improvement is claimed. User
 recorder and this diagnostic remain off during ordinary BQL comparisons;
 their frozen APK is unchanged. No test suites added/run.
 
-#### Bounded vCPU0 BQL spin (ordinary comparison in progress)
+#### Bounded vCPU0 BQL spin (ordinary comparison complete)
 
 Engine `23041226e7` adds default-off `LT_BQL_SPIN=on`. Only vCPU0 tries a
 contended BQL for a50us clock budget before the original blocking call. The
@@ -2743,8 +2743,52 @@ SHA256 `b6de1bb3770f4c811e9922fbb1aea81f2fa37c06119c030123eb565d07b387b5`;
 identity/symbols in `bql-spin-build-identity.json`. Same-APK ordinary Jetpack
 comparison launched in on/off,off/on,on/off order,60s each after50s title
 settling, other experiments fixed off and array caching on. No completed A/B
-result or ceiling/median/low/1%low/hitch count/duration improvement yet. Keep
-default off pending complete results. No test suites added/run.
+result was available at launch. Completed results follow. No test suites added/run.
+
+**Ordinary comparison complete:** Snapdragon 865-class Poco F3, serial28 guest
+tools, same frozen APK/package, three60s pairs in on/off,off/on,on/off order.
+Each title scene settled50s. Only LT_BQL_SPIN changed. Native wait attribution,
+all other diagnostics/accounting and the user recorder stayed off; hflags and
+host-PC cache off, array cache on, display priority off. The same vCPU TID,
+nice0/CFS were verified at both boundaries of every arm. All twelve before/end
+scenes reviewed as the Jetpack title with Start profile off; zero skipped
+publications in all six windows.
+
+| Ordinary Jetpack, off → on | Pair1 | Pair2 (reversed) | Pair3 |
+| --- | --- | --- | --- |
+| Mean fps | 53.617 → 57.567 | 53.300 → 57.683 | 53.350 → 57.167 |
+| Ceiling fps | 58 → 60 | 58 → 60 | 58 → 60 |
+| Median fps | 54 → 58 | 54 → 58 | 54 → 58 |
+| Low fps | 48 → 52 | 48 → 54 | 50 → 52 |
+| 1% low fps | 28.129 → 29.247 | 27.959 → 29.033 | 28.221 → 28.997 |
+| Hitches >50ms | 9 → 0 | 8 → 1 | 13 → 7 |
+| Full hitch duration, ms | 476.106 → 0 | 403.070 → 50.311 | 690.576 → 360.425 |
+| Longest gap, ms | 67.815 → 49.318 | 51.527 → 50.311 | 67.409 → 52.947 |
+
+Aggregate mean **53.422 → 57.472fps (+7.58%)**. Hitches **30 → 8**, full duration
+**1569.752 → 410.736ms per180s per mode**. Throughput, low and hitch count/duration
+improve in every pair. This supports a repeatable benefit from avoiding short
+BQL sleeps and their delayed host wakeups on this host/scene. It does not
+identify the precise kernel/firmware wake mechanism. Pair3 retains seven
+50–53ms gaps; even the first enabled arm's longest gap is49.318ms. The 1% lows
+still correspond to roughly34ms frames: **stable60fps/good1% lows remain unmet**.
+No Pixel or other-game benefit has been measured. Keep the experimental switch
+default off while investigating remaining frame pacing and broader behavior.
+
+Whole-worker enabled outcomes (contended/acquired/fallback) are
+107919/101889/6030,106056/99411/6645,108190/101699/6491; all hooks unchanged,
+93.73–94.41% acquired during spin. These counts include boot/settling and must
+not be treated as counts for the60s frame windows. No spin outcomes in off arms.
+Clean Stop/no-qemu/exact baseline restoration confirmed; serial28 verdict good
+in every arm. Pixel disconnected and untouched.
+
+Evidence: `build/perf-codex/poco-bql-spin-game-{1,2,3}-{off,on}/`, frozen
+`bql-spin-build-identity.json`, `bql-spin-game-results.json` (exact windows and
+every hitch's bounds/duration), reviewed `bql-spin-game-scenes.png`, runner
+`bql-spin-game-run.py` and analyzer `bql-spin-game-analyze.py`. The later AHB
+stage build did not replace this comparison's APK. Next use focused stage /
+scheduler captures to separate remaining present waits, including ~33ms gaps;
+retain the standard >50ms threshold for ordinary benchmark reporting.
 
 #### Android vCPU display priority (runtime measurements pending)
 
