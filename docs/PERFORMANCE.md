@@ -1188,11 +1188,38 @@ app `b636084a`, engine `6a71c1842f`. APK SHA256:
 `c133324d9064025139861d413df894703d854f4e6c2115838bf9c5363ee182d4`.
 Library SHA256: `93fe8be855d7ac586ecd38f548376a0567d28b7cd85fbb8b042c7c90b2ef88fe`.
 
-Focused runner/analyzer `ibtc-l2-run.py` / `ibtc-l2-analyze.py` are prepared only,
-not started. The combined comparison is complete; prioritize masked-check and
-CPU-only IRQ-delivery comparisons before assigning this experiment the phone. No hit rate, local saving,
-FPS or pacing result established; keep off pending direct timings and ordinary
-diagnostic-off comparisons. Settings/fields are documented in PROFILING.md.
+Focused runner/analyzer `ibtc-l2-run.py` / `ibtc-l2-analyze.py` started after the
+completed IRQ-delivery comparison's exact process exit and successful cleanup
+marker. Two 35 s pairs off/on, on/off; array cache on, L2 profiler on both, other
+experiments/diagnostics and the recorder/full accounting off. First pair complete;
+reverse pair running. Both final title scenes reviewed, recorder off, zero skips;
+six complete contiguous five-second timing blocks wholly inside each frame window.
+
+| First-pair metric | Off → on |
+| --- | --- |
+| Helper attempts/s | 495125 → 460796 |
+| L2 hit rate | 0 → 67.166% |
+| Sampled mean / median block mean (ns) | 526.62 / 522.45 → 497.65 / 497.42 |
+| Hit / fallback sampled mean (ns) | — / 526.62 → 438.86 / 618.30 |
+| Max completed sample (µs) | 200.31 → 60.47 |
+| Diagnostic mean / ceiling / median / low fps | 51.46 / 56 / 52 / 44 → 52.09 / 56 / 52 / 48 |
+| Diagnostic 1% low fps | 19.98 → 28.11 |
+| Hitches (>50 ms) per 35 s | 20 (1272.3 ms) → 10 (557.6 ms) |
+
+Sampled mean drops **5.5%**, a small local saving with a useful hit rate. These
+timings include clocks/descheduling, not an estimate of whole-game savings; the
+slightly higher diagnostic FPS does not establish a repeatable gain. Retain the
+baseline outlier (max 200.31 µs). Keep off pending the reverse pair and separate
+ordinary comparisons. Three profiler-off 30 s pairs off/on, on/off, off/on are
+queued behind the exact live focused PID/starttime and successful clean-stop
+marker (`ibtc-l2-ordinary-run.py`); no overlapping phone measurements.
+
+First-pair exact half-open frame windows (monotonic ns): off
+`[435394732365677, 435429732365677)`, on
+`[435574134564567, 435609134564567)`. Selected timing windows: off
+`[435394938718594, 435424945707645]`, on
+`[435578795467326, 435608811278408]`. `ibtc-l2-results.json` retains all timing
+blocks, exact frame bounds and every hitch. Settings/fields are in PROFILING.md.
 
 ### Measured and rejected
 

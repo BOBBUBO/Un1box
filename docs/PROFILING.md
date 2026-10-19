@@ -149,8 +149,11 @@ enable full accounting, BQL tables or the manual recorder.
 Compare hit rate and direct helper costs in interleaved off/on pairs with profiling
 on in both, then use separate diagnostic-off ordinary FPS pairs. Do not extrapolate
 sample timings to whole-game savings or treat diagnostic FPS as an ordinary baseline.
-Runtime measurement is pending; the local runner started its first off arm after
-IRQ-delivery process exit plus its successful clean-stop marker.
+First focused pair complete, reverse running: hit rate 67.166%, sampled mean
+526.62 → 497.65 ns (−5.5%), hit/fallback 438.86/618.30 ns on. Diagnostic FPS
+51.46 → 52.09 with fewer hitches; no repeatable game improvement established.
+Both title scenes reviewed, zero skips. Three ordinary profiler-off pairs queued
+behind exact focused process identity and its successful clean-stop marker.
 
 ## Focused GL presentation stages
 

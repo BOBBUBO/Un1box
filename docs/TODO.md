@@ -83,9 +83,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `LT_IBTC_L2_PROF` counts hits/attempts and samples one in 256 helper calls.
   Linux/Android builds pass, frozen `ibtc-l2-pcrel.apk`/symbols/identity retained. Focused
   runner/analyzer started after exact IRQ-delivery process exit and successful
-  clean-stop marker. First off arm launching; only one phone runner may proceed.
-  No runtime results yet; completed delivery comparison has no diagnostic pacing win.
-  No measured hit rate/local/FPS/pacing saving yet. Details in PERFORMANCE/PROFILING.
+  clean-stop marker. First off/on pair complete, reverse pair running. Both title
+  scenes reviewed, zero skips, six contiguous complete timing blocks per arm:
+  67.166% hit rate; sampled mean 526.62 → 497.65 ns (−5.5%), median block mean
+  522.45 → 497.42 ns. Hit/fallback means 438.86/618.30 ns on, fallback 526.62 ns
+  off. Max sample 200.31 → 60.47 µs retained. Diagnostic mean 51.46 → 52.09 fps,
+  ceiling 56 → 56, median 52 → 52, low 44 → 48, 1% low 19.98 → 28.11;
+  hitches 20 → 10, 1272.3 → 557.6 ms per 35 s. No repeatable game gain claimed.
+  Keep off; three profiler-off ordinary pairs queued behind exact live focused
+  process and successful cleanup marker. Exact bounds/raw evidence in PERFORMANCE.md.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
