@@ -2722,6 +2722,58 @@ ceiling/median/low/1%low/hitch count/duration improvement is claimed. User
 recorder and this diagnostic remain off during ordinary BQL comparisons;
 their frozen APK is unchanged. No test suites added/run.
 
+**First stage capture complete:** Poco worker31360/vCPU31520, spin on, native
+wait tracing off, AHB stages + sparse milestones/scheduler/IRQ/idle on; other
+diagnostics/accounting/user recorder off. Frozen ahb-path.apk SHA256
+`06a5e014e89f5c9a7ade979b07eea4fc7297e78eae5cecf82b145bce218832cd`, runtime
+app66607fea / engine669353072a. Both title scenes reviewed with Start profile
+off; same TID/nice0/CFS at both boundaries, good28 verdict. Clean Stop/no-qemu /
+exact baseline restored; own phone trace/milestones removed after pulling.
+
+Diagnostic metrics: mean58.167,ceiling60,median58,low54,1%low29.476;
+one51.766ms hitch,zero skipped publications. These are not an A/B speedup or
+diagnostic-overhead measurement. All141506 milestone records complete, no
+drops/incomplete/write errors or late publications. All3527 in-window presents
+and all map/unmap results succeed. Trace has no error/data loss and complete
+scheduler coverage, clock spread104ns. The strict initial analysis rejects an
+open first scheduler row; the explicit existing superseded-initial-state mode
+accepts it only after verifying the next finite state ends before the frame
+window. That row and exception remain in both scheduler reports. Initial plot
+attempts lacked matplotlib in the default Python; final analyses/charts completed
+successfully with /usr/bin/python3. No new device measurement for these retries.
+
+| Stage,3527calls each | Wall ms | Running ms | Sleeping ms | Runnable ms (R; R+ separate) | Median us | p99 us | Max us |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| glFinish | 705.373 | 26.630 | 346.354 | 332.389 | 4.792 | 1890.365 | 2722.396 |
+| AHardwareBuffer_describe | 7.344 | 7.290 | 0 | 0 (R+0.054) | 1.927 | 3.542 | 77.864 |
+| AHardwareBuffer_lock | 542.473 | 284.558 | 81.579 | 176.307 (R+0.029) | 79.688 | 1874.844 | 4142.968 |
+| AHardwareBuffer_unlock | 202.338 | 102.101 | 51.084 | 49.154 | 26.875 | 1640.990 | 3859.271 |
+
+Whole-window vCPU states:47949.701ms running,5698.580ms sleeping,
+6349.958ms runnable R,1.493ms preempted R+,0.268ms D. The marked stages account
+for only557.851ms of R, despite their long tails. In the single >50ms gap,
+all three selected>=1ms runnable intervals/4.917ms are outside surface presents.
+For a separate diagnostic threshold of30ms,106 gaps contain202 selected long
+runnable intervals:20/24.286ms within glFinish,6/9.219ms within mapping, and
+176/279.002ms outside the entire surface present. No long interval in unlock
+is selected within these gaps. This identifies some exact operations containing
+waits; it does not prove a driver defect or explain most residual gaps.
+
+Next attribute the outside-present waits while preserving spin. Engine
+`77a6f34c02` adds `LT_NATIVE_WAIT_PROF=conditions`: only original condition waits
+are interposed, both mutex function pointers stay intact and are checked at
+cleanup. Full mode retains its refusal of preexisting interposers; off remains
+unchanged. The existing80MiB trace capacity also applies to conditions mode.
+Linux/Android builds pass; a separate conditions+AHB+spin capture has started,
+user recorder off. No new optimization or performance gain claimed.
+
+Evidence: `build/perf-codex/poco-ahb-path-1/` retains trace, exact frame window,
+engine log/identity, reviewed scenes, completed milestones, hitch-50/30.json/txt
+and charts, stages-50/30.json/txt (raw input hashes, all in-window stages and
+per-gap clipping). `ahbpath.py` processed this real capture successfully.
+Runner ahb-path-run.py, identity ahb-path-build-identity.json. No test suites
+added/run; Pixel disconnected/untouched.
+
 #### Bounded vCPU0 BQL spin (ordinary comparison complete)
 
 Engine `23041226e7` adds default-off `LT_BQL_SPIN=on`. Only vCPU0 tries a

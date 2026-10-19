@@ -684,7 +684,18 @@ matches selected long in-hitch runnable intervals to their enclosing operation.
 It also retains stages clipped to each long frame. Wall times include clock
 overhead and descheduling. Enclosure locates a wait; it does not prove a driver
 defect. Keep this diagnostic and the user recorder off for ordinary benchmarks.
-Linux/Android builds pass; the first stage capture is pending.
+Linux/Android builds pass; first real capture/analyzer complete. See PERFORMANCE.md:
+26 of202 selected long runnable intervals in >30ms gaps are in glFinish/map;
+the other176 are outside surface presents. These remain diagnostic thresholds,
+not a change to ordinary >50ms hitch reporting. Remaining waits need attribution.
+
+`LT_NATIVE_WAIT_PROF=conditions` (engine `77a6f34c02`) can coexist with the
+BQL-spin experiment and these stages. It instruments only original condition
+waits, preserves both mutex hook pointers and checks them again at shutdown.
+Existing condition interposers cause refusal. Use nativewaits.py for the same
+worker and scheduler report; durations still include mutex reacquisition.
+This mode uses the80MiB bounded trace. Full native mode retains its refusal of
+preexisting mutex hooks. The first combined condition capture is in progress.
 
 `LT_GLES_PRESENT_PROF=on` (engine `5b38fec1df`) independently times surface presentations. It defaults
 off and needs neither the manual recorder, `IT_GLES_PROF`, nor full accounting.

@@ -10,8 +10,20 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   glFinish/describe/map/unmap boundaries retain buffer/status. Producers only
   append bounded memory; output deferred until Stop, original synchronization
   preserved. `ahbpath.py` joins stages to scheduler states and long frames.
-  Linux/Android builds pass; first phone capture/analyzer exercise pending.
-  No speedup or exact driver-call cause claimed; ordinary comparisons keep off.
+  Linux/Android builds pass; first capture/analyzer complete, spinon. Stage
+  running/sleeping/runnable times in PERFORMANCE.md; glFinish/map/unmap all
+  have long tails, but only557.851ms of6349.958ms whole-window R is inside stages.
+  Separate30ms threshold:106 gaps/202long runnable intervals;20/24.286ms within
+  glFinish,6/9.219ms within map,176/279.002ms outside entire surface presents.
+  Standard50ms:one51.766ms gap,all3long runnable intervals outside presents.
+  Diagnostic mean58.167,ceiling60,median58,low54,1%low29.476,zero skips;
+  no A/B speedup/overhead claim.141506complete records/no loss,clockspread104ns,
+  validated pre-window superseded initial scheduler row retained in reports.
+  Both scenes reviewed,Stop/no-qemu/exactbaseline restored,good28.
+  Engine77a6f34c02 adds native conditions-only tracing, mutex hooks unchanged,
+  compatible with spin; builds pass, first conditions+AHB+spin capture running.
+  Attribute remaining outside-present waits next; ordinary comparisons keep
+  diagnostics off. Evidence poco-ahb-path-1/ and stage reports.
 
 - [x] Measure bounded vCPU0 BQL spin (`23041226e7`, default-off LT_BQL_SPIN=on).
   Short observed sleeps preceding long idle wakes justify trying a50us spin
