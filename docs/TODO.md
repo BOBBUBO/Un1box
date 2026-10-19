@@ -79,6 +79,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   timing and guest scheduling/IO cause of batching. Keep audio/exception
   semantics; do not repeat the rejected store bypass. Full exact evidence and
   timeline in PERFORMANCE.md. No new optimization or gain claimed.
+  `c5cc5be3b9` now implements fault-only mode and optional matched, sampled
+  architectural fault/return markers (`LT_ALIGNMENT_PATH_PROF=on|returns`).
+  `alignmentlatency.py` splits same-worker intervals by scheduler state while
+  retaining failed/outside-window matches. Runtime confirmation pending.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

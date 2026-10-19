@@ -49,6 +49,10 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   compares default-off `LT_AUDIO_PATH_PROF` sampled f32 operands/status/timings
   and exact alignment fault PCs across frame classes. Optional matching guest
   symbols name the code. See PROFILING.md for sampling and timing limits.
+- `alignmentlatency.py EVENTS AUDIO_JSON FRAMEPATH_JSON SCHEDULER_JSON` joins
+  optional `LT_ALIGNMENT_PATH_PROF=returns` sampled fault/return pairs to host
+  scheduler states. `LT_ALIGNMENT_PATH_PROF=on` records only faults, leaving
+  arithmetic helpers and their counters untouched. See PROFILING.md for scope.
 - `framepath.py MILESTONES FRAMES --json OUT` joins default-off `LT_FRAME_PATH`
   engine milestones to frontend publications by serial, retaining guest presents,
   LCD flips/ticks and frontend lag for each hitch. Pull milestones after clean Stop.

@@ -281,6 +281,41 @@ FP operands or a large per-call arithmetic delay. See PERFORMANCE.md for
 counts/timings and diagnostic limits; this is not a speedup or justification
 to bypass architectural faults.
 
+### Alignment faults without floating-point instrumentation
+
+Engine `c5cc5be3b9` adds default-off `LT_ALIGNMENT_PATH_PROF=on` for alignment
+markers alone. Keep `LT_AUDIO_PATH_PROF=off`: generated arithmetic then uses
+the ordinary helpers, with no VFP sampling counters. Use the same context,
+frame and scheduler capture/process snapshot workflow above. `audiopath.py`
+can analyze a trace containing faults and zero VFP samples.
+
+`LT_ALIGNMENT_PATH_PROF=returns` additionally samples one in 257 CPU 0 EL0
+ARM-state alignment faults and brackets the architectural handler. Each
+`alignment-begin` stores a unique ID, privileged thread register (low two bits
+masked) plus fault PC, and raw TTBR0. A translation-selected exception-return
+wrapper first performs the original CPSR/PC/hflags update, then matches thread,
+TTBR0, CIDR, ARM state and exact PC+4. Its `alignment-return` has the same ID,
+thread/return PC and TTBR0. A bounded 64-entry pending table allows guest
+context switches; failed returns/new faults/table exhaustion emit explicit
+`alignment-abandon` reasons 2/1/3. Thumb faults remain counted but untimed.
+No pending table or return wrapper runs with the switch off or in fault-only mode.
+
+```sh
+python3 tools/perf/alignmentlatency.py events.tsv audio.json milestones.json scheduler.json \
+    --json alignment-latency.json
+```
+
+Generate `audio.json` with `audiopath.py`, milestones with
+`framepath.py --residency-intervals`, and scheduler JSON with
+`hitchsched.py --all-states` from this same worker/window. The latency analyzer
+checks hashes/identities, preserves unmatched/outside/cross-frame samples, and
+splits observed durations into target-pmap execution, all execution, runnable
+and sleeping time. The interval begins **after** restoring fault state and
+ends after the original exception-return helper: it excludes the triggering
+memory probe/state unwind and includes diagnostic/wait time. Target-pmap time
+can still include other guest threads; a pmap is not a thread execution trace.
+Runtime confirmation pending; these are diagnostics, not optimizations.
+
 ## Sparse frame milestones
 
 `LT_FRAME_PATH=/absolute/host/path.tsv` (engine `78eaa87497`, default off)

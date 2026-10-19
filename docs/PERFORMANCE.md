@@ -1734,6 +1734,20 @@ same-worker process snapshot, `audio.json/txt`, scheduler/residency reports,
 `audiopath.py` processed the actual complete capture; no tests added/run, no
 new optimization or speedup. Pixel untouched. Stable 60 fps remains unmet.
 
+#### Lighter fault tracing and architectural return timing
+
+Engine `c5cc5be3b9` adds default-off `LT_ALIGNMENT_PATH_PROF=on` for fault-only
+markers with original arithmetic helpers and no FP counters. Optional `returns`
+mode additionally brackets one in 257 CPU 0 EL0 ARM faults, matching privileged
+thread register, TTBR0, CIDR and exact next instruction at exception return.
+The original architectural handler/return runs. Unmatched/new-fault/overflow
+cases are observable, and the pending table is bounded. Default/fault-only
+generated exception-return code uses the original helper.
+`alignmentlatency.py` joins matched intervals to the same scheduler timeline;
+time excludes triggering access/unwind and includes waits/diagnostic work.
+Initial Linux/Android builds pass (`alignment-path-build.txt`); clean final
+build/captures pending. No tests added/run or speedup claimed.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,
