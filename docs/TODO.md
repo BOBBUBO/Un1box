@@ -45,8 +45,22 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   11 hitches/616.772 ms, zero skips. Host runnable delays remain a separate
   lead. One old publication marker is late outside every hitch boundary;
   explicit legacy analysis preserves it. `c0347336e6` orders future markers
-  inside the frame lock; Linux/Android builds passed, phone capture pending.
+  inside the frame lock; Linux/Android builds passed, subsequent phone captures
+  below contain zero late publication markers.
   Full evidence/limitations in PERFORMANCE.md; no speedup claimed.
+  Same-worker process mapping now works (`6d87d27dc8`, opt-in loopback guest
+  debugger attached only after capture). Two new captures identify the recurring
+  third task as mediaserverd: normal/hitch execution shares 16.47/39.89% and
+  14.65/27.74%. One present-to-flip interval includes 25.612 ms under its pmap.
+  Captures: mean 52.683/55.067, ceiling 58/58, median 52/56, low 48/50,
+  1% low 28.047/28.539; 9 hitches/473.829 ms and 5/257.218 ms, zero skips.
+  Diagnostic modes differ; this is not an improvement comparison. Capture 2's
+  61 mediaserverd hitch samples nominate stereo sample-rate conversion, native
+  float arithmetic and guest alignment handling. Next: focused timing of float
+  paths and fault PCs, preserving audio and exception semantics; sparse samples
+  alone do not justify retrying rejected experiments. Named guest code and
+  process-aware analysis tools now exist. Full provenance/data caveat in
+  PERFORMANCE.md (one superseded initial scheduler row outside the window).
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

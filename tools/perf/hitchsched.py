@@ -31,6 +31,8 @@ def main():
                     help="also align recorded CPU frequencies with running intervals")
     ap.add_argument("--all-states", action="store_true",
                     help="retain whole-window vCPU state intervals for address-space residency analysis")
+    ap.add_argument("--allow-superseded-initial-state", action="store_true",
+                    help="report/exclude an open trace-initial row only if superseded before the frame window")
     args = ap.parse_args()
     if args.secs <= 0 or args.hitch_ms <= 0:
         ap.error("duration and hitch threshold must be positive")
@@ -78,10 +80,19 @@ def main():
                    "w.name AS waker_name FROM thread_state s LEFT JOIN thread w "
                    f"ON s.waker_utid=w.utid WHERE s.utid={int(cpu['utid'])} "
                    f"AND s.ts<{b} AND (s.dur=-1 OR s.ts+s.dur>{a}) ORDER BY s.ts")
-    intervals = []
+    intervals, superseded_initial = [], []
     for row in states:
         ts, dur = int(row["ts"]), int(row["dur"])
         if dur < 0:
+            if args.allow_superseded_initial_state and ts < a and not superseded_initial:
+                initial = query("SELECT ts,dur,state FROM thread_state "
+                                f"WHERE utid={int(cpu['utid'])} ORDER BY ts LIMIT 2")
+                if (len(initial) == 2 and int(initial[0]["ts"]) == ts and
+                        int(initial[0]["dur"]) == -1 and int(initial[1]["dur"]) > 0 and
+                        int(initial[1]["ts"]) + int(initial[1]["dur"]) <= a):
+                    superseded_initial.append(dict(raw=row, next_observed_state=initial[1],
+                                                    inferred_end_ns=int(initial[1]["ts"])))
+                    continue
             ap.error("incomplete scheduler interval in the frame window")
         row.update(ts=ts, end_ns=ts + dur)
         if intervals and ts < intervals[-1]["end_ns"]:
@@ -168,6 +179,9 @@ def main():
                                    "hitches", "hitch_ms", "skipped")}, hitches=hitches)
     if args.all_states:
         report["vcpu_states"] = intervals
+    report["superseded_initial_states"] = superseded_initial
+    if superseded_initial:
+        print("WARNING: open trace-initial state superseded before the frame window:", superseded_initial)
     print(f"Selected vCPU TID {cpu['tid']}; clock offset {offset} ns, spread {spread} ns.")
     print("No trace error/data-loss counters; complete scheduler coverage of frame window.")
     print("vCPU window ms:", window["ms"])

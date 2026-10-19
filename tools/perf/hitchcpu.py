@@ -18,6 +18,7 @@ import sys
 
 from framestats import parse
 from guestpc import PerfMap
+from guestsymbols import GuestSymbols
 
 
 def main():
@@ -31,12 +32,44 @@ def main():
     ap.add_argument("--build-identity", type=Path, required=True,
                     help="frozen build JSON containing library_sha256")
     ap.add_argument("--nm", default="llvm-nm")
+    ap.add_argument("--milestones", type=Path,
+                    help="same capture's framepath JSON with --residency-intervals")
+    ap.add_argument("--guest-processes", type=Path,
+                    help="post-capture proc/pmap snapshot with capture engine_pid")
+    ap.add_argument("--guest-kernel", type=Path)
+    ap.add_argument("--guest-cache", type=Path)
     ap.add_argument("--simpleperf-dir", type=Path,
                     default=Path.home() / "Android/Sdk/ndk/28.2.13676358/simpleperf")
     ap.add_argument("--json", type=Path)
     args = ap.parse_args()
     scheduler = json.loads(args.scheduler.read_text())
     pid, tid = scheduler["engine_pid"], int(scheduler["vcpu"]["tid"])
+    if bool(args.guest_kernel) != bool(args.guest_cache):
+        ap.error("guest symbols require both --guest-kernel and --guest-cache")
+    guest_symbols = GuestSymbols(args.guest_kernel, args.guest_cache) if args.guest_kernel else None
+    addresses, address_times, address_groups, process_tables = [], [], {}, {}
+    if args.milestones:
+        milestones = json.loads(args.milestones.read_text())
+        if milestones["window"] != {k: scheduler["window"][k]
+                                    for k in ("begin_ns", "end_exclusive_ns")}:
+            ap.error("milestone and scheduler windows differ")
+        addresses = milestones.get("address_space_timeline", [])
+        if not addresses:
+            ap.error("milestones need framepath --residency-intervals and context tracing")
+        address_times = [e["ns"] for e in addresses]
+    if args.guest_processes:
+        if not args.milestones:
+            ap.error("process attribution requires --milestones")
+        processes = json.loads(args.guest_processes.read_text())
+        if processes.get("engine_pid") != pid or not processes.get("detached"):
+            ap.error("guest snapshot needs this engine_pid and confirmed debugger detach")
+        if guest_symbols and processes["kernel_sha256"] != guest_symbols.hashes["kernel"]:
+            ap.error("guest snapshot and symbol kernel differ")
+        table_mask = ~((1 << processes["ttbr0_alignment_bits"]) - 1)
+        for row in processes["processes"]:
+            if row["ttbr0"] in process_tables:
+                ap.error("process snapshot has ambiguous page-table identity")
+            process_tables[row["ttbr0"]] = row
     identity = json.loads(args.build_identity.read_text())
     digest = hashlib.sha256(args.engine_symbols.read_bytes()).hexdigest()
     if digest != identity["library_sha256"]:
@@ -79,7 +112,8 @@ def main():
             if pc is not None:
                 # These are address regions, not a guest process identification.
                 region = "guest-high-address" if pc >= 0x80000000 else "guest-low-address"
-                return region, f"guest:0x{pc:08x}"
+                label = guest_symbols.lookup(pc) if guest_symbols else None
+                return region, f"guest:{label}" if label else f"guest:0x{pc:08x}"
             return f"anonymous-{state}", f"anonymous-{state}"
         if symbol.dso_name.endswith("/libqemu-arm.so"):
             category = "engine"
@@ -142,6 +176,22 @@ def main():
             accumulate(classes.setdefault(interval["category"], {}), category, name,
                        sample.period, chain)
             accumulate(interval, category, name, sample.period, chain)
+            if addresses:
+                address_index = bisect.bisect_right(address_times, sample.time) - 1
+                # Avoid assigning a sample interrupted inside the register-write
+                # helper to one of its short-lived transitional register pairs.
+                near_boundary = address_index < 0 or sample.time - address_times[address_index] <= 10_000
+                if address_index + 1 < len(address_times):
+                    near_boundary |= address_times[address_index + 1] - sample.time <= 10_000
+                if near_boundary:
+                    key, process = "address-boundary/unknown", None
+                else:
+                    row = addresses[address_index]
+                    key = f"cidr=0x{row['a']:x},ttbr0=0x{row['b']:x}"
+                    process = process_tables.get(row["b"] & table_mask) if process_tables else None
+                group = address_groups.setdefault(key, dict(process=process, classes={}))
+                accumulate(group["classes"].setdefault(interval["category"], {}), category, name,
+                           sample.period, chain)
     finally:
         lib.Close()
     if first is None or first > begin or last < frames[-1][0]:
@@ -151,6 +201,8 @@ def main():
                   window=scheduler["window"], classes=classes, intervals=intervals,
                   first_sample_ns=first, last_sample_ns=last,
                   before_map_entries=len(before.records), after_map_entries=len(after.records))
+    report["address_spaces"] = address_groups
+    report["guest_symbol_input_sha256"] = guest_symbols.hashes if guest_symbols else None
     for label, group in classes.items():
         total = group["event_weight_ns"]
         print(f"{label}: {group['samples']} samples; {total / 1e6:.3f} ms event weight")
@@ -162,8 +214,18 @@ def main():
         if interval["category"] == "hitch":
             print(f"Hitch ending {(interval['end_ns'] - begin) / 1e9:.3f}s: "
                   f"{interval['ms']:.3f} ms, {interval.get('samples', 0)} samples")
+    for key, address in address_groups.items():
+        print(f"Address space {key}: {address['process']}")
+        for label, group in address["classes"].items():
+            print(f"  {label}: {group['samples']} samples:")
+            total = group["event_weight_ns"]
+            for name, weight in group["self"].most_common(12):
+                print(f"    {100 * weight / total:6.2f}% {name}")
     print("Sparse per-hitch samples are leads, not proof of a culprit. Inclusive rows overlap.")
-    print("Guest address regions do not identify a process; unstable/unmapped PCs are excluded.")
+    print("Guest address regions alone do not identify a process; unstable/unmapped PCs are excluded.")
+    if addresses:
+        print("Address-space groups include kernel/native work; samples within 10 us of a change are separate.")
+        print("Process names are post-capture pmap matches, not per-sample guest thread identities.")
     if args.json:
         args.json.write_text(json.dumps(report, indent=2) + "\n")
 

@@ -1558,6 +1558,97 @@ Next: map key 5 to a guest process, then locate its expensive work and the
 render-to-flip dependency; separately investigate the host runnable delays.
 Pixel untouched. No tests added/run, no new optimization or speedup claimed.
 
+#### Process snapshots identify mediaserverd during the delayed flips
+
+Engine `6d87d27dc8` adds default-off `LT_GUEST_GDB_PORT=PORT` to the embedded
+entry. It starts the existing QEMU debugger on loopback only. Both Linux and
+Android builds passed. A debugger attaches **after** the complete frame window,
+reads the guest's proc/task/pmap list, then detaches before clean Stop. The
+existing `qemu-ios/imgtools/lldb/xnu.py` derives offsets from the matching
+kernel's accessors. No guest package update. This avoids assuming that ASIDs or
+physical page tables identify the same task across different boots.
+
+Two completed Snapdragon 865-class Poco Jetpack title captures, same frozen
+`frame-guest-process.apk` / symbols / identity, app `96853da6`, engine
+`6d87d27dc8`, clean at freeze. APK SHA-256
+`75eafcac725ca0b402be89631c5a84aa6085ec6a06a0d8317c36d950232aea96`.
+User recorder/full accounting/focused timing off, array cache on, other
+experiments off, audio enabled. Both have scheduler/context milestones; only
+capture 2 adds attached 1 kHz monotonic cpu-clock samples, FP call chains and
+before/after JIT maps. These are diagnostic observations, **not an A/B speed
+comparison**; the 52.68 → 55.07 fps difference is not a measured improvement.
+
+| Capture | Mean fps | Ceiling | Median | Low | 1% low | Hitches >50 ms | Exact 60 s monotonic bounds | Engine / vCPU |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Process mapping | 52.683 | 58 | 52 | 48 | 28.047 | 9 / 473.829 ms | `[447464415631021,447524415631021)` | 19134 / 19293 |
+| Mapping + samples | 55.067 | 58 | 56 | 50 | 28.539 | 5 / 257.218 ms | `[447765665621479,447825665621479)` | 20257 / 20415 |
+
+Zero skipped publications in either window; before/final scenes reviewed as
+the correct title with Start profile off. Clean Stop/no-qemu/baseline readback
+confirmed, debugger forwards removed. **301,018 / 349,485 milestone records**,
+zero drops/incomplete/write errors. No late publication markers: the ordered
+marker fix now passes the phone capture's default ordering validation. All
+3,206 / 3,344 explicit presents succeed and match the **jetpack** process's
+page table. Hitch flips match **SpringBoard**. The recurring third task is
+**mediaserverd, guest PID 14**, established from the same worker's process list.
+The older capture's unnamed key 5 remains unnamed; this identification applies
+to these new, directly mapped captures.
+
+| Capture | mediaserverd installed key | Normal execution share | Hitch execution share | Its running time inside hitches |
+| --- | --- | --- | --- | --- |
+| Process mapping | CIDR 0x11 / TTBR0 0xafbc018 | 16.47% | 39.89% | 156.293 ms |
+| Mapping + samples | CIDR 0x11 / TTBR0 0xb30c018 | 14.65% | 27.74% | 59.987 ms |
+
+In capture 1's gap ending **35.683582 s**, latest completed present → flip
+is **34.487917 ms**, including **25.612030 ms running under mediaserverd's
+stable CIDR/TTBR0 pair**. Jetpack accounts for 5.220365 ms and SpringBoard 1.442188 ms
+of that interval. This strengthens the audio-service lead; an installed pmap
+still includes kernel/native execution, and the nearest present is not a proven
+dependency or frame identity. Scheduler waits remain separate: all hitch gaps
+contain **391.775 / 216.225 ms running**, **59.775 / 25.174 ms runnable** and
+**22.279 / 15.819 ms sleeping**, respectively.
+
+**Named samples:** local inputs were decrypted from the already-held matching
+IPSW; kernel decompression Adler32 verified. `guestsymbols.py` reads 32-bit
+Mach-O code-section symbols and dyld v1 cache mappings, deduplicates alias
+images, uses each image's canonical LC_ID_DYLIB, and names indirect stubs
+separately. These are nearest symbols for sampled TB starting PCs, not guest
+stack unwinds or exact sampled guest instructions. No firmware was published;
+temporary encrypted/decrypted rootfs images were removed after extracting the
+symbol inputs.
+
+Capture 2 records **79,613 process samples, zero lost**. Selected vCPU frame
+classes contain **39,481 normal / 8,086 late / 217 hitch samples**. After
+excluding samples within 10 µs of address-register changes into a separate
+boundary group, mediaserverd's stable key has **5,612 normal / 61 hitch samples**.
+Its stereo sample-rate converter
+`SRC_convert_table_i16_scalar_stereo` receives **4.35% / 4.92%** of those
+normal/hitch samples. Native `float32_add` receives **0.89% / 11.48%** (50 / 7
+samples), `float32_mul` **1.28% / 4.92%** (72 / 3), `float32_sub` **0.37% /
+3.28%** (21 / 2), and `soft_f32_mul` **0.36% / 3.28%** (20 / 2).
+Guest `sleh_alignment` is **0.37% / 11.48%** (21 / 7). These small hitch
+counts nominate paths for focused timing, not a sufficient verdict about a
+single function or justification to repeat rejected VFP/alignment experiments.
+Next: measure floating-point exceptional/zero paths and faulting guest PCs in
+the audio work, while retaining sound and architectural exception semantics.
+
+Perfetto reports no error/data-loss counters and complete selected-window state
+coverage. Capture 2 has one **open initial R row**, timestamp
+448067652582155, followed 6.562 µs later by a complete S state; both precede
+the frame window by about 2.116 s. Default `hitchsched.py` correctly rejects
+it. Explicit `--allow-superseded-initial-state` preserves the raw row and next
+state in the report, excluding only that trace-initial row when its immediately
+following complete state ends before the first frame. Window coverage/overlap
+checks remain mandatory. No in-window missing intervals were filled. Clock
+offset spread 105 / 0 ns; raw trace untouched.
+
+Artifacts: `build/perf-codex/poco-frame-guest-process-1/` and
+`poco-frame-guest-process-samples-1/`, with raw traces, process snapshots,
+milestones/scheduler/residency summaries and capture 2's named `cpu.json/txt`.
+`guestprocs.py` was used successfully in capture 2 and confirmed detach;
+`hitchcpu.py` ran on the actual samples with exact frozen symbols/hash checks.
+Pixel untouched. No tests added/run. The stable 60 fps target remains unmet.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

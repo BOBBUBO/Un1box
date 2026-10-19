@@ -132,6 +132,13 @@ exact gap intervals, scheduler segments and wakeup metadata. It also separates
 sequence-gap publications from ordinary/late/hitch frames. Frequencies are
 reported clock values, not measured effective clock or retired cycles.
 
+One real trace contained an open initial R row superseded by a complete S
+state entirely before the frame window. Default analysis rejects it. Only for
+that situation, `--allow-superseded-initial-state` excludes the first row while
+preserving it, its successor and the inferred outside-window end in JSON.
+Complete coverage and nonoverlap within the measured window remain required;
+this option does not repair missing in-window scheduler data.
+
 If the vCPU is running during the hitch, capture timestamped CPU samples in the
 same trace window. Enable `QEMU_PERFMAP_DIR` before launching that worker and
 retain its before/after maps as described below. Attach under run-as:
@@ -172,6 +179,56 @@ are focused diagnostic captures, not FPS comparisons. Confirm any resulting
 optimization in interleaved A/B pairs with all diagnostics off. Pull first, then
 remove only this capture's phone trace/perf data/maps, stop cleanly, check for
 stray engines and restore the baseline environment.
+
+### Identify guest processes and code
+
+Address-space values can change between boots. Use a snapshot from the same
+worker before identifying an installed page table as a guest process.
+Engine `6d87d27dc8` provides default-off `LT_GUEST_GDB_PORT=PORT` (1024–65535),
+binding its existing guest debugger to `127.0.0.1` only. Set it before launch,
+but attach **after** all timed capture windows: attaching pauses the guest.
+Forward the selected port over ADB, then use LLDB with the matching unslid
+ARMv6 kernel and the engine's existing XNU helper:
+
+```text
+command script import /path/to/LightTouch/tools/perf/guestprocs.py
+lt-guest-procs --kernel /local/kernel.macho --xnu /path/to/qemu-ios/imgtools/lldb/xnu.py --connect connect://127.0.0.1:43101 --json /new/processes.json
+```
+
+For example, `adb forward tcp:43101 tcp:43100` reaches a worker started with
+`LT_GUEST_GDB_PORT=43100`. LLDB may run on another host through an SSH tunnel.
+`guestprocs.py` derives proc/task/pmap offsets from kernel accessors, checks
+active/kernel translation registers, records input hashes, and attempts detach
+even on failure. Require `detached:true` before Stop; preserve the command log.
+The guest cannot supply the Android host PID: add `engine_pid` to the JSON
+from the capture's retained worker identity, recording how it was bound.
+Remove forwards and the debugger environment setting after clean Stop.
+
+Generate framepath JSON with `--residency-intervals` and context tracing, then
+add these options to the `hitchcpu.py` command above:
+
+```sh
+    --milestones build/milestones.json --guest-processes build/processes.json \
+    --guest-kernel /local/kernel.macho --guest-cache /local/dyld_shared_cache_armv6
+```
+
+The tool checks matching windows/engine PID/detach and the snapshot's kernel
+hash. It groups samples by raw CIDR/TTBR0 pairs, retaining transitional values;
+samples within 10 µs of register changes form a separate boundary group.
+Process matches use page-table alignment from the same snapshot. Residency
+includes kernel and native work under that pmap, and is not guest-thread or
+userspace-only accounting. Process exit/page-table reuse can invalidate a
+post-capture match; keep captures short and preserve unknown keys.
+
+`guestsymbols.py` reads code-section symbols and indirect stubs from the local
+kernel and ARMv6 dyld v1 cache, uses canonical dylib names rather than aliases,
+and excludes ambiguous overlapping ranges. `--kernel KERNEL --cache CACHE
+--pc 0xADDRESS` resolves an individual address; `--json OUT` exports ranges
+and hashes. Both guest inputs are required for hitchcpu naming. Symbol extents
+are approximated to the next symbol/section boundary. These are sampled TB
+starting PCs, not exact sampled guest instructions or unwound guest stacks.
+Keep firmware/symbol inputs private. Both tools have processed the real Poco
+captures documented in PERFORMANCE.md; sparse hitch counts remain leads.
 
 ## Sparse frame milestones
 

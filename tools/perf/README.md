@@ -32,6 +32,19 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   `hitchcpu.py PERF_DATA FRAMES SCHEDULER_JSON ...` compares timestamped vCPU self
   samples inside ordinary and long frames. Both operate offline; capture setup and
   matching-symbol requirements are in PROFILING.md.
+  An explicit `hitchsched.py --allow-superseded-initial-state` can report/exclude
+  one open trace-initial state superseded entirely before the frame window;
+  it still requires complete in-window coverage and preserves the evidence.
+  `hitchcpu.py --milestones FRAMEPATH_JSON --guest-processes SNAPSHOT_JSON`
+  groups samples by installed address space and a same-worker proc/pmap snapshot.
+  Add `--guest-kernel KERNEL --guest-cache DYLD_CACHE` for named guest TB PCs.
+- `guestprocs.py` is an LLDB command module: `lt-guest-procs` reads the guest's
+  proc/task/pmap list through an opt-in loopback QEMU debugger, then detaches.
+  Attach after measurement; the debugger pauses the guest. Bind the snapshot
+  to its host engine PID before using it for attribution.
+- `guestsymbols.py --kernel KERNEL --cache DYLD_CACHE --pc ADDRESS` names local
+  ARMv6 Mach-O/dyld v1 cache code ranges, preserving hashes and ambiguous results.
+  Keep firmware inputs local. These names do not unwind guest stacks.
 - `framepath.py MILESTONES FRAMES --json OUT` joins default-off `LT_FRAME_PATH`
   engine milestones to frontend publications by serial, retaining guest presents,
   LCD flips/ticks and frontend lag for each hitch. Pull milestones after clean Stop.
