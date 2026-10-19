@@ -230,6 +230,45 @@ starting PCs, not exact sampled guest instructions or unwound guest stacks.
 Keep firmware/symbol inputs private. Both tools have processed the real Poco
 captures documented in PERFORMANCE.md; sparse hitch counts remain leads.
 
+### Focused audio arithmetic and alignment paths
+
+`LT_AUDIO_PATH_PROF=on` (engine `6743f6a81b`, default off) selects diagnostic
+helpers during AArch32 VFP translation. Keep Start profile off. Enable
+`LT_FRAME_PATH` and `LT_FRAME_PATH_CONTEXT` to retain the results. CPU 0 samples
+each f32 add/sub/mul every 1021 calls, recording raw operands/results, pre/post
+exception flags, rounding/flush settings, read-only unwound instruction PC, and
+the original operation's wall duration. PC-relative translations are resolved
+using the same page base as architectural restore, without modifying guest state.
+`0xffffffff` means PC unwind failed. Short-vector operations produce one call
+per element; compound VMLA/VMLS forms retain their separate arithmetic steps.
+This diagnostic selects original arithmetic even if the separate zero-multiply
+experiment is enabled. Use it with that experiment off.
+
+Every CPU 0 AArch32 alignment fault also records its restored instruction PC,
+faulting virtual address, access type and MMU index. The architectural fault and
+guest handler still run. Ordinary arithmetic uses the original helpers when
+the switch is off. Half/double precision and other translators are not sampled.
+The deferred milestone buffer remains bounded: reject any dropped records.
+
+After clean Stop, process the same-worker snapshot and complete milestone trace:
+
+```sh
+python3 tools/perf/framepath.py events.tsv frames.log --residency-intervals --json milestones.json
+python3 tools/perf/audiopath.py events.tsv milestones.json --engine-pid PID \
+    --guest-processes processes.json --guest-kernel /local/kernel.macho \
+    --guest-cache /local/dyld_shared_cache_armv6 --json audio.json
+```
+
+Both symbol inputs are optional together. The analyzer verifies the milestone
+context timeline against the raw trace, retains individual samples/faults and
+compares normal/late/hitch frame classes by installed page table. It reports
+status/input hardfloat eligibility and tiny-result candidates; these classify
+observations and do not count actual internal softfloat branches. Timings
+include clocks and host descheduling. Sampling is systematic, so preserve
+sample counts and do not treat samples × 1021 as exact per-PC call counts or
+extrapolate these durations into a proven whole-game saving. Use the scheduler
+trace to distinguish descheduling in a slow sampled call.
+
 ## Sparse frame milestones
 
 `LT_FRAME_PATH=/absolute/host/path.tsv` (engine `78eaa87497`, default off)

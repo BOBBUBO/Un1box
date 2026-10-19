@@ -61,6 +61,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   alone do not justify retrying rejected experiments. Named guest code and
   process-aware analysis tools now exist. Full provenance/data caveat in
   PERFORMANCE.md (one superseded initial scheduler row outside the window).
+  Engine `6743f6a81b` adds default-off `LT_AUDIO_PATH_PROF`: sampled original
+  f32 add/sub/mul operands/status/call timing with instruction PCs, and all
+  CPU 0 AArch32 alignment fault PCs. Linux/Android builds pass. Use the
+  same-worker process snapshot and `audiopath.py` to compare frame classes;
+  runtime capture/analysis pending. No new optimization or gain claimed.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

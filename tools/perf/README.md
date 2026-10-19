@@ -45,6 +45,10 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
 - `guestsymbols.py --kernel KERNEL --cache DYLD_CACHE --pc ADDRESS` names local
   ARMv6 Mach-O/dyld v1 cache code ranges, preserving hashes and ambiguous results.
   Keep firmware inputs local. These names do not unwind guest stacks.
+- `audiopath.py EVENTS FRAMEPATH_JSON --engine-pid PID --guest-processes SNAPSHOT`
+  compares default-off `LT_AUDIO_PATH_PROF` sampled f32 operands/status/timings
+  and exact alignment fault PCs across frame classes. Optional matching guest
+  symbols name the code. See PROFILING.md for sampling and timing limits.
 - `framepath.py MILESTONES FRAMES --json OUT` joins default-off `LT_FRAME_PATH`
   engine milestones to frontend publications by serial, retaining guest presents,
   LCD flips/ticks and frontend lag for each hitch. Pull milestones after clean Stop.

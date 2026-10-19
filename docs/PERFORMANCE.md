@@ -1649,6 +1649,19 @@ milestones/scheduler/residency summaries and capture 2's named `cpu.json/txt`.
 `hitchcpu.py` ran on the actual samples with exact frozen symbols/hash checks.
 Pixel untouched. No tests added/run. The stable 60 fps target remains unmet.
 
+#### Focused audio-path diagnostic
+
+Engine `6743f6a81b` adds default-off `LT_AUDIO_PATH_PROF`, selecting sampled
+original AArch32 f32 add/sub/mul helpers during translation. CPU 0 times one
+in 1021 calls per operation and retains operands, result, pre/post FP flags,
+rounding/flush settings and a read-only unwound instruction PC in the deferred
+milestone buffer. It records each CPU 0 AArch32 alignment fault's instruction
+PC/address/access/MMU index and retains architectural fault handling. Ordinary
+arithmetic helpers remain unchanged with the switch off. No guest package update.
+Linux/Android builds passed (`audio-path-build.txt`); no tests added/run.
+`audiopath.py` compares the same-worker samples/faults across frame classes.
+Capture/analysis pending; no new optimization or measured speedup.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,
