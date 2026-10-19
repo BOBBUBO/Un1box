@@ -511,7 +511,7 @@ reviewed montage `masked-irq-scenes.png`. Runner confirmed clean Stop, no qemu
 engine and baseline environment readback; `masked-irq-focused-finished` permits
 the queued delivery comparison to start.
 
-### Surface-present stage diagnostic (2026-10-19, default off, measurement pending)
+### Surface-present stage diagnostic (2026-10-19, default off, captures complete)
 
 Existing captures combine GPU synchronization and guest-memory row copies in the
 surface-present duration (roughly 1 ms/call in the earlier focused capture). This
@@ -527,11 +527,54 @@ all blocks. No live recorder/full accounting/per-draw profiling is needed.
 Linux/Android final builds succeeded (`present-prof-final-build.txt`), no tests
 added/run. Frozen `present-prof.apk`, `present-prof-symbols/libqemu-arm.so` and
 `present-prof-build-identity.json` retain source pins/hashes (app changes at build
-are documentation and the offline analyzer only). Runtime measurements are
-pending; two 30 s profiler off/on, on/off pairs are queued after the ordinary
-L2 runner's exact process exit and successful cleanup marker (`present-prof-run.py`).
-No before/after or FPS improvement claimed.
-See PROFILING.md for phase scope, clocks/descheduling and failure handling.
+are documentation and the offline analyzer only).
+
+Two 30 s pairs, profiler off/on then on/off, completed after ordinary L2 cleanup.
+Array cache on; L2 and other experiments/diagnostics off; user-facing Start profile
+and full accounting off. All four final title scenes reviewed, zero skips. This
+measures a dedicated engine diagnostic, not user-facing recording performance.
+
+| Pair | FPS off → diagnostic on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 54.30 → 50.87 | 58 → 56 | 54 → 52 | 50 → 40 | 28.71 → 19.88 | 2 (116.6 ms) → 18 (1255.3 ms) |
+| 2 (on first) | 54.17 → 52.33 | 58 → 58 | 54 → 52 | 48 → 46 | 28.60 → 20.50 | 5 (272.2 ms) → 10 (717.9 ms) |
+
+Aggregate **54.23 → 51.60 fps (−4.9%)**, hitches **7 → 28**, total
+**388.8 → 1973.2 ms/60 s per mode**. Use focused timings to locate work; do not
+use their FPS as an ordinary baseline. No optimization or game gain is claimed.
+
+Both enabled arms selected five complete contiguous timing blocks wholly inside
+their frame windows. All returned attempts use the mapped IOSurface path, no
+errors/fault retries, no readback or conversion phase. Mapped copy includes any
+platform row swizzle. Acquire includes flush, required GPU completion and mapping.
+
+| Metric | Enabled arm 1 | Enabled arm 2 |
+| --- | --- | --- |
+| Selected timing seconds / attempts | 25.029 / 1301 | 25.074 / 1341 |
+| Total mean / wall share | 922.10 µs / 4.793% | 982.84 µs / 5.256% |
+| Prep / acquire / copy / tail mean µs | 0.86 / 644.32 / 173.16 / 103.76 | 0.90 / 707.85 / 173.72 / 100.37 |
+| Slowest total / acquire component µs | 6696.56 / 6428.39 | 6726.09 / 6399.27 |
+| Slowest end timestamp ns | 437350013408473 | 437518700760909 |
+
+The longest surface-present calls are dominated by acquire; these ~6.7 ms calls
+alone do not explain 50–100 ms frame gaps. Keep the required synchronization.
+Clocks/descheduling are included; phase maxima can belong to different calls.
+
+Exact frame windows [begin, end), monotonic ns:
+
+| Arm | Frame window |
+| --- | --- |
+| 1 off | 437154897122193, 437184897122193 |
+| 1 on | 437333077035146, 437363077035146 |
+| 2 on | 437511682019401, 437541682019401 |
+| 2 off | 437682403887148, 437712403887148 |
+
+Selected timing windows: enabled 1 `[437333662314781, 437358691367532]`,
+enabled 2 `[437512165868828, 437537239779339]`. Raw `poco-present-prof-*`,
+`present-prof-results.json`, per-arm `stages.json` and reviewed `present-prof-scenes.png`
+preserve all blocks, slowest call components, frame windows and hitches. Runner
+confirmed clean Stop/no-qemu/baseline readback; `present-prof-finished` released
+the serialized context experiment. Fields/scope in PROFILING.md.
 
 ### CPU-only physical IRQ delivery (2026-10-19, experimental, default off)
 
@@ -1231,6 +1274,72 @@ Exact monotonic windows (frame bounds half-open; timing blocks complete):
 hitch; `ibtc-l2-analysis.txt` and reviewed `ibtc-l2-scenes.png` cover all four arms.
 Runner confirmed clean Stop, no remaining qemu engine and baseline environment
 readback before writing `ibtc-l2-focused-finished`. Settings/fields in PROFILING.md.
+
+#### Ordinary helper-cache comparison
+
+Three 30 s pairs off/on, on/off, off/on on the same frozen `ibtc-l2-pcrel.apk`;
+all profiling, accounting and the user-facing recorder off. Array cache on;
+other experiments off. All six final scenes reviewed: correct Jetpack title,
+recorder off, zero skips. This is an ordinary FPS comparison.
+
+| Pair | Mean off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 53.70 → 54.03 | 58 → 58 | 54 → 54 | 50 → 48 | 28.10 → 28.38 | 4 (219.6 ms) → 4 (250.8 ms) |
+| 2 (on first) | 51.50 → 52.30 | 56 → 56 | 52 → 52 | 42 → 48 | 20.32 → 26.83 | 11 (848.0 ms) → 9 (649.1 ms) |
+| 3 | 51.97 → 54.27 | 58 → 58 | 52 → 54 | 44 → 50 | 20.75 → 28.59 | 13 (979.3 ms) → 8 (403.2 ms) |
+
+Aggregate **52.39 → 53.53 fps (+2.2%)**, all three pairs ahead, including the
+reverse-order pair. Hitches **28 → 21**, total duration **2046.9 → 1303.1 ms/90 s
+per mode**. Pair 1 is nearly flat and its hitch duration increases; do not discard
+it. This is promising game-level evidence alongside the repeated direct helper
+saving. Keep default off pending a longer independent confirmation; it does not
+establish steady 60 fps or eliminate 1% low frames. Do not add this percentage to
+earlier experiments measured in other sessions.
+
+Exact frame windows [begin, end), monotonic ns:
+
+| Pair | Off | On |
+| --- | --- | --- |
+| 1 | 436116231785350, 436146231785350 | 436283160115547, 436313160115547 |
+| 2 | 436637900306089, 436667900306089 | 436459567761104, 436489567761104 |
+| 3 | 436817545410968, 436847545410968 | 436984607926894, 437014607926894 |
+
+Raw `poco-ibtc-l2-ordinary-*`, `ibtc-l2-ordinary-results.json` and
+`ibtc-l2-ordinary-analysis.txt` retain all frame windows and individual hitch
+lengths; reviewed montage `ibtc-l2-ordinary-scenes.png`. Runner completed clean
+Stop/no-qemu/baseline readback and wrote `ibtc-l2-ordinary-finished` before the
+presentation diagnostic started.
+
+### Android surfaceless context binding (unsupported; experiment removed)
+
+Viewport make-current costs about 110 µs/call in the earlier focused capture.
+Source inspection found each native EGL context binds a dummy 1x1 pbuffer even
+though the renderer uses private FBOs. Engine `e9e13d795e` tried omitting that
+binding behind default-off `LT_GLES_SURFACELESS`, keeping pbuffer lifetime,
+release flushing and GPU-completion waits unchanged. Android ES1/2 clients must
+advertise `GL_OES_surfaceless_context`; failed capability/binding checks fall back.
+Linux/Android builds succeeded (`surfaceless-build.txt`), no tests added/run.
+Frozen `surfaceless.apk`, symbols and `surfaceless-build-identity.json` retained.
+
+The first off/on 35 s pair finished, user recorder off, focused context profiling
+on both, array cache on, other experiments/diagnostics off. All three enabled-arm
+contexts reported `surfaceless=fallback api=1 reason=client-extension`. **No
+context used the experiment**, so this cannot measure its benefit. The runner
+stopped further pairs and confirmed clean Stop/no-qemu/baseline readback in its
+`finally` cleanup; `surfaceless-cleanup-finished` exists. Both final title scenes
+reviewed, zero skips. Switch-request off/on observed FPS **53.26 → 52.34**,
+ceiling **58 → 58**, median **54 → 52**, low **46 → 40**, 1% low **28.18 → 20.28**,
+hitches **11 (873.8 ms) → 15 (1205.5 ms)**. These are two pbuffer diagnostic runs,
+not a before/after optimization result.
+
+Exact frame windows: off `[437866395928745, 437901395928745)`, requested on
+`[438044394914042, 438079394914042)`. Raw `poco-surfaceless-focused-1-*`,
+`surfaceless-results.json` and reviewed `surfaceless-scenes.png` retained.
+The unsupported binding experiment was removed in `2e79c09b2e`; exact contiguous
+context timing completion markers remain. `tools/perf/contextstages.py` parsed
+the real logs, selects complete intervals inside exact frame bounds, rejects gaps,
+and preserves every block and maxima. Do not retry this on the same ES1 driver
+without new capability evidence.
 
 ### Measured and rejected
 

@@ -91,10 +91,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   retained. Diagnostic mean 51.46/51.06 → 52.09/53.09 fps; ceiling 56/56 → 56/58,
   median 52/52 → 52/54, low 44/44 → 48/48, 1% low 19.98/20.10 → 28.11/28.47.
   Aggregate diagnostic 51.26 → 52.59 (+2.6%); hitches 34 → 14,
-  2275.9 → 761.4 ms/70 s per mode. Local saving repeats; ordinary FPS not established.
-  Keep off; three profiler-off ordinary pairs started after exact focused process
-  exit and successful clean Stop/no-qemu/baseline readback. Exact bounds/raw
-  evidence in PERFORMANCE.md.
+  2275.9 → 761.4 ms/70 s per mode. Focused local saving repeats; ordinary results follow.
+  All three ordinary 30 s pairs complete, off/on,on/off,off/on; diagnostics and
+  user recorder off, array cache on. Mean 53.70/51.50/51.97 → 54.03/52.30/54.27;
+  ceiling 58/56/58 → 58/56/58, median 54/52/52 → 54/52/54, low 50/42/44 → 48/48/50,
+  1% low 28.10/20.32/20.75 → 28.38/26.83/28.59. Aggregate 52.39 → 53.53 (+2.2%),
+  all three ahead; hitches 28 → 21, 2046.9 → 1303.1 ms/90 s. Pair 1 nearly flat,
+  hitch duration worse. All six scenes reviewed, zero skips, cleanup confirmed.
+  Keep default off pending longer independent confirmation; no steady 60 claim.
+  Exact bounds/raw evidence in PERFORMANCE.md.
 
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
@@ -152,8 +157,16 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   on the Poco Jetpack title puts viewport init/make-current/dispatch at 0.565/110.474/4.039 µs
   per call (3396 calls, 1752 selected-context changes over six five-second blocks); present surface
   is 0.726/20.837/1049.176 µs (1625 calls). The viewport cost is largely before dispatch.
-  Inspect context switching and explicit synchronization before changing viewport state forwarding.
-  These are focused diagnostic timings; no before/after optimization or FPS gain is claimed.
+  Android surfaceless bindings tried in `e9e13d795e`, default-off switch; all three
+  Poco ES1 contexts lack `GL_OES_surfaceless_context` and used pbuffer fallback.
+  Further pairs stopped, cleanup confirmed, both scenes reviewed, zero skips.
+  Requested off/on diagnostic FPS 53.26 → 52.34; ceiling 58 → 58, median 54 → 52,
+  low 46 → 40, 1% low 28.18 → 20.28; hitches 11 (873.8 ms) → 15 (1205.5 ms).
+  No context used the change; no speed comparison established. Experiment removed
+  in `2e79c09b2e`; exact contiguous context markers retained. Offline
+  `tools/perf/contextstages.py` parsed real logs and preserves complete blocks.
+  Do not retry on this driver without new capability evidence. Inspect other
+  context selection/synchronization leads before changing viewport forwarding.
 - [ ] Measure exact-zero single-precision VFP multiplication (`f43fbe4986`,
   `LT_VFP_MUL_ZERO_FAST=on`, default off). The recent Poco profile includes `float32_mul`
   1.07% self and software multiply 0.62%; the host-FPU underflow predicate also sends
@@ -278,10 +291,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   exact complete five-second blocks, fault retries and the slowest call's phase
   breakdown without per-row clocks. Linux/Android builds succeeded; frozen
   `present-prof.apk`/matching symbols/identity retained. `tools/perf/presentstages.py`
-  selects exact windows and preserves outliers. Two 30 s profiler off/on, on/off
-  pairs queued after ordinary L2 exact process exit and successful cleanup marker.
-  No runtime stage or FPS result yet; measure before changing synchronization or
-  copies (details in PROFILING.md).
+  selects exact windows and preserves outliers. Both 30 s profiler off/on,on/off
+  pairs complete; user recorder off, all four scenes reviewed, zero skips, cleanup
+  confirmed. Diagnostic FPS 54.30/54.17 → 50.87/52.33; ceiling 58/58 → 56/58,
+  median 54/54 → 52/52, low 50/48 → 40/46, 1% low 28.71/28.60 → 19.88/20.50.
+  Aggregate 54.23 → 51.60 (−4.9%); hitches 7 → 28, 388.8 → 1973.2 ms/60 s.
+  All presents mapped, no errors/retries. Mean acquire 644/708 µs, copy 173/174 µs,
+  tail 104/100 µs; slowest calls 6.70/6.73 ms dominated by acquire (6.43/6.40 ms).
+  Preserve required GPU completion; these calls do not explain 50–100 ms gaps.
+  Dedicated diagnostic results only, no optimization gain (details in PROFILING.md).
   Measure with the capture's BQL wait/hold intervals, `[acct]` tables and `tools/perf/bqlsites.py`.
   Engine `f64fb44e3c` adds default-off `LT_BQL_PROF` to collect lock tables and outer vCPU
   timings without per-TB instruction/lookup/TLB-fill accounting; full accounting remains

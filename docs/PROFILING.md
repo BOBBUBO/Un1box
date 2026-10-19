@@ -52,13 +52,21 @@ No guest package update is needed. Profiling is activated dynamically by the but
 require `IT_VCPU_ACCT` or `IT_GLES_PROF`, and does not enable per-instruction instrumentation.
 `LT_PROFILE=off` (or `0`) disables the engine recording API for comparison. The additional timers and
 buffered writes run during a capture, so captures are diagnostic runs, not uninstrumented performance
-baselines. Compare changes with interleaved A/B pairs using the same capture settings.
+baselines. Use this recorder for user-selected obvious hitches; ordinary performance
+measurements keep Start profile off. Recording performance is not an optimization target.
+Use narrow engine counters only for a specific investigation; confirm improvements in
+interleaved A/B pairs with all diagnostics off.
 
 For a focused context-switch investigation, `LT_GLES_CONTEXT_PROF=on` (default off) writes
 `[gles-context]` totals/maxima to the engine log every five seconds. It separately times initialization,
 make-current and dispatch for viewport, framebuffer bind and surface present calls, without requiring
 Start profile. `switches` counts changes in the engine's selected context, not driver-internal work.
 Dispatch includes strict error checks. Divide summed nanoseconds by `n` for the mean per call.
+Engine `e9e13d795e` adds `[gles-context] end begin-ns=... end-ns=...` markers.
+`python3 tools/perf/contextstages.py ENGINE_LOG --start-ns BEGIN --end-ns END --json OUT`
+selects complete contiguous blocks wholly inside exact frame bounds and preserves all maxima.
+This parser has processed real Poco logs; the surfaceless-binding experiment from that engine
+was unsupported by its ES1 driver and removed in `2e79c09b2e`.
 
 Capture records now pass through bounded memory queues to background file writers (8 MiB for
 engine events, 1 MiB for Android presentation). Storage writes during recording do not hold the
@@ -153,9 +161,11 @@ Both focused pairs complete, second reversed: hit rate 67.166/66.670%, sampled
 mean 526.62/522.40 → 497.65/500.65 ns (−5.5/4.2%). Enabled hit/fallback means
 438.86/618.30 and 448.13/604.52 ns. Aggregate diagnostic FPS 51.26 → 52.59;
 hitches 34 → 14 (2275.9 → 761.4 ms/70 s per mode). All four title scenes reviewed,
-recorder off, zero skips. Keep off: three ordinary profiler-off pairs started
-after exact focused process exit and successful clean-stop marker. Ordinary
-FPS/pacing benefit and diagnostic overhead remain unestablished.
+recorder off, zero skips. Three ordinary profiler-off 30 s pairs now complete,
+including reverse order: 52.39 → 53.53 fps (+2.2%); hitches 28 → 21,
+2046.9 → 1303.1 ms/90 s. All six scenes reviewed, zero skips, cleanup confirmed.
+Keep default off pending longer independent confirmation. Exact per-arm metrics
+and windows in PERFORMANCE.md; no steady 60 or eliminated 1% low frames claimed.
 
 ## Focused GL presentation stages
 
@@ -180,9 +190,12 @@ This covers the surface-present call, not direct panel presents or LCD publishin
 selects complete blocks wholly inside the supplied frame window, rejects gaps,
 and preserves all selected blocks/outliers. Without bounds, `--last 30` selects
 the last complete interval. Compare dedicated profiler-on captures separately
-from ordinary FPS; no runtime saving or measured overhead is established yet.
-Two 30 s profiler off/on, on/off pairs are queued behind the ordinary L2 runner's
-exact process identity and successful cleanup marker.
+from ordinary FPS. Diagnostic overhead and phase results are recorded below.
+Both 30 s profiler off/on,on/off pairs complete, user-facing recorder off:
+54.23 → 51.60 fps (−4.9%), hitches 7 → 28 (388.8 → 1973.2 ms/60 s). These are
+focused diagnostic captures. Mapped acquire averages 644/708 µs; copy 173/174 µs,
+tail 104/100 µs. Slowest calls ~6.7 ms, predominantly acquire. Full metrics,
+exact windows and scope in PERFORMANCE.md; preserve the synchronization.
 
 ## Focused interrupt checks
 
