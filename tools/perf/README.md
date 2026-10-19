@@ -32,6 +32,9 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   `hitchcpu.py PERF_DATA FRAMES SCHEDULER_JSON ...` compares timestamped vCPU self
   samples inside ordinary and long frames. Both operate offline; capture setup and
   matching-symbol requirements are in PROFILING.md.
+- `framepath.py MILESTONES FRAMES --json OUT` joins default-off `LT_FRAME_PATH`
+  engine milestones to frontend publications by serial, retaining guest presents,
+  LCD flips/ticks and frontend lag for each hitch. Pull milestones after clean Stop.
 - `guestsyslog.py` (desktop) runs a headless guest and reads its syslog through the
   app's USB bridge, then counts messages by sender: a guest that logs every frame pays
   for launchd and syslogd handling each line (found this way: engine `7f744e80cc`).

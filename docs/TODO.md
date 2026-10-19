@@ -23,6 +23,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   guest-present/LCD/publication timestamps to determine where cadence first
   breaks, before changing another broad hotspot. Pixel untouched; these Poco
   observations do not identify the earlier Pixel user-capture pauses.
+  Sparse default-off milestones now implemented (`78eaa87497`), Linux/Android
+  builds pass, one completed Poco capture processed by `framepath.py`. All six
+  ~50 ms gaps already exist at engine publication; frontend lag stays under
+  0.635 ms. Each contains three timely LCD ticks (max lateness 0.076662 ms),
+  one late guest framebuffer flip and one publication. Two surface presents
+  finish ~41–42 ms before the flip; no single overlapping host present exceeds
+  2.936 ms. One hitch has 25.535 ms host runnable delay, so retain scheduler
+  attribution per gap. Diagnostic metrics: 52.683 fps, ceiling 56, median 52,
+  low 48, 1% low 28.042, 6 hitches/301.566 ms, zero skips. 83,047 milestones,
+  no drops/incomplete records; scenes/cleanup reviewed. No speedup claimed.
+  Next: guest address-space residency through the present-to-flip interval.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

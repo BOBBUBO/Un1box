@@ -1426,6 +1426,66 @@ build identity/symbols are adjacent. Next: correlate a few frame-path milestones
 instrumentation, to locate where cadence first breaks. More scene-wide GL totals
 will not answer that question; preserve required GPU synchronization.
 
+#### Sparse milestones locate delayed guest framebuffer flips
+
+Engine `78eaa87497` adds default-off `LT_FRAME_PATH=PATH`: 131,072 bounded
+in-memory records (about 5 MiB), dumped only after `qemu_cleanup` stops vCPU and
+device activity. No allocation, mutex acquisition or file I/O on producers.
+It timestamps explicit GL surface presents, LCD register flips, vsync/scan,
+capture/suppression and engine publication. No guest package change or user
+recorder. Linux/Android builds passed. Frozen `frame-path.apk`, symbols and
+identity retained; app `85e09f5d`, APK SHA-256
+`5e1dac13bebbc141ac0cbc3375c07104bf4876083be91f8bc9d8aa981daf3b00`.
+
+One focused 60 s Poco Jetpack title capture, with a concurrent scheduler trace:
+array cache on, other experiments and diagnostics off, no simpleperf/perfmaps.
+Diagnostic metrics: **52.683 fps**, ceiling **56**, median **52**, low **48**,
+1% low **28.042**, **6 hitches (301.566 ms)**, zero skipped publications.
+This is not an optimization comparison or ordinary FPS baseline. Both scenes
+reviewed, Start profile off; clean Stop/no-qemu/baseline readback confirmed.
+Recorder footer: **83,047 events, zero dropped/incomplete**, engine write-error=no.
+Perfetto reports no error/data-loss counters, full state coverage, constant clock
+offset. PID 14628, vCPU TID 14827; exact frame bounds
+`[445850097880699,445910097880699)` monotonic ns.
+
+**All six gaps already exist at engine publication.** Frontend lag is
+0.193–0.606 ms at the start and 0.248–0.635 ms at the end. Each gap contains
+three timely LCD ticks, a single late guest framebuffer flip and one publication;
+there are no identical-capture suppressions. Maximum virtual-deadline lateness
+inside these gaps is **0.076662 ms**. This locates their late milestone before
+the LCD latches the guest's new framebuffer, rather than in frontend copying or
+a delayed LCD timer.
+
+| Gap end (s) | Frontend gap ms | Engine gap ms | Guest flip after previous publication ms | Latest surface-present end to flip ms |
+| --- | --- | --- | --- | --- |
+| 0.551 | 50.462 | 50.249 | 34.848 | 2.845 |
+| 9.134 | 50.289 | 49.912 | 47.938 | 40.950 |
+| 11.384 | 50.107 | 50.050 | 35.478 | 1.395 |
+| 22.801 | 50.135 | 50.277 | 43.048 | 41.948 |
+| 53.367 | 50.032 | 50.006 | 33.289 | 38.380 |
+| 54.884 | 50.541 | 50.487 | 35.757 | 3.656 |
+
+One explicit GL-present context, 3,205 calls/window, all success, maximum
+**5.298 ms**; calls overlapping hitches are at most **2.936 ms**. The 9.134 s
+and 22.801 s gaps contain a present completed early, followed by about 41–42 ms
+before the guest flip. These timestamps do not prove that a particular present
+is the frame later flipped: app surfaces and final scanout bases differ. They
+do show that timing host present calls alone misses the late guest-side stage.
+The 53.367 s gap has its sole overlapping present after its flip.
+
+Scheduler states distinguish different cases: the 9.134 s gap includes
+**25.535 ms runnable delay / 23.596 ms execution**, while the other five contain
+37.910–43.150 ms execution. Do not generalize the earlier 83–84% execution share
+to every capture or dismiss host scheduling. Next: correlate guest address-space
+residency through the render-to-flip interval to distinguish delayed app work
+from other guest/kernel/composition work.
+
+`tools/perf/framepath.py` processed this actual completed capture; it joins
+publication serials, checks completion/counts and retains all hitch milestones,
+present calls and surrounding context boundaries. Raw traces, reviewed scenes,
+`milestones.json/txt`, scheduler report and engine log:
+`build/perf-codex/poco-frame-path-1/`. No tests added/run. No speedup claimed.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

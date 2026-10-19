@@ -173,6 +173,50 @@ optimization in interleaved A/B pairs with all diagnostics off. Pull first, then
 remove only this capture's phone trace/perf data/maps, stop cleanly, check for
 stray engines and restore the baseline environment.
 
+## Sparse frame milestones
+
+`LT_FRAME_PATH=/absolute/host/path.tsv` (engine `78eaa87497`, default off)
+records a bounded 131,072-entry memory trace independently of Start profile.
+Keep the user recorder, full accounting and other diagnostics off when answering
+a frame-path question. No guest package update is needed. The embedded entry
+allocates about 5 MiB at startup and writes the records **after clean engine
+shutdown**, once vCPU/device activity has stopped. Producers only timestamp and
+reserve a record; they perform no file writes, allocation or mutex acquisition.
+Tracing is diagnostic work and can still affect scheduling/cache behavior.
+
+Pull the file after Stop, retaining the matching `LT_FRAME_LOG` frontend log,
+engine startup/completion log and frozen APK identity. A killed worker leaves a
+header without a completion footer; a full buffer counts dropped events instead
+of overwriting earlier records. Neither is a complete capture. The engine log
+reports final counts and write errors. `framepath.py` rejects dropped/incomplete
+records or a missing footer:
+
+```sh
+python3 tools/perf/framepath.py frame-path.tsv frames.log --json frame-path.json
+```
+
+Each line is `monotonic_ns event a b c`. Events are:
+
+| Event | a | b | c |
+| --- | --- | --- | --- |
+| `present-begin` | guest GL context | destination surface base | width << 32 \| height |
+| `present-end` | same context | same base | return code (negative encoded as uint64) |
+| `lcd-flip` | old framebuffer register | new framebuffer register | 0 |
+| `vsync-begin` | previous scanout base | pending framebuffer register | virtual deadline lateness, ns |
+| `vsync-end` | latched scanout base | 0 | 0 |
+| `scan-begin/end` | latched scanout base | 1 for vsync scan, 0 for display poll | 0 |
+| `capture-begin/same` | current engine serial | 0 | 0 |
+| `publish` | new engine serial | intended LCD timestamp, ns | 0 |
+
+`present` covers the GL bridge's explicit surface-present operation. It does not
+trace every draw, guest timer callback or other legacy presentation path.
+The analyzer joins engine and frontend publication by serial and preserves each
+hitch's engine gap, frontend lag, all overlapping milestones, and nearby presents
+per context/target. Present destinations and LCD scanout bases can differ; don't
+assume they identify one surface. Unchanged captures can be suppressed. These
+timestamps locate cadence changes but do not alone prove a causal dependency.
+Use the scheduler trace alongside them when a thread ran late.
+
 ## Lock diagnostics without instruction accounting
 
 `LT_BQL_PROF=on` (engine `f64fb44e3c`, default off) enables the existing cumulative
