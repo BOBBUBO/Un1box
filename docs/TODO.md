@@ -82,7 +82,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   accounting/breakpoints/execution logging retain full lookup. Independent
   `LT_IBTC_L2_PROF` counts hits/attempts and samples one in 256 helper calls.
   Linux/Android builds pass, frozen `ibtc-l2-pcrel.apk`/symbols/identity retained. Focused
-  runner/analyzer prepared, not started; prioritize masked-check and IRQ-delivery results.
+  runner/analyzer queued behind exact live IRQ-delivery PID/starttime and its
+  successful clean-stop marker; only one phone runner may proceed. No runtime
+  results yet; delivery's first pair is locally cheaper but game pacing worsens.
   No measured hit rate/local/FPS/pacing saving yet. Details in PERFORMANCE/PROFILING.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
@@ -195,8 +197,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Linux/Android builds succeeded; clean frozen `irq-delivery.apk`/symbols/identity.
   Two focused 35 s off/on,on/off pairs starting after masked-check cleanup, ahead
   of L2. Array cache on; masked-fast/L2/other diagnostics off, IRQ profiler on both,
-  no recorder/full accounting. No local/FPS/pacing result yet; keep off pending
-  focused and ordinary evidence. See PERFORMANCE/PROFILING.
+  no recorder/full accounting. First pair complete, both title scenes reviewed,
+  zero skips: delivered check/wait 87.205/83.265 → 1.946/0 µs; all check/wait
+  wall 5.765/5.448% → 0.293/0%. Deliveries rise 552 → 969/s. Diagnostic mean
+  53.06 → 49.54 fps, ceiling 58 → 58, median 54 → 52, low 46 → 34,
+  1% low 28.25 → 14.85; hitches 10 → 42, 819.4 → 3234.8 ms per 35 s.
+  Reverse pair running. Direct wait removal does not prove recovered vCPU time:
+  guest MMIO still locks; interrupt/guest-handler frequency changes too. Keep
+  off; ordinary runner prepared only, reconsider after reverse evidence.
+  Exact frame/timing bounds and raw evidence in PERFORMANCE.md.
 - [ ] The guest kernel is 22% of the vCPU in Jetpack on the Poco (half the time in translated code).
   It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
   lock and interrupt-mask instructions cheaper. Next to look at: how many exceptions and Mach messages
@@ -250,6 +259,13 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   wall-time figure. The PL080 FIFO burst path (`a62f05bae3`) and LCD conversion outside the BQL
   (`d7c4927685`) are already implemented. Inspect the remaining LCD dirty tracking,
   interrupt delivery (cpu-exec.c), timer IRQ ack writes, VIC and LCD register access.
+  A separate default-off `LT_GLES_PRESENT_PROF` diagnostic (`5b38fec1df`) splits
+  GL surface-present acquire/GPU wait from readback/conversion/copy/tail. It keeps
+  exact complete five-second blocks, fault retries and the slowest call's phase
+  breakdown without per-row clocks. Linux/Android builds succeeded; frozen
+  `present-prof.apk`/matching symbols/identity retained. `tools/perf/presentstages.py`
+  selects exact windows and preserves outliers. No runtime stage or FPS result yet; measure
+  before changing synchronization or copies (details in PROFILING.md).
   Measure with the capture's BQL wait/hold intervals, `[acct]` tables and `tools/perf/bqlsites.py`.
   Engine `f64fb44e3c` adds default-off `LT_BQL_PROF` to collect lock tables and outer vCPU
   timings without per-TB instruction/lookup/TLB-fill accounting; full accounting remains

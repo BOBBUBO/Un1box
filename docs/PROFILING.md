@@ -149,7 +149,33 @@ enable full accounting, BQL tables or the manual recorder.
 Compare hit rate and direct helper costs in interleaved off/on pairs with profiling
 on in both, then use separate diagnostic-off ordinary FPS pairs. Do not extrapolate
 sample timings to whole-game savings or treat diagnostic FPS as an ordinary baseline.
-Runtime measurement is pending; the prepared local runner has not been started.
+Runtime measurement is pending; the local runner is queued behind the exact live
+IRQ-delivery PID/starttime plus its successful clean-stop marker.
+
+## Focused GL presentation stages
+
+`LT_GLES_PRESENT_PROF=on` (engine `5b38fec1df`) independently times surface presentations. It defaults
+off and needs neither the manual recorder, `IT_GLES_PROF`, nor full accounting.
+It adds clocks at stage boundaries, never inside the row loop. Every five seconds,
+`[gles-present]` emits per-path rows and an `end` marker with contiguous exact
+`begin-ns` / `end-ns` boundaries. Paths are `mapped` (IOSurface/AHardwareBuffer),
+`readback`, `invalid`, and the existing diagnostic `test` pattern.
+
+Each row retains attempts, returned errors (including separately counted pending
+guest-fault retries), total wall time, per-stage totals/maxima, and the exact
+components/end timestamp of the slowest whole call. Stages are preparation;
+acquire (flush/GPU completion/map, or fallback finish); readback; fallback
+conversion; row copying (including mapped platform byte swapping); and tail
+(unlock, bookkeeping and optional existing diagnostics). Early validation failures
+and the test pattern are in tail. Only returned attempts count; a longjmp would
+bypass completion. Clock overhead/descheduling are included; logging is excluded.
+This covers the surface-present call, not direct panel presents or LCD publishing.
+
+`python3 tools/perf/presentstages.py ENGINE_LOG --start-ns BEGIN --end-ns END --json OUT`
+selects complete blocks wholly inside the supplied frame window, rejects gaps,
+and preserves all selected blocks/outliers. Without bounds, `--last 30` selects
+the last complete interval. Compare dedicated profiler-on captures separately
+from ordinary FPS; no runtime saving or measured overhead is established yet.
 
 ## Focused interrupt checks
 
@@ -193,7 +219,11 @@ now includes eligible unlocked no-ops too; `fast=MODE` still names the masked
 precheck switch, so use the separate `[tcg] irq-delivery-fast=MODE` init line and
 saved environment to identify delivery mode. Compare with IRQ profiling on both,
 masked fast/L2/other diagnostics off; then use separate profiler-off ordinary
-FPS pairs. Both optimizations remain default off; delivery has no runtime result yet.
+FPS pairs. Both optimizations remain default off. First delivery pair: delivered
+check/wait 87.205/83.265 → 1.946/0 µs, all check/wait wall 5.765/5.448% →
+0.293/0%, but deliveries 552 → 969/s and diagnostic FPS 53.06 → 49.54 with
+worse pacing. Reverse pair is running. Guest device MMIO still locks; removed
+check wait need not be recovered time. Ordinary comparisons are prepared only.
 
 ## Focused exact-zero VFP multiplication
 

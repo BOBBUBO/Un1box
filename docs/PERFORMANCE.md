@@ -511,6 +511,26 @@ reviewed montage `masked-irq-scenes.png`. Runner confirmed clean Stop, no qemu
 engine and baseline environment readback; `masked-irq-focused-finished` permits
 the queued delivery comparison to start.
 
+### Surface-present stage diagnostic (2026-10-19, default off, measurement pending)
+
+Existing captures combine GPU synchronization and guest-memory row copies in the
+surface-present duration (roughly 1 ms/call in the earlier focused capture). This
+is not enough to justify removing synchronization or changing the copy path.
+Engine `5b38fec1df`, `LT_GLES_PRESENT_PROF=on`, now independently splits preparation, acquire, readback,
+conversion, copy and tail, with no clocks inside the row loop. Acquire includes
+the required GPU completion/map; mapped copy includes platform row byte swapping.
+Mapped/readback/invalid/test paths retain attempt/error/fault-retry counts,
+phase totals/maxima, and the phase breakdown/timestamp of the slowest whole call.
+Exact five-second blocks have completion markers; `tools/perf/presentstages.py`
+selects contiguous complete blocks wholly inside an exact frame window and saves
+all blocks. No live recorder/full accounting/per-draw profiling is needed.
+Linux/Android final builds succeeded (`present-prof-final-build.txt`), no tests
+added/run. Frozen `present-prof.apk`, `present-prof-symbols/libqemu-arm.so` and
+`present-prof-build-identity.json` retain source pins/hashes (app changes at build
+are documentation and the offline analyzer only). Runtime measurements are
+pending; no before/after or FPS improvement claimed.
+See PROFILING.md for phase scope, clocks/descheduling and failure handling.
+
 ### CPU-only physical IRQ delivery (2026-10-19, experimental, default off)
 
 The first masked-check pair leaves 4.20% wall in BQL acquisitions after masked
@@ -542,13 +562,41 @@ identity `irq-delivery-build-identity.json`: app `29a58213`, engine `5b956fc6ae`
 APK SHA256: `24aba9dd778e351106c8d061581688b7e997692acef7d39f8b41f61492137b78`.
 Library SHA256: `c9a1b9765cf2d5b7888b473622eafedf6f12624f5fe4fe298d00975b29a8fd6a`.
 
-Two focused 35 s pairs off/on, on/off are starting after the completed masked-IRQ
+Two focused 35 s pairs off/on, on/off run after the completed masked-IRQ
 focused comparison and its clean stop, ahead of the indirect L2 experiment.
 `LT_IRQ_CHECK_PROF=on` both; only delivery-fast varies. Masked fast path, L2,
 other experiments/diagnostics and live recorder/full accounting off; array cache
 on. `irq-delivery-run.py` / `irq-delivery-analyze.py` preserve exact frame/timing
-bounds and all hitches under `poco-irq-delivery-focused-*`. No runtime local,
-FPS or pacing gain established. Keep off pending focused and ordinary comparisons.
+bounds and all hitches under `poco-irq-delivery-focused-*`.
+
+First pair complete; reverse pair is still running. Both final screenshots
+reviewed: correct Jetpack title, recorder off, zero skips. Six contiguous complete
+five-second blocks per arm, wholly inside the exact 35 s frame windows:
+
+| First pair metric | Off → on |
+| --- | --- |
+| Mean delivered check / acquisition wait | 87.205 / 83.265 → 1.946 / 0 µs |
+| All check / acquisition wall | 5.765 / 5.448% → 0.293 / 0% |
+| Delivered interrupts | 551.97 → 969.10/s |
+| All checks / unlocked fraction | 1690.79 / 0% → 2928.25/s / 100% |
+| Max completed check | 4150.68 → 61.93 µs |
+| Diagnostic mean / ceiling / median / low fps | 53.06 / 58 / 54 / 46 → 49.54 / 58 / 52 / 34 |
+| Diagnostic 1% low | 28.25 → 14.85 fps |
+| Hitches (>50 ms) | 10 (819.4 ms) → 42 (3234.8 ms) per 35 s |
+
+The direct wait disappears but interrupt frequency rises sharply and diagnostic
+pacing worsens. Do not equate the removed check wait with recovered vCPU time:
+guest device MMIO acknowledgements still lock and waits may move there. Increased
+delivery/guest-handler work is another possible cost; neither explanation is yet
+proved. Keep off. Profiler-off ordinary pairs are prepared, not queued; reconsider
+their value after the reverse pair rather than assume a throughput gain.
+
+First-pair exact half-open frame windows (monotonic ns): off
+`[434650140183826, 434685140183826)`, on
+`[434833235134798, 434868235134798)`. Selected timing windows: off
+`[434653684393825, 434683693384594]`, on
+`[434834350906568, 434864359308432]`. `irq-delivery-results.json` retains all
+blocks and every hitch; no ordinary FPS or pacing gain established.
 
 ### Exception and SVC diagnostics (2026-10-18)
 
