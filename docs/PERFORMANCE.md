@@ -2335,12 +2335,32 @@ and Start profile off. Both arms stop cleanly before switching modes.
 | Hitches >50ms/full duration ms | 1/50.463906 →1/50.338542 |
 | Skipped publications | 0 →0 |
 
-All tally texts/counters remain visible and show zero failed presents. There
-is a promising local reduction in candidate intervals but no established
-whole-game gain or hitch fix. A reversed focused pair and three ordinary pairs
-are running/planned; do not infer the broader outcome from this first pair.
+The reversed focused pair (on first, workers1761/3862) is complete. Both saved
+before/end scenes were reviewed as Jetpack title with Start profile off; the
+same scheduling, identity, policy, serial and lossless-trace checks passed.
+
+| Focused pair2 | Original fragments → single write |
+| --- | --- |
+| Periodic candidate intervals | 12 →12 |
+| Candidate mean/median ms | 14.855937/15.407760 →15.482444/15.275312 |
+| Candidate p95/max ms | 16.493750/16.787552 →17.667032/20.968958 |
+| Candidates >40ms | 0 →0 |
+| Other intervals: count | 3553 →3558 |
+| Other intervals median/p95/max ms | 16.094114/19.894427/42.128229 →16.148073/19.889219/46.415000 |
+| Other intervals >40ms | 3 →1 |
+| Mean/ceiling/median/low fps (diagnostic) | 59.266667/62/60/56 →59.216667/62/60/56 |
+| 1%low fps | 30.182700 →30.421143 |
+| Hitches >50ms/full duration ms | 0/0 →1/50.497135 |
+| Skipped publications | 0 →0 |
+
+All tally texts/counters remain visible and show zero failed presents. The
+first pair's candidate mean/tail reduction does not repeat in the reversed
+pair. No repeatable local benefit, whole-game gain or hitch fix is established.
+Three ordinary pairs are running; do not infer their outcome from diagnostic
+FPS. Across the two focused pairs only, diagnostic mean59.200000→59.183333fps,
+hitches1→2 and full hitch time50.463906→100.835677ms per120s/mode.
 Raw arms/tallies/frames/logs/identity under
-`build/perf-codex/poco-tally-batch-focus-1-{off,on}/`; frozen build identity:
+`build/perf-codex/poco-tally-batch-focus-{1,2}-{off,on}/`; frozen build identity:
 `tally-batch-build-identity.json`. Reproduction runner/analysis:
 `tally-batch-run.py`/`tally-batch-analyze.py`. Offline `tallypath.py --mode batch`
 validates exact policy2 and preserves it in JSON. No tests added/run.

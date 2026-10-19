@@ -19,8 +19,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   p95/max34.967/43.836→18.122/20.538ms;>40ms1→0 (controls3→5).
   Diagnosticmean59.133→59.150,ceiling60→60,median60→60,low58→56,
   1%low30.189→30.046,hitches1/50.464→1/50.339ms,0skips. No ordinary
-  gain/hitch fix established. Reversed focused pair and3ordinary pairs in
-  progress/planned. FrozenAPK/identity/raw retained; full PERFORMANCE table.
+  gain/hitch fix established. Reversed focused pair complete:12candidates each,
+  mean14.856→15.482ms,median15.408→15.275ms,p95/max16.494/16.788→
+  17.667/20.969ms,>40ms0→0. Diagnosticmean59.267→59.217,ceiling62→62,
+  median60→60,low56→56,1%low30.183→30.421,hitches0/0→1/50.497ms,
+  0skips. First-pair candidate benefit does not repeat; no repeatable local
+  benefit established. All8focused scenes reviewed title/Startprofileoff;
+  serial/policy/lossless/scheduling checks pass. Three ordinary pairs running.
+  FrozenAPK/identity/raw retained; full PERFORMANCE tables.
 
 - [x] Measure the extended BQL spin budget (`5547634eeb`). Default-off
   `LT_BQL_SPIN_EXTENDED=on` selects 150 µs with BQL spin on; off retains 50 µs.
