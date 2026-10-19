@@ -120,6 +120,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   upstream app ZIP and unpacks it on any OS, including guest.aar's LZFSE Apple Archive), then by
   hand, then IPSW preparation. `--verified-tools` makes the folder IPSW preparation needs
   (Linux `lighttouch-prepare` verified with it).
+- [x] Boot the bases `get-assets.py` unpacks. LightTouchMac prepares them with `aes-uid=hardware`
+  (its NOR wraps the SHSH with iBoot's encrypting UID derivation), and the v0.0.5 engine accepted only
+  `engine` or `legacy`, so every port failed at engine start with "aes-uid must be 'engine' or
+  'legacy'" (reported on Windows). Engine dev/perf now carries upstream's `cb400606d2`. Checked on Linux:
+  the v0.0.5 engine fails with that error on an imported `n72ap-7E18.itbase`, and the new engine boots
+  it to SpringBoard. Users need a new release to get it.
 - [ ] Owner decision: attach `LightTouch-n72ap-7E18.zip` (itbase + armv6.itpack + bootrom.bin,
   built locally in `~/Documents/LightTouch-Development/release-assets/`) to a release. It is
   Apple's copyrighted firmware; upstream and devos50/qemu-ios `n72ap_v1` host the same kind of
