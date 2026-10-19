@@ -458,55 +458,58 @@ added/run. Frozen APK/symbols: `masked-irq.apk`, `masked-irq-symbols/`; identity
 in `masked-irq-build-identity.json` (app `6281142f`, documentation edits only).
 APK SHA256: `9c431d362337a89400da8ba01fd3582ee61eec91ba282efca8b60dd20bb923af`.
 Library SHA256: `45040f4403d95401c1c0c94777dbcbdc2f0ef50f6db242ce1b1fca64f473f156`.
-Two focused 35 s pairs (off/on, on/off) are running after the completed combined
-cache+lookup baseline and its clean stop. Vary only `LT_MASKED_IRQ_FAST`; IRQ profiling on both,
+Both focused 35 s pairs completed after the combined cache+lookup baseline:
+off/on, then on/off, varying only `LT_MASKED_IRQ_FAST`. IRQ profiling on both,
 array cache on, other experiments/diagnostics off, no live recorder/full accounting.
-Select at least four contiguous complete timing blocks wholly inside each frame
-window. Raw logs/settings/scenes: `poco-masked-irq-focused-{1,2}-{off,on}/`;
-runner `masked-irq-run.py`. First-pair evidence follows; keep the experiment off
-pending reverse-order and ordinary diagnostic-off comparisons.
+All four final screenshots reviewed: correct Jetpack title, recorder off, zero
+publisher skips. Every arm has six contiguous complete ~5 s timing blocks wholly
+inside its 35 s frame window, about 30 s of direct timings per arm.
 
-First focused pair complete (35 s per mode, off then on). Both final screenshots
-reviewed: correct Jetpack title, recorder off, zero publisher skips. Six contiguous
-complete timing blocks wholly inside each frame window, about 30 s each:
+| Metric | Pair 1 off → on | Pair 2 off → on (on first) |
+| --- | --- | --- |
+| Checks/s | 1665 → 1684 | 1656 → 1696 |
+| Masked candidates/s | 1106 → 1124 | 1104 → 1134 |
+| Masked candidates % | 66.4% → 66.8% | 66.6% → 66.8% |
+| Masked mean µs/check | 7.985 → 0.422 | 8.072 → 0.426 |
+| Masked BQL wait µs/check | 7.108 → 0 | 7.183 → 0 |
+| Masked check wall % | 0.883% → 0.047% | 0.891% → 0.048% |
+| All check wall % | 5.340% → 4.452% | 5.332% → 4.464% |
+| All acquisition wall % | 5.036% → 4.199% | 5.036% → 4.201% |
+| Delivered checks/s | 560.5 → 559.5 | 553.3 → 562.4 |
 
-| Metric | Fast off → on |
-| --- | --- |
-| Checks/s | 1665 → 1684 |
-| Masked candidates/s | 1106 → 1124 (66.4% → 66.8% of checks) |
-| Masked mean µs/check | 7.985 → 0.422 |
-| Masked BQL wait µs/check | 7.108 → 0 |
-| Masked check wall % | 0.883% → 0.047% |
-| All check wall % | 5.340% → 4.452% |
-| All acquisition wall % | 5.036% → 4.199% |
-| Delivered checks/s | 560.5 → 559.5 |
-
-There are 28 masked-candidate deliveries in the off arm (a request can change
-before acquisition), zero enabled; all 33,736 enabled masked candidates skip the
-lock. Completed maximum check times 3.135 → 4.160 ms are retained. The masked
-subset is cheaper, but most remaining wait is outside that subset: skipping all
-masked checks does not recover the earlier full 6% interrupt-wait observation.
+All 33,736/34,036 enabled masked candidates skip the lock. Off arms have 28/24
+masked-candidate deliveries, enabled arms zero: a request can change before lock
+acquisition. Completed maximum check times 3.135/3.666 → 4.160/3.360 ms are
+retained. The local masked-check saving repeats, including reverse order, but
+most remaining wait is outside that subset: skipping all masked checks does not
+recover the earlier full 6% interrupt-wait observation.
 
 | Pair | Diagnostic mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 51.97 → 52.97 | 56 → 58 | 52 → 54 | 44 → 44 | 27.15 → 27.85 | 13 (972.7 ms) → 9 (838.5 ms) |
+| 2 (on first) | 54.20 → 53.03 | 58 → 58 | 54 → 54 | 50 → 48 | 28.82 → 28.29 | 3 (151.8 ms) → 10 (526.4 ms) |
 
-These are instrumented FPS results, not ordinary baselines or a profiler-overhead
-measurement. Reverse pair still running; keep the optimization off pending
-confirmation. An ordinary diagnostic-off runner is prepared, not queued; the
-larger delivered-check wait motivates the separate delivery experiment below.
+Aggregate diagnostic mean **53.09 → 53.00 fps (−0.2%)**; hitches **16 → 19**,
+total duration **1124.6 → 1364.9 ms** over 70 s per mode. One pair wins, one loses;
+no consistent game/pacing gain. These instrumented FPS results are not ordinary
+baselines or a profiler-overhead measurement. Keep the optimization off. An
+ordinary diagnostic-off runner is prepared, not queued: the separate delivery
+experiment below has priority and also covers eligible masked no-ops.
 
 Exact half-open frame / complete-block timing bounds (monotonic ns):
 
-| Mode | FPS [start, end) | Timing [begin, end] |
+| Pair/mode | FPS [start, end) | Timing [begin, end] |
 | --- | --- | --- |
-| off | [433923155694885, 433958155694885) | [433927854207383, 433957863277059] |
-| on | [434107396548356, 434142396548356) | [434107481622002, 434137489276313] |
+| 1 off | [433923155694885, 433958155694885) | [433927854207383, 433957863277059] |
+| 1 on | [434107396548356, 434142396548356) | [434107481622002, 434137489276313] |
+| 2 off | [434461063175565, 434496063175565) | [434463995312699, 434493999079354] |
+| 2 on | [434284970737559, 434319970737559) | [434287343786464, 434317359895047] |
 
-Raw `poco-masked-irq-focused-1-{off,on}/`; `masked-irq-analyze.py`,
+Raw `poco-masked-irq-focused-{1,2}-{off,on}/`; `masked-irq-analyze.py`,
 `masked-irq-results.json` retain all blocks, counts, windows and every hitch;
-reviewed montage `masked-irq-scenes.png`. The queued delivery comparison waits
-for both focused pairs and the runner's clean-stop/baseline restoration marker.
+reviewed montage `masked-irq-scenes.png`. Runner confirmed clean Stop, no qemu
+engine and baseline environment readback; `masked-irq-focused-finished` permits
+the queued delivery comparison to start.
 
 ### CPU-only physical IRQ delivery (2026-10-19, experimental, default off)
 
@@ -539,7 +542,7 @@ identity `irq-delivery-build-identity.json`: app `29a58213`, engine `5b956fc6ae`
 APK SHA256: `24aba9dd778e351106c8d061581688b7e997692acef7d39f8b41f61492137b78`.
 Library SHA256: `c9a1b9765cf2d5b7888b473622eafedf6f12624f5fe4fe298d00975b29a8fd6a`.
 
-Two focused 35 s pairs off/on, on/off are queued after the current masked-IRQ
+Two focused 35 s pairs off/on, on/off are starting after the completed masked-IRQ
 focused comparison and its clean stop, ahead of the indirect L2 experiment.
 `LT_IRQ_CHECK_PROF=on` both; only delivery-fast varies. Masked fast path, L2,
 other experiments/diagnostics and live recorder/full accounting off; array cache

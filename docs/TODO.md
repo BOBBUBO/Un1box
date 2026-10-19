@@ -172,16 +172,19 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   pending levels/EXITTB and bypasses replay/stepping/special events. Independent
   `LT_IRQ_CHECK_PROF=on` counts/times CPU-0 masked candidates and actual no-op checks
   without full accounting/BQL tables. Linux/Android builds succeeded; frozen
-  `masked-irq.apk`/symbols/identity retained. Two focused 35 s pairs off/on, on/off
-  running after the completed combined cache+lookup baseline, varying only the fast switch;
-  IRQ profiling on both, other diagnostics/experiments off, array cache on. First pair:
-  masked check 7.985 → 0.422 µs, masked wait 7.108 → 0 µs, masked wall 0.883% →
-  0.047%; masked candidates ~1106 → 1124/s, 66–67% of checks. All wait still
-  5.036% → 4.199% wall. Diagnostic FPS 51.97 → 52.97, ceiling 56 → 58,
-  median 52 → 54, low 44 → 44, 1% low 27.15 → 27.85, hitches 13 (972.7 ms) →
-  9 (838.5 ms). Both title/recorder-off scenes reviewed, zero skips. Reverse pair
-  running; keep off. Ordinary runner prepared, not queued; larger remaining wait
-  motivates delivery experiment below. Exact bounds/limits in PERFORMANCE/PROFILING.
+  `masked-irq.apk`/symbols/identity retained. Both focused 35 s pairs complete,
+  off/on,on/off; IRQ profiling on both, other diagnostics/experiments off, array
+  cache on. Masked mean 7.985/8.072 → 0.422/0.426 µs, wait 7.108/7.183 → 0 µs,
+  masked wall 0.883/0.891% → 0.047/0.048%; ~1104–1134 masked candidates/s.
+  All acquisition wait 5.036/5.036% → 4.199/4.201% wall: most wait remains.
+  Diagnostic FPS 51.97/54.20 → 52.97/53.03 (53.09 → 53.00, −0.2%).
+  Ceiling 56/58 → 58/58, median 52/54 → 54/54, low 44/50 → 44/48,
+  1% low 27.15/28.82 → 27.85/28.29. Hitches 13/3 → 9/10, duration
+  972.7/151.8 → 838.5/526.4 ms per 35 s; total 16 → 19 (1124.6 → 1364.9 ms/70s).
+  All four title/recorder-off scenes reviewed, zero skips. Local saving repeats;
+  no consistent game/pacing gain, keep off. Clean Stop/no-qemu/baseline readback
+  confirmed. Ordinary runner prepared, not queued; delivery experiment below
+  (also covers masked no-ops) has priority. Exact bounds in PERFORMANCE.md.
 - [ ] Measure CPU-only physical ARMv6 IRQ delivery (`5b956fc6ae`, default-off
   `LT_IRQ_DELIVERY_FAST=on`). Physical entry uses the same CPU-owned path already
   unlocked for synchronous exceptions; device MMIO acknowledgement still locks.
@@ -190,7 +193,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Atomic request snapshot preserves levels, EXITTB and new-request kicks. Independent
   `LT_IRQ_CHECK_PROF` adds unlocked counts and delivered-check time/wait subsets.
   Linux/Android builds succeeded; clean frozen `irq-delivery.apk`/symbols/identity.
-  Two focused 35 s off/on,on/off pairs queued behind masked-check cleanup, ahead
+  Two focused 35 s off/on,on/off pairs starting after masked-check cleanup, ahead
   of L2. Array cache on; masked-fast/L2/other diagnostics off, IRQ profiler on both,
   no recorder/full accounting. No local/FPS/pacing result yet; keep off pending
   focused and ordinary evidence. See PERFORMANCE/PROFILING.

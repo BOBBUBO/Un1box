@@ -173,9 +173,11 @@ overhead, exclude logging and the outer interrupt-flag clear. Blocks are emitted
 after unlock at the first completed check at least five seconds after the previous
 boundary. Select contiguous complete blocks wholly inside each exact frame window.
 Instrumentation overhead must be measured separately; diagnostic FPS is not an
-ordinary baseline. First focused masked pair: masked check mean 7.985 → 0.422 µs,
-masked wall 0.883% → 0.047%, all acquisition wait 5.036% → 4.199%. Reverse pair
-is pending; no ordinary game/pacing benefit is established.
+ordinary baseline. Both focused masked pairs completed, second reversed: mean
+7.985/8.072 → 0.422/0.426 µs, masked wall 0.883/0.891% → 0.047/0.048%; all
+acquisition wait 5.036/5.036% → 4.199/4.201%. Diagnostic mean FPS 53.09 → 53.00;
+no consistent game/pacing gain or ordinary baseline established. Keep off; delivery
+comparison below has priority over ordinary masked-only FPS work.
 
 `LT_IRQ_DELIVERY_FAST=on` (engine `5b956fc6ae`, default off) separately permits
 CPU-only physical ARMv6 IRQ/FIQ entry without BQL. It requires a machine with
