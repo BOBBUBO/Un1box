@@ -217,6 +217,61 @@ assume they identify one surface. Unchanged captures can be suppressed. These
 timestamps locate cadence changes but do not alone prove a causal dependency.
 Use the scheduler trace alongside them when a thread ran late.
 
+Engine `c0347336e6` stamps publication inside the existing frame-copy lock,
+before unlock. Earlier builds emitted the marker after unlock and can therefore
+produce a frontend observation earlier than its marker if that producer is
+descheduled. The analyzer rejects this ordering by default. For an existing
+legacy capture only, `--allow-late-publication-markers` reports and preserves
+each anomaly, and still rejects any hitch with an affected boundary. Do not
+edit raw timestamps or treat old markers as exact publication linearization
+times. One such anomaly in `poco-frame-context-1` is outside every hitch.
+
+Engine `5511f5466d` adds optional `LT_FRAME_PATH_CONTEXT=on` alongside the path.
+It records changed AArch32 CONTEXTIDR and TTBR0 values, selecting the active
+secure/nonsecure bank. This mode raises the bounded allocation to 1,048,576
+records (about 40 MiB); without it the original 131,072-record capacity remains.
+`context-switch` records new CONTEXTIDR, active TTBR0 and old CONTEXTIDR;
+`ttbr0` records active CONTEXTIDR, new TTBR0 and old TTBR0. Timestamps follow the
+register update and any associated TLB flush. This is not per-instruction
+accounting or a guest thread-switch trace. The active address space can remain
+unchanged during kernel execution and host bridge/driver calls.
+
+With the same capture processed by both `framepath.py` and `hitchsched.py`:
+
+```sh
+python3 tools/perf/frameresidency.py frame-path.json hitch-sched.json \
+    --json residency.json
+```
+
+The tool joins actual vCPU running/runnable/sleeping segments to address-space
+intervals inside each hitch and the portion between the latest completed present
+and flip. That present is a temporal neighbor, not a proven dependency.
+Present-call context summaries list their observed address-space keys. Do not
+label these as process names or mistake residency for userspace-only CPU time.
+Kernel work and native work can execute with a game's address space installed.
+To compare hitches against ordinary frames in the same captured window, retain
+the complete timelines during offline analysis:
+
+```sh
+python3 tools/perf/framepath.py frame-path.tsv frames.log \
+    --residency-intervals --json frame-path.json
+python3 tools/perf/hitchsched.py trace.pftrace frames.log --engine-pid PID \
+    --trace-processor /path/to/trace_processor_shell --all-states --json scheduler.json
+python3 tools/perf/frameresidency.py frame-path.json scheduler.json --json residency.json
+```
+
+Classes match the scheduler analyzer: normal ≤20 ms, late >20 to ≤50 ms,
+hitch >50 ms (or its configured threshold), with skipped publications separate.
+Intervals use frontend timestamps; whole-window output ends at the last observed
+frame, without inventing a final frame at the requested window end. Compare
+running-time shares as well as milliseconds per frame: hitches last longer.
+This reuses existing traces and adds no phone instrumentation.
+
+Markers do not capture TTBR1, changes of security state, migration restore,
+AArch64 regimes or every translation-control register; this diagnostic is for
+the single-vCPU ARMv6 iPod workload. Run only a narrow capture and restore both
+variables afterward.
+
 ## Lock diagnostics without instruction accounting
 
 `LT_BQL_PROF=on` (engine `f64fb44e3c`, default off) enables the existing cumulative

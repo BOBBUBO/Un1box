@@ -34,6 +34,19 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   low 48, 1% low 28.042, 6 hitches/301.566 ms, zero skips. 83,047 milestones,
   no drops/incomplete records; scenes/cleanup reviewed. No speedup claimed.
   Next: guest address-space residency through the present-to-flip interval.
+  Completed one context capture (`5511f5466d`), 302,468 records with no drops:
+  all 3,248 presents under CIDR 7 / TTBR0 0xdb6e018; all eleven hitch flips
+  under CIDR 6 / TTBR0 0xa802018. Unknown CIDR 5 / TTBR0 0xa7ba018 consumes
+  35.37% of hitch execution versus 15.45% in normal frames (same capture).
+  The 44.799 s hitch includes 20.674 ms execution under key 5 in a 24.268 ms
+  latest-present-to-flip interval. Identify the process and its work next;
+  register residency includes kernel/native work and does not prove causation.
+  Diagnostic metrics: 53.200 fps, ceiling 58, median 54, low 48, 1% low 27.863,
+  11 hitches/616.772 ms, zero skips. Host runnable delays remain a separate
+  lead. One old publication marker is late outside every hitch boundary;
+  explicit legacy analysis preserves it. `c0347336e6` orders future markers
+  inside the frame lock; Linux/Android builds passed, phone capture pending.
+  Full evidence/limitations in PERFORMANCE.md; no speedup claimed.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

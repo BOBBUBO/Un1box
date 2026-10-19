@@ -35,6 +35,11 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
 - `framepath.py MILESTONES FRAMES --json OUT` joins default-off `LT_FRAME_PATH`
   engine milestones to frontend publications by serial, retaining guest presents,
   LCD flips/ticks and frontend lag for each hitch. Pull milestones after clean Stop.
+- `frameresidency.py FRAMEPATH_JSON SCHEDULER_JSON --json OUT` joins optional
+  guest address-space markers to vCPU scheduler states during hitches. Generate
+  inputs with `framepath.py --residency-intervals` and `hitchsched.py --all-states`
+  to compare residency during normal, late and hitch intervals as well.
+  Register values do not establish guest process identity or userspace CPU time.
 - `guestsyslog.py` (desktop) runs a headless guest and reads its syslog through the
   app's USB bridge, then counts messages by sender: a guest that logs every frame pays
   for launchd and syslogd handling each line (found this way: engine `7f744e80cc`).

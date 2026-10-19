@@ -5,6 +5,7 @@ LT_FRAME_PATH is a bounded memory trace written after clean engine shutdown.
 Frame timestamps are host monotonic publication times, not display scanout.
 """
 import argparse
+import bisect
 from collections import Counter, defaultdict
 import json
 from pathlib import Path
@@ -19,6 +20,10 @@ def main():
     ap.add_argument("frames", type=Path)
     ap.add_argument("--secs", type=float, default=60)
     ap.add_argument("--hitch-ms", type=float, default=50)
+    ap.add_argument("--allow-late-publication-markers", action="store_true",
+                    help="legacy post-unlock markers only; reject affected hitch boundaries")
+    ap.add_argument("--residency-intervals", action="store_true",
+                    help="retain whole-window address changes and frame intervals for residency comparison")
     ap.add_argument("--json", type=Path)
     args = ap.parse_args()
     lines = args.events.read_text().splitlines()
@@ -56,9 +61,16 @@ def main():
         if event["a"] in published:
             ap.error("engine publication sequence reused")
         published[event["a"]] = event
+    late_markers = []
     for ns, seq, *_ in frames:
-        if seq not in published or published[seq]["ns"] > ns:
-            ap.error(f"frontend sequence {seq} missing or earlier than engine publication")
+        if seq not in published:
+            ap.error(f"frontend sequence {seq} missing from engine publications")
+        if published[seq]["ns"] > ns:
+            if not args.allow_late_publication_markers:
+                ap.error(f"frontend sequence {seq} earlier than engine publication")
+            late_markers.append(dict(sequence=seq, frontend_ns=ns,
+                                     marker_lateness_ms=(published[seq]["ns"] - ns) / 1e6))
+    late_sequences = {m["sequence"] for m in late_markers}
 
     # Present calls run serially on the vCPU. Keep context and target to avoid
     # pairing different renderers when inspecting multi-context scenes.
@@ -82,11 +94,23 @@ def main():
     contexts = defaultdict(list)
     for call in sorted(calls, key=lambda c: c["begin_ns"]):
         contexts[call["context"]].append(call)
+    address_spaces = [e for e in events if e["kind"] in ("context-switch", "ttbr0")]
+    address_times = [e["ns"] for e in address_spaces]
+
+    def address_at(ns):
+        index = bisect.bisect_right(address_times, ns) - 1
+        return address_spaces[index] if index >= 0 else None
+
+    def address_key(row):
+        return f"cidr=0x{row['a']:x},ttbr0=0x{row['b']:x}" if row else "unknown"
+
     hitches = []
     for first, last in zip(frames, frames[1:]):
         ms = (last[0] - first[0]) / 1e6
         if ms <= args.hitch_ms:
             continue
+        if first[1] in late_sequences or last[1] in late_sequences:
+            ap.error("cannot attribute a hitch involving a late legacy publication marker")
         left, right = published[first[1]]["ns"], published[last[1]]["ns"]
         selected = [e for e in events if left < e["ns"] <= right]
         detail = dict(begin_ns=first[0], end_ns=last[0], ms=ms,
@@ -99,6 +123,9 @@ def main():
                       frontend_lag_end_ms=(last[0] - right) / 1e6,
                       event_counts=dict(Counter(e["kind"] for e in selected)),
                       events=selected, contexts={})
+        detail["address_space_initial"] = address_at(left)
+        detail["address_space_changes"] = [e for e in address_spaces
+                                           if left < e["ns"] <= last[0]]
         detail["max_vsync_lateness_ms"] = max(
             (e["c"] / 1e6 for e in selected if e["kind"] == "vsync-begin"), default=None)
         detail["flips"] = []
@@ -106,6 +133,7 @@ def main():
             prior = [c for c in calls if c["end_ns"] <= flip["ns"]]
             last_present = max(prior, key=lambda c: c["end_ns"]) if prior else None
             detail["flips"].append(dict(event=flip, latest_present=last_present,
+                                        address_space=address_at(flip["ns"]),
                                         since_present_end_ms=(flip["ns"] - last_present["end_ns"]) / 1e6
                                         if last_present else None))
         for ctx, rows in contexts.items():
@@ -127,12 +155,31 @@ def main():
             context_summary[ctx] = dict(calls=len(chosen), total_ms=sum(c["ms"] for c in chosen),
                                         max_ms=max(c["ms"] for c in chosen),
                                         results=dict(Counter(c["result"] for c in chosen)),
-                                        dimensions=sorted({(c["width"], c["height"]) for c in chosen}))
+                                        dimensions=sorted({(c["width"], c["height"]) for c in chosen}),
+                                        address_spaces=dict(Counter(
+                                            address_key(address_at(c["begin_ns"])) for c in chosen)))
     report = dict(window=dict(begin_ns=begin, end_exclusive_ns=end),
                   frames={k: v for k, v in analyse(frames, secs=args.secs).items()
                           if k in ("mean", "ceiling", "median", "low", "low1", "hitches",
                                    "hitch_ms", "skipped")},
                   stage_counts=stage_counts, contexts=context_summary, hitches=hitches)
+    report["late_legacy_publication_markers"] = late_markers
+    if args.residency_intervals:
+        initial = address_at(begin)
+        report["address_space_timeline"] = ([initial] if initial else []) + [
+            e for e in address_spaces if begin < e["ns"] < end]
+        report["frame_intervals"] = []
+        for first, last in zip(frames, frames[1:]):
+            duration = last[0] - first[0]
+            skipped = max(0, last[1] - first[1] - 1)
+            category = "skipped" if skipped else (
+                "hitch" if duration > args.hitch_ms * 1e6 else
+                "late" if duration > 20e6 else "normal")
+            report["frame_intervals"].append(dict(begin_ns=first[0], end_ns=last[0],
+                                                  category=category))
+    if late_markers:
+        print("WARNING: legacy publication markers after frontend copies, outside all hitch boundaries:",
+              late_markers)
     print("Frame metrics:", report["frames"])
     print("Stage counts:", stage_counts)
     print("Surface-present contexts:", context_summary)

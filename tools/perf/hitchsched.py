@@ -29,6 +29,8 @@ def main():
     ap.add_argument("--chart", type=Path)
     ap.add_argument("--frequency", action="store_true",
                     help="also align recorded CPU frequencies with running intervals")
+    ap.add_argument("--all-states", action="store_true",
+                    help="retain whole-window vCPU state intervals for address-space residency analysis")
     args = ap.parse_args()
     if args.secs <= 0 or args.hitch_ms <= 0:
         ap.error("duration and hitch threshold must be positive")
@@ -164,6 +166,8 @@ def main():
                   frames={k: v for k, v in analyse(frames, secs=args.secs).items()
                           if k in ("mean", "ceiling", "median", "low", "low1",
                                    "hitches", "hitch_ms", "skipped")}, hitches=hitches)
+    if args.all_states:
+        report["vcpu_states"] = intervals
     print(f"Selected vCPU TID {cpu['tid']}; clock offset {offset} ns, spread {spread} ns.")
     print("No trace error/data-loss counters; complete scheduler coverage of frame window.")
     print("vCPU window ms:", window["ms"])

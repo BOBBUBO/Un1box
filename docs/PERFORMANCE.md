@@ -1486,6 +1486,78 @@ present calls and surrounding context boundaries. Raw traces, reviewed scenes,
 `milestones.json/txt`, scheduler report and engine log:
 `build/perf-codex/poco-frame-path-1/`. No tests added/run. No speedup claimed.
 
+#### Guest address-space residency narrows the post-render delay
+
+Engine `5511f5466d` adds default-off `LT_FRAME_PATH_CONTEXT=on`, alongside
+`LT_FRAME_PATH`: changed AArch32 CONTEXTIDR/TTBR0 markers in a bounded
+1,048,576-record buffer (about 40 MiB), with writes still deferred until Stop.
+Linux/Android builds passed. This records the installed address space, including
+kernel and native engine/driver work, not guest process identity or userspace CPU
+time. Transitional register pairs remain separate.
+
+One completed 60 s Snapdragon 865-class Poco Jetpack title capture, user recorder
+off, array cache on, other experiments/full accounting/focused counters off;
+scheduler trace only, no simpleperf/perfmaps. App `9437d59c`, engine
+`5511f5466d`; frozen `frame-context.apk`, symbols and identity retained. APK
+SHA-256 `dfeb042494283c7883f0d54be9f42a14007dd3cd60f8cbf52acd3eca4c766301`.
+Diagnostic metrics: **53.200 fps, ceiling 58, median 54, low 48, 1% low 27.863,
+11 hitches / 616.772 ms, zero skips**. These are not before/after improvement
+measurements. Exact window `[446409644953923,446469644953923)` monotonic ns,
+engine PID 16403, vCPU TID 16559. Both scenes reviewed, Start profile off;
+clean Stop/no-qemu/baseline readback confirmed. **302,468 records, zero
+dropped/incomplete/write errors**. Perfetto reports no error/data-loss counters,
+complete scheduler coverage, clock-offset spread 52 ns.
+
+All **3,248** explicit GL presents ran with CIDR **7**, TTBR0 **0xdb6e018**
+installed. All eleven in-hitch framebuffer flips ran with CIDR **6**, TTBR0
+**0xa802018** installed. A third address space, CIDR **5**, TTBR0 **0xa7ba018**,
+accounts for substantial execution in the gaps. Joining the complete scheduler
+timeline to address changes gives:
+
+| Frame class | Intervals | Wall ms | vCPU running ms | Render-associated key 7 share of running | Key 5 share | Flip-associated key 6 share |
+| --- | --- | --- | --- | --- | --- | --- |
+| Normal (≤20 ms, no skips) | 2,789 | 46,410.748 | 37,198.426 | 66.68% | 15.45% | 16.46% |
+| Late (>20 to ≤50 ms, no skips) | 391 | 12,971.459 | 10,612.942 | 68.11% | 16.13% | 14.25% |
+| Hitch (>50 ms, no skips) | 11 | 616.772 | 491.525 | 48.10% | 35.37% | 12.92% |
+
+Key 5 executes **173.848 ms** during the hitches, **15.804 ms per hitch**,
+versus **2.060 ms per normal interval**. Its running-time share is about
+**2.29×** the normal-frame share. This is an association within this capture,
+not proof it causes the missed deadlines or a named system daemon.
+
+The gap ending **44.798688 s** is a useful next target: latest completed
+surface present → framebuffer flip is **24.268125 ms**, including
+**20.673855 ms execution with key 5 installed**, versus 1.398073 ms under the
+render-associated key and 1.644166 ms under the flip-associated key. The nearest
+present is a temporal neighbor; its identity/dependency with the final scanout
+frame remains unproven. Address-space identity must be established before calling
+this audio, SpringBoard, logging or another subsystem. Host scheduling also
+remains relevant: the worst **81.032 ms** gap contains **52.116 ms running /
+24.734 ms runnable**. Maximum LCD deadline lateness in the eleven gaps is
+0.997350 ms.
+
+**Timestamp ordering correction:** sequence 4753's publication marker was
+0.464583 ms later than its frontend observation (47.831607 s into the window).
+The marker had been emitted after unlocking the frame-copy mutex, permitting
+the frontend to copy before that marker was timestamped. Its preceding gap is
+10.481250 ms, outside all eleven hitch boundary pairs. `framepath.py` rejects
+this by default. The explicit `--allow-late-publication-markers` legacy option
+preserves/reports the anomaly and still rejects an affected hitch boundary;
+raw timestamps were not edited. Address/scheduler joins use frontend bounds and
+are independent of that marker's timing. Do not interpret the older markers as
+exact publication linearization times. Engine `c0347336e6` moves the marker
+inside the existing copy lock before unlock. Linux/Android builds passed;
+`frame-context-ordered.apk`, symbols and identity are frozen separately, with
+no new phone capture of that fix yet.
+
+Actual capture analysis: `framepath.py --residency-intervals`,
+`hitchsched.py --all-states`, and `frameresidency.py`; full per-hitch execution,
+runnable/sleeping residency and normal-frame comparison are retained in
+`build/perf-codex/poco-frame-context-1/{milestones,hitches,residency}.{json,txt}`.
+Next: map key 5 to a guest process, then locate its expensive work and the
+render-to-flip dependency; separately investigate the host runnable delays.
+Pixel untouched. No tests added/run, no new optimization or speedup claimed.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,
