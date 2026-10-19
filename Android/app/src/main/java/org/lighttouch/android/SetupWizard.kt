@@ -60,8 +60,9 @@ internal class SetupState {
 internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: () -> Unit, onPickSystem: () -> Unit,
                          onPickTools: () -> Unit, onPickRom: () -> Unit, onCreate: () -> Unit, onPrepare: () -> Unit,
                          onFinish: (start: Boolean) -> Unit, onCancel: () -> Unit) {
-    BackHandler(enabled = state.step != SetupStep.CREATING) {
+    BackHandler {
         when {
+            state.step == SetupStep.CREATING -> {}  // consumed: the import keeps running behind the wizard
             state.step == SetupStep.FILES && !canCancel && state.system == null -> state.step = SetupStep.WELCOME
             canCancel && state.step != SetupStep.DONE -> onCancel()
             state.step == SetupStep.DONE -> onFinish(false)
@@ -162,7 +163,7 @@ private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () 
         if (state.system != null && state.rom == null) Text("Without the boot file the iPod touch 2G will not start; you can still add it now.",
             style = MaterialTheme.typography.bodySmall, color = LtColors.Warning, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(16.dp))
-        OutlinedTextField(state.name, { if (it.length <= 60) state.name = it }, Modifier.fillMaxWidth().testTag("setup_name"), singleLine = true,
+        OutlinedTextField(state.name, { if (fitsDeviceName(it)) state.name = it }, Modifier.fillMaxWidth().testTag("setup_name"), singleLine = true,
             label = { Text("Name (optional)") }, placeholder = { Text("Named after the model and iOS version") })
         if (state.error.isNotEmpty()) Text(state.error, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         Spacer(Modifier.height(20.dp))

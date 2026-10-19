@@ -28,11 +28,14 @@ internal fun shortProductName(productType: String): String = when (productType) 
     "iPad1,1" -> "iPad"; else -> productType
 }
 
-/** Default name for a new device: "<model> <iOS version>", numbered if another device has it. */
+/** Whether a name being typed fits: 60 characters, and the library's 127-byte UTF-8 limit (an emoji or CJK name reaches it first). */
+internal fun fitsDeviceName(name: String) = name.length <= 60 && name.trim().toByteArray(Charsets.UTF_8).size <= 127
+
 /** A name LightTouch made up from the firmware id rather than one the user chose. */
 internal fun isGeneratedDeviceName(name: String, board: String, build: String) =
     name.isBlank() || name == "$board $build" || name.startsWith("$board-$build") && name.endsWith("prepared")
 
+/** Default name for a new device: "<model> <iOS version>", numbered if another device has it. */
 internal fun defaultDeviceName(board: String, build: String, targets: Map<String, StoreTarget>, taken: Collection<String>): String {
     val base = targets["$board-$build"]?.let { "${shortProductName(it.productType)} ${it.ios}" } ?: "$board $build"
     if (base !in taken) return base

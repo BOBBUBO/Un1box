@@ -506,6 +506,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         setup.step = SetupStep.CREATING; setup.error = ""; setup.phase = ""; busy = true
         Thread({
             val staging = File(filesDir, "setup-${System.nanoTime()}").apply { mkdirs() }
+            var imported = false
             try {
                 val romPath = rom?.let { File(staging, "bootrom.bin").also { f -> copyWithProgress(it.uri, f, "Copying the boot file") }.absolutePath } ?: ""
                 val toolsPath = tools?.let { File(staging, "guest.itpack").also { f -> copyWithProgress(it.uri, f, "Copying guest tools") }.absolutePath } ?: ""
@@ -518,16 +519,30 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 val result = worker.importDevice(source.absolutePath, "", romPath, toolsPath, sha256)
                 android.util.Log.i("LightTouch", "Device import took ${(System.nanoTime() - started) / 1_000_000} ms")
                 require(result.isEmpty()) { result }
+                // The record exists from here on: a failed rename or select keeps it (under its
+                // firmware name, unselected) rather than sending the user back to import it again.
+                imported = true
                 val all = worker.records().toList()
                 val created = all.firstOrNull { it.getString("id") !in before } ?: error("The new device did not appear in the library")
                 val id = created.getString("id") ?: ""
                 val name = requested.ifEmpty { defaultDeviceName(created.getString("board") ?: "", created.getString("build") ?: "", firmwareTargets,
                     all.filter { it.getString("id") != id }.mapNotNull { it.getString("name") }) }
-                worker.rename(id, name).takeIf { it.isNotEmpty() }?.let { error(it) }
-                worker.select(id).takeIf { it.isNotEmpty() }?.let { error(it) }
-                handler.post { setup.created = name; setup.step = SetupStep.DONE; refreshDevices() }
+                val renamed = worker.rename(id, name)
+                val shown = if (renamed.isEmpty()) name else created.getString("name") ?: name
+                // Selecting under a running session would show this device while the old one runs.
+                val selected = status !in listOf("running", "paused", "starting", "stopping") && worker.select(id).isEmpty()
+                handler.post {
+                    refreshDevices()
+                    if (selected) { setup.created = shown; setup.step = SetupStep.DONE }
+                    else { overlay = null; notice = "Added $shown; stop the running device to switch to it" }
+                    if (renamed.isNotEmpty()) error = "Added the device, but could not name it \"$name\": $renamed"
+                }
             } catch (e: Exception) {
-                handler.post { setup.error = e.message ?: "Could not create the device"; setup.step = SetupStep.FILES }
+                handler.post {
+                    // Offering Start here could start whichever device was selected before.
+                    if (imported) { overlay = null; error = "Added the device, but could not finish setting it up: ${e.message}"; refreshDevices() }
+                    else { setup.error = e.message ?: "Could not create the device"; setup.step = SetupStep.FILES }
+                }
             } finally { staging.deleteRecursively(); handler.post { busy = false } }
         }, "setup-create").start()
     }

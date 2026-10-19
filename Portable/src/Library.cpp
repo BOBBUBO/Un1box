@@ -34,6 +34,26 @@ static void text(char *out, size_t capacity, const std::string &s) {
     require(s.size() < capacity, "record field exceeds ABI bound");
     memcpy(out, s.c_str(), s.size() + 1);
 }
+// Names are stored in record.json, which the JSON reader parses strictly: anything but well-formed
+// UTF-8 (overlong forms, surrogates such as JNI's modified UTF-8 emits) would make the record unreadable.
+static void display_name(const std::string &name) {
+    require(!name.empty() && name.size() < 128, "device name must be 1-127 bytes");
+    for (size_t i = 0; i < name.size();) {
+        auto c = static_cast<unsigned char>(name[i]);
+        require(c >= 0x20 && c != 0x7f, "device name has control characters");
+        size_t n = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 0;
+        require(n && i + n <= name.size(), "device name is not valid UTF-8");
+        uint32_t code = n == 1 ? c : c & (0x7f >> n);
+        for (size_t k = 1; k < n; ++k) {
+            auto b = static_cast<unsigned char>(name[i + k]);
+            require((b & 0xc0) == 0x80, "device name is not valid UTF-8");
+            code = code << 6 | (b & 0x3f);
+        }
+        static const uint32_t least[] = {0, 0, 0x80, 0x800, 0x10000};
+        require(code >= least[n] && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff), "device name is not valid UTF-8");
+        i += n;
+    }
+}
 static void copy_regular(const fs::path &source, const fs::path &destination, bool immutable = false) {
     require(fs::is_regular_file(fs::symlink_status(source)), "record asset must be regular file");
     fs::copy_file(source, destination, fs::copy_options::none);
@@ -185,7 +205,7 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         auto lock = parse(read_file(stage / "base/device.lock.json"));
         std::string board = lock.at("board").string(), build = lock.at("build").string(),
                     name = c->display_name && *c->display_name ? c->display_name : board + " " + build;
-        require(name.size() < 128, "device name too long");
+        display_name(name);
         fs::create_directory(stage / "assets");
         if (c->bootrom_path && *c->bootrom_path)
             copy_regular(c->bootrom_path, stage / "assets/bootrom.bin", true);
@@ -239,8 +259,7 @@ static std::string record_json(const Json &metadata, const std::string &id, cons
 }
 static void rename_record(lt_library *l, const std::string &id, const std::string &name) {
     record_id(id);
-    require(!name.empty() && name.size() < 128, "device name must be 1-127 bytes");
-    require(name.find_first_of(std::string("\0\n\r", 3)) == std::string::npos, "device name has control characters");
+    display_name(name);
     auto directory = l->root / "records" / id;
     auto metadata = parse(read_file(directory / "record.json", 65536));
     require(metadata.at("schema").integer() == 1 && metadata.at("id").string() == id, "invalid device record");

@@ -206,12 +206,46 @@ void window_error(const char *operation,int code) {
             static_cast<unsigned long long>(surface_generation),last_buffer_format,last_buffer_width,last_buffer_height,last_buffer_stride);
     }
 }
+// JNI's own UTF conversions use modified UTF-8: a character outside the BMP (an emoji) becomes two
+// encoded surrogates, which strict readers (record.json, the filesystem) reject, and NewStringUTF
+// rejects the standard 4-byte form under CheckJNI. Convert through UTF-16 both ways instead.
 struct Utf {
-    JNIEnv *env; jstring source; const char *value;
-    Utf(JNIEnv *e, jstring s): env(e), source(s), value(s ? e->GetStringUTFChars(s, nullptr) : nullptr) {}
-    ~Utf() { if (value) env->ReleaseStringUTFChars(source, value); }
+    std::string text; const char *value = nullptr;
+    Utf(JNIEnv *e, jstring s) {
+        if (!s) return;
+        const jsize n = e->GetStringLength(s);
+        std::vector<jchar> units(n);
+        e->GetStringRegion(s, 0, n, units.data());
+        for (jsize i = 0; i < n; ++i) {
+            uint32_t c = units[i];
+            if (c >= 0xd800 && c <= 0xdbff && i + 1 < n && units[i + 1] >= 0xdc00 && units[i + 1] <= 0xdfff)
+                c = 0x10000 + ((c - 0xd800) << 10) + (units[++i] - 0xdc00);
+            else if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd;  // unpaired surrogate
+            if (c < 0x80) text += char(c);
+            else if (c < 0x800) { text += char(0xc0 | c >> 6); text += char(0x80 | (c & 0x3f)); }
+            else if (c < 0x10000) { text += char(0xe0 | c >> 12); text += char(0x80 | (c >> 6 & 0x3f)); text += char(0x80 | (c & 0x3f)); }
+            else { text += char(0xf0 | c >> 18); text += char(0x80 | (c >> 12 & 0x3f)); text += char(0x80 | (c >> 6 & 0x3f)); text += char(0x80 | (c & 0x3f)); }
+        }
+        value = text.c_str();
+    }
 };
-jstring string(JNIEnv *e, const std::string &s) { return e->NewStringUTF(s.c_str()); }
+jstring string(JNIEnv *e, const std::string &s) {
+    std::vector<jchar> units;
+    units.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        auto c = static_cast<unsigned char>(s[i]);
+        size_t n = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 0;
+        uint32_t code = n == 1 ? c : c & (0x7f >> n);
+        for (size_t k = 1; n && k < n; ++k)
+            if (i + k >= s.size() || (static_cast<unsigned char>(s[i + k]) & 0xc0) != 0x80) n = 0;
+            else code = code << 6 | (s[i + k] & 0x3f);
+        if (!n) { units.push_back(0xfffd); ++i; continue; }  // malformed byte
+        if (code >= 0x10000) { code -= 0x10000; units.push_back(jchar(0xd800 + (code >> 10))); units.push_back(jchar(0xdc00 + (code & 0x3ff))); }
+        else units.push_back(jchar(code));
+        i += n;
+    }
+    return e->NewString(units.data(), jsize(units.size()));
+}
 std::string result(lt_status status, const lt_error &error) {
     return status == LT_OK ? "" : (error.message[0] ? error.message : "Native operation failed");
 }

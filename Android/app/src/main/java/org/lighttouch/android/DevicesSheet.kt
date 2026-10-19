@@ -27,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,18 +45,20 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
         SheetSystemBars()
         Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
             Text("Devices", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-            if (host.active) Text("Stop ${host.selected?.name ?: "the running device"} to switch to another.",
+            if (host.active) Text("Stop ${host.selected?.name ?: "the running device"} to switch to or add another.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
             LazyColumn(Modifier.padding(top = 8.dp).weight(1f, fill = false)) {
                 items(host.devices, key = { it.id }) { device ->
+                    // A running device's record is marked in use, which is not a crash to recover from.
                     DeviceRow(device, switchable = !host.active && !host.busy, editable = !(host.active && device.selected),
+                        needsRecovery = device.dirty && !(host.active && device.selected),
                         onSelect = { host.selectDevice(device.id); onDismiss() },
                         onRename = { renaming = device }, onDelete = { deleting = device })
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
-                .clickable(enabled = !host.busy) { onDismiss(); host.addDevice() }.padding(12.dp).testTag("add_device"),
+                .clickable(enabled = !host.busy && !host.active) { onDismiss(); host.addDevice() }.padding(12.dp).testTag("add_device").alpha(if (host.active) 0.38f else 1f),
                 verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -80,7 +83,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Boolean, onSelect: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Boolean, needsRecovery: Boolean, onSelect: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
         .background(if (device.selected) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow)
@@ -92,7 +95,7 @@ private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Bool
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(device.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(device.subtitle + if (device.dirty) " · needs recovery" else "", style = MaterialTheme.typography.bodySmall,
+            Text(device.subtitle + if (needsRecovery) " · needs recovery" else "", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (device.selected) Icon(Icons.Filled.Check, "Selected", tint = MaterialTheme.colorScheme.primary)
@@ -116,7 +119,7 @@ internal fun RenameDialog(device: DeviceSummary, onDismiss: () -> Unit, onRename
     LaunchedEffect(Unit) { focus.requestFocus() }
     val save = { if (name.text.isNotBlank()) onRename(name.text.trim()) }
     AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags, title = { Text("Rename device", style = MaterialTheme.typography.titleMedium) },
-        text = { OutlinedTextField(name, { if (it.text.length <= 60) name = it }, singleLine = true, label = { Text("Name") },
+        text = { OutlinedTextField(name, { if (fitsDeviceName(it.text)) name = it }, singleLine = true, label = { Text("Name") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { save() }),
             modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag("rename_field")) },
         confirmButton = { TextButton(onClick = save, enabled = name.text.isNotBlank(), modifier = Modifier.testTag("rename_save")) { Text("Save") } },

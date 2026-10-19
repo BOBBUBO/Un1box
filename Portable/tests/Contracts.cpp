@@ -410,6 +410,19 @@ int main() {
             break;
     }
     assert(std::string(renamed.display_name) == "iPod touch 2G 3.1.3" && std::string(renamed.base_sha256) == first.base_sha256);
+    // Names round-trip through strict JSON: real UTF-8 (an emoji) is kept; JNI modified UTF-8 (the
+    // emoji as two encoded surrogates), overlong forms and control characters are refused.
+    assert(lt_library_rename(l, first.id, "Kai\xe2\x80\x99s iPod \xf0\x9f\x8e\xb5", &e) == LT_OK);
+    assert(lt_library_rename(l, first.id, "x\xed\xa0\xbc\xed\xbe\xb5", &e) == LT_INVALID);
+    assert(lt_library_rename(l, first.id, "\xc0\xaf", &e) == LT_INVALID);
+    assert(lt_library_rename(l, first.id, "a\tb", &e) == LT_INVALID);
+    assert(lt_library_rename(l, first.id, "\xe2\x80", &e) == LT_INVALID);
+    for (uint32_t i = 0; i < count; ++i) {
+        assert(lt_library_record_at(l, i, &renamed, &e) == LT_OK);
+        if (std::string(renamed.id) == first.id)
+            break;
+    }
+    assert(std::string(renamed.display_name) == "Kai\xe2\x80\x99s iPod \xf0\x9f\x8e\xb5");
     assert(lt_library_device_open(l, second_record.id, 0, &d, &e) == LT_OK);
     assert(lt_library_remove(l, second_record.id, &e) == LT_BUSY);
     lt_device_close(d);
