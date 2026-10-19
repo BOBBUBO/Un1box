@@ -173,7 +173,25 @@ overhead, exclude logging and the outer interrupt-flag clear. Blocks are emitted
 after unlock at the first completed check at least five seconds after the previous
 boundary. Select contiguous complete blocks wholly inside each exact frame window.
 Instrumentation overhead must be measured separately; diagnostic FPS is not an
-ordinary baseline. No runtime benefit has been established yet.
+ordinary baseline. First focused masked pair: masked check mean 7.985 → 0.422 µs,
+masked wall 0.883% → 0.047%, all acquisition wait 5.036% → 4.199%. Reverse pair
+is pending; no ordinary game/pacing benefit is established.
+
+`LT_IRQ_DELIVERY_FAST=on` (engine `5b956fc6ae`, default off) separately permits
+CPU-only physical ARMv6 IRQ/FIQ entry without BQL. It requires a machine with
+one current/maximum vCPU and no EL-change hooks; newer/M-profile targets,
+virtual/special/unknown requests, replay and stepping keep the locked path.
+IRQ/FIQ levels and EXITTB/new-request kicks are preserved; guest MMIO device
+acknowledgement still takes BQL. It uses the existing target entry code.
+
+In this build, `[irq-check]` adds integer `unlocked` completed checks (including
+no-ops), `delivered-ns` and `delivered-wait-ns`. Delivered subsets can overlap
+masked candidates if the request changes before lock acquisition. `unhandled`
+now includes eligible unlocked no-ops too; `fast=MODE` still names the masked
+precheck switch, so use the separate `[tcg] irq-delivery-fast=MODE` init line and
+saved environment to identify delivery mode. Compare with IRQ profiling on both,
+masked fast/L2/other diagnostics off; then use separate profiler-off ordinary
+FPS pairs. Both optimizations remain default off; delivery has no runtime result yet.
 
 ## Focused exact-zero VFP multiplication
 

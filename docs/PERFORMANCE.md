@@ -463,8 +463,89 @@ cache+lookup baseline and its clean stop. Vary only `LT_MASKED_IRQ_FAST`; IRQ pr
 array cache on, other experiments/diagnostics off, no live recorder/full accounting.
 Select at least four contiguous complete timing blocks wholly inside each frame
 window. Raw logs/settings/scenes: `poco-masked-irq-focused-{1,2}-{off,on}/`;
-runner `masked-irq-run.py`. No local saving, FPS gain or pacing result is claimed.
-Keep the experiment off pending results and an ordinary diagnostic-off comparison.
+runner `masked-irq-run.py`. First-pair evidence follows; keep the experiment off
+pending reverse-order and ordinary diagnostic-off comparisons.
+
+First focused pair complete (35 s per mode, off then on). Both final screenshots
+reviewed: correct Jetpack title, recorder off, zero publisher skips. Six contiguous
+complete timing blocks wholly inside each frame window, about 30 s each:
+
+| Metric | Fast off → on |
+| --- | --- |
+| Checks/s | 1665 → 1684 |
+| Masked candidates/s | 1106 → 1124 (66.4% → 66.8% of checks) |
+| Masked mean µs/check | 7.985 → 0.422 |
+| Masked BQL wait µs/check | 7.108 → 0 |
+| Masked check wall % | 0.883% → 0.047% |
+| All check wall % | 5.340% → 4.452% |
+| All acquisition wall % | 5.036% → 4.199% |
+| Delivered checks/s | 560.5 → 559.5 |
+
+There are 28 masked-candidate deliveries in the off arm (a request can change
+before acquisition), zero enabled; all 33,736 enabled masked candidates skip the
+lock. Completed maximum check times 3.135 → 4.160 ms are retained. The masked
+subset is cheaper, but most remaining wait is outside that subset: skipping all
+masked checks does not recover the earlier full 6% interrupt-wait observation.
+
+| Pair | Diagnostic mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 51.97 → 52.97 | 56 → 58 | 52 → 54 | 44 → 44 | 27.15 → 27.85 | 13 (972.7 ms) → 9 (838.5 ms) |
+
+These are instrumented FPS results, not ordinary baselines or a profiler-overhead
+measurement. Reverse pair still running; keep the optimization off pending
+confirmation. An ordinary diagnostic-off runner is prepared, not queued; the
+larger delivered-check wait motivates the separate delivery experiment below.
+
+Exact half-open frame / complete-block timing bounds (monotonic ns):
+
+| Mode | FPS [start, end) | Timing [begin, end] |
+| --- | --- | --- |
+| off | [433923155694885, 433958155694885) | [433927854207383, 433957863277059] |
+| on | [434107396548356, 434142396548356) | [434107481622002, 434137489276313] |
+
+Raw `poco-masked-irq-focused-1-{off,on}/`; `masked-irq-analyze.py`,
+`masked-irq-results.json` retain all blocks, counts, windows and every hitch;
+reviewed montage `masked-irq-scenes.png`. The queued delivery comparison waits
+for both focused pairs and the runner's clean-stop/baseline restoration marker.
+
+### CPU-only physical IRQ delivery (2026-10-19, experimental, default off)
+
+The first masked-check pair leaves 4.20% wall in BQL acquisitions after masked
+candidates skip it. Source inspection found that physical ARMv6 IRQ/FIQ entry
+calls the same CPU-only `arm_cpu_do_interrupt` path already used without BQL
+for synchronous exceptions. It changes banked registers, CPSR, PC and CPU-owned
+exception state; it neither queries nor acknowledges the VIC. The guest's later
+MMIO acknowledgement continues to take BQL.
+
+Engine `5b956fc6ae` adds default-off `LT_IRQ_DELIVERY_FAST=on`, gated on one
+current and one maximum vCPU. A target predicate permits only physical IRQ/FIQ
+(optionally EXITTB) on ARMv6 A/R, excluding v7/newer and M-profile, EL-change hooks,
+virtual/NMI/unknown/special requests. Replay and stepping use the locked path.
+It calls the original target interrupt handler with the atomic request snapshot;
+IRQ/FIQ levels remain pending, delivered IRQ accounting and EXITTB chain-breaking
+are retained, and newly arriving requests retain their kicks and the final
+`exit_request` check. A later deassertion does not undo an IRQ already sampled.
+No target interrupt semantics or guest exception code are replaced.
+
+`LT_IRQ_CHECK_PROF` remains independent. New fields count `unlocked` completed
+checks (including masked no-ops) and time the `delivered-ns` / `delivered-wait-ns`
+subset, allowing direct measurement of the remaining wait. Ordinary mode has no
+profiling clocks/counter updates. Timings include clocks/descheduling, and target
+longjmps can bypass completed records as before.
+
+Linux/Android builds succeeded (`build/perf-codex/irq-delivery-build.txt`), no
+tests added/run. Frozen `irq-delivery.apk`, `irq-delivery-symbols/` and clean build
+identity `irq-delivery-build-identity.json`: app `29a58213`, engine `5b956fc6ae`.
+APK SHA256: `24aba9dd778e351106c8d061581688b7e997692acef7d39f8b41f61492137b78`.
+Library SHA256: `c9a1b9765cf2d5b7888b473622eafedf6f12624f5fe4fe298d00975b29a8fd6a`.
+
+Two focused 35 s pairs off/on, on/off are queued after the current masked-IRQ
+focused comparison and its clean stop, ahead of the indirect L2 experiment.
+`LT_IRQ_CHECK_PROF=on` both; only delivery-fast varies. Masked fast path, L2,
+other experiments/diagnostics and live recorder/full accounting off; array cache
+on. `irq-delivery-run.py` / `irq-delivery-analyze.py` preserve exact frame/timing
+bounds and all hitches under `poco-irq-delivery-focused-*`. No runtime local,
+FPS or pacing gain established. Keep off pending focused and ordinary comparisons.
 
 ### Exception and SVC diagnostics (2026-10-18)
 
@@ -1034,8 +1115,8 @@ app `b636084a`, engine `6a71c1842f`. APK SHA256:
 Library SHA256: `93fe8be855d7ac586ecd38f548376a0567d28b7cd85fbb8b042c7c90b2ef88fe`.
 
 Focused runner/analyzer `ibtc-l2-run.py` / `ibtc-l2-analyze.py` are prepared only,
-not started. Prioritize the running combined comparison and pending interrupt
-experiment before assigning this experiment the phone. No hit rate, local saving,
+not started. The combined comparison is complete; prioritize masked-check and
+CPU-only IRQ-delivery comparisons before assigning this experiment the phone. No hit rate, local saving,
 FPS or pacing result established; keep off pending direct timings and ordinary
 diagnostic-off comparisons. Settings/fields are documented in PROFILING.md.
 

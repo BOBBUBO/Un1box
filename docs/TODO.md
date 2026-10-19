@@ -82,7 +82,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   accounting/breakpoints/execution logging retain full lookup. Independent
   `LT_IBTC_L2_PROF` counts hits/attempts and samples one in 256 helper calls.
   Linux/Android builds pass, frozen `ibtc-l2-pcrel.apk`/symbols/identity retained. Focused
-  runner/analyzer prepared, not started; prioritize combined and masked-IRQ results.
+  runner/analyzer prepared, not started; prioritize masked-check and IRQ-delivery results.
   No measured hit rate/local/FPS/pacing saving yet. Details in PERFORMANCE/PROFILING.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
@@ -174,8 +174,26 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   without full accounting/BQL tables. Linux/Android builds succeeded; frozen
   `masked-irq.apk`/symbols/identity retained. Two focused 35 s pairs off/on, on/off
   running after the completed combined cache+lookup baseline, varying only the fast switch;
-  IRQ profiling on both, other diagnostics/experiments off, array cache on. Runtime results pending;
-  no FPS or pacing saving established. Details/limits in PERFORMANCE/PROFILING.
+  IRQ profiling on both, other diagnostics/experiments off, array cache on. First pair:
+  masked check 7.985 → 0.422 µs, masked wait 7.108 → 0 µs, masked wall 0.883% →
+  0.047%; masked candidates ~1106 → 1124/s, 66–67% of checks. All wait still
+  5.036% → 4.199% wall. Diagnostic FPS 51.97 → 52.97, ceiling 56 → 58,
+  median 52 → 54, low 44 → 44, 1% low 27.15 → 27.85, hitches 13 (972.7 ms) →
+  9 (838.5 ms). Both title/recorder-off scenes reviewed, zero skips. Reverse pair
+  running; keep off. Ordinary runner prepared, not queued; larger remaining wait
+  motivates delivery experiment below. Exact bounds/limits in PERFORMANCE/PROFILING.
+- [ ] Measure CPU-only physical ARMv6 IRQ delivery (`5b956fc6ae`, default-off
+  `LT_IRQ_DELIVERY_FAST=on`). Physical entry uses the same CPU-owned path already
+  unlocked for synchronous exceptions; device MMIO acknowledgement still locks.
+  Single-current/maximum-vCPU only, physical IRQ/FIQ optionally EXITTB, no EL hooks;
+  v7/newer/M-profile, virtual/special/unknown requests, replay and stepping stay locked.
+  Atomic request snapshot preserves levels, EXITTB and new-request kicks. Independent
+  `LT_IRQ_CHECK_PROF` adds unlocked counts and delivered-check time/wait subsets.
+  Linux/Android builds succeeded; clean frozen `irq-delivery.apk`/symbols/identity.
+  Two focused 35 s off/on,on/off pairs queued behind masked-check cleanup, ahead
+  of L2. Array cache on; masked-fast/L2/other diagnostics off, IRQ profiler on both,
+  no recorder/full accounting. No local/FPS/pacing result yet; keep off pending
+  focused and ordinary evidence. See PERFORMANCE/PROFILING.
 - [ ] The guest kernel is 22% of the vCPU in Jetpack on the Poco (half the time in translated code).
   It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
   lock and interrupt-mask instructions cheaper. Next to look at: how many exceptions and Mach messages
