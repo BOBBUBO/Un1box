@@ -149,6 +149,32 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(CatalogClient(opener=opener).versions({"bundle_id": "org.example/a?b"}), [])
         self.assertIn("org.example%2Fa%3Fb/versions", opener.requests[0][0].full_url)
 
+    def test_compatible_versions_keep_copies_that_run_and_the_searched_copy(self):
+        def copy(ipa_id, status="installable", archs=("armv6", "armv7"), macho="3.1", size=100):
+            return {"ipa_id": str(ipa_id), "install_status": status, "architectures": list(archs),
+                    "macho_min_os": macho, "size": size}
+        versions = {"data": [
+            {"version": "3.8", "minimum_os_version": "4.3", "copies": [copy(1, macho="4.3")]},
+            {"version": "3.6.1", "minimum_os_version": "3.1", "copies": [copy(123), copy(2, status="encrypted")]},
+            {"version": "3.1", "minimum_os_version": "3.1", "copies": [copy(3, macho="4.3")]},
+            {"version": "2.0", "minimum_os_version": "3.0", "copies": [copy(4, archs=["armv7"]), copy(5, macho=None, size=0)]},
+            {"version": "1.0", "minimum_os_version": None, "copies": [copy(6, macho="3.x"), {"ipa_id": "bad"}]}]}
+        rows = CatalogClient(opener=Opener(versions)).compatible_versions(self.app, N72)
+        self.assertEqual(rows, [{"ipa_id": 123, "version": "3.6.1", "size": 100, "minimum_os": "3.1"},
+                                {"ipa_id": 5, "version": "2.0", "size": None, "minimum_os": "3.0"}])
+
+    def test_choose_rechecks_the_picked_copy(self):
+        older = dict(self.app, ipa_id=124)
+        details = dict(self.details, ipa_id="124")
+        client = CatalogClient(opener=Opener({"apps": [older]}, details))
+        self.assertEqual(client.choose(self.app, 124, N72), older)
+        other = dict(older, bundle_id="org.other")
+        with self.assertRaisesRegex(CatalogError, "different app"):
+            CatalogClient(opener=Opener({"apps": [other]})).choose(self.app, 124, N72)
+        newer = dict(details, binary=dict(details["binary"], macho_min_os="4.3"))
+        with self.assertRaisesRegex(CatalogError, "Requires iOS 4.3"):
+            CatalogClient(opener=Opener({"apps": [older]}, newer)).choose(self.app, 124, N72)
+
 
 if __name__ == "__main__":
     unittest.main()

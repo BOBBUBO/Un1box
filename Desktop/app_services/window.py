@@ -18,7 +18,7 @@ class AppsWindow:
         self.on_error = on_error
         self.window = tk.Toplevel(parent)
         self.window.title("LightTouch · Apps")
-        self.window.geometry("780x620")
+        self.window.geometry("900x640")
         self.window.minsize(640, 480)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.client = None
@@ -28,6 +28,11 @@ class AppsWindow:
         self.events = queue.Queue(maxsize=256)
         self.cancelled = threading.Event()
         self.entries = []
+        # The version picker: the chosen app's copies, and the rechecked copy Download takes.
+        self.app = None
+        self.copies = []
+        self.candidate = None
+        self.lookups = 0
         self.pending_download = None
         self.widgets = []
         self.query = tk.StringVar()
@@ -44,10 +49,18 @@ class AppsWindow:
         entry.bind("<Return>", lambda e: self.search())
         self.button(row, "Search Legacy Store", self.search).pack(side="left", padx=(8, 0))
         self.widgets.append(entry)
-        self.list = tk.Listbox(frame, exportselection=False, height=12)
-        self.list.pack(fill="both", expand=True, pady=(12, 8))
+        lists = ttk.Frame(frame)
+        lists.pack(fill="both", expand=True, pady=(12, 8))
+        lists.columnconfigure(0, weight=1, uniform="lists")
+        lists.columnconfigure(2, weight=1, uniform="lists")
+        lists.rowconfigure(1, weight=1)
+        ttk.Label(lists, text="Results").grid(row=0, column=0, sticky="w")
+        ttk.Label(lists, text="Versions that run on this device").grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.list = self.listbox(lists, 0)
         self.list.bind("<<ListboxSelect>>", self.selected)
-        self.details = tk.StringVar(value="Select an app to see its compatibility.")
+        self.versions = self.listbox(lists, 2)
+        self.versions.bind("<<ListboxSelect>>", self.version_selected)
+        self.details = tk.StringVar(value="Select an app, then the version to install.")
         ttk.Label(frame, textvariable=self.details, wraplength=700, justify="left").pack(anchor="w", pady=(0, 12))
         actions = ttk.Frame(frame)
         actions.pack(fill="x")
@@ -77,6 +90,15 @@ class AppsWindow:
         if self.client is None:
             self.client = CatalogClient()
         return self.client
+
+    @staticmethod
+    def listbox(parent, column):
+        value = tk.Listbox(parent, exportselection=False, height=12)
+        value.grid(row=1, column=column, sticky="nsew", padx=(12, 0) if column else 0)
+        bar = ttk.Scrollbar(parent, orient="vertical", command=value.yview)
+        bar.grid(row=1, column=column + 1, sticky="ns")
+        value.configure(yscrollcommand=bar.set)
+        return value
 
     def button(self, parent, text, command):
         value = ttk.Button(parent, text=text, command=command)
@@ -124,12 +146,71 @@ class AppsWindow:
         except Exception as error:
             self.error(error)
 
+    def lookup(self, action):
+        """Version list and copy checks: no guest work, so they run beside other operations.
+
+        Each new lookup supersedes the last; a superseded result is dropped.
+        """
+        self.lookups += 1
+        generation = self.lookups
+        def run():
+            try:
+                value = action()
+            except Exception as error:
+                value = {"problem": str(error)}
+            self.events.put({"lookup": value, "generation": generation})
+        threading.Thread(target=run, daemon=True).start()
+
     def selected(self, _event=None):
         selected = self.list.curselection()
-        if selected:
-            app = self.entries[selected[0]]
-            self.details.set("{} · {}\n{}".format(app["name"], app.get("version", ""),
-                                                  incompatibility(app) or "Compatible copy; availability is checked again before download."))
+        if not selected or self.target is None:
+            return
+        app, target = self.entries[selected[0]], self.target
+        self.app, self.copies, self.candidate = app, [], None
+        self.versions.delete(0, "end")
+        reason = incompatibility(app)
+        if reason:
+            self.lookups += 1
+            self.details.set("{}\n{}".format(app["name"], reason))
+            return
+        self.details.set("{}\nLoading versions…".format(app["name"]))
+        self.lookup(lambda: {"copies": self.catalog_client().compatible_versions(app, target)})
+
+    def version_selected(self, _event=None):
+        selected = self.versions.curselection()
+        if not selected or self.app is None or self.target is None:
+            return
+        app, copy, target = self.app, self.copies[selected[0]], self.target
+        self.candidate = None
+        self.details.set("{} {}\nChecking this copy…".format(app["name"], copy["version"]))
+        self.lookup(lambda: {"candidate": self.catalog_client().choose(app, copy["ipa_id"], target), "copy": copy})
+
+    def show_lookup(self, value):
+        name = self.app["name"] if self.app else ""
+        if "problem" in value:
+            self.details.set("{}\n{}".format(name, value["problem"]))
+            if self.on_error:
+                self.on_error(value["problem"])
+        if "copies" in value:
+            self.copies = value["copies"]
+            for copy in self.copies:
+                twin = sum(c["version"] == copy["version"] for c in self.copies) > 1
+                # Two archived copies of one version need their copy number to tell apart.
+                self.versions.insert("end", " · ".join(filter(None, (
+                    copy["version"], "{:.1f} MB".format(copy["size"] / 1e6) if copy["size"] else None,
+                    "iOS {}+".format(copy["minimum_os"]) if copy["minimum_os"] else None,
+                    "copy {}".format(copy["ipa_id"]) if twin else None))))
+            if not self.copies:
+                self.details.set("{}\nNo version of this app runs on this device.".format(name))
+                return
+            index = next((i for i, c in enumerate(self.copies) if c["ipa_id"] == self.app["ipa_id"]), 0)
+            self.versions.selection_set(index)
+            self.versions.see(index)
+            self.version_selected()
+        if "candidate" in value:
+            self.candidate = value["candidate"]
+            self.details.set("{} {}\nThis copy runs on this device; availability is checked again before download.".format(
+                name, value["copy"]["version"]))
 
     def local(self):
         try:
@@ -144,14 +225,11 @@ class AppsWindow:
     def download(self):
         try:
             self.admit()
-            selected = self.list.curselection()
-            if not selected or self.target is None:
-                raise InstallError("Select a compatible app first.")
-            app, target = self.entries[selected[0]], self.target
-            reason = incompatibility(app)
-            if reason:
-                raise InstallError(reason)
-            if not messagebox.askyesno("Download and install?", "Download {} and install it into the running guest?".format(app["name"]), parent=self.window):
+            app, target = self.candidate, self.target
+            if app is None or target is None:
+                raise InstallError("Select an app and a version that runs on this device first.")
+            if not messagebox.askyesno("Download and install?", "Download {} {} and install it into the running guest?".format(
+                    app["name"], app.get("version", "")), parent=self.window):
                 return
             def progress(count, total):
                 try:
@@ -233,6 +311,10 @@ class AppsWindow:
     def handle(self, event):
         if "error" in event:
             self.error(event["error"])
+        if "lookup" in event:
+            if event["generation"] == self.lookups:
+                self.show_lookup(event["lookup"])
+            return
         if "phase" in event:
             self.message.set(event.get("status") or {"download": "Downloading app…", "upload": "Sending to guest…",
                                                     "install": "Installing…"}.get(event["phase"], event["phase"]))
@@ -241,11 +323,14 @@ class AppsWindow:
         result = event.get("background", {})
         if "apps" in result:
             self.entries = result["apps"]
+            self.app, self.copies, self.candidate = None, [], None
+            self.lookups += 1
+            self.versions.delete(0, "end")
             self.list.delete(0, "end")
             for app in self.entries:
                 reason = incompatibility(app)
                 self.list.insert("end", app["name"] + (" · " + reason if reason else ""))
-            self.message.set("{} results. Select a compatible app to install.".format(len(self.entries)))
+            self.message.set("{} results. Select an app, then the version to install.".format(len(self.entries)))
         if "download" in result:
             self.pending_download = result["download"]
             # The thread queued its terminal result just before returning. It may

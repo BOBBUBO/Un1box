@@ -78,6 +78,47 @@ class UITests(unittest.TestCase):
         self.ui.copy_diagnostics()
         self.assertIn(failure, self.window.clipboard_get())
 
+    def test_apps_version_picker_downloads_the_picked_copy(self):
+        from app_services.window import AppsWindow
+        from app_services.catalog import Target
+        app = {'name': 'Synthetic', 'ipa_id': 3, 'bundle_id': 'org.example.synthetic', 'version': '3.0'}
+        copies = [{'ipa_id': 3, 'version': '3.0', 'size': 2000000, 'minimum_os': '3.1'},
+                  {'ipa_id': 2, 'version': '2.0', 'size': None, 'minimum_os': '3.0'},
+                  {'ipa_id': 1, 'version': '2.0', 'size': None, 'minimum_os': None}]
+        class Client:
+            downloaded = None
+            def search(self, query, target): return [app]
+            def compatible_versions(self, chosen, target): return copies
+            def choose(self, chosen, ipa_id, target):
+                return dict(chosen, ipa_id=ipa_id, version=next(c['version'] for c in copies if c['ipa_id'] == ipa_id))
+            def download(self, chosen, target, scratch, **kwargs):
+                Client.downloaded = chosen
+                raise ValueError('stop before install')
+        bridge = type('Bridge', (), {'alive': True})()
+        with patch.object(AppsWindow, 'run_service'):
+            apps = AppsWindow(self.window, lambda: bridge, self.root / 'downloads', lambda: True)
+        self.addCleanup(apps.window.destroy)
+        apps.target = Target('iPod2,1', '3.1.3', 'armv6')
+        apps.client = Client()
+        def settle():
+            # Lookups run on their own threads; the fake client answers at once.
+            for _ in range(25):
+                apps.poll()
+                time.sleep(0.02)
+        apps.search(); apps.work.join(3); settle()
+        apps.list.selection_set(0); apps.selected(); settle()
+        self.assertEqual(apps.versions.get(0, 'end'),
+                         ('3.0 · 2.0 MB · iOS 3.1+', '2.0 · iOS 3.0+ · copy 2', '2.0 · copy 1'))
+        self.assertEqual(apps.versions.curselection(), (0,))
+        self.assertEqual(apps.candidate['ipa_id'], 3)
+        apps.versions.selection_clear(0, 'end'); apps.versions.selection_set(1); apps.version_selected(); settle()
+        self.assertEqual(apps.candidate['ipa_id'], 2)
+        with patch('app_services.window.messagebox.askyesno', return_value=True):
+            apps.download()
+        apps.work.join(3); settle()
+        self.assertEqual(Client.downloaded['ipa_id'], 2)
+        self.assertEqual(apps.message.get(), 'stop before install')
+
     def test_file_picker_accepts_readonly_files_and_autofills_companions(self):
         source = archive(self.root / 'n72ap-7E18.itbase')
         for name in ('armv6.itpack', 'bootrom.bin'):

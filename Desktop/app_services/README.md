@@ -6,9 +6,10 @@
 applies. It uses Python 3.9+ standard-library HTTPS with certificate verification.
 
 The desktop UI can run `CatalogClient.search(query, target)` on a background
-thread, show `incompatibility(app)` on unavailable rows, use `versions(app)` for
-other copies, and call `download(app, target, private_scratch)` only after a user
-selects a copy. `Target` contains the selected guest's product type, iOS version,
+thread, show `incompatibility(app)` on unavailable rows, list the copies that run
+on the target with `compatible_versions(app, target)`, recheck the picked one with
+`choose(app, ipa_id, target)`, and call `download(copy, target, private_scratch)`
+only after a user selects a copy. `Target` contains the selected guest's product type, iOS version,
 CPU architecture and device family; it describes the guest, not the Linux host.
 Every search and copy recheck names the actual target. Downloads revalidate copy
 identity, availability, architecture, encryption classification and minimum OS,
@@ -27,8 +28,10 @@ python3 -m unittest discover -s Linux/tests -p 'test_app_services_catalog.py' -v
 ## Desktop installation
 
 The launcher's **Apps…** window queries the running guest's `ProductType` and
-`ProductVersion`, searches Legacy Store with that actual target, and supports
-**Download and install** and **Install local IPA…**. Downloads remain private and
+`ProductVersion`, searches Legacy Store with that actual target, lists the chosen
+app's versions that run on it (as Android's Store and the macOS app's version
+sheet do; the search row's copy is preselected), and supports **Download and
+install** of the picked version and **Install local IPA…**. Downloads remain private and
 are removed after installation or failure. No app is downloaded merely by opening
 the window or searching. Open an installed app from its icon in the guest.
 

@@ -127,6 +127,20 @@ def incompatibility(app):
             "not_analyzed": "Not checked for compatibility yet"}.get(reason, "Not compatible with this device")
 
 
+def _runs(archs, target):
+    return isinstance(archs, list) and any(a == target.arch or (target.arch == "armv7" and a == "armv6") for a in archs)
+
+
+def _requires(minimum, target):
+    """True when the target's iOS is older than minimum; unreadable minimums never fit."""
+    if minimum is None:
+        return False
+    try:
+        return _version(minimum) > _version(target.ios)
+    except CatalogError:
+        return True
+
+
 def check_copy(copy, app, target):
     if str(copy.get("ipa_id")) != str(app["ipa_id"]) or copy.get("bundle_id") != app.get("bundle_id"):
         raise CatalogError("The archived copy no longer matches this app.")
@@ -137,8 +151,7 @@ def check_copy(copy, app, target):
         raise CatalogError("This copy has not been analyzed for compatibility.")
     if binary.get("install_status") != "installable":
         raise CatalogError("This copy is encrypted or has not been classified as installable.")
-    archs = binary.get("architectures")
-    if not isinstance(archs, list) or not any(a == target.arch or (target.arch == "armv7" and a == "armv6") for a in archs):
+    if not _runs(binary.get("architectures"), target):
         raise CatalogError("This copy needs a newer processor than this device has.")
     if target.arch == "armv6" and binary.get("armv7_code") is True:
         raise CatalogError("This copy needs a newer processor than this device has.")
@@ -260,6 +273,41 @@ class CatalogClient:
         if not isinstance(versions, list):
             raise CatalogError("Legacy Store sent unreadable version information.")
         return versions
+
+    def compatible_versions(self, app, target):
+        """Every archived copy of the app that could run on the target, in catalog order.
+
+        The copy the search row names is always kept, so the picker can show it.
+        Each row is {"ipa_id", "version", "size", "minimum_os"}; choose() rechecks one.
+        """
+        rows = []
+        for entry in self.versions(app):
+            if not isinstance(entry, dict) or not isinstance(entry.get("copies"), list):
+                continue
+            minimum = entry.get("minimum_os_version")
+            for copy in entry["copies"]:
+                try:
+                    ipa_id = int(copy["ipa_id"])
+                except (TypeError, KeyError, ValueError):
+                    continue
+                macho = copy.get("macho_min_os")
+                fits = (copy.get("install_status") == "installable" and _runs(copy.get("architectures"), target)
+                        and not _requires(minimum, target) and not _requires(macho, target))
+                if fits or ipa_id == app["ipa_id"]:
+                    known = [m for m in (minimum, macho) if isinstance(m, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,2}", m)]
+                    size = copy.get("size")
+                    rows.append({"ipa_id": ipa_id, "version": str(entry.get("version") or "Unknown"),
+                                 "size": size if type(size) is int and size > 0 else None,
+                                 "minimum_os": max(known, key=lambda m: tuple(map(int, m.split(".")))) if known else None})
+        return rows
+
+    def choose(self, app, ipa_id, target):
+        """Revalidate one archived copy of app against target; returns the row download() takes."""
+        found = self.compatible_copy(ipa_id, target)
+        if found.get("bundle_id") != app.get("bundle_id"):
+            raise CatalogError("This copy belongs to a different app.")
+        check_copy(self.copy_details(ipa_id), found, target)
+        return found
 
     def download(self, app, target, scratch, *, progress=lambda count, total: None, cancelled=lambda: False):
         deadline = time.monotonic() + 900

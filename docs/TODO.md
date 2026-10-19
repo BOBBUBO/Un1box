@@ -166,8 +166,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   shows puts it back to sleep.)
 - [ ] Stop was seen disabled once after Store use; not reproduced.
 - [x] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.
-- [ ] Some catalog apps marked compatible need iOS 4 APIs (Doodle Jump 3.x: GCD). Consider flagging
-  apps that weak-link iOS 4 symbols, or surfacing Last crash automatically after a quick quit.
+- [ ] Some catalog apps marked compatible need iOS 4 APIs (Doodle Jump 3.x: GCD; the n72 search row
+  is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash
+  automatically after a quick quit. Linux/Windows Apps now has a version picker; it has no Last crash.
 
 ## Guest graphics
 
