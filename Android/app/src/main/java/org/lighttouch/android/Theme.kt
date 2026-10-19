@@ -73,6 +73,11 @@ private val Type = Typography().let { base ->
 
 internal val MonoStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp)
 
+/** Full screen is always dark: its menus sit on black around the guest. */
+@Composable
+internal fun DarkTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = Dark, typography = Type,
+    shapes = MaterialTheme.shapes, content = content)
+
 @Composable
 internal fun LightTouchTheme(mode: ThemeMode, content: @Composable () -> Unit) {
     val dark = when (mode) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.DARK -> true; ThemeMode.LIGHT -> false }

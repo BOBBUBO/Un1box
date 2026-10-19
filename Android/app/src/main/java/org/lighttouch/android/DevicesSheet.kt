@@ -1,5 +1,9 @@
 package org.lighttouch.android
 
+import android.os.Build
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -28,13 +32,14 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
     var renaming by remember { mutableStateOf<DeviceSummary?>(null) }
     var deleting by remember { mutableStateOf<DeviceSummary?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.testTag("devices_sheet")) {
-        Column(Modifier.padding(bottom = 24.dp)) {
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), modifier = DialogTags.testTag("devices_sheet")) {
+        SheetSystemBars()
+        Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
             Text("Devices", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
             if (host.active) Text("Stop ${host.selected?.name ?: "the running device"} to switch to another.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp))
-            LazyColumn(Modifier.padding(top = 8.dp).heightIn(max = 420.dp)) {
+            LazyColumn(Modifier.padding(top = 8.dp).weight(1f, fill = false)) {
                 items(host.devices, key = { it.id }) { device ->
                     DeviceRow(device, switchable = !host.active && !host.busy, editable = !(host.active && device.selected),
                         onSelect = { host.selectDevice(device.id); onDismiss() },
@@ -57,7 +62,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
     }
     renaming?.let { device -> RenameDialog(device, { renaming = null }) { host.renameDevice(device.id, it); renaming = null } }
     deleting?.let { device ->
-        AlertDialog(onDismissRequest = { deleting = null }, icon = { Icon(Icons.Filled.Delete, null) },
+        AlertDialog(onDismissRequest = { deleting = null }, modifier = DialogTags, icon = { Icon(Icons.Filled.Delete, null) },
             title = { Text("Delete ${device.name}?") },
             text = { Text("Its apps, settings and data are removed from this phone. This can't be undone.") },
             confirmButton = { Button(onClick = { host.deleteDevice(device.id); deleting = null },
@@ -98,9 +103,20 @@ private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Bool
 @Composable
 internal fun RenameDialog(device: DeviceSummary, onDismiss: () -> Unit, onRename: (String) -> Unit) {
     var name by remember { mutableStateOf(device.name) }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Rename device") },
+    AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags, title = { Text("Rename device") },
         text = { OutlinedTextField(name, { if (it.length <= 60) name = it }, singleLine = true, label = { Text("Name") },
             modifier = Modifier.fillMaxWidth().testTag("rename_field")) },
         confirmButton = { TextButton(onClick = { onRename(name.trim()) }, enabled = name.isNotBlank()) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+/** The sheet's own window follows the system theme; match the app's instead, without the nav-bar scrim. */
+@Composable
+private fun SheetSystemBars() {
+    val window = (LocalView.current.parent as? DialogWindowProvider)?.window ?: return
+    val light = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+    SideEffect {
+        if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
+        WindowCompat.getInsetsController(window, window.decorView).run { isAppearanceLightNavigationBars = light; isAppearanceLightStatusBars = light }
+    }
 }

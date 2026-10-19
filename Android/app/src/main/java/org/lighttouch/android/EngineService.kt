@@ -44,6 +44,8 @@ class EngineService : Service() {
     private val cpuSampler by lazy { WorkerCpuSampler() }
     private val profileTail = ProfileTail()
     @Volatile private var detailedTiming = false
+    // Why detailed timing is not recording (e.g. LT_PROFILE=off); retried only when it is turned on again.
+    @Volatile private var detailedTimingError = ""
     // Detailed timing keeps an automatic capture running while the guest does; this thread
     // starts one once the guest runs and again after a capture reaches its limit.
     private val detailedTimingThread = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { Thread(it, "detailed-timing") }
@@ -58,10 +60,11 @@ class EngineService : Service() {
             putLongArray("cpu", cpuSampler.sample())
             profileTail.follow(if (detailedTiming && profileCapture.automatic) profileCapture.currentEvents() else null)
             profileTail.summary()?.let { putBundle("detailed", it) }
+            if (detailedTiming && detailedTimingError.isNotEmpty()) putString("detailedError", detailedTimingError)
         }
         override fun setPresentScale(mode: Int) = Native.setPresentScale(mode)
         override fun setDetailedTiming(enabled: Boolean) {
-            detailedTiming = enabled
+            detailedTiming = enabled; detailedTimingError = ""
             if (!enabled && profileCapture.automatic) profileCapture.finish("detailed-timing-off")
         }
         /** Freeze what led up to now for the hitch inspector: the frame timeline, and the detailed
@@ -417,7 +420,10 @@ class EngineService : Service() {
     override fun onCreate() {
         super.onCreate()
         detailedTimingThread.scheduleWithFixedDelay({
-            try { if (detailedTiming && !stopping.get()) profileCapture.startAutomatic(Native.status().firstOrNull() ?: "stopped") }
+            try {
+                if (detailedTiming && detailedTimingError.isEmpty() && !stopping.get())
+                    detailedTimingError = profileCapture.startAutomatic(Native.status().firstOrNull() ?: "stopped")
+            }
             catch (_: Exception) { /* Retried on the next tick; the overlay shows timing as unavailable. */ }
         }, 3, 3, java.util.concurrent.TimeUnit.SECONDS)
         // A fresh worker must not inherit a prior PID's error as current status.

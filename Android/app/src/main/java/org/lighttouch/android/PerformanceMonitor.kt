@@ -19,7 +19,13 @@ data class PerfSnapshot(
     /** Frame intervals (ms) of the last few seconds, oldest first, for the graph. */
     val intervals: FloatArray = FloatArray(0),
     val detailedAvailable: Boolean = false,
+    val detailedError: String? = null,
+    /** No frame for over a second: the guest screen is static, which is not a slowdown. */
+    val idle: Boolean = false,
 )
+
+/** A gap this long between guest frames is a static screen (iOS publishes only on change), not a frame. */
+internal const val IDLE_GAP_MS = 1000f
 
 /**
  * Polls the engine's frame timeline and CPU counters four times a second while the overlay is
@@ -91,7 +97,7 @@ internal class PerformanceMonitor(private val engine: () -> IEngine?) {
             catch (_: RemoteException) { }
         }
         val cpu = stats.getLongArray("cpu")
-        val next = summarize(now, stats.getBundle("detailed"), cpu)
+        val next = summarize(now, stats.getBundle("detailed"), cpu).copy(detailedError = stats.getString("detailedError"))
         main.post { snapshot = next }
     }
 
@@ -117,9 +123,9 @@ internal class PerformanceMonitor(private val engine: () -> IEngine?) {
         }
         intervals.reverse()
         val stale = n == 0 || now - published[at(0)] > 1_000_000_000L
-        val sorted = intervals.sorted()
+        val sorted = intervals.filter { it < IDLE_GAP_MS }.sorted()
         val worst = if (sorted.isEmpty()) 0f else sorted[((sorted.size - 1) * 0.99f).toInt()]
-        val recent = intervals.takeLast(oneSecondFrames)
+        val recent = intervals.takeLast(oneSecondFrames).filter { it < IDLE_GAP_MS }
         return PerfSnapshot(
             fps = if (stale) 0f else oneSecondFrames.toFloat(),
             frameMs = if (recent.isEmpty()) 0f else recent.average().toFloat(),
@@ -133,7 +139,7 @@ internal class PerformanceMonitor(private val engine: () -> IEngine?) {
             glMsPerFrame = detailed?.let { d -> d.getLong("glNs") / 1e6f / maxOf(1, d.getInt("frames")) },
             bqlMsPerFrame = detailed?.let { d -> d.getLong("bqlNs") / 1e6f / maxOf(1, d.getInt("frames")) },
             runPercent = detailed?.let { d -> 100f * d.getLong("runNs") / maxOf(1L, d.getLong("windowNs")) },
-            intervals = intervals.toFloatArray(), detailedAvailable = detailed != null)
+            intervals = intervals.toFloatArray(), detailedAvailable = detailed != null, idle = stale && n > 0)
     }
 
     fun close() { active = false; thread.quitSafely() }

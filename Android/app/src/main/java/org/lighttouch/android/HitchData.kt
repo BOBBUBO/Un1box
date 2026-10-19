@@ -12,7 +12,10 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /** A published guest frame: [intervalMs] since the previous one; presented is 0 if never posted. */
-internal data class HitchFrame(val sequence: Long, val publishedNs: Long, val presentedNs: Long, val workNs: Long, val intervalMs: Float)
+internal data class HitchFrame(val sequence: Long, val publishedNs: Long, val presentedNs: Long, val workNs: Long, val intervalMs: Float) {
+    /** The first frame after a static screen: its interval is the idle time, not render time. */
+    val idle get() = intervalMs >= IDLE_GAP_MS
+}
 
 /** Where one frame interval went, from detailed timing (deltas of the engine's F records, ms). */
 internal data class FrameBreakdown(val endNs: Long, val intervalMs: Float, val runMs: Float, val outsideMs: Float,
@@ -29,7 +32,7 @@ internal class HitchData(val directory: File, val frames: List<HitchFrame>, val 
     val startNs get() = frames.firstOrNull()?.publishedNs ?: snapshotNs
     val endNs get() = maxOf(frames.lastOrNull()?.publishedNs ?: snapshotNs, snapshotNs.coerceAtMost((frames.lastOrNull()?.publishedNs ?: 0) + 2_000_000_000L))
 
-    fun framesIn(from: Long, to: Long) = frames.filter { it.publishedNs in from..to }
+    fun framesIn(from: Long, to: Long) = frames.filter { it.publishedNs in from..to && !it.idle }
     fun breakdownIn(from: Long, to: Long) = breakdown.filter { it.endNs in from..to }
     fun eventsIn(from: Long, to: Long) = events.filter { it.endNs >= from && it.startNs <= to }
     /** The detailed record nearest a frame's publication (they come from the same engine event). */

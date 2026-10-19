@@ -40,7 +40,7 @@ import kotlinx.coroutines.delay
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
-internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifier) -> Unit) {
+internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifier) -> Unit) = DarkTheme {
     BackHandler { host.navigate(Screen.HOME) }
     var confirmStop by remember { mutableStateOf(false) }
     val skin = DeviceSkin.forBoard(host.selected?.board)
@@ -73,6 +73,7 @@ internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifi
             }
         }
         Text(host.status, Modifier.size(1.dp).testTag("session_status"), color = Color.Transparent)
+        ErrorBanner(host.error, host::dismissError, Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp))
     }
     if (confirmStop) StopDialog(host) { confirmStop = false }
 }

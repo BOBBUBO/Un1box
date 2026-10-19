@@ -68,15 +68,18 @@ internal class ProfileCapture(private val context: android.content.Context, priv
      * and is restarted when it reaches its size or time limit. Only the newest few automatic
      * captures are kept, unless the hitch inspector claimed one.
      */
-    @Synchronized fun startAutomatic(guestState: String) {
-        if (directory != null || guestState != "running") return
+    /** Returns the start error, or "" (also when nothing needed starting). */
+    @Synchronized fun startAutomatic(guestState: String): String {
+        if (directory != null || guestState != "running") return ""
         change(true, guestState, automatic = true)
+        if (directory == null) return lastError.ifEmpty { "Detailed timing could not start" }
         val root = File(filesDir, "profiles")
         root.listFiles()?.filter { dir ->
             dir != directory && try {
                 JSONObject(File(dir, "metadata.json").readText()).let { it.optBoolean("automatic") && !it.optBoolean("keep") }
             } catch (_: Exception) { false }
         }?.sortedByDescending { it.name }?.drop(2)?.forEach { it.deleteRecursively() }
+        return ""
     }
 
     @Synchronized fun change(recording: Boolean, guestState: String, automatic: Boolean = false): Bundle {
@@ -133,7 +136,8 @@ internal class ProfileCapture(private val context: android.content.Context, priv
                 val result = Native.profile(File(dir, "events.tsv").absolutePath)
                 if (result.isNotEmpty()) {
                     info.put("state", "start-failed").put("error", result)
-                    File(dir, "metadata.json").writeText(info.toString(2))
+                    // An automatic capture that never started is not worth keeping.
+                    if (automatic) dir.deleteRecursively() else File(dir, "metadata.json").writeText(info.toString(2))
                     error(result)
                 }
                 directory = dir; metadata = info; engineLog = log; logOffset = log?.length() ?: 0L

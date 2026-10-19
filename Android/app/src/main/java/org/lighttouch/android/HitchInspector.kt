@@ -41,7 +41,7 @@ private fun frameColor(ms: Float) = when {
 internal fun HitchInspector(data: HitchData?, loadError: String?, onResume: () -> Unit, onSave: (Long, Long) -> Unit,
                             saving: Boolean, savedNotice: String?, onShare: (() -> Unit)?) {
     BackHandler(onBack = onResume)
-    Surface(Modifier.fillMaxSize().testTag("hitch_inspector")) {
+    Surface(Modifier.fillMaxSize().then(DialogTags).testTag("hitch_inspector")) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onResume, modifier = Modifier.testTag("hitch_close")) { Icon(Icons.Filled.Close, "Close and resume") }
@@ -78,12 +78,12 @@ private fun InspectorBody(data: HitchData, onSave: (Long, Long) -> Unit, saving:
     val end = data.frames.last().publishedNs
     // Default to the worst frame of the last ten seconds, with a second either side.
     val initial = remember(data) {
-        val recent = data.frames.filter { end - it.publishedNs < 10_000_000_000L }.ifEmpty { data.frames }
+        val recent = data.frames.filter { !it.idle && end - it.publishedNs < 10_000_000_000L }.ifEmpty { data.frames.filter { !it.idle } }.ifEmpty { data.frames }
         val worst = recent.maxBy { it.intervalMs }
         (worst.publishedNs - 1_000_000_000L).coerceAtLeast(start) to (worst.publishedNs + 1_000_000_000L).coerceAtMost(end)
     }
     var range by remember(data) { mutableStateOf(initial) }
-    var picked by remember(data) { mutableStateOf<HitchFrame?>(data.frames.filter { it.publishedNs in initial.first..initial.second }.maxByOrNull { it.intervalMs }) }
+    var picked by remember(data) { mutableStateOf<HitchFrame?>(data.framesIn(initial.first, initial.second).maxByOrNull { it.intervalMs }) }
     val selected = remember(range, data) { data.framesIn(range.first, range.second) }
     val stats = remember(selected) { RangeStats.of(selected) }
 
@@ -183,6 +183,7 @@ private fun Overview(data: HitchData, range: Pair<Long, Long>, modifier: Modifie
         fun x(t: Long) = (t - start).toFloat() / span * size.width
         fun h(ms: Float) = (ms.coerceAtMost(100f) / 100f) * (size.height - 8f)
         for (f in data.frames) {
+            if (f.idle) continue
             val color = frameColor(f.intervalMs)
             drawLine(color.copy(alpha = if (f.publishedNs in range.first..range.second) 1f else 0.45f),
                 Offset(x(f.publishedNs), size.height - 4f), Offset(x(f.publishedNs), size.height - 4f - h(f.intervalMs)), 1.5f)
@@ -203,19 +204,23 @@ private fun Detail(data: HitchData, frames: List<HitchFrame>, picked: HitchFrame
     val label = MaterialTheme.colorScheme.onSurfaceVariant
     val highlight = MaterialTheme.colorScheme.onSurface
     val breakdown = remember(frames) { frames.map { data.breakdownFor(it) } }
-    val top = maxOf(66f, (frames.maxOfOrNull { it.intervalMs } ?: 0f).coerceAtMost(200f))
+    val top = maxOf(40f, (frames.maxOfOrNull { it.intervalMs } ?: 0f) * 1.1f).coerceAtMost(250f)
     Canvas(modifier.pointerInput(frames) {
         detectTapGestures { offset ->
             if (frames.isNotEmpty()) onPick(frames[(offset.x / size.width * frames.size).toInt().coerceIn(0, frames.size - 1)])
         }
     }) {
-        val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 9.dp.toPx(); color = android.graphics.Color.argb(200, (label.red * 255).toInt(), (label.green * 255).toInt(), (label.blue * 255).toInt()) }
-        fun y(ms: Float) = size.height - ms.coerceAtMost(top) / top * size.height
-        for (g in listOf(16.7f, 33.3f, 50f)) {
-            drawLine(guide, Offset(0f, y(g)), Offset(size.width, y(g)), 1f)
-            drawContext.canvas.nativeCanvas.drawText(String.format(Locale.ROOT, "%.0f ms", g), 2f, y(g) - 3f, labelPaint)
+        val labelPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 10.dp.toPx(); textAlign = android.graphics.Paint.Align.RIGHT
+            color = android.graphics.Color.argb(230, (label.red * 255).toInt(), (label.green * 255).toInt(), (label.blue * 255).toInt())
+            setShadowLayer(4f, 0f, 0f, android.graphics.Color.BLACK)
         }
-        if (frames.isEmpty()) return@Canvas
+        fun y(ms: Float) = size.height - ms.coerceAtMost(top) / top * size.height
+        val guides = listOf(16.7f, 33.3f, 50f, 100f, 200f).filter { it < top }
+        for (g in guides) drawLine(guide, Offset(0f, y(g)), Offset(size.width, y(g)), 1f)
+        val canvas = drawContext.canvas.nativeCanvas
+        fun labels() { for (g in guides) canvas.drawText(String.format(Locale.ROOT, "%.0f ms", g), size.width - 4f, y(g) - 4f, labelPaint) }
+        if (frames.isEmpty()) { labels(); return@Canvas }
         val w = size.width / frames.size
         val gap = if (w > 4f) 1f else 0f
         frames.forEachIndexed { i, f ->
@@ -236,6 +241,7 @@ private fun Detail(data: HitchData, frames: List<HitchFrame>, picked: HitchFrame
             } else drawRect(frameColor(f.intervalMs), Offset(left, y(f.intervalMs)), Size(w - gap, size.height - y(f.intervalMs)))
             if (f == picked) drawRect(highlight, Offset(left, y(f.intervalMs) - 3.dp.toPx()), Size((w - gap).coerceAtLeast(2f), 2.dp.toPx()))
         }
+        labels()
     }
 }
 

@@ -277,6 +277,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         // The guest is a portrait device; its landscape apps rotate inside the portrait screen.
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        // Draw under transparent bars; the theme picks light or dark bar icons.
+        @Suppress("DEPRECATION") run { window.statusBarColor = android.graphics.Color.TRANSPARENT; window.navigationBarColor = android.graphics.Color.TRANSPARENT }
+        window.isNavigationBarContrastEnforced = false; window.isStatusBarContrastEnforced = false
         preferSixtyHertz(guestInFront = false)
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
@@ -297,7 +300,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 firmwareTargets = (0 until entries.length()).map { entries.getJSONObject(it) }
                     .filter { it.has("product_type") && it.has("version") }
                     .associate { "${it.getString("board")}-${it.getString("build")}" to StoreTarget.of(it.getString("product_type"), it.getString("version")) }
-                handler.post { catalogVersion++; if (overlay == Screen.STORE) store.useRecord(recordTarget()) }
+                handler.post { catalogVersion++; if (overlay == Screen.STORE) store.useRecord(recordTarget()); if (engine != null) refreshDevices() }
             } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
         }, "store-targets").start()
         bindWorker()
@@ -629,7 +632,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (preparedImportInFlight) return
         val destination = requireNotNull(state.getString("destination")); preparedImported = destination; busy = true; preparedImportInFlight = true
         Thread({
-            val result = try { engine?.importPrepared(destination, "$firmwareId prepared") ?: "Device worker unavailable" }
+            val result = try { engine?.importPrepared(destination, defaultDeviceName(firmwareId.substringBefore('-'), firmwareId.substringAfter('-'), firmwareTargets, devices.map { it.name })) ?: "Device worker unavailable" }
                 catch (e: RemoteException) { e.message ?: "Device worker exited during import" }
             handler.post {
                 busy = false; preparedImportInFlight = false; error = result; preparedImportError = result
@@ -674,7 +677,18 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun refreshDevices(afterDelete: Boolean = false) {
         Thread({
             try {
-                val loaded = engine?.records()?.toList() ?: return@Thread
+                var loaded = engine?.records()?.toList() ?: return@Thread
+                // Earlier builds named devices after their firmware id ("n72ap-7E18 prepared"); give those the friendly default once.
+                if (firmwareTargets.isNotEmpty()) {
+                    val names = loaded.mapNotNull { it.getString("name") }.toMutableList()
+                    val renamed = loaded.count { record ->
+                        val name = record.getString("name") ?: ""; val board = record.getString("board") ?: ""; val build = record.getString("build") ?: ""
+                        if (!isGeneratedDeviceName(name, board, build)) return@count false
+                        val friendly = defaultDeviceName(board, build, firmwareTargets, names - name)
+                        friendly != name && engine?.rename(record.getString("id"), friendly).isNullOrEmpty().also { if (it) { names -= name; names += friendly } }
+                    }
+                    if (renamed > 0) loaded = engine?.records()?.toList() ?: loaded
+                }
                 handler.post {
                     records = loaded; recordsLoaded = true
                     if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = false); overlay = Screen.SETUP }

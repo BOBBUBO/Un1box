@@ -40,7 +40,7 @@ internal fun PerformanceOverlay(snapshot: PerfSnapshot, level: OverlayLevel, gra
             withStyle(SpanStyle(color = color, fontWeight = FontWeight.Bold)) { append(label.padEnd(5)) }
             append(value)
         }, style = text, maxLines = 1)
-        val fps = if (snapshot.fps > 0) f0(snapshot.fps) else "–"
+        val fps = if (snapshot.fps > 0) f0(snapshot.fps) else if (snapshot.idle) "idle" else "–"
         when (level) {
             OverlayLevel.FPS -> Text(buildAnnotatedString {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(fps) }
@@ -52,7 +52,7 @@ internal fun PerformanceOverlay(snapshot: PerfSnapshot, level: OverlayLevel, gra
             }
             else -> {
                 row("FPS", LtColors.OverlayFps, "${fps.padStart(3)}  ${f1(snapshot.frameMs)} ms")
-                row("1%", LtColors.OverlayFps, "${f0(snapshot.lowFps).padStart(3)}  max ${f1(snapshot.maxFrameMs)} ms")
+                row("1%", LtColors.OverlayFps, if (snapshot.lowFps > 0) "${f0(snapshot.lowFps).padStart(3)}  max ${f1(snapshot.maxFrameMs)} ms" else "  –")
                 FrameGraph(snapshot.intervals, graph, Modifier.padding(vertical = 2.dp).size((168 * scale).dp, (34 * scale).dp))
                 row("CPU", LtColors.OverlayCpu, buildString {
                     append("guest ${snapshot.vcpuPercent?.let { f0(it) + "%" } ?: "–"}")
@@ -64,7 +64,11 @@ internal fun PerformanceOverlay(snapshot: PerfSnapshot, level: OverlayLevel, gra
                     row("GPU", LtColors.OverlayGpu, "GL ${f1(snapshot.glMsPerFrame ?: 0f)} ms/frame")
                     row("LOCK", LtColors.OverlayGpu, "BQL ${f1(snapshot.bqlMsPerFrame ?: 0f)} ms/frame")
                     row("RUN", LtColors.OverlayCpu, "vCPU ${f0(snapshot.runPercent ?: 0f)}% of wall")
-                } else row("GPU", LtColors.OverlayGpu, if (detailedTiming) "waiting for timing…" else "detailed timing off")
+                } else row("GPU", LtColors.OverlayGpu, when {
+                    !detailedTiming -> "detailed timing off"
+                    snapshot.detailedError != null -> "timing unavailable"
+                    else -> "waiting for frames…"
+                })
                 row("PRES", LtColors.OverlayLabel, buildString {
                     append(snapshot.presentMs?.let { f1(it) + " ms" } ?: "–")
                     snapshot.latencyMs?.let { append(" · lat ${f1(it)} ms") }
@@ -86,15 +90,19 @@ internal fun FrameGraph(intervals: FloatArray, graph: OverlayGraph, modifier: Mo
         for (g in if (frameTime) listOf(16.7f, 33.3f) else listOf(30f, 60f)) drawLine(guide, Offset(0f, y(g)), Offset(size.width, y(g)), 1f)
         if (intervals.size < 2) return@Canvas
         val shown = intervals.takeLast(240)
+        // A static screen's gap is drawn as a break in the line, not as a spike.
         val step = size.width / (shown.size - 1).coerceAtLeast(1)
         val line = Path()
+        var pen = false
         shown.forEachIndexed { i, ms ->
+            if (ms >= IDLE_GAP_MS) { pen = false; return@forEachIndexed }
             val v = if (frameTime) ms else if (ms > 0) 1000f / ms else 0f
-            if (i == 0) line.moveTo(0f, y(v)) else line.lineTo(i * step, y(v))
+            if (!pen) line.moveTo(i * step, y(v)) else line.lineTo(i * step, y(v))
+            pen = true
         }
         drawPath(line, LtColors.OverlayGpu, style = Stroke(1.5f))
         // A spike over 50 ms is marked at the top so a hitch never hides off-scale.
-        if (frameTime) shown.forEachIndexed { i, ms -> if (ms > 50f) drawCircle(LtColors.Danger, 2.dp.toPx(), Offset(i * step, 2.dp.toPx())) }
+        if (frameTime) shown.forEachIndexed { i, ms -> if (ms > 50f && ms < IDLE_GAP_MS) drawCircle(LtColors.Danger, 2.dp.toPx(), Offset(i * step, 2.dp.toPx())) }
     }
 }
 

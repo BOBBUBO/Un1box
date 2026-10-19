@@ -50,7 +50,7 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
             Dock(host) { confirmStop = true }
         }
         // For automation (tools/perf): the raw session state as text.
-        Text(host.status, Modifier.align(Alignment.TopStart).size(1.dp).alpha(0f).testTag("session_status"), fontSize = 1.sp)
+        Text(host.status, Modifier.align(Alignment.TopStart).size(1.dp).testTag("session_status"), color = Color.Transparent, fontSize = 1.sp)
     }
     if (confirmStop) StopDialog(host) { confirmStop = false }
 }
@@ -169,7 +169,7 @@ private fun Dock(host: GuestHost, onStop: () -> Unit) {
 /** Shutting down is slow and closes every app, so it is confirmed; Save & Stop keeps the session. */
 @Composable
 internal fun StopDialog(host: GuestHost, onDismiss: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss,
+    AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags,
         icon = { Icon(LtIcons.Power, null) },
         title = { Text("Stop ${host.selected?.name ?: "device"}?") },
         text = {

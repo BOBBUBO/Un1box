@@ -29,6 +29,10 @@ internal fun shortProductName(productType: String): String = when (productType) 
 }
 
 /** Default name for a new device: "<model> <iOS version>", numbered if another device has it. */
+/** A name LightTouch made up from the firmware id rather than one the user chose. */
+internal fun isGeneratedDeviceName(name: String, board: String, build: String) =
+    name.isBlank() || name == "$board $build" || name.startsWith("$board-$build") && name.endsWith("prepared")
+
 internal fun defaultDeviceName(board: String, build: String, targets: Map<String, StoreTarget>, taken: Collection<String>): String {
     val base = targets["$board-$build"]?.let { "${shortProductName(it.productType)} ${it.ios}" } ?: "$board $build"
     if (base !in taken) return base

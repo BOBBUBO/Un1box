@@ -54,7 +54,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     if (s.overlay != OverlayLevel.OFF) {
                         OverlayPreview(host)
                         ChoiceRow(null, "Graph", OverlayGraph.entries, s.overlayGraph, { it.label }) { s.overlayGraph = it }
-                        ChoiceRow(null, "Position", OverlayCorner.entries, s.overlayCorner, { it.label.replace("Top ", "↑ ").replace("Bottom ", "↓ ").replaceFirstChar { c -> c.uppercase() } }) { s.overlayCorner = it }
+                        ChoiceRow(null, "Position", OverlayCorner.entries, s.overlayCorner, { it.glyph }, s.overlayCorner.label) { s.overlayCorner = it }
                         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                             Text("Background", style = MaterialTheme.typography.bodyLarge)
                             Slider(s.overlayOpacity, { s.overlayOpacity = it }, valueRange = 0f..0.9f)
@@ -98,8 +98,8 @@ private fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun RowIcon(icon: ImageVector?) {
-    if (icon != null) { Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(16.dp)) }
+private fun RowIcon(icon: ImageVector?, alpha: Float = 1f) {
+    if (icon != null) { Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)); Spacer(Modifier.width(16.dp)) }
     else Spacer(Modifier.width(38.dp))
 }
 
@@ -143,7 +143,7 @@ private fun ActionRow(icon: ImageVector?, title: String, subtitle: String?, enab
     Row(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).then(if (tag != null) Modifier.testTag(tag) else Modifier)
         .padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         val alpha = if (enabled) 1f else 0.4f
-        Box(Modifier.then(Modifier)) { RowIcon(icon) }
+        RowIcon(icon, alpha)
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
             subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)) }
@@ -161,7 +161,7 @@ private fun OverlayPreview(host: GuestHost) {
             vcpuCore = 7, vcpuMHz = 2840, workerPercent = 131f, pssMiB = 412f, glMsPerFrame = 3.1f, bqlMsPerFrame = 0.3f, runPercent = 82f,
             intervals = FloatArray(160) { i -> 16.7f + (if (i % 37 == 0) 18f else 0f) + (i % 5) * 0.4f }, detailedAvailable = s.detailedTiming)
     }
-    Box(Modifier.padding(start = 54.dp, end = 16.dp, top = 4.dp, bottom = 8.dp).fillMaxWidth().height(if (s.overlay == OverlayLevel.FULL) 220.dp else 96.dp)
+    Box(Modifier.padding(start = 54.dp, end = 16.dp, top = 4.dp, bottom = 8.dp).fillMaxWidth().height(if (s.overlay == OverlayLevel.FULL) 196.dp else 84.dp)
         .clip(RoundedCornerShape(14.dp)).background(Color(0xFF1B3A4B)).testTag("overlay_preview")) {
         PerformanceOverlay(sample, s.overlay, s.overlayGraph, s.overlayOpacity, s.detailedTiming,
             Modifier.align(Alignment.of(s.overlayCorner)).padding(8.dp))

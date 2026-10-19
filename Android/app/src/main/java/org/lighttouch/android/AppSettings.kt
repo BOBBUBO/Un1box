@@ -6,8 +6,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 enum class ThemeMode(val label: String) { SYSTEM("System"), DARK("Dark"), LIGHT("Light") }
-enum class OverlayLevel(val label: String) { OFF("Off"), FPS("FPS"), COMPACT("Compact"), FULL("Full") }
-enum class OverlayCorner(val label: String) { TOP_LEFT("Top left"), TOP_RIGHT("Top right"), BOTTOM_LEFT("Bottom left"), BOTTOM_RIGHT("Bottom right") }
+enum class OverlayLevel(val label: String) { OFF("Off"), FPS("FPS"), COMPACT("Basic"), FULL("Full") }
+enum class OverlayCorner(val label: String, val glyph: String) { TOP_LEFT("Top left", "↖"), TOP_RIGHT("Top right", "↗"), BOTTOM_LEFT("Bottom left", "↙"), BOTTOM_RIGHT("Bottom right", "↘") }
 enum class OverlayGraph(val label: String) { FRAME_TIME("Frame time"), FPS("Frame rate") }
 /** Matches the presenter's PresentScale (lighttouch_jni.cpp). */
 enum class ScreenScaling(val label: String, val native: Int) { SMOOTH("Smooth", 0), SHARP("Sharp", 1) }

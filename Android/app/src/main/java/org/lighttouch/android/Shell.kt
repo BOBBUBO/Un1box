@@ -1,5 +1,6 @@
 package org.lighttouch.android
 
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -123,3 +124,7 @@ internal fun statusLabel(status: String) = when (status) {
     "running" -> "Running"; "starting" -> "Starting"; "paused" -> "Paused"; "stopping" -> "Shutting down"
     "failed" -> "Stopped unexpectedly"; else -> "Off"
 }
+
+/** Dialogs get their own window, so they repeat the activity's opt-in to expose test tags as resource ids. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+internal val DialogTags = Modifier.semantics { testTagsAsResourceId = true }
