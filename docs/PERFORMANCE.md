@@ -3181,6 +3181,90 @@ Reproduce with surface-map-run.py/analyze.py/summary.py in build/perf-codex;
 PROFILING.md documents event semantics and the offline tool. No tests added/run.
 Ordinary comparisons continue with user recording and diagnostics off.
 
+#### Guest swap transactions and scheduling (capture complete; new hitch lead)
+
+The next capture follows the same physical buffers through guest swap API
+boundaries and selected-thread changes, using the **same frozen surface-map.apk**
+and engine `2898270eb9`. No new engine/guest build or synchronization change.
+`poco-swap-path-1/` retains a 60 s Jetpack title window, worker6494/vCPU6658,
+150us BQL spin, physical mapping, context, 20 selected guest instruction points
+and host scheduler/frequency tracing. User recorder, full accounting,
+native/AHB/NAND/RAM-pointer/idle diagnostics off. No guest syslog streaming,
+including after timing. Both scenes title/Startprofileoff; sameTID/nice0/CFS,
+good28. Same-worker task/thread snapshot detached after timing; clean Stop,
+no-qemu and exact debug-env restoration verified. Runner exits0.
+
+1,384,698 complete records; 344,565 valid guest-PC triplets (210,023 inside
+window); no loss/incomplete/writeerror. Complete scheduler coverage, no trace
+errors/loss/initial-state exception; clockspread364ns. Diagnostic mean58.300,
+ceiling60,median58,low56,1%low29.811,0hitches>50ms/0ms,zero skips.
+Longest gaps49.974/49.890/45.016ms. This supplies attribution evidence, **no
+before/after improvement or diagnostic-overhead measurement**.
+
+3533 successful contiguous-mapped writes; 3498 fresh-buffer flips
+(3466 single/32 multiple writes). 100 flip cycles contain 102 repeated refresh
+ticks. Matching write completed before100ticks, after2. At98ticks the write
+is complete but the corresponding SwapEnd entry has not occurred; at2 the
+write is incomplete; at2 SwapEnd has started after a completed write.
+Observed missed-tick phases:44before SwapWait,51inside SwapWait,2after wait
+before SwapBegin,1before SetLayer,2write pending,2after SwapEnd before flip.
+Completion of the write alone still does not prove CA submission eligibility.
+
+**New transaction pattern:** of3588 completed window transactions,3498 contain
+a nonnull game surface and90 contain only `SwapSetLayer(layer=1,surface=NULL)`
+before a successful SwapEnd. Of100held-refresh cycles, **88 follow one of
+these secondary-layer-only transactions**,12 follow a transaction with a
+nonnull surface. **None of3398normal cycles follow a secondary-layer-only
+transaction.** These counts join observations in order; they do not establish
+that these transactions cause the delay or make no other state change.
+All3498flip joins have a consistent observed physical-buffer/layer-ID order:
+0xf6ee000→18 (1165),0xf658000→10 (1164),0xf5c2000→6 (1169). This is not an
+independent address translation of the layer object.
+
+| Completed window API | Calls | Median elapsed ms | Maximum elapsed ms |
+| --- | --- | --- | --- |
+| IOSurfaceUnlock, nonnull path | 3533 | 0.049480 | 4.490313 |
+| SwapBegin | 3588 | 0.1309895 | 8.192187 |
+| SwapEnd | 3588 | 0.095156 | 10.302864 |
+| SwapSetLayer | 10584 | 0.001875 | 2.550209 |
+| SwapWait | 3587 | 13.392500 | 33.452552 |
+
+All observed epilogue r0 values are0; observations precede the actual return.
+SwapWait elapsed includes execution on other guest threads, not just its own
+CPU work. No SwapSurface/SwapSignal wrapper points observed; lower-level
+notification paths remain possible. Surface-ID points follow
+`_CoreSurfaceBufferGetID`, not IOSurfaceGetID. One initial unpaired epilogue
+is before the window; no pending API entries at trace end.
+
+**Audio contributor:** same-worker post-window ownership identifies presenter
+as jetpack48, swap thread as SpringBoard21, LCD flipper as kernel_task, and
+thread0xe078d444 as mediaserverd14 (lifetime continuity remains a limit).
+In the45.016ms publication gap ending3.112742s, SpringBoard's enqueue request
+to scheduled boundary spans15.386770ms;15.331250ms runs on that media thread,
+with the host vCPU entirely running. Matching GL write→flip is27.876ms;
+SwapEnd starts just after the repeated tick. Engine publication gap is34.950ms
+and frontend end lag10.607ms: do not attribute all45ms solely to audio.
+Two other gaps37.405/35.267ms include request→scheduled spans21.061/18.883ms,
+with18.985/17.062ms on the same media thread. `thread_setrun` is an enqueue
+request boundary, not proof of runnable state/exact queue residence. Selected
+thread execution includes kernel/native work; the audio function is untraced.
+
+**Next:** inspect the game→CA notification and the origin/order of the90
+secondary-layer-only swaps. Source GLESPresentView calls drawable vt[4] after
+host write and IOSurface unlock. Measure callback entry/exit and subsequent
+CA processing before choosing a fix; preserve swaps, locks and notifications.
+The audio path can be confirmed with converter boundaries separately. This
+capture explains neither every long frame nor Pixel's older214ms gameplay gap.
+
+Evidence: raw artifacts/identity and summary.json with input hashes under
+`build/perf-codex/poco-swap-path-1/`; swap-report.json, swap-waits.json and
+transactions.json preserve every pairing. Run/analyze/report/waits/transactions/
+summary scripts retained in build/perf-codex. New reusable `swapcalls.py` and
+pinned point manifest reproduce all API summaries, calls, flip execution
+splits and present associations from the real capture exactly. Revised
+audio-swap-timeline.png/svg visualizes the45ms example. No tests added/run;
+ordinary A/B benchmarks continue with user recording and diagnostics off.
+
 #### TLB refill RAM-pointer lookup (local saving, no hitch improvement established)
 
 Engine `54da21c185` adds independent default-off `LT_TLB_RAM_PTR_FAST=on`

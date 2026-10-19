@@ -1115,3 +1115,42 @@ scheduled-thread transitions. It separates aligned/unaligned converter calls
 and matches kernel enqueue requests to scheduled boundaries; see PERFORMANCE.md
 for measured differences, dispatch/queue timing limits and the remaining
 non-decoder hitches. This is attribution evidence, not an optimization result.
+
+### Guest swap API and display handoff
+
+For a missed refresh after a completed physical-buffer write, follow the
+guest's submission path. `tools/perf/n72-7e18-swap-points.json` pins 20 points
+to the recorded n72/7E18 kernel and shared-cache SHA256 values. It covers swap
+API entry/epilogues, nonnull IOSurfaceUnlock, CoreSurfaceBufferGetID results,
+scheduled-thread changes and thread_setrun requests. These addresses require
+the matching firmware; do not reuse them on another build. No firmware is
+included. Set LT_GUEST_TRACE_PC from the manifest's pc values, with frame/context
+and physical surface tracing; delay guest points until the scene has settled.
+Keep user recording and unrelated diagnostics off. Do not stream guest syslog.
+
+After clean Stop, run guestpoints.py, hitchsched.py with --all-states, and
+surfacemap.py with --lcd-address-mode n72-physical against the same window/raw
+files. Retain their outputs as guest-points.json, hitches.json, surfaces.json,
+and the detached same-worker snapshot as guest-processes.json, then:
+
+```sh
+python3 tools/perf/swapcalls.py build/perf-codex/poco-swap-path-1 \
+    --engine-pid 6494 --json build/perf-codex/poco-swap-path-1/swap-report.json
+```
+
+The tool validates worker/window, pinned symbol hashes, snapshot/raw input
+identity and scheduler continuity. It pairs APIs per thread, retains initial
+epilogues/pending entries, reports call counts/results/elapsed times, and splits
+each API and matching-write→flip interval into host states and selected guest
+thread execution. It preserves ordered same-thread unlock observations and all
+overlapping APIs. It does not infer a buffer dependency from adjacent calls.
+On the real capture, every call/summary/flip split/present association matches
+the original focused report. No phone interaction is performed by the tool.
+
+An epilogue observation precedes return execution. SwapWait elapsed time includes
+other guest threads. Post-window ownership needs lifetime continuity; selected
+thread running includes kernel/native execution. An enqueue request is not
+proof of runnable state or exact queue residence. Physical backing, layer IDs,
+CA eligibility and pixel-generation identity are distinct. In particular, the
+newly observed secondary-layer-only transactions correlate with missed refreshes
+but must be traced back to the CA notification path before changing behavior.

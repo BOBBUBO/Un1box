@@ -99,6 +99,26 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   state totals. No cause or ordinary performance gain proven.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
+  NEW swap-path capture: same frozenAPK/engine2898270eb9, recorderoff,
+  no syslog streaming; physical mapping +20guest points +host scheduler.
+  1384698lossless records/344565valid triplets, complete scheduler/clockspread364ns.
+  worker6494/vCPU6658, sameTID/nice0/CFS,good28,bothscenes title/profileoff,
+  same-worker snapshot detached, cleanStop/no-qemu/exactbaseline verified.
+  Diagnostic58.300fps,ceiling60,median58,low56,1%low29.811,0hitches/0ms,
+  zero skips; longest49.974ms. No new A/B gain/overhead measurement.
+  3533mappedwrites/3498fresh flips;100cycles with102heldticks, matching
+  write complete before100ticks. At98ticks corresponding SwapEnd not entered.
+  Of3588window transactions,90 only clear secondarylayer1 with NULL surface.
+  **88/100held cycles follow one of these;0/3398normal cycles do.**
+  Ordering association, not causality or proof of wholly no-op transactions.
+  Follow game→CA callback entry/exit and origin of these extra transactions;
+  preserve synchronization. In45.016ms gap SpringBoard enqueue request→selected
+  15.387ms includes15.331ms running mediaserverd thread0xe078d444; two more
+  gaps include18.985/17.062ms on that thread. Function unknown; enqueue request
+  does not prove exact queue residence. Full frame includes frontend delay too.
+  New swapcalls.py reproduces real API/flip/residency associations; pinned
+  manifest and raw summary/swap-report/swap-waits/transactions retained in
+  poco-swap-path-1/. Full evidence/caveats in PERFORMANCE.md. Pixel gap still open.
   Physical-buffer capture now complete, engine2898270eb9 LT_GLES_SURFACE_PATH=on:
   102204lossless milestones,3540successful contiguous-mapped presents and3520flips,
   all fresh write associations (3500single/20multiple). Three real analyzers pass;
