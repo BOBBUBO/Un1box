@@ -528,7 +528,9 @@ Linux/Android final builds succeeded (`present-prof-final-build.txt`), no tests
 added/run. Frozen `present-prof.apk`, `present-prof-symbols/libqemu-arm.so` and
 `present-prof-build-identity.json` retain source pins/hashes (app changes at build
 are documentation and the offline analyzer only). Runtime measurements are
-pending; no before/after or FPS improvement claimed.
+pending; two 30 s profiler off/on, on/off pairs are queued after the ordinary
+L2 runner's exact process exit and successful cleanup marker (`present-prof-run.py`).
+No before/after or FPS improvement claimed.
 See PROFILING.md for phase scope, clocks/descheduling and failure handling.
 
 ### CPU-only physical IRQ delivery (2026-10-19, experimental, default off)
@@ -1191,35 +1193,44 @@ Library SHA256: `93fe8be855d7ac586ecd38f548376a0567d28b7cd85fbb8b042c7c90b2ef88f
 Focused runner/analyzer `ibtc-l2-run.py` / `ibtc-l2-analyze.py` started after the
 completed IRQ-delivery comparison's exact process exit and successful cleanup
 marker. Two 35 s pairs off/on, on/off; array cache on, L2 profiler on both, other
-experiments/diagnostics and the recorder/full accounting off. First pair complete;
-reverse pair running. Both final title scenes reviewed, recorder off, zero skips;
-six complete contiguous five-second timing blocks wholly inside each frame window.
+experiments/diagnostics and the recorder/full accounting off. Both pairs complete;
+all four final title scenes reviewed, recorder off, zero skips. Each arm has six
+complete contiguous five-second timing blocks wholly inside its frame window.
 
-| First-pair metric | Off → on |
-| --- | --- |
-| Helper attempts/s | 495125 → 460796 |
-| L2 hit rate | 0 → 67.166% |
-| Sampled mean / median block mean (ns) | 526.62 / 522.45 → 497.65 / 497.42 |
-| Hit / fallback sampled mean (ns) | — / 526.62 → 438.86 / 618.30 |
-| Max completed sample (µs) | 200.31 → 60.47 |
-| Diagnostic mean / ceiling / median / low fps | 51.46 / 56 / 52 / 44 → 52.09 / 56 / 52 / 48 |
-| Diagnostic 1% low fps | 19.98 → 28.11 |
-| Hitches (>50 ms) per 35 s | 20 (1272.3 ms) → 10 (557.6 ms) |
+| Metric | Pair 1 off → on | Pair 2 off → on (on first) |
+| --- | --- | --- |
+| Helper attempts/s | 495125 → 460796 | 494547 → 465299 |
+| L2 hit rate | 0 → 67.166% | 0 → 66.670% |
+| Sampled mean / median block mean (ns) | 526.62 / 522.45 → 497.65 / 497.42 | 522.40 / 522.89 → 500.65 / 500.19 |
+| Hit / fallback sampled mean (ns) | — / 526.62 → 438.86 / 618.30 | — / 522.40 → 448.13 / 604.52 |
+| Max completed sample (µs) | 200.31 → 60.47 | 13.23 → 27.14 |
+| Diagnostic mean / ceiling / median / low fps | 51.46 / 56 / 52 / 44 → 52.09 / 56 / 52 / 48 | 51.06 / 56 / 52 / 44 → 53.09 / 58 / 54 / 48 |
+| Diagnostic 1% low fps | 19.98 → 28.11 | 20.10 → 28.47 |
+| Hitches (>50 ms) per 35 s | 20 (1272.3 ms) → 10 (557.6 ms) | 14 (1003.6 ms) → 4 (203.8 ms) |
 
-Sampled mean drops **5.5%**, a small local saving with a useful hit rate. These
-timings include clocks/descheduling, not an estimate of whole-game savings; the
-slightly higher diagnostic FPS does not establish a repeatable gain. Retain the
-baseline outlier (max 200.31 µs). Keep off pending the reverse pair and separate
-ordinary comparisons. Three profiler-off 30 s pairs off/on, on/off, off/on are
-queued behind the exact live focused PID/starttime and successful clean-stop
-marker (`ibtc-l2-ordinary-run.py`); no overlapping phone measurements.
+Sampled mean drops **5.5% / 4.2%**, repeating the local saving in reverse order.
+These timings include clocks/descheduling; do not extrapolate them to whole-game
+savings. Preserve all outliers, including the larger enabled maximum in pair 2.
+Aggregate **diagnostic** mean **51.26 → 52.59 fps (+2.6%)**; hitches **34 → 14**,
+total **2275.9 → 761.4 ms per 70 s per mode**. This is promising diagnostic pacing
+evidence, not an ordinary FPS baseline or a profiler-overhead measurement. Keep
+off pending separate ordinary comparisons. Three profiler-off 30 s pairs off/on,
+on/off, off/on started after the exact focused process exited and its successful
+clean-stop marker appeared (`ibtc-l2-ordinary-run.py`).
 
-First-pair exact half-open frame windows (monotonic ns): off
-`[435394732365677, 435429732365677)`, on
-`[435574134564567, 435609134564567)`. Selected timing windows: off
-`[435394938718594, 435424945707645]`, on
-`[435578795467326, 435608811278408]`. `ibtc-l2-results.json` retains all timing
-blocks, exact frame bounds and every hitch. Settings/fields are in PROFILING.md.
+Exact monotonic windows (frame bounds half-open; timing blocks complete):
+
+| Arm | Frame window [begin, end) | Selected timing [begin, end] |
+| --- | --- | --- |
+| 1 off | 435394732365677, 435429732365677 | 435394938718594, 435424945707645 |
+| 1 on | 435574134564567, 435609134564567 | 435578795467326, 435608811278408 |
+| 2 on | 435758354496528, 435793354496528 | 435763010071995, 435793017093650 |
+| 2 off | 435942358760885, 435977358760885 | 435947013935779, 435977022858111 |
+
+`ibtc-l2-results.json` retains all timing blocks, exact frame bounds and every
+hitch; `ibtc-l2-analysis.txt` and reviewed `ibtc-l2-scenes.png` cover all four arms.
+Runner confirmed clean Stop, no remaining qemu engine and baseline environment
+readback before writing `ibtc-l2-focused-finished`. Settings/fields in PROFILING.md.
 
 ### Measured and rejected
 

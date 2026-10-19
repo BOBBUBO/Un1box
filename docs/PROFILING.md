@@ -149,11 +149,13 @@ enable full accounting, BQL tables or the manual recorder.
 Compare hit rate and direct helper costs in interleaved off/on pairs with profiling
 on in both, then use separate diagnostic-off ordinary FPS pairs. Do not extrapolate
 sample timings to whole-game savings or treat diagnostic FPS as an ordinary baseline.
-First focused pair complete, reverse running: hit rate 67.166%, sampled mean
-526.62 → 497.65 ns (−5.5%), hit/fallback 438.86/618.30 ns on. Diagnostic FPS
-51.46 → 52.09 with fewer hitches; no repeatable game improvement established.
-Both title scenes reviewed, zero skips. Three ordinary profiler-off pairs queued
-behind exact focused process identity and its successful clean-stop marker.
+Both focused pairs complete, second reversed: hit rate 67.166/66.670%, sampled
+mean 526.62/522.40 → 497.65/500.65 ns (−5.5/4.2%). Enabled hit/fallback means
+438.86/618.30 and 448.13/604.52 ns. Aggregate diagnostic FPS 51.26 → 52.59;
+hitches 34 → 14 (2275.9 → 761.4 ms/70 s per mode). All four title scenes reviewed,
+recorder off, zero skips. Keep off: three ordinary profiler-off pairs started
+after exact focused process exit and successful clean-stop marker. Ordinary
+FPS/pacing benefit and diagnostic overhead remain unestablished.
 
 ## Focused GL presentation stages
 
@@ -179,6 +181,8 @@ selects complete blocks wholly inside the supplied frame window, rejects gaps,
 and preserves all selected blocks/outliers. Without bounds, `--last 30` selects
 the last complete interval. Compare dedicated profiler-on captures separately
 from ordinary FPS; no runtime saving or measured overhead is established yet.
+Two 30 s profiler off/on, on/off pairs are queued behind the ordinary L2 runner's
+exact process identity and successful cleanup marker.
 
 ## Focused interrupt checks
 
