@@ -37,4 +37,11 @@ interface IEngine {
     String debugArmVcpuAccounting();
     Bundle debugShutdownProgress();
     String debugSelectTcgIrCache(boolean enabled);
+    String rename(String recordId, String name);
+    String remove(String recordId);
+    String importDevice(String source, String displayName, String rom, String guest);
+    Bundle frameStats(long sinceSequence);
+    void setPresentScale(int mode);
+    void setDetailedTiming(boolean enabled);
+    Bundle hitchSnapshot();
 }

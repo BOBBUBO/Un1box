@@ -9,6 +9,10 @@ internal object Native {
     external fun setGuestPackage(libraryRoot: String, id: String, path: String): String
     external fun records(libraryRoot: String): Array<Array<String>>
     external fun select(libraryRoot: String, id: String): String
+    external fun rename(libraryRoot: String, id: String, name: String): String
+    external fun remove(libraryRoot: String, id: String): String
+    external fun frameTimeline(since: Long): LongArray
+    external fun setPresentScale(mode: Int)
     external fun start(libraryRoot: String, id: String): String
     external fun recoverStart(libraryRoot: String, id: String): String
     external fun status(): Array<String>

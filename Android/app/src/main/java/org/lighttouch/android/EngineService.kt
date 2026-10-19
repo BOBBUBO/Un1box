@@ -41,7 +41,45 @@ class EngineService : Service() {
     // The daemon's parent-death signal follows the thread that forked it, so fork from one that never exits.
     private val usbThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "usb-bridge") }
     @Volatile private var usbError = ""
+    private val cpuSampler by lazy { WorkerCpuSampler() }
+    private val profileTail = ProfileTail()
+    @Volatile private var detailedTiming = false
+    // Detailed timing keeps an automatic capture running while the guest does; this thread
+    // starts one once the guest runs and again after a capture reaches its limit.
+    private val detailedTimingThread = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { Thread(it, "detailed-timing") }
     private val binder = object : IEngine.Stub() {
+        override fun rename(recordId: String, name: String): String = Native.rename(File(filesDir, "library").absolutePath, recordId, name)
+        override fun remove(recordId: String): String = Native.remove(File(filesDir, "library").absolutePath, recordId)
+        override fun importDevice(source: String, displayName: String, rom: String, guest: String): String =
+            Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, guest)
+        override fun frameStats(sinceSequence: Long): Bundle = Bundle().apply {
+            putLongArray("frames", Native.frameTimeline(sinceSequence))
+            putLong("nowNs", System.nanoTime())
+            putLongArray("cpu", cpuSampler.sample())
+            profileTail.follow(if (detailedTiming && profileCapture.automatic) profileCapture.currentEvents() else null)
+            profileTail.summary()?.let { putBundle("detailed", it) }
+        }
+        override fun setPresentScale(mode: Int) = Native.setPresentScale(mode)
+        override fun setDetailedTiming(enabled: Boolean) {
+            detailedTiming = enabled
+            if (!enabled && profileCapture.automatic) profileCapture.finish("detailed-timing-off")
+        }
+        /** Freeze what led up to now for the hitch inspector: the frame timeline, and the detailed
+         * timing capture (closed and kept) when one is running. The caller has paused the guest. */
+        override fun hitchSnapshot(): Bundle {
+            val events = if (profileCapture.automatic) profileCapture.currentEvents() else null
+            val directory = events?.parentFile ?: File(filesDir, "hitches/${System.currentTimeMillis()}").apply { mkdirs() }
+            if (events != null) profileCapture.finish("hitch", keep = true)
+            val frames = Native.frameTimeline(0)
+            File(directory, "frames.tsv").bufferedWriter().use { out ->
+                out.write("# sequence published-ns presented-ns presenter-work-ns (CLOCK_MONOTONIC)\n")
+                for (i in frames.indices step 4) out.write("${frames[i]} ${frames[i + 1]} ${frames[i + 2]} ${frames[i + 3]}\n")
+            }
+            return Bundle().apply {
+                putString("directory", directory.absolutePath); putBoolean("detailed", events != null)
+                putLong("snapshotNs", System.nanoTime()); putString("engineLog", Native.status().getOrElse(3) { "" })
+            }
+        }
         override fun performance(observationEpoch: Long): Bundle = performanceSampler.request(Binder.getCallingPid(), observationEpoch)
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
         override fun debugShutdownProgress(): Bundle {
@@ -378,6 +416,10 @@ class EngineService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
     override fun onCreate() {
         super.onCreate()
+        detailedTimingThread.scheduleWithFixedDelay({
+            try { if (detailedTiming && !stopping.get()) profileCapture.startAutomatic(Native.status().firstOrNull() ?: "stopped") }
+            catch (_: Exception) { /* Retried on the next tick; the overlay shows timing as unavailable. */ }
+        }, 3, 3, java.util.concurrent.TimeUnit.SECONDS)
         // A fresh worker must not inherit a prior PID's error as current status.
         // The UI reads the exited PID's receipt/error; state markers and legacy
         // diagnostics remain available for cold recovery review.
@@ -554,5 +596,5 @@ class EngineService : Service() {
         startForeground(1, Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("LightTouch guest").setContentText("Tap to return; Stop ends this worker").setContentIntent(launch).setOngoing(true).build())
     }
-    override fun onDestroy() { usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); abandonAudioFocus(); super.onDestroy() }
+    override fun onDestroy() { detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); abandonAudioFocus(); super.onDestroy() }
 }

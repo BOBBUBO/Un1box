@@ -53,6 +53,11 @@ lt_status lt_library_record_at(lt_library *, uint32_t index, lt_record_info *, l
 lt_status lt_library_select(lt_library *, const char *record_id, lt_error *);
 lt_status lt_library_selected(lt_library *, lt_record_info *, lt_error *);
 lt_status lt_library_device_open(lt_library *, const char *record_id, uint32_t allow_dirty, lt_device **, lt_error *);
+/* Rename a record (1..127 bytes of UTF-8). Allowed while the device runs. */
+lt_status lt_library_rename(lt_library *, const char *record_id, const char *display_name, lt_error *);
+/* Permanently delete a stopped record: base, writable state and assets. LT_BUSY while its device
+ * is open. If it was selected, the first remaining record (if any) becomes selected. */
+lt_status lt_library_remove(lt_library *, const char *record_id, lt_error *);
 
 /* All paths UTF-8, absolute, private app-owned directories. Destination must not
  * exist. Imports stage beside destination and atomically publish after validation.

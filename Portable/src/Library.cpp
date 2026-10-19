@@ -225,6 +225,56 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         throw;
     }
 }
+/* record.json with one field replaced; the schema has no nested values. */
+static std::string record_json(const Json &metadata, const std::string &id, const std::string &name) {
+    std::string json = "{\"schema\":1,\"id\":" + quote(id) + ",\"name\":" + quote(name) +
+                       ",\"board\":" + quote(metadata.at("board").string()) +
+                       ",\"build\":" + quote(metadata.at("build").string()) +
+                       ",\"base_sha256\":" + quote(metadata.at("base_sha256").string());
+    if (const auto *rom = metadata.find("bootrom_sha256"))
+        json += ",\"bootrom_sha256\":" + quote(rom->string());
+    if (const auto *package = metadata.find("guest_package_sha256"))
+        json += ",\"guest_package_sha256\":" + quote(package->string());
+    return json + "}\n";
+}
+static void rename_record(lt_library *l, const std::string &id, const std::string &name) {
+    record_id(id);
+    require(!name.empty() && name.size() < 128, "device name must be 1-127 bytes");
+    require(name.find_first_of(std::string("\0\n\r", 3)) == std::string::npos, "device name has control characters");
+    auto directory = l->root / "records" / id;
+    auto metadata = parse(read_file(directory / "record.json", 65536));
+    require(metadata.at("schema").integer() == 1 && metadata.at("id").string() == id, "invalid device record");
+    atomic_write(directory / "record.json", record_json(metadata, id, name));
+    sync_dir(directory);
+}
+static void remove_record(lt_library *l, const std::string &id) {
+    record_id(id);
+    auto directory = l->root / "records" / id;
+    require(fs::is_directory(fs::symlink_status(directory)), "no such device", LT_INVALID);
+    int lease = open((directory / "state/.lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    io(lease >= 0, "device lease");
+    struct Closer {
+        int fd;
+        ~Closer() { close(fd); }
+    } closer{lease};
+    require(flock(lease, LOCK_EX | LOCK_NB) == 0, "stop the device before deleting it", LT_BUSY);
+    // Out of the record namespace first, so a crash mid-delete leaves no half record.
+    std::string pattern = (l->root / "records/.record-trash-XXXXXX").string();
+    std::vector<char> tmp(pattern.begin(), pattern.end());
+    tmp.push_back(0);
+    io(mkdtemp(tmp.data()) != nullptr, "record trash");
+    fs::path trash = tmp.data();
+    fs::rename(directory, trash / "record");
+    sync_dir(l->root / "records");
+    if (selected(l) == id) {
+        auto rest = records(l);
+        if (rest.empty())
+            fs::remove(l->root / "selected");
+        else
+            atomic_write(l->root / "selected", rest.front());
+    }
+    discard(trash);
+}
 static void set_guest_package(lt_library *l, const std::string &id, const char *path, lt_record_info *out) {
     abi(out);
     record_id(id);
@@ -285,6 +335,20 @@ lt_status lt_library_set_guest_package(lt_library *l, const char *id, const char
         lt::LibraryLock lock(l);
         lt::require(id, "record ID missing");
         lt::set_guest_package(l, id, path, out);
+    });
+}
+lt_status lt_library_rename(lt_library *l, const char *id, const char *name, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::LibraryLock lock(l);
+        lt::require(id && name, "record ID/name missing");
+        lt::rename_record(l, id, name);
+    });
+}
+lt_status lt_library_remove(lt_library *l, const char *id, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::LibraryLock lock(l);
+        lt::require(id, "record ID missing");
+        lt::remove_record(l, id);
     });
 }
 lt_status lt_library_open(const lt_library_config *c, lt_library **out, lt_error *e) {

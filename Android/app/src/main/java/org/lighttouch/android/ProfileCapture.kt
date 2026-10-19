@@ -32,35 +32,62 @@ internal class ProfileCapture(private val context: android.content.Context, priv
             finish(if (guestState in listOf("running", "paused")) "capture-limit-or-error" else "guest-$guestState")
         return Bundle().apply {
             putBoolean("profileRecording", directory != null)
+            putBoolean("profileAutomatic", metadata?.optBoolean("automatic") == true)
             putString("profileNotice", notice)
             putString("profileError", lastError)
         }
     }
 
-    @Synchronized fun change(recording: Boolean, guestState: String): Bundle {
+    /** Resolve the identity before starting the timed capture. Keep the raw
+     * response as evidence, including the localized display name. */
+    private fun frontmostApp(): Array<String> {
+        val request = Native.guestRequest(1, "", 2000)
+        check(request[1].isEmpty()) { request[1] }
+        val id = request[0].toLong()
+        var reply: Array<String>
+        try {
+            val deadline = SystemClock.elapsedRealtime() + 2500
+            do {
+                reply = Native.guestPoll(id)
+                check(reply[3].isEmpty()) { reply[3] }
+                if (reply[0] != "1") break
+                check(SystemClock.elapsedRealtime() < deadline) { "Could not identify the current iOS app" }
+                Thread.sleep(25)
+            } while (true)
+            check(reply[0] == "2" && reply[1] == "0") { "Could not identify the current iOS app" }
+        } finally { Native.guestCancel(id) }
+        return reply
+    }
+
+    /** The capture's events file while one is recording. */
+    @Synchronized fun currentEvents(): File? = directory?.let { File(it, "events.tsv") }
+    @get:Synchronized val automatic get() = metadata?.optBoolean("automatic") == true
+
+    /**
+     * Detailed frame timing records continuously: an automatic capture runs while the guest does
+     * and is restarted when it reaches its size or time limit. Only the newest few automatic
+     * captures are kept, unless the hitch inspector claimed one.
+     */
+    @Synchronized fun startAutomatic(guestState: String) {
+        if (directory != null || guestState != "running") return
+        change(true, guestState, automatic = true)
+        val root = File(filesDir, "profiles")
+        root.listFiles()?.filter { dir ->
+            dir != directory && try {
+                JSONObject(File(dir, "metadata.json").readText()).let { it.optBoolean("automatic") && !it.optBoolean("keep") }
+            } catch (_: Exception) { false }
+        }?.sortedByDescending { it.name }?.drop(2)?.forEach { it.deleteRecursively() }
+    }
+
+    @Synchronized fun change(recording: Boolean, guestState: String, automatic: Boolean = false): Bundle {
         lastError = ""
         try {
             if (recording && directory == null) {
                 check(guestState == "running") { "Start profiling while the guest is running" }
-                // Resolve the identity before starting the timed capture. Keep the raw
-                // response as evidence, including the localized display name.
-                val request = Native.guestRequest(1, "", 2000)
-                check(request[1].isEmpty()) { request[1] }
-                val id = request[0].toLong()
-                var reply: Array<String>
-                try {
-                    val deadline = SystemClock.elapsedRealtime() + 2500
-                    do {
-                        reply = Native.guestPoll(id)
-                        check(reply[3].isEmpty()) { reply[3] }
-                        if (reply[0] != "1") break
-                        check(SystemClock.elapsedRealtime() < deadline) { "Could not identify the current iOS app" }
-                        Thread.sleep(25)
-                    } while (true)
-                    check(reply[0] == "2" && reply[1] == "0") { "Could not identify the current iOS app" }
-                } finally { Native.guestCancel(id) }
-                val identity = reply[2].trimEnd().lines()
-                check(identity.size >= 2 && identity[0].isNotBlank() && identity[1].isNotBlank()) {
+                // An automatic capture also covers app switches, so it is labelled by when it began.
+                val reply = if (automatic) arrayOf("2", "0", "", "") else frontmostApp()
+                val identity = if (automatic) listOf("", "Detailed timing") else reply[2].trimEnd().lines()
+                check(identity.size >= 2 && identity[1].isNotBlank() && (automatic || identity[0].isNotBlank())) {
                     "The guest returned an incomplete app identity"
                 }
                 val root = File(filesDir, "profiles").apply { mkdirs() }
@@ -82,7 +109,7 @@ internal class ProfileCapture(private val context: android.content.Context, priv
                         System.getenv().filterKeys { it.startsWith("LT_") || it.startsWith("IT_GLES_") || it == "IT_VCPU_ACCT" }
                             .forEach { (key, value) -> put(key, value) }
                     })
-                    put("state", "recording")
+                    put("state", "recording"); put("automatic", automatic)
                     put("observationsAtStart", encode(observations()))
                 }
                 // Preserve build and engine identity manifests shipped with this APK.
@@ -110,7 +137,7 @@ internal class ProfileCapture(private val context: android.content.Context, priv
                     error(result)
                 }
                 directory = dir; metadata = info; engineLog = log; logOffset = log?.length() ?: 0L
-                notice = "Profiling ${identity[1]}"
+                notice = if (automatic) "" else "Profiling ${identity[1]}"
             } else if (!recording) finish("user")
         } catch (e: Exception) {
             lastError = e.message ?: "Profile capture failed"
@@ -121,8 +148,9 @@ internal class ProfileCapture(private val context: android.content.Context, priv
         }
     }
 
-    @Synchronized fun finish(reason: String) {
+    @Synchronized fun finish(reason: String, keep: Boolean = false) {
         val dir = directory ?: return
+        if (keep) metadata?.put("keep", true)
         try {
             val result = Native.profile("")
             if (result.isNotEmpty()) lastError = result
@@ -148,7 +176,7 @@ internal class ProfileCapture(private val context: android.content.Context, priv
                 put("observationsAtEnd", encode(observations()))
                 File(dir, "metadata.json").writeText(toString(2))
             }
-            notice = "Saved profile: ${metadata?.optString("appName") ?: "iOS app"}"
+            if (metadata?.optBoolean("automatic") != true) notice = "Saved profile: ${metadata?.optString("appName") ?: "iOS app"}"
         } catch (e: Exception) {
             lastError = e.message ?: "Could not finish profile capture"
             notice = "Profile retained with incomplete metadata"

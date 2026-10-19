@@ -87,8 +87,39 @@ constexpr int fps_buckets=256;
 constexpr uint64_t fps_bucket_ns=250000000;
 std::atomic<uint64_t> fps_bucket_id[fps_buckets];
 std::atomic<uint32_t> fps_bucket_frames[fps_buckets];
+// Per-frame timeline for the UI's performance overlay and hitch inspector: when each
+// guest frame was published, when the presenter posted it, and what presenting it
+// cost. One slot per sequence; a slot is valid while its sequence field matches, so
+// a reader that races the publisher drops that frame rather than mixing two.
+constexpr uint64_t timeline_size=8192;  // ~136 s at 60 fps
+struct TimelineSlot { std::atomic<uint64_t> sequence{0},published{0},presented{0},work{0}; };
+TimelineSlot timeline[timeline_size];
+std::atomic<uint64_t> timeline_latest{0};
+void timeline_published(uint64_t sequence,uint64_t now) {
+    auto &slot=timeline[sequence%timeline_size];
+    slot.sequence.store(0,std::memory_order_relaxed);
+    slot.published.store(now,std::memory_order_relaxed);
+    slot.presented.store(0,std::memory_order_relaxed);slot.work.store(0,std::memory_order_relaxed);
+    slot.sequence.store(sequence,std::memory_order_release);
+    timeline_latest.store(sequence,std::memory_order_release);
+}
+void timeline_presented(uint64_t sequence,uint64_t now,uint64_t work) {
+    auto &slot=timeline[sequence%timeline_size];
+    if(slot.sequence.load(std::memory_order_acquire)!=sequence)return;
+    slot.work.store(work,std::memory_order_relaxed);slot.presented.store(now,std::memory_order_release);
+}
+// How the guest frame reaches the panel. The compositor modes hand SurfaceFlinger a
+// guest-sized buffer (or an integer multiple, for sharp pixels) and let it scale on the
+// display hardware; the CPU mode is the old full-resolution nearest-neighbour upscale,
+// which wrote every panel pixel (~10 MB a frame at 1080x2400). LT_PRESENT_SCALE=cpu for A/B.
+enum PresentScale : int { ScaleSmooth=0, ScaleSharp=1, ScaleCpu=2 };
+std::atomic<int> present_scale{[] {
+    const char *v=getenv("LT_PRESENT_SCALE");
+    return v && !strcmp(v,"cpu")?int(ScaleCpu):v && !strcmp(v,"sharp")?int(ScaleSharp):int(ScaleSmooth);
+}()};
 void frame_published(void *,uint64_t published) {
     vcpu_hint.framePublished();
+    timeline_published(published,monotonic_ns());
     const uint64_t id=monotonic_ns()/fps_bucket_ns;auto &slot=fps_bucket_id[id%fps_buckets];
     if(slot.load(std::memory_order_relaxed)!=id){fps_bucket_frames[id%fps_buckets].store(0,std::memory_order_relaxed);slot.store(id,std::memory_order_release);}
     fps_bucket_frames[id%fps_buckets].fetch_add(1,std::memory_order_relaxed);
@@ -208,6 +239,8 @@ using WindowSnapshot = PresentationWindow<ANativeWindow, ANativeWindow_acquire, 
 using WindowPost = PresentationPost<ANativeWindow, ANativeWindow_unlockAndPost>;
 void present() {
     uint64_t configured_generation = 0;
+    int configured_scale=-1;
+    uint32_t configured_width=0,configured_height=0;
     uint64_t woken_sequence = 0;
     uint64_t phase_generation=0,phase_epoch=0;
     for (;;) {
@@ -281,17 +314,26 @@ void present() {
         if (snapshot) {
             ANativeWindow *target_window=snapshot->get();
             int geometry_code=0, geometry_width=0, geometry_height=0, geometry_format=0;
-            const bool configure=configured_generation!=snapshot->generation();
+            const int scale=present_scale.load(std::memory_order_relaxed);
+            const bool configure=configured_generation!=snapshot->generation() || scale!=configured_scale ||
+                source.width!=configured_width || source.height!=configured_height;
             if(configure) {
                 present_stage(PresentPhase::Configure,phase_generation,phase_epoch);
                 // Only this presenter configures or draws the window. Binder
                 // setters only exchange the owning reference under guard.
+                // Reset first: buffer dimensions persist on the Surface across
+                // attaches, and the reset size is the panel area to scale into.
+                geometry_code=ANativeWindow_setBuffersGeometry(target_window,0,0,WINDOW_FORMAT_RGBA_8888);
                 geometry_width=ANativeWindow_getWidth(target_window);
                 geometry_height=ANativeWindow_getHeight(target_window);
                 geometry_format=ANativeWindow_getFormat(target_window);
-                geometry_code=ANativeWindow_setBuffersGeometry(target_window,0,0,WINDOW_FORMAT_RGBA_8888);
+                if(!geometry_code && scale!=ScaleCpu && source.width && source.height) {
+                    const int factor=scale==ScaleSharp?std::max(1,std::min(geometry_width/int(source.width),geometry_height/int(source.height))):1;
+                    geometry_code=ANativeWindow_setBuffersGeometry(target_window,int(source.width)*factor,int(source.height)*factor,WINDOW_FORMAT_RGBA_8888);
+                }
                 request_guest_frame_rate(target_window);
-                configured_generation=snapshot->generation();
+                configured_generation=snapshot->generation();configured_scale=scale;
+                configured_width=source.width;configured_height=source.height;
             }
             ANativeWindow_Buffer target{};
             present_stage(PresentPhase::WindowLock,phase_generation,phase_epoch);
@@ -396,6 +438,7 @@ void present() {
                                     (unsigned long long)post_begin,(unsigned long long)post_end,
                                     (unsigned long long)monotonic_ns());
                             }
+                            timeline_presented(source.sequence,now,(scale_end-lock_begin)+(post_end-post_begin)+(begin-copy_begin));
                             ++presented_frames;
                             if(!first_present_ns)first_present_ns=now;
                             if(previous_present_ns) {
@@ -476,6 +519,16 @@ JNI(records) jobjectArray JNICALL Java_org_lighttouch_android_Native_records(JNI
 JNI(select) jstring JNICALL Java_org_lighttouch_android_Native_select(JNIEnv *env,jobject,jstring root,jstring id) {
     std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_select(library,record.value,&error);
+    return string(env,result(status,error));
+}
+JNI(rename) jstring JNICALL Java_org_lighttouch_android_Native_rename(JNIEnv *env,jobject,jstring root,jstring id,jstring name) {
+    std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root),record(env,id),label(env,name);lt_error error=LT_INIT(lt_error);
+    auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_rename(library,record.value,label.value,&error);
+    return string(env,result(status,error));
+}
+JNI(remove) jstring JNICALL Java_org_lighttouch_android_Native_remove(JNIEnv *env,jobject,jstring root,jstring id) {
+    std::lock_guard<std::mutex> lock(library_guard);Utf path(env,root),record(env,id);lt_error error=LT_INIT(lt_error);
+    auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_remove(library,record.value,&error);
     return string(env,result(status,error));
 }
 static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirty) {
@@ -1038,6 +1091,30 @@ JNI(guestFrameBuckets) jintArray JNICALL Java_org_lighttouch_android_Native_gues
         values[i]=fps_bucket_id[id%fps_buckets].load(std::memory_order_acquire)==id?jint(fps_bucket_frames[id%fps_buckets].load(std::memory_order_relaxed)):0;
     }
     auto array=env->NewIntArray(n);env->SetIntArrayRegion(array,0,n,values);return array;
+}
+// Frames newer than since as (sequence, published, presented, presenter work) quads,
+// oldest first, all CLOCK_MONOTONIC ns. presented is 0 until (unless) it was posted.
+JNI(frameTimeline) jlongArray JNICALL Java_org_lighttouch_android_Native_frameTimeline(JNIEnv *env,jobject,jlong since) {
+    const uint64_t latest=timeline_latest.load(std::memory_order_acquire);
+    uint64_t first=latest>=timeline_size?latest-timeline_size+1:1;
+    first=std::max(first,uint64_t(since)+1);
+    std::vector<jlong> out;
+    if(latest>=first)out.reserve(size_t(latest-first+1)*4);
+    for(uint64_t sequence=first;sequence<=latest && sequence;++sequence) {
+        auto &slot=timeline[sequence%timeline_size];
+        if(slot.sequence.load(std::memory_order_acquire)!=sequence)continue;
+        const uint64_t published=slot.published.load(std::memory_order_relaxed);
+        const uint64_t presented=slot.presented.load(std::memory_order_acquire);
+        const uint64_t work=slot.work.load(std::memory_order_relaxed);
+        if(slot.sequence.load(std::memory_order_acquire)!=sequence)continue;
+        out.insert(out.end(),{jlong(sequence),jlong(published),jlong(presented),jlong(work)});
+    }
+    auto array=env->NewLongArray(jsize(out.size()));
+    if(array && !out.empty())env->SetLongArrayRegion(array,0,jsize(out.size()),out.data());
+    return array;
+}
+JNI(setPresentScale) void JNICALL Java_org_lighttouch_android_Native_setPresentScale(JNIEnv *,jobject,jint mode) {
+    if(mode>=ScaleSmooth && mode<=ScaleCpu)present_scale.store(mode,std::memory_order_relaxed);
 }
 JNI(debugArmVcpuAccounting) jstring JNICALL Java_org_lighttouch_android_Native_debugArmVcpuAccounting(JNIEnv *env,jobject) {
 #ifdef LT_ANDROID_DEBUG
