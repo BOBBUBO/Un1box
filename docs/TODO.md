@@ -99,6 +99,10 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   235,490 faults; 23/28 hitches overlap, media execution14.37/55.85%.
   Next: guest audio buffer/decode cadence and scheduling dependencies, keeping
   sound/architectural faults. No new optimization or measured gain claimed.
+  New distinct candidate: default-off `LT_VFP_MLA_FAST` combines the two host
+  helper calls for VMLA/VMLS/VNMLA/VNMLS single precision, preserving separate
+  softfloat rounding/status and NaN operand order. `vfp-mla` LT Bench adds a
+  long-loop focused measurement. Builds/phone A/B pending; no gain claimed.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

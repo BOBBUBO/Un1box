@@ -1840,6 +1840,23 @@ Do not repeat the rejected unaligned-store bypass. Evidence under
 data in `alignment-latency.json/txt` and the same raw/reports as fault-only.
 No tests added/run, no optimization or speedup claimed. Pixel untouched.
 
+#### Non-fused VFP multiply/add helper experiment
+
+`LT_VFP_MLA_FAST=on` (default off) combines each AArch32 single-precision
+VMLA/VMLS/VNMLA/VNMLS into one generated helper call. It still invokes the
+original `float32_mul` then `float32_add` using the same status object, sign
+changes and NaN operand order. It does not use fused multiply/add or alter
+rounding/exception handling. Half/double precision remain unchanged. Audio
+arithmetic diagnostics or either zero-multiply switch suppress the experiment
+so those paths keep their own selected helpers; the engine logs the effective
+and requested modes. This targets helper boundaries in the AAC/libvDSP code
+identified above, rather than exceptional operands or alignment bypass.
+
+LT Bench `vfp-mla` times a long loop of eight independent scalar VFP2
+accumulators across all four forms, with non-exact products to establish the
+ordinary sticky inexact flag. No per-operation host clocks. Build and focused/
+ordinary same-APK interleaved measurements pending; no gain claimed.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

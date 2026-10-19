@@ -125,6 +125,36 @@ typedef struct { const char *name, *what; Bench run; u32 n; } Test;
 
 static volatile u32 sink;
 
+/* Eight independent accumulators model the scalar VFP2 unrolling in libvDSP.
+ * Exercise all four non-fused forms; no per-instruction host timers. The
+ * non-exact product quickly establishes the sticky inexact flag used in audio.
+ * n is a multiple of eight in the table below. */
+static u64 b_vfp_mla(u32 n)
+{
+    static const float values[10] = {1, 2, 3, 4, 5, 6, 7, 8, .1f, .3f};
+    u32 loops = n / 8, result;
+    u64 start = now_ns();
+    __asm__ volatile(
+        "vldmia %2, {s0-s9}\n"
+        "1:\n"
+        "vmla.f32 s0, s8, s9\n"
+        "vmls.f32 s1, s8, s9\n"
+        "vnmla.f32 s2, s8, s9\n"
+        "vnmls.f32 s3, s8, s9\n"
+        "vmla.f32 s4, s8, s9\n"
+        "vmls.f32 s5, s8, s9\n"
+        "vnmla.f32 s6, s8, s9\n"
+        "vnmls.f32 s7, s8, s9\n"
+        "subs %0, %0, #1\n"
+        "bne 1b\n"
+        "vmov %1, s0\n"
+        : "+r"(loops), "=r"(result) : "r"(values)
+        : "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "cc", "memory");
+    u64 elapsed = now_ns() - start;
+    sink = result;
+    return elapsed;
+}
+
 /* ------------------------------------------------------------- objc/UIKit --- */
 
 static Object (*get_class)(const char *);
@@ -570,6 +600,7 @@ static u64 b_sleep(u32 n)
 
 static const Test tests[] = {
     {"loop", "integer loop iteration", b_loop, 4000000},
+    {"vfp-mla", "VFP2 non-fused multiply/add", b_vfp_mla, 2000000},
     {"icall", "indirect call + return", b_icall, 2000000},
     {"fib", "recursive call + return", b_fib, 500000},
     {"memcpy", "KiB copied", b_memcpy, 20480},

@@ -19,6 +19,7 @@ repeatable figure, a median well above it means interference).
 | Test | One operation | Path it exercises |
 | --- | --- | --- |
 | `loop` | an integer LCG step | translated straight-line code (baseline) |
+| `vfp-mla` | one scalar VMLA/VMLS/VNMLA/VNMLS | eight independent VFP2 accumulators, separately rounded multiply/add and generated helper calls; long loop timing, no per-operation clocks |
 | `icall` | an indirect call through a 4-entry table, and its return | indirect branches: TB exits, the per-site branch cache, `helper_lookup_tb_ptr` |
 | `fib` | a recursive call and return | returns to many sites |
 | `memcpy` | 1 KiB copied (libSystem `memcpy`, 256 KiB blocks) | guest loads/stores through the softmmu TLB fast path |
