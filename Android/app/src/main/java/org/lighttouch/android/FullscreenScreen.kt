@@ -46,20 +46,18 @@ internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifi
     val skin = DeviceSkin.forBoard(host.selected?.board)
     val aspect = skin.screenWidth / skin.screenHeight
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black).semantics { testTagsAsResourceId = true }) {
-        val bar = 112.dp
+        // The guest is centred on the panel itself, with equal black borders above and below, so it
+        // sits in the middle of the phone however it is held. The buttons dock in the lower border
+        // when it can hold them; the guest shrinks a little to make room before they float instead.
+        val bar = 88.dp
         val fitHeight = maxWidth / aspect
-        val docked = maxHeight - fitHeight >= bar * 0.8f
-        val screenHeight = if (docked) min(fitHeight, maxHeight - bar) else min(fitHeight, maxHeight)
+        val docked = (maxHeight - fitHeight) / 2 >= bar * 0.8f
+        val screenHeight = if (docked) min(fitHeight, maxHeight - bar * 2) else min(fitHeight, maxHeight)
         val screenWidth = screenHeight * aspect
         if (docked) {
-            // The gap above the guest matches the gap between it and the buttons, so the guest sits
-            // centred in what the buttons leave rather than high in a fixed-height bar's space.
-            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Spacer(Modifier.weight(1f))
-                GuestScreen(host, guestSurface, Modifier.size(screenWidth, screenHeight), overlayScale = 1f, inDeviceView = false)
-                Spacer(Modifier.weight(1f))
+            GuestScreen(host, guestSurface, Modifier.size(screenWidth, screenHeight).align(Alignment.Center), overlayScale = 1f, inDeviceView = false)
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height((maxHeight - screenHeight) / 2), contentAlignment = Alignment.Center) {
                 ButtonBar(host, Modifier.fillMaxWidth().height(64.dp)) { confirmStop = true }
-                Spacer(Modifier.navigationBarsPadding().height(24.dp))
             }
         } else {
             var visible by remember { mutableStateOf(true) }
