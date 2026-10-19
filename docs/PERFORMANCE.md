@@ -2317,16 +2317,54 @@ host-PC/result entry per TCG region, under the original region mutex. Insert,
 remove and reset clear it before mutating the tree. All fault/state restoration
 and guest handler behavior remain. Independent default-off
 `LT_HOST_PC_CACHE_PROF=on` samples one lookup body per256 calls in five-second
-blocks and counts candidate hits in either mode. Focused reversed A/B pending;
-no speedup claimed. Game ceiling/median/low/1% low and hitches/durations are
-not applicable to this static-screen diagnostic and have not been measured
-for this experiment.
+blocks and counts candidate hits in either mode. Focused reversed A/B follows.
+Game ceiling/median/low/1% low and hitches/durations are not applicable to this
+static-screen diagnostic and have not been measured for this experiment.
 
 Evidence: `build/perf-codex/poco-stm-profile-1/` with `perf.data`, `record.txt`,
 `self.txt`, `callgraph.txt`, symbol cache, JIT maps, `guest-pc.json/txt`, engine
 log and reviewed result scene. Runner `stm-profile-run.py`; private LT Bench
 IPA SHA-256 `aa24eb583e041fa344404ee71232c1d94f25914d4b11d7807cc92bb21113efb9`.
 Pixel untouched; no tests added/run.
+
+**Focused lookup A/B:** final Linux/Android builds pass. Same frozen APK,
+app source `779c5ed7` / engine `c146d54fad`, serial28 package, four1200-round
+STM passes in off/on/on/off order. APK SHA-256
+`4d81aec2a2209600e27cbb5d37e7aa38565f3df8225f7cfc5a75f865b5f21886`.
+Lookup sampling enabled identically in both modes; user recorder, simpleperf,
+frame/context/PC/fault/arithmetic diagnostics and accounting off. Every pass's
+byte/guard/writeback checks passed; all four result scenes reviewed as LT Bench
+with Start profile off. `hostpclookup.py` excludes the first region block after
+pass start, conservatively removing any block that began before the pass.
+All11 subsequent five-second blocks per arm are complete and retained.
+
+| Focused timing | Pair1 off → on | Pair2 off → on (reversed order) |
+| --- | --- | --- |
+| Sampled lookup mean, ns | 379.793 → 288.749 | 353.489 → 287.615 |
+| Median block mean, ns | 379.452 → 289.006 | 351.570 → 287.434 |
+| Samples retained | 134226 → 139723 | 135996 → 134836 |
+| Calls in retained blocks | 34361856 → 35769088 | 34814976 → 34518016 |
+| Exact-address candidate hits | 99.99194% → 99.99186% | 99.99184% → 99.98439% |
+| Largest sampled lookup, ns | 63698 → 22864 | 65573 → 24531 |
+| STM best / median, ns/store | 1546.1 / 1582.1 → 1477.2 / 1522.1 | 1519.1 / 1558.0 → 1456.3 / 1535.3 |
+| Whole1200-round pass, ms | 63007 → 60582 | 62181 → 62847 |
+
+The sampled lookup body drops91.044/65.874ns (24.0/18.6%), including matched
+clock overhead/descheduling and excluding mutex acquisition. STM best improves
+4.46/4.13%, median3.79/1.46%; the full pass duration is mixed. This supports a
+small local saving in the preserved architectural fault path. It does not
+establish uninstrumented speed, ordinary game FPS or a hitch fix. Keep the
+cache default off; next confirm short focused timing with lookup sampling off
+before deciding whether a game comparison is justified. Maxima are systematic
+samples, not all-call worst cases or evidence that these outliers were fixed.
+
+Evidence: `build/perf-codex/poco-host-pc-{1,2}-{off,on}/` contains engine logs,
+lookup reports/all blocks, mode/identity, scenes and process checks;
+`host-pc-focused-results.json`, reviewed `host-pc-scenes.png`,
+`host-pc-build-identity.json` and runner `host-pc-run.py` reproduce the result.
+Original short LT Bench restored; final clean Stop/no-qemu and baseline
+environment readback verified. Cache and lookup sampling are off. Pixel
+untouched; no test suites added/run.
 
 For a visual check using the existing complete delayed-PC trace, local
 `build/perf-codex/hitch-examples.py` produces `hitch-examples.png/json`.

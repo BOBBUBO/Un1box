@@ -10,8 +10,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   STM diagnostic completed at best/median1498.5/1542.0ns with all byte/guard/
   writeback checks passing. Native call chains nominate `tcg_tb_lookup`5.89%
   inclusive, tree lookup3.98%, comparator2.28% self; these are not recoverable
-  savings or game attribution. Use independent sampled `LT_HOST_PC_CACHE_PROF`
-  in both modes, off/on/on/off, then diagnostic-off timing if justified.
+  savings or game attribution. Two same-APK reversed pairs now complete,
+  independent `LT_HOST_PC_CACHE_PROF` enabled in both modes, off/on/on/off:
+  lookup mean379.793→288.749ns and353.489→287.615ns; all11 complete5s blocks
+  per arm retained. Candidate hit rates99.984–99.992%. STM best/median
+  1546.1/1582.1→1477.2/1522.1ns and1519.1/1558.0→1456.3/1535.3ns;
+  best improves4.46/4.13%, median3.79/1.46%, full pass durations mixed.
+  All byte/guard/writeback checks pass and four scenes reviewed, Start profile
+  off. Original short LT Bench restored, clean Stop/no-qemu/baseline verified.
+  Timings include diagnostic bookkeeping; next confirm sampling-off.
   Clear the cache before tree mutations under the original mutex; preserve
   faults/audio. No game ceiling/median/low/1%low/hitch count/duration gain
   measured or claimed. Focused profile and provenance in PERFORMANCE.md.
