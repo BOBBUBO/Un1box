@@ -1341,6 +1341,91 @@ the real logs, selects complete intervals inside exact frame bounds, rejects gap
 and preserves every block and maxima. Do not retry this on the same ES1 driver
 without new capability evidence.
 
+### Hitch attribution with scheduler traces and timestamped CPU samples
+
+2026-10-19: changed the investigation from whole-scene hotspot totals to
+**time-aligned scheduler states and CPU samples inside individual long frames**.
+These are diagnostic observations, not an optimization A/B or another measured
+FPS gain. User-facing Start profile, full accounting and all focused engine timing
+counters stayed off. Array cache on, all other optimization experiments off.
+Frozen `hitch-sched.apk`: app `5ab5880d`, engine `2e79c09b2e`; Linux/Android builds
+completed. APK SHA-256 `cebcf786c02f631abe84d64f195b3e4edff1077db72ec03da1d43a38b6a895c4`;
+matching unstripped library SHA-256
+`098d5b8a6ab88e484be2021abd445695176ead53a1a6404afdb78253daea19be`.
+
+Two 65 s Perfetto scheduler/frequency traces bracket separate exact 60 s frame
+windows on the Snapdragon 865-class Poco, Jetpack title. Capture 2 also attaches
+simpleperf at 1 kHz `cpu-clock`, `--clockid monotonic`, frame-pointer call chains,
+`-p PID -m 8 --cpu-percent 25`; no sample losses reported (80,408 process samples).
+Same-worker guest-PC perfmaps taken before/after; only unambiguous stable mappings
+are attributed. Perfmap writes and tracing can perturb execution, so neither
+capture is an ordinary baseline. Both before/final scenes reviewed: Jetpack title,
+Start profile off. Both runners completed clean Stop/no-qemu/baseline readback;
+Pixel untouched.
+
+| Capture | Mean | Ceiling | Median | Low | 1% low | Hitches >50 ms | Skipped publications |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1, scheduling | 54.50 | 60 | 54 | 50 | 28.438 | 8 (409.964 ms) | 0 |
+| 2, scheduling + samples | 53.817 | 58 | 54 | 48 | 28.359 | 7 (371.120 ms) | 1 |
+
+The single sequence gap in capture 2 is a separate **33.231 ms** interval; none of
+its seven >50 ms gaps contains a skipped publication. Do not call every published
+frame gap a single guest rendering call.
+
+| vCPU state inside all >50 ms gaps | Capture 1 | Capture 2 |
+| --- | --- | --- |
+| Running | 340.721 ms (83.1%) | 312.659 ms (84.2%) |
+| Runnable, waiting to be scheduled | 36.076 ms (8.8%) | 40.136 ms (10.8%) |
+| Sleeping | 33.167 ms (8.1%) | 18.325 ms (4.9%) |
+
+Thus **these Poco title gaps mainly contain vCPU execution**. This rules against
+one long off-CPU wait as their dominant component, but does not distinguish guest
+work from engine or driver work, or prove the frame path's critical dependency.
+Sleeping alone does not identify BQL waits. This conclusion does not establish the
+cause of earlier, longer Pixel user-capture pauses.
+
+Capture 2 has **312 vCPU samples inside the seven hitches**, 38–55 per hitch,
+versus 38,822 inside ordinary <=20 ms gaps. Sampled self-time shares:
+
+| Region | Ordinary gaps | Hitch gaps |
+| --- | --- | --- |
+| Native engine | 34.85% | 41.35% |
+| Translated guest, low addresses | 27.02% | 24.04% |
+| Translated guest, high addresses | 18.25% | 16.67% |
+| GL driver | 11.06% | 8.33% |
+| Other native | 7.88% | 8.01% |
+| Anonymous/unmapped | 0.94% | 1.60% |
+
+No dominant sampled function identifies a culprit. `float32_mul` rises from
+0.79% to 4.17%, but that is only **13 hitch samples**: a lead, not proof or
+justification to repeat the rejected VFP-zero optimization. `tb_lookup_legacy`
+is 5.32% ordinary / 3.85% hitch self samples. Guest regions do not identify the
+process; kernel/dyld symbol coverage remains incomplete. Inclusive native chains
+overlap and do not unwind guest stacks.
+
+All capture-2 hitch execution is on CPU 7. Its running-time-weighted reported
+frequency is **2.681 GHz**, versus **2.721 GHz** for ordinary CPU-7 intervals.
+Three hitches (ending 28.435, 35.550 and 43.052 s) run entirely at the maximum
+recorded **2.7456 GHz**. Frequency variation therefore cannot explain all these
+hitches. Counter values are reported frequencies, not a measurement of retired
+cycles or effective clock under throttling.
+
+Trace processor v58.2 reports no error/data-loss counters and complete vCPU state
+coverage for each 60 s window. MONOTONIC-to-trace clock offset spread is 103 ns /
+1 ns; no suspend occurred. Exact windows [begin,end), monotonic ns:
+
+- Capture 1: `[444628761101894,444688761101894)`, PID 11060, vCPU TID 11266.
+- Capture 2: `[444989508326028,445049508326028)`, PID 12366, vCPU TID 12545.
+
+Reusable `tools/perf/hitchsched.py` and `hitchcpu.py` processed these real captures;
+no tests added/run. `tools/perf/hitch-sched.pbtxt` retains the capture configuration.
+Raw traces, frames, reviewed scenes, maps, perf data, per-gap states/frequencies
+and CPU distributions remain under `build/perf-codex/poco-hitch-sched-{1,2}/`;
+build identity/symbols are adjacent. Next: correlate a few frame-path milestones
+(guest present → LCD output → frontend publication), with minimal default-off
+instrumentation, to locate where cadence first breaks. More scene-wide GL totals
+will not answer that question; preserve required GPU synchronization.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

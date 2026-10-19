@@ -95,6 +95,84 @@ stall time. These captures do not identify every guest function or measure GPU e
 Use an attached simpleperf call-graph profile for a CPU-heavy scene, or a supported GPU/system trace
 when the remaining question is asynchronous GPU work or precise host scheduling.
 
+## Scheduler and CPU samples aligned to individual frame gaps
+
+For an unresolved hitch, first separate execution from sleeping and runnable
+delay using a system scheduler trace. Keep Start profile and engine accounting
+off. `tools/perf/hitch-sched.pbtxt` is the 65 s configuration used on the Poco:
+64 MiB trace buffer, scheduler/wakeup/blocking events, thread names and CPU
+frequency events/counters. Check for stray qemu bench engines before launching.
+Use the ordinary `LT_FRAME_LOG` publication log and bracket a 60 s frame window
+with the trace. For example, while the game is already running:
+
+```sh
+adb shell perfetto --txt -c - \
+    -o /data/misc/perfetto-traces/lighttouch-hitch.pftrace \
+    < tools/perf/hitch-sched.pbtxt
+adb pull /data/misc/perfetto-traces/lighttouch-hitch.pftrace build/hitch.pftrace
+# Run framestats.py --device 60 --save build/hitch.frames.log concurrently,
+# starting about two seconds after the trace starts; retain its exact output.
+```
+
+Analyze offline with an official Perfetto `trace_processor_shell` binary:
+
+```sh
+/usr/bin/python3 tools/perf/hitchsched.py build/hitch.pftrace build/hitch.frames.log \
+    --engine-pid PID --trace-processor /path/to/trace_processor_shell \
+    --frequency --json build/hitch-sched.json --chart build/hitch-sched.png
+```
+
+The tool rejects trace error/data-loss counters, overlapping/incomplete vCPU
+states and incomplete state coverage. It aligns MONOTONIC clock snapshots with
+trace time and rejects offset spread over 1 ms. Keep the phone awake: startup
+snapshots alone cannot rule out a later suspend. Default thread selection is the
+busiest `CPU 0/TCG` in the engine process; driver workers can inherit the same
+name. Check the reported TID; `--vcpu-tid` overrides selection. JSON preserves
+exact gap intervals, scheduler segments and wakeup metadata. It also separates
+sequence-gap publications from ordinary/late/hitch frames. Frequencies are
+reported clock values, not measured effective clock or retired cycles.
+
+If the vCPU is running during the hitch, capture timestamped CPU samples in the
+same trace window. Enable `QEMU_PERFMAP_DIR` before launching that worker and
+retain its before/after maps as described below. Attach under run-as:
+
+```sh
+adb shell run-as org.lighttouch.android simpleperf record \
+    -p PID -m 8 --cpu-percent 25 -e cpu-clock --clockid monotonic \
+    -f 1000 --duration 65 --call-graph fp -o files/perf-hitch.data
+```
+
+Retain simpleperf's recorder output, including sample/loss counts, pull the data
+and both maps before stopping the worker, and use the exact frozen build's
+unstripped engine library. Then:
+
+```sh
+python3 tools/perf/hitchcpu.py build/perf.data build/hitch.frames.log build/hitch-sched.json \
+    --before-map build/perf-PID-before.map --after-map build/perf-PID-after.map \
+    --engine-symbols build/symbols/libqemu-arm.so --build-identity build/identity.json \
+    --nm /path/to/llvm-nm --json build/hitch-cpu.json
+```
+
+`identity.json` must contain `library_sha256` from the frozen build; the operator
+must retain the APK/build identity and confirm that this is the captured worker's
+build. The tool checks that hash and both map PIDs, requires `cpu-clock` and an
+explicit monotonic clock, and selects the exact vCPU TID from the scheduler
+report. It compares self-sample distributions across <=20 ms, late and hitch
+intervals, retaining individual-frame results and overlapping inclusive native
+chains. Anonymous PCs require identical unambiguous guest mappings in both maps;
+unstable/unmapped mappings stay unattributed. Guest address regions do not
+identify processes or unwind guest stacks. At 1 kHz a 50 ms gap has only roughly
+40 running samples: preserve counts and avoid declaring a culprit from a few
+samples. Running state also does not prove that thread is the frame path's
+critical dependency. Correlate guest-present/LCD/publication milestones next
+when execution samples remain spread thin.
+
+Both tools processed the real Poco captures recorded in PERFORMANCE.md. These
+are focused diagnostic captures, not FPS comparisons. Confirm any resulting
+optimization in interleaved A/B pairs with all diagnostics off. Pull first, then
+remove only this capture's phone trace/perf data/maps, stop cleanly, check for
+stray engines and restore the baseline environment.
+
 ## Lock diagnostics without instruction accounting
 
 `LT_BQL_PROF=on` (engine `f64fb44e3c`, default off) enables the existing cumulative

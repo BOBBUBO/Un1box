@@ -5,6 +5,24 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Locate the first missed deadline in the frame path. Two Poco Jetpack title
+  scheduler traces now align exact 60 s frame windows with vCPU states; user recorder,
+  full accounting and focused engine timing off. In 8 / 7 long gaps, execution is
+  83.1 / 84.2% of gap time; runnable waits 8.8 / 10.8%, sleeping 8.1 / 4.9%.
+  Capture 2's 312 in-hitch CPU samples are spread across native engine and guest
+  work; no single culprit established. GL-driver self share 11.06% ordinary vs
+  8.33% hitch, not evidence for one dominant GL stall. Three hitches execute on
+  CPU 7 entirely at max reported 2.7456 GHz, so frequency variation is not a
+  complete explanation. `float32_mul` enrichment is only 13 samples; do not
+  repeat rejected VFP experiments on that alone. Capture metrics (diagnostic,
+  not before/after): mean 54.50 / 53.817, ceiling 60 / 58, median 54 / 54,
+  low 50 / 48, 1% low 28.438 / 28.359, hitches 8 (409.964 ms) / 7 (371.120 ms).
+  One skipped capture-2 publication is outside its hitch gaps. Scenes reviewed,
+  cleanup confirmed. `hitchsched.py` / `hitchcpu.py` processed real captures;
+  exact windows and limitations in PERFORMANCE.md. Next: sparse default-off
+  guest-present/LCD/publication timestamps to determine where cadence first
+  breaks, before changing another broad hotspot. Pixel untouched; these Poco
+  observations do not identify the earlier Pixel user-capture pauses.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

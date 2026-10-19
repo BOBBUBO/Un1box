@@ -26,7 +26,12 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
 - `guestpc.py PERF_DATA perf-PID-after.map [--before-map perf-PID-before.map]` maps attached
   self samples to guest instruction PCs, using the NDK's simpleperf reader. Conflicting/stale
   mappings are excluded; unmapped samples include native work and missing JIT map entries.
-  See PROFILING.md for capture setup and limitations; first mapped runtime capture is pending.
+  See PROFILING.md for capture setup and limitations.
+- `hitchsched.py TRACE FRAMES --engine-pid PID --json OUT` aligns Perfetto scheduler
+  states with published frame gaps; `--frequency` also correlates CPU frequencies.
+  `hitchcpu.py PERF_DATA FRAMES SCHEDULER_JSON ...` compares timestamped vCPU self
+  samples inside ordinary and long frames. Both operate offline; capture setup and
+  matching-symbol requirements are in PROFILING.md.
 - `guestsyslog.py` (desktop) runs a headless guest and reads its syslog through the
   app's USB bridge, then counts messages by sender: a guest that logs every frame pays
   for launchd and syslogd handling each line (found this way: engine `7f744e80cc`).
