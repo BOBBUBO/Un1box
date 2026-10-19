@@ -2058,7 +2058,7 @@ snapshot and reviewed scenes. Offline reproduction scripts are preserved as
 focused benchmark/profile for the preserved alignment/return path, plus guest
 syslog message capture for the separate logging bursts. No speedup claimed.
 
-#### Exception-return duplicate hflags rebuild (measurement pending)
+#### Exception-return duplicate hflags rebuild (focused measurements complete)
 
 Static inspection found that `helper_cpsr_write_eret` calls `cpsr_write` with
 `CPSRWriteExceptionReturn` and a valid mask that always includes `CPSR_M`.
@@ -2067,7 +2067,7 @@ rebuilds the same flags again. PC is not an input to the hflags calculation.
 Engine `9171922768` adds default-off `LT_ERET_HFLAGS_FAST=on`, skipping only
 the second rebuild. Linux/Android builds and the focused Mac LT Bench build pass.
 Architectural alignment faults, guest handler execution, CPSR/mode updates,
-PC alignment and EL hooks remain intact. No measured speedup yet.
+PC alignment and EL hooks remain intact. No measured game speedup yet.
 
 LT Bench adds `stm-aligned` / `stm-unaligned`: the converter's exact
 `STMIA r1!, {r8,r9}` store into pre-touched 2 KiB output, at 0/2 mod4.
@@ -2075,7 +2075,33 @@ Each round times 32,768 stores as one loop; byte/guard/writeback checks run
 after timing. `ONLY` accepts a comma-separated exact list, enabling a
 focused `syscall,fault,stm-aligned,stm-unaligned` build without GL work.
 These measurements target preserved exception handling, not the rejected
-unaligned-store bypass. Same-APK interleaved measurements are pending.
+unaligned-store bypass.
+
+Two same-APK interleaved/reversed pairs on the Snapdragon 865-class Poco F3,
+order off/on/on/off, five rounds per benchmark. Frozen app `bad04241` /
+engine `9171922768`, `eret-hflags.apk` SHA-256
+`99ee9fb09f38dc349ea1362c778ed9aed383bfc3238597c21f17acf150dccf00`.
+User recorder, full accounting, fault/arithmetic/context/PC diagnostics and
+other experiments off; array cache on. Four result screens reviewed. Every
+store's byte/guard/writeback checks passed; all four passes completed. Clean
+Stop, no stray qemu engine and default-off baseline restoration verified.
+
+| Path | Pair 1 best / median ns/op, off → on | Pair 2 best / median ns/op, off → on |
+| --- | --- | --- |
+| syscall | 864.3 / 915.8 → 853.0 / 900.0 | 897.5 / 1045.3 → 871.5 / 898.4 |
+| fault | 16336.1 / 16510.4 → 14237.2 / 15866.6 | 15692.6 / 16116.0 → 13702.7 / 16365.3 |
+| stm-aligned | 6.5 / 6.6 → 6.5 / 6.7 | 6.6 / 6.7 → 6.6 / 8.7 |
+| stm-unaligned | 1531.5 / 1555.7 → 1481.6 / 1510.2 | 1548.2 / 1580.8 → 1563.9 / 1611.2 |
+
+Page-fault best times improve about13% in both pairs, but medians are mixed.
+The targeted misaligned store improves in pair1 and loses in pair2: no
+repeatable audio-path improvement established. Keep the switch default off.
+These static benchmark screens have no game ceiling/median/low/1% low or
+hitch count/durations; none is reported as an FPS gain or hitch fix. Ordinary
+Jetpack comparison remains unmeasured. Raw evidence under
+`build/perf-codex/poco-eret-hflags-{1,2}-{off,on}/`, frozen identity in
+`eret-hflags-build-identity.json`, structured `eret-hflags-focused-results.json`
+and reviewed `eret-hflags-focused-scenes.png`. No tests added/run.
 
 #### Android guest syslog capture for decoder-free pauses
 

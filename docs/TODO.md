@@ -11,7 +11,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   hflags. Preserve original ARM faults, guest handler, CPSR and EL hooks.
   New LT Bench `stm-aligned` / `stm-unaligned` time the converter's store
   across a pre-touched 2 KiB buffer with byte/guard/writeback checks after
-  timing. Focused same-APK A/B, then ordinary Jetpack; no measured gain yet.
+  timing. Two same-APK reversed pairs complete (off/on/on/off), five rounds:
+  misaligned-store best/median1531.5/1555.7→1481.6/1510.2ns and
+  1548.2/1580.8→1563.9/1611.2ns: mixed, no repeatable audio-path gain.
+  Fault best16336.1→14237.2ns and15692.6→13702.7ns (~13%); medians mixed.
+  All byte/guard/writeback checks pass, four result screens reviewed, clean
+  Stop/no-qemu/baseline verified. Full numbers in PERFORMANCE.md. No game
+  ceiling/median/low/1%low/hitches/durations measured on these static screens;
+  no FPS or hitch improvement claimed. Keep default off; ordinary Jetpack
+  comparison remains open.
 
 - [ ] Identify messages behind the separate decoder-free pauses. Android
   helper `syslog --seconds 1..600` and `tools/perf/androidsyslog.py` now add
