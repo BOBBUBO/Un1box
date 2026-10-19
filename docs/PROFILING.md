@@ -912,6 +912,27 @@ Compare interleaved `LT_DIRTY_QUERY_FAST=off/on` runs with this diagnostic enabl
 The diagnostic can perturb scheduling, so keep it off for ordinary FPS comparisons. It does
 not enable the live recorder, full accounting or exception/LCD diagnostics.
 
+## TLB refill RAM-pointer timing
+
+Engine `54da21c185` adds independent default-off `LT_TLB_RAM_PTR_FAST=on`
+and `LT_TLB_RAM_PTR_PROF=on`. The fast path avoids a nested RCU lock/unlock
+when a TLB refill maps an unaliased RAM/ROMD region. The caller's existing RCU
+critical section still protects the translated section; the original RAM mapper
+and alias fallback remain. It does not change RCU TLS storage or coroutine accessors.
+
+The diagnostic samples one call in 256 on CPU 0. `[tlb-ram-ptr]` blocks retain
+exact `begin-ns`/`end-ns`, `calls`, `samples`, summed `ns` and `max-ns`;
+`ns / samples` is sampled mean call wall time. Blocks finish at the first sample
+after five seconds. Select complete contiguous blocks inside the frame window.
+Times include clock overhead and descheduling; maxima cover sampled calls only.
+Initialization logs both switches. No sampling clocks or counters run with the
+diagnostic off. Keep Start profile and other diagnostics off for this focused
+comparison, and turn this diagnostic off too for any ordinary game comparison.
+Builds and two reversed focused pairs completed: sampled call means
+365.164/373.283 → 348.406/351.099 ns. This small local saving supplies no
+established game or hitch benefit; keep off. Full capture metrics and limits
+are in PERFORMANCE.md. No profiler-off ordinary comparison was run.
+
 ## Guest PCs in an attached CPU profile
 
 For a focused run, set `QEMU_PERFMAP_DIR=/data/user/0/org.lighttouch.android/files` in

@@ -3110,6 +3110,66 @@ Pixel remains disconnected; its 214 ms gameplay hitch still needs a matching
 scheduler trace and native samples, and cannot be explained from these Poco
 observations. Ordinary benchmarks keep all diagnostic/user recording off.
 
+#### TLB refill RAM-pointer lookup (local saving, no hitch improvement established)
+
+Engine `54da21c185` adds independent default-off `LT_TLB_RAM_PTR_FAST=on`
+and `LT_TLB_RAM_PTR_PROF=on`. Earlier native call graphs place dynamic TLS
+resolver samples under `memory_region_get_ram_ptr`, called by TLB fills.
+The helper takes a nested RCU read lock even though the translated section
+already requires an RCU critical section. The fast path calls the same
+`qemu_map_ram_ptr` for unaliased RAM/ROMD regions under that outer protection.
+Alias resolution and the mapper's Xen behavior remain. No TLS storage or
+coroutine accessor changes. The diagnostic times one call in 256 on CPU 0,
+with exact five-second block boundaries and no sampling clocks/counters off.
+
+Linux/Android builds pass. Frozen `tlb-ram-ptr.apk`, app `ae9d845e` / engine
+`54da21c185`, SHA256
+`08286fe5efa6e6809c823c39030b8c161ed6191f71d1a751b20ab54157e693bc`;
+matching Android/Linux libraries and identity retained. Two focused 35 s pairs
+on the Snapdragon 865-class Poco, off/on then on/off. BQL 150 us spin stays
+on, idle spin off; only the RAM-pointer optimization changes. Sampling is on
+in both modes, all other focused diagnostics/accounting/user recording off.
+All eight before/end scenes reviewed as Jetpack title with Start profile off.
+Same vCPU TID/nice0/CFS within each arm, good28 verdicts, zero skipped
+publications; clean Stop/no-qemu/exact baseline restoration verified.
+
+| Focused off → on | Pair 1 | Pair 2 (reversed) |
+| --- | --- | --- |
+| Sampled mean call, ns | 365.164 → 348.406 | 373.283 → 351.099 |
+| Median block mean, ns | 364.645 → 343.764 | 372.070 → 351.407 |
+| Timed samples | 17350 → 17374 | 16785 → 16855 |
+| Calls/s in selected blocks | 148006.5 → 148178.0 | 143220.1 → 143822.4 |
+| Largest sampled call, ns | 4843 → 92656 | 20521 → 7292 |
+| Diagnostic mean fps | 59.057 → 59.171 | 59.257 → 58.971 |
+| Ceiling fps | 60 → 60 | 60 → 60 |
+| Median fps | 60 → 60 | 60 → 60 |
+| Low fps | 56 → 58 | 58 → 56 |
+| 1% low fps | 30.129 → 30.161 | 30.020 → 30.036 |
+| Hitches >50 ms / full duration, ms | 2 / 101.475 → 1 / 50.471 | 0 / 0 → 3 / 151.552 |
+| Longest gap, ms | 50.780 → 50.471 | 35.308 → 50.835 |
+
+Six complete contiguous blocks wholly inside each frame window supply the call
+timings. Means include matched clock overhead and host descheduling; maxima
+are sampled calls only. The 16.759 / 22.184 ns local savings estimate just
+2.480 / 3.177 ms per second at the control call rates (0.25–0.32% of wall
+time), not measured CPU recovery. Diagnostic mean is effectively flat overall,
+59.157 → 59.071 fps; hitches 2 → 4, full duration 101.475 → 202.022 ms per
+70 s per mode. These runs establish a small local saving, not an ordinary
+game-speed or hitch improvement. Keep the experiment off; no longer ordinary
+comparison is justified by this alone. Stable 60 / clean 1% lows remains unmet.
+
+Exact frame windows [begin,end), host monotonic ns:
+
+- Pair 1 off `[471034099727447,471069099727447)`, on `[471215379706805,471250379706805)`.
+- Pair 2 off `[471579197305259,471614197305259)`, on `[471397736136370,471432736136370)`.
+
+Evidence: `poco-tlb-ram-ptr-focused-{1,2}-{off,on}/`, frozen build identity/libs,
+`tlb-ram-ptr-focused-results.json`, all block/input hashes, reviewed
+`tlb-ram-ptr-focused-scenes.png`, runner/analyzer and cleanup marker under
+`build/perf-codex/`. Both scripts completed on real captures; no tests added/run.
+Pixel disconnected and untouched. Dynamic TLS at other call sites remains open;
+this small cost does not explain the delayed framebuffer flips.
+
 #### Extended BQL spin budget (ordinary comparison complete)
 
 The residual fallback capture above finds 153 of 163 selected BQL wake delays

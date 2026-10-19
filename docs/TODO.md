@@ -672,8 +672,20 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   (840/152 → 387/283 ms). No consistent pacing gain; keep it off for ordinary use.
 - [ ] Dynamic TLS in the engine. `libqemu-arm.so` is `dlopen`ed, so each `__thread` access in QEMU's
   hot paths (`current_cpu`, the RCU reader) goes through `tlsdesc_resolver_dynamic`: 1.2% of the vCPU
-  in Jetpack, 3.2% in `gl-sprite` on the Poco. Find the hot accessors (a call-graph profile), then cache
-  them or move them out of TLS.
+  in Jetpack, 3.2% in `gl-sprite` on the Poco. Call graphs identify nested RCU
+  in memory_region_get_ram_ptr during TLB fills; engine `54da21c185` adds default-off
+  LT_TLB_RAM_PTR_FAST/PROF. Existing outer RCU protection, mapper and alias
+  fallback retained. Builds and two focused 35 s pairs complete, off/on then on/off:
+  sampled call 365.164/373.283 → 348.406/351.099 ns, just 0.25–0.32% wall estimated.
+  Diagnostic mean 59.057/59.257 → 59.171/58.971; ceiling 60/60 → 60/60;
+  median 60/60 → 60/60; low 56/58 → 58/56; 1% low 30.129/30.020 → 30.161/30.036;
+  hitches 2/0 → 1/3, full duration 101.475/0 → 50.471/151.552 ms.
+  Local saving only, no game/hitch gain established; keep off and do not launch
+  longer ordinary pairs from this evidence alone. All eight scenes reviewed,
+  same TID/nice0/CFS, good28, zero skips, clean Stop and exact baseline restored.
+  Full blocks/windows/hashes and limitations in PERFORMANCE.md; Pixel untouched.
+  Other TLS sites (including current_cpu / cleanup / BQL ownership) remain open;
+  do not replace coroutine TLS globally. Focus further work on delayed flips.
 - [ ] GL context selection: focused timing (`c2e06923de`, `LT_GLES_CONTEXT_PROF=on`, default off)
   on the Poco Jetpack title puts viewport init/make-current/dispatch at 0.565/110.474/4.039 µs
   per call (3396 calls, 1752 selected-context changes over six five-second blocks); present surface
