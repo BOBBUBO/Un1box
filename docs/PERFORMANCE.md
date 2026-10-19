@@ -2378,6 +2378,27 @@ claim. The selected-thread association includes guest kernel/native work;
 enqueue intervals are not exact run-queue timers. See PROFILING.md for the
 approach. Pixel user-capture causes remain unproven by these Poco examples.
 
+#### ARMv6 hflags specialization (runtime confirmation pending)
+
+The preserved-STM profile above nominates generic flag rebuilding, including
+ARMv8 exception-level and control-register helpers. Engine `e414b9d74a` adds
+default-off `LT_HFLAGS_V6_FAST=on`, calculating the same flag fields directly
+for pre-v7 VMSA system emulation without EL2/EL3, M-profile, PMSA or AArch64.
+Other configurations and unsupported current exception levels use the original
+builder. ARM1176 on the iPod board explicitly disables EL3. The calculation
+preserves CPACR traps, raw CPTR_EL3/PAN handling, alignment requirements,
+endianness, NS and illegal-state flags; it does not skip exceptions or change
+guest fault handling. Single-step-active requires an AArch64 debug target,
+which the guarded CPU class lacks.
+
+Independent default-off `LT_HFLAGS_V6_VERIFY=on` compares both flag words
+against the generic builder at every eligible rebuild and reports each
+million comparisons. This diagnostic is for a separate runtime capture;
+ordinary measurements keep it off. Linux/Android builds pass. Runtime
+confirmation, focused timing and game A/B remain pending. No speedup claimed;
+game ceiling/median/low/1%low/hitches/durations are unmeasured. The concurrent
+host-PC cache comparisons use their earlier frozen APK, not this new code.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,
