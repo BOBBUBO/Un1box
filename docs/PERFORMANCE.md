@@ -147,6 +147,36 @@ The two tally experiments bumped the guest package to serials 28 and 29, which w
 privately and are reverted (the source is serial 27 again). A device with 28 or 29 installed keeps
 working: the host answers the unknown tally op with 0, and the shim then logs as serial 27 does.
 
+### Upstream review of 2026-10-19
+
+[samhenrigold/qemu-ios](https://github.com/samhenrigold/qemu-ios) (343 commits past our merge base, to
+`6e869d1b33`) and [LightTouchMac](https://github.com/samhenrigold/LightTouchMac) (101, to `08f44357`) were
+checked for speed and bug fixes. **Upstream has no speedup we lack**: its performance commits of 2026-10-18/19
+are our own changes, adopted (PKE inverse, I2S clock, PL080 burst, GL copies through the TLB, lockless
+exceptions and timebase, per-ASID 16K jump caches, cs_base hashing, global TLB entries, CPSR fast paths,
+QEMU_CALL through the TLB, the quiet GL shim). Its refinement of our I/O insn limits (`2e1e7e611e`) and
+publishing frames on the panel's vsync (`97860b36b0`) were already here. LightTouchMac's changes are Mac
+app features.
+
+Taken into engine `dev/perf` (`b6db569a58`..`f736ef8a20`):
+
+| Change | Engine |
+| --- | --- |
+| QEMU v11.0.5 (TCG optimizer fixes; CBZ/CBNZ, IT and the Thumb hint space UNDEF before v6T2, as on an ARM1176) | `b6db569a58` |
+| Windows gets the touch report queue (no lost quick taps) and the 25 ms boot-args scan; both were Linux-only by an `__linux__` guard | `99ede499c9` |
+| n72 AES key/IV writes land in their byte lane, PMU clock follows QEMU's RTC, SPI receive-only RUN with AGD | `09ca794c58` |
+| Upstream's bare-metal checks of the TCG speedups (ASID switches, PSR, QEMU_CALL across pages) and the paced I2S DMA qtest; all pass on ours | `f736ef8a20` |
+
+**Poco, Jetpack title, v0.0.6 APK vs the same app on this engine, 7 interleaved 60 s pairs: no change.**
+First set (A B B A A B, phone 32 → 37 °C): 58.9/57.4/56.6 → 56.9/57.5/54.9 fps. Second set (B A A B B A A B, phone
+charging at ~38 °C, ceiling capped at 52–56): 48.4/49.2/48.4/49.4 → 54.9/50.9/49.0/50.5. The sets disagree
+and both sit inside the session's thermal drift; mean 52.6 → 53.5.
+
+Not taken: upstream's ISL29003 light sensor model (a new guest interrupt source with no host light input),
+its MBX GPU model (only stock OpenGLES composites on it; with our GL front end SpringBoard sends it no work),
+the NAND image store (a storage format change for the Mac app's records) and the n72 boot-args rework (7E18
+boots unchanged).
+
 ### Measured and rejected
 
 **Per-address-space TLB banks** (patch kept as `perf/rejected-tlb-banks.patch`): the user TLB index
