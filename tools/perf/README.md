@@ -19,57 +19,14 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   `fcbench.py APK SECS` installs an APK, boots, unlocks, starts Flight Control
   (first icon on Home page 2) and measures it. `FC_FRAMES=chart.png` also saves
   the exact frame window as `chart.png.frames.log`. See docs/PERFORMANCE.md.
-- `gameprof.sh OUTDIR [SECONDS]` attaches simpleperf to the running engine worker.
-  `SP_CALLGRAPH=fp` or `dwarf` adds call stacks; `SP_FREQ=1000` changes the sampling
-  frequency (default 4000 Hz). It retains recorder diagnostics and rejects empty
-  recordings. Resolve samples with the exact matching unstripped engine library.
-- `guestpc.py PERF_DATA perf-PID-after.map [--before-map perf-PID-before.map]` maps attached
-  self samples to guest instruction PCs, using the NDK's simpleperf reader. Conflicting/stale
-  mappings are excluded; unmapped samples include native work and missing JIT map entries.
-  See PROFILING.md for capture setup and limitations.
-- `hitchsched.py TRACE FRAMES --engine-pid PID --json OUT` aligns Perfetto scheduler
-  states with published frame gaps; `--frequency` also correlates CPU frequencies.
-  `hitchcpu.py PERF_DATA FRAMES SCHEDULER_JSON ...` compares timestamped vCPU self
-  samples inside ordinary and long frames. Both operate offline; capture setup and
-  matching-symbol requirements are in PROFILING.md.
-  An explicit `hitchsched.py --allow-superseded-initial-state` can report/exclude
-  one open trace-initial state superseded entirely before the frame window;
-  it still requires complete in-window coverage and preserves the evidence.
-  `hitchcpu.py --milestones FRAMEPATH_JSON --guest-processes SNAPSHOT_JSON`
-  groups samples by installed address space and a same-worker proc/pmap snapshot.
-  Add `--guest-kernel KERNEL --guest-cache DYLD_CACHE` for named guest TB PCs.
-- `guestprocs.py` is an LLDB command module: `lt-guest-procs` reads the guest's
-  proc/task/pmap list through an opt-in loopback QEMU debugger, then detaches.
-  Attach after measurement; the debugger pauses the guest. Bind the snapshot
-  to its host engine PID before using it for attribution.
-- `guestsymbols.py --kernel KERNEL --cache DYLD_CACHE --pc ADDRESS` names local
-  ARMv6 Mach-O/dyld v1 cache code ranges, preserving hashes and ambiguous results.
-  Keep firmware inputs local. These names do not unwind guest stacks.
-- `audiopath.py EVENTS FRAMEPATH_JSON --engine-pid PID --guest-processes SNAPSHOT`
-  compares default-off `LT_AUDIO_PATH_PROF` sampled f32 operands/status/timings
-  and exact alignment fault PCs across frame classes. Optional matching guest
-  symbols name the code. See PROFILING.md for sampling and timing limits.
-- `alignmentlatency.py EVENTS AUDIO_JSON FRAMEPATH_JSON SCHEDULER_JSON` joins
-  optional `LT_ALIGNMENT_PATH_PROF=returns` sampled fault/return pairs to host
-  scheduler states. `LT_ALIGNMENT_PATH_PROF=on` records only faults, leaving
-  arithmetic helpers and their counters untouched. See PROFILING.md for scope.
-- `framepath.py MILESTONES FRAMES --json OUT` joins default-off `LT_FRAME_PATH`
-  engine milestones to frontend publications by serial, retaining guest presents,
-  LCD flips/ticks and frontend lag for each hitch. Pull milestones after clean Stop.
-- `tallypath.py EVENTS FRAMES --mode off|on --json OUT` compares directly marked
-  periodic tally candidates with other post-present intervals in a complete sparse
-  frame-path trace. Run `framepath.py` first. It distinguishes interval/hitch overlap
-  from a marker actually inside a hitch; surrounding guest/scheduling work is included.
-- `frameresidency.py FRAMEPATH_JSON SCHEDULER_JSON --json OUT` joins optional
-  guest address-space markers to vCPU scheduler states during hitches. Generate
-  inputs with `framepath.py --residency-intervals` and `hitchsched.py --all-states`
-  to compare residency during normal, late and hitch intervals as well.
-  Register values do not establish guest process identity or userspace CPU time.
-- `guestsyslog.py` (desktop) runs a headless guest and reads its syslog through the
-  app's USB bridge, then counts messages by sender: a guest that logs every frame pays
-  for launchd and syslogd handling each line (found this way: engine `7f744e80cc`).
-- `build-apk.sh ENGINE_DIR NAME` builds an arm64-only debug APK from this
-  working tree. Paths are this workstation's; adjust before reuse.
+- `gameprof.sh OUTDIR [SECONDS]` attaches simpleperf to the running engine worker
+  (`SP_CALLGRAPH=fp` or `dwarf` for call stacks, `SP_FREQ` for the rate, default 4000 Hz).
+  Resolve samples with the matching unstripped engine library.
+- Hitch analyzers (`hitchsched.py`, `hitchcpu.py`, `framepath.py`, `guestpc.py`,
+  `guestsymbols.py`, `guestprocs.py` and the per-diagnostic readers such as `audiopath.py`
+  and `btpath.py`) read the engine's opt-in diagnostics and Perfetto traces offline. Which
+  switch each one reads, and how to capture it: [PROFILING.md](../../docs/PROFILING.md).
+  Each script's `--help` lists its inputs.
 
 ## Manual hitch captures
 

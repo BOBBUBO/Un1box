@@ -16,7 +16,6 @@ docs/matrix-results.json.lock
 docs/*
 !docs/ASSETS.md
 !docs/PERFORMANCE.md
-!docs/PERFORMANCE-HANDOFF.md
 !docs/TODO.md
 !docs/GUEST-BENCHMARKS.md
 !docs/BUILDING.md
