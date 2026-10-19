@@ -10,18 +10,18 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   44.8–49.2). Pixel not re-measured.
 - [ ] Android: steady target frame rate in common period games. Jetpack Joyride's title is the Poco
   benchmark (Flight Control, Doodle Jump and JellyCar hold their targets on both phones and have left the
-  set). Poco, guest tools serial 27: 53.4 fps by default (ceiling 58, median 54, 1% low ~28, 8–13
-  hitches per 60 s); 57.5 with `LT_BQL_SPIN=on` and 58.4 with the 150 µs budget (median 58–60, 1% low
+  set). Poco, guest tools serial 27: 53.4 fps without the BQL spin (ceiling 58, median 54, 1% low ~28, 8–13
+  hitches per 60 s); 57.5 with a 50 µs spin and 58.4 with the 150 µs budget, now the Android default (median 58–60, 1% low
   ~29–30, 1–8 hitches per 60 s). Desktop Jetpack 59. The 1% low (~33 ms frames) is what is left; see
   the hitch leads below.
-- [ ] Turn the BQL spin on by default (`LT_BQL_SPIN=on`, `LT_BQL_SPIN_EXTENDED=on`; engine
-  `23041226e7`, `5547634eeb`). +7.6% and hitches 30 → 8 on the Poco, then +2.1% for 150 µs
-  (PERFORMANCE.md). Before switching it on: interleaved pairs on the Pixel (JellyCar, and a 60 fps
-  scene), one more Poco game, and idle engine CPU with the spin on, since it burns up to 150 µs per
-  contended take.
+- [x] BQL spin on by default on Android with the 150 µs budget (engine `b5708085da`): +7.6% and
+  hitches 30 → 8 on the Poco, then +2.1% for 150 µs (PERFORMANCE.md).
+- [ ] BQL spin follow-ups: interleaved pairs on the Pixel (JellyCar and a 60 fps scene) and one more
+  Poco game with `LT_BQL_SPIN=off` as the A arm, idle engine CPU with the spin on (it burns up to
+  150 µs per contended take), and a desktop measurement before turning it on there.
 - [ ] Confirm the two open engine leads (both default off, PERFORMANCE.md): the indirect miss-helper
   cache (`LT_IBTC_L2=on`, +2.2% in 3 of 3 pairs) and the inlined TB lookup hit (`LT_TB_LOOKUP_INLINE=on`,
-  ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin.
+  ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin (now the Android default).
 - [ ] Jetpack hitches on the Poco (PERFORMANCE.md, "Hitches in Jetpack's title"; capture tools in
   PROFILING.md). Leads, by evidence:
   1. Held refreshes recur 88–92 ticks (~1.5 s) apart in four sparse captures (`LT_FRAME_PATH`). Follow
