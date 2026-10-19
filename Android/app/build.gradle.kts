@@ -22,6 +22,9 @@ android {
         ndk { abiFilters += providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",") }
         externalNativeBuild { cmake { arguments += listOf("-DLT_NATIVE_JOBS=" + providers.gradleProperty("nativeJobs").orElse("2").get(), "-DANDROID_STL=c++_shared", "-DLT_FIRMWARE_DIR=" + providers.gradleProperty("firmwareDir").orElse(file("../../Portable/firmware").absolutePath).get(), "-DXPWN_SOURCE=" + providers.gradleProperty("xpwnSource").orElse("").get(), "-DLT_NATIVE_DEPS_ROOT=" + providers.gradleProperty("nativeDepsRoot").orElse("").get(), "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get()) } }
     }
+    // -Pdebuggable=false makes a debug APK the runtime may compile ahead of time. Phones with the
+    // JIT off (GrapheneOS) otherwise interpret a debuggable app's whole UI.
+    buildTypes { getByName("debug") { isDebuggable = providers.gradleProperty("debuggable").orElse("true").get().toBoolean() } }
     buildFeatures { compose = true; aidl = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
