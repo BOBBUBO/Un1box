@@ -458,8 +458,8 @@ added/run. Frozen APK/symbols: `masked-irq.apk`, `masked-irq-symbols/`; identity
 in `masked-irq-build-identity.json` (app `6281142f`, documentation edits only).
 APK SHA256: `9c431d362337a89400da8ba01fd3582ee61eec91ba282efca8b60dd20bb923af`.
 Library SHA256: `45040f4403d95401c1c0c94777dbcbdc2f0ef50f6db242ce1b1fca64f473f156`.
-Two focused 35 s pairs (off/on, on/off) are queued after the combined cache+lookup
-baseline and its clean stop. Vary only `LT_MASKED_IRQ_FAST`; IRQ profiling on both,
+Two focused 35 s pairs (off/on, on/off) are running after the completed combined
+cache+lookup baseline and its clean stop. Vary only `LT_MASKED_IRQ_FAST`; IRQ profiling on both,
 array cache on, other experiments/diagnostics off, no live recorder/full accounting.
 Select at least four contiguous complete timing blocks wholly inside each frame
 window. Raw logs/settings/scenes: `poco-masked-irq-focused-{1,2}-{off,on}/`;
@@ -948,25 +948,40 @@ stutter fix established. The completed runner handed the phone to LCD stage capt
 Artifacts: `build/perf-codex/poco-tb-confirm-{1,2,3}-{off,on}/`, summarized by
 `tb-confirm-analyze.py` / `tb-confirm-results.json`, with exact frame windows and hitches.
 
-The combined baseline is running after the independent BQL comparison and focused
-VFP captures/cleanups. It uses current engine `f43fbe4986` in frozen `vfp-mul-zero.apk`
-(identity/SHA256 in the VFP section), three 30 s pairs off/on, on/off, off/on. Both
-`LT_GLES_ARRAY_CACHE` and `LT_TB_LOOKUP_INLINE` vary together; all diagnostics, other
-experiments and the live recorder/full accounting are off, including both VFP switches.
-This measures their combined effect rather than adding the earlier percentages.
-Raw results: `poco-combined-baseline-{1,2,3}-{off,on}/`, with exact windows,
-scenes and settings; analyzer `combined-baseline-analyze.py`. First pair complete,
-both title/recorder-off scenes reviewed, zero publisher skips:
+The combined baseline completed on current engine `f43fbe4986` in frozen
+`vfp-mul-zero.apk` (identity/SHA256 in the VFP section), Snapdragon 865-class Poco,
+Jetpack title, three 30 s pairs off/on, on/off, off/on. Both `LT_GLES_ARRAY_CACHE`
+and `LT_TB_LOOKUP_INLINE` vary together; all diagnostics, other experiments and
+the live recorder/full accounting are off, including both VFP switches. All six
+final screenshots reviewed: correct title, recorder off, zero publisher skips.
+This measures their combined effect rather than adding earlier percentages.
 
 | Pair | Mean fps both off → both on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 53.63 → 53.07 | 58 → 58 | 54 → 54 | 50 → 48 | 28.33 → 28.16 | 3 (150.7 ms) → 7 (360.9 ms) |
+| 2 | 53.57 → 54.17 | 58 → 58 | 54 → 54 | 50 → 50 | 28.26 → 28.24 | 1 (50.6 ms) → 3 (151.9 ms) |
+| 3 | 52.97 → 53.83 | 58 → 58 | 52 → 54 | 50 → 50 | 28.43 → 28.14 | 9 (503.1 ms) → 7 (371.8 ms) |
 
-First-pair FPS bounds: off [432873115121118, 432903115121118), on
-[433040687255169, 433070687255169) ns. This pair is slightly slower enabled;
-remaining reversed/interleaved pairs are still running. No combined benefit
-established; lookup remains off by default. Reviewed montage:
-`combined-baseline-scenes.png`. The runner ends with a clean stop and baseline readback.
+Aggregate mean **53.39 → 53.69 fps (+0.6%)**, two of three pairs ahead, within
+session drift. Hitches **13 → 17**, total duration **704.4 → 884.6 ms** over 90 s
+per mode; each enabled 1% low is slightly lower. No repeatable combined throughput
+or pacing benefit established. Keep lookup inlining default off; array caching
+remains on for its direct host-call saving. The earlier six individual lookup
+wins do not establish a combined game benefit or steady 60 fps.
+
+Exact half-open frame windows (monotonic ns):
+
+| Pair | Both off [start, end) | Both on [start, end) |
+| --- | --- | --- |
+| 1 | [432873115121118, 432903115121118) | [433040687255169, 433070687255169) |
+| 2 | [433388548898943, 433418548898943) | [433215693039738, 433245693039738) |
+| 3 | [433569569402988, 433599569402988) | [433737896954955, 433767896954955) |
+
+Raw logs/settings/scenes: `poco-combined-baseline-{1,2,3}-{off,on}/`;
+`combined-baseline-analyze.py` / `combined-baseline-results.json` retain every
+hitch and exact bounds; reviewed montage `combined-baseline-scenes.png`. The
+runner confirmed clean Stop, no qemu engine and baseline environment readback
+before handing the phone to the already queued masked-IRQ focused comparison.
 
 Evidence: `build/perf-codex/poco-tb-lookup-inline-{1,2,3}-{off,on}/` contains exact frame logs,
 screenshots, environment, LT Bench and engine logs. `tb-lookup-inline-results.json` records exact

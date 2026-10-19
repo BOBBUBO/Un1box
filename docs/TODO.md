@@ -60,15 +60,18 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   48/48/48, 1% low 27.88/28.09/22.14 → 25.85/28.13/28.28. Hitches 6/7/9 →
   12/6/7, durations 305.3/534.4/683.3 → 822.6/334.5/385.9 ms per 30 s.
   All six final scenes reviewed, recorder off, zero skips. Six of six pairs across
-  both sets favor throughput; no consistent pacing gain. Combined baseline remains
-  outstanding before enabling by default. LCD stage diagnostics now follow.
-  Combined cache+lookup baseline now running after BQL and focused VFP captures on
-  current engine `f43fbe4986` / frozen `vfp-mul-zero.apk`: three 30 s pairs, second
-  reversed, both switches off versus both on; all diagnostics and other experiments
-  off (including VFP). First pair: 53.63 → 53.07 fps, ceiling 58 → 58, median
-  54 → 54, low 50 → 48, 1% low 28.33 → 28.16; hitches 3 (150.7 ms) → 7
-  (360.9 ms). Both scenes reviewed title/recorder off, zero skips. Remaining
-  reversed/interleaved pairs running; no combined benefit established yet.
+  both individual sets favor throughput; no consistent pacing gain.
+  Combined cache+lookup comparison complete on current engine `f43fbe4986` /
+  frozen `vfp-mul-zero.apk`, three 30 s pairs off/on, on/off, off/on, all diagnostics
+  and other experiments off. Means 53.63/53.57/52.97 → 53.07/54.17/53.83 fps
+  (53.39 → 53.69, +0.6%, within drift). Ceiling 58/58/58 → 58/58/58;
+  median 54/54/52 → 54/54/54; low 50/50/50 → 48/50/50;
+  1% low 28.33/28.26/28.43 → 28.16/28.24/28.14. Hitches 3/1/9 → 7/3/7,
+  durations 150.7/50.6/503.1 → 360.9/151.9/371.8 ms per 30 s. Total hitches
+  13 → 17 (704.4 → 884.6 ms/90 s). All six title/recorder-off scenes reviewed,
+  zero skips. No repeatable combined or pacing benefit; keep lookup off, array
+  cache on for local host-call saving. Clean Stop/no-qemu/baseline readback
+  confirmed; handed phone to masked-IRQ focused comparison. Exact bounds in PERFORMANCE.md.
 - [ ] Measure cache in the indirect miss helper (`6a71c1842f`, `LT_IBTC_L2=on`,
   default off). The existing two-entry generated path and TB layout are unchanged;
   a 384 KiB table allocated only when enabled checks source-site address plus
@@ -170,7 +173,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `LT_IRQ_CHECK_PROF=on` counts/times CPU-0 masked candidates and actual no-op checks
   without full accounting/BQL tables. Linux/Android builds succeeded; frozen
   `masked-irq.apk`/symbols/identity retained. Two focused 35 s pairs off/on, on/off
-  queued after the combined cache+lookup baseline, varying only the fast switch;
+  running after the completed combined cache+lookup baseline, varying only the fast switch;
   IRQ profiling on both, other diagnostics/experiments off, array cache on. Runtime results pending;
   no FPS or pacing saving established. Details/limits in PERFORMANCE/PROFILING.
 - [ ] The guest kernel is 22% of the vCPU in Jetpack on the Poco (half the time in translated code).
