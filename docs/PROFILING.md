@@ -221,6 +221,20 @@ lag an execution slice; use the aligned scheduler trace to resolve the interval.
 No matching scheduler trace was captured in that manual recording, so its
 cause cannot be recovered from the existing counters alone.
 
+For long runnable delays, add `--runnable-details` to `hitchsched.py`.
+It examines in-hitch runnable intervals of at least1ms (`--runnable-min-ms`
+changes the threshold), retaining wake events and their target CPU separately
+from the next-running CPU. Destination scheduler slices distinguish another
+task from the idle task; raw CPU-idle events are preserved. Missing target or
+occupancy stays explicit. Selected intervals are not all-frame statistics.
+An idle task can execute interrupt handlers, so idle occupancy alone does not
+prove hardware sleep or idle-exit latency. If this pattern repeats, capture
+IRQ/softirq/IPI activity alongside wake/idle events. The diagnostic-only
+`tools/perf/hitch-wake.pbtxt` adds these events with a256MiB buffer; check event
+availability and reject any trace loss on the target phone. Existing Poco analysis
+and read-only cpuidle latency observations are recorded in PERFORMANCE.md;
+Pixel behavior remains unproven. This analysis adds no runtime instrumentation.
+
 The scheduler report retains waker identities and blocked functions when the
 kernel supplies them. A null blocked function is missing evidence; a waker name
 does not identify the lock owner or prove why the thread went to sleep. If the

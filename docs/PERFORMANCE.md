@@ -2425,7 +2425,7 @@ claim. The selected-thread association includes guest kernel/native work;
 enqueue intervals are not exact run-queue timers. See PROFILING.md for the
 approach. Pixel user-capture causes remain unproven by these Poco examples.
 
-#### ARMv6 hflags specialization (focused timings complete, game pending)
+#### ARMv6 hflags specialization (focused and game comparisons complete)
 
 The preserved-STM profile above nominates generic flag rebuilding, including
 ARMv8 exception-level and control-register helpers. Engine `e414b9d74a` adds
@@ -2504,6 +2504,71 @@ Evidence: `build/perf-codex/poco-hflags-v6-{1,2}-{off,on}/`,
 confirmed; short LT Bench remains installed, serial28 verdict good. No tests
 added/run. Pixel disconnected and untouched.
 
+**Ordinary Jetpack comparison complete:** same frozen APK/package, three
+60 s pairs in off/on, on/off, off/on order; title scene settled 50 s. Only
+`LT_HFLAGS_V6_FAST` changed. Verification, host-PC caching, all diagnostics,
+accounting and user recorder were off; client-array caching stayed on. All
+12 before/end scenes reviewed as Jetpack title / Start profile off; zero
+skipped publications. This uses engine `e414b9d74a`, not the later priority build.
+
+| Ordinary Jetpack, off → on | Pair 1 | Pair 2 (reversed) | Pair 3 |
+| --- | --- | --- | --- |
+| Mean fps | 54.417 → 54.200 | 52.833 → 52.717 | 52.467 → 53.217 |
+| Ceiling fps | 58 → 58 | 58 → 58 | 58 → 58 |
+| Median fps | 54 → 54 | 52 → 52 | 52 → 54 |
+| Low fps | 50 → 50 | 48 → 48 | 48 → 48 |
+| 1% low fps | 28.234 → 28.430 | 28.206 → 28.432 | 28.026 → 27.912 |
+| Hitches >50 ms | 6 → 6 | 8 → 8 | 10 → 10 |
+| Full hitch duration, ms | 335.172 → 346.903 | 404.651 → 403.703 | 554.553 → 536.423 |
+| Longest gap, ms | 67.645 → 68.849 | 51.405 → 51.028 | 68.569 → 66.054 |
+
+Aggregate mean **53.239 → 53.378 fps (+0.26%)**, hitches **24 → 24**,
+full duration **1294.377 → 1287.030 ms per 180 s per mode**. Throughput loses
+two pairs; 1% low worsens in pair 3. The focused savings above do not deliver
+a repeatable Jetpack throughput or hitch improvement. **Keep default off;
+do not repeat unchanged.** Stable 60 fps and strong 1% lows remain unmet.
+
+Evidence: `build/perf-codex/poco-hflags-v6-game-{1,2,3}-{off,on}/`,
+`hflags-v6-game-results.json` (exact windows, identities and every hitch's
+bounds/duration), reviewed `hflags-v6-game-scenes.png`, runner
+`hflags-v6-game-run.py` and analyzer `hflags-v6-game-analyze.py`. Clean Stop /
+no-qemu / exact baseline restoration confirmed. Pixel disconnected/untouched.
+
+#### Destination CPU occupancy during runnable waits (existing trace analysis)
+
+A different diagnostic question: while the host vCPU was runnable, was its
+destination core executing another task or still running the idle task?
+`hitchsched.py --runnable-details` now retains raw wake events, explicit wake
+target versus next-running CPU, destination scheduler slices and CPU-idle events
+for in-hitch runnable intervals of at least 1 ms (configurable). It reuses the
+complete-state/clock/loss validation; missing destination/occupancy stays explicit.
+This is offline analysis; no additional phone logging or ordinary FPS claim.
+
+Applied to the existing complete `poco-guest-pc-delayed-1` trace (worker6912,
+vCPU7069): **37 intervals / 55.582 ms** across nine hitches. In **36 intervals /
+54.436 ms**, sched_waking targets CPU7, which runs only its idle task throughout
+the interval; every one has an idle-exit event shortly before vCPU execution.
+The remaining 1.146 ms is a preemption without a wake event, during frontend
+`ReferenceQueueD` execution on CPU7. Destination coverage is complete, with no
+unattributed occupancy. The decoder-free 50.057 ms hitch alone contains six
+long wake intervals / 7.606 ms with CPU7 idle. An example 1.256 ms wait includes
+a successful wake to CPU7, idle state1 entry and exit, then vCPU execution.
+
+After the flags comparison stopped cleanly, read-only sysfs inspection reports
+CPU7 state0 `C0` / `wfi`, latency43 us; state1 `C1` / `rail-pc`, latency1061 us.
+The tracing clock is `boot`. This is consistent with costly idle/wakeup latency,
+**not proof that hardware idle exit caused the entire delay**: IRQ/softirq/IPI
+execution can occur while the idle task remains selected, and those events were
+not enabled in the original trace. It also does not explain guest-decoder work
+or establish the cause of Pixel hitches. Next capture those events together
+with idle/wake/frame timestamps before selecting a mitigation. Priority is a
+separate unmeasured candidate, not a demonstrated remedy for these idle waits.
+
+Evidence: `poco-guest-pc-delayed-1/hitch-wake.json/txt` retains every selected
+interval and raw destination slices/events. Existing capture metrics remain
+mean51.850,ceiling56,median52,low46,1%low28.172,hitches9/488.681ms,zero skips;
+these are diagnostic observations, not a before/after comparison. No tests added/run.
+
 #### Android vCPU display priority (runtime measurements pending)
 
 The scheduler captures above include host runnable delay, including 8.620 ms
@@ -2522,8 +2587,8 @@ identity and symbols in `build/perf-codex/vcpu-display-build-identity.json`.
 No phone runtime effectiveness or performance comparison yet; game ceiling,
 median, low, 1%low, hitch count and duration are unmeasured. Do not treat a
 requested but ineffective nice change as an optimization A/B. Measure this
-separately with hflags/cache switches fixed. Current focused flags measurements
-continue using their original frozen APK, without this change. No tests added/run.
+separately with hflags/cache switches fixed. The completed flags measurements
+used their original frozen APK, without this change. No tests added/run.
 
 ### Measured and rejected
 

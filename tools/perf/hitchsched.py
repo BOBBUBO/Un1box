@@ -16,6 +16,83 @@ import subprocess
 from framestats import analyse, parse
 
 
+def runnable_details(query, hitches, states, vcpu, minimum_ms):
+    """Inspect the destination CPU during long runnable parts of hitch gaps.
+
+    An idle task on that CPU rules out another scheduled task occupying it;
+    it does not identify why a wakeup or idle exit was delayed.
+    """
+    waits = []
+    starts = [r["ts"] for r in states]
+    for hitch in hitches:
+        for event in hitch["vcpu"]["events"]:
+            left, right = event["overlap_begin_ns"], event["overlap_end_ns"]
+            if event["state"] not in ("R", "R+") or right - left < minimum_ms * 1e6:
+                continue
+            index = bisect.bisect_left(starts, event["end_ns"])
+            following = states[index] if index < len(states) else None
+            next_cpu = (int(following["cpu"]) if following and
+                        following["ts"] == event["end_ns"] and
+                        following["state"] == "Running" else None)
+            waits.append(dict(hitch_end_s=hitch["relative_end_s"], state=event,
+                              next_running_cpu=next_cpu, begin_ns=left, end_ns=right))
+    if not waits:
+        return dict(minimum_ms=minimum_ms, waits=[])
+    begin = min(w["state"]["ts"] for w in waits)
+    end = max(w["end_ns"] for w in waits)
+    wakes = query("SELECT ts,cpu,name,EXTRACT_ARG(arg_set_id,'target_cpu') AS target_cpu,"
+                  "EXTRACT_ARG(arg_set_id,'success') AS success FROM ftrace_event "
+                  f"WHERE ts>={begin} AND ts<{end} AND name IN ('sched_waking','sched_wakeup') "
+                  f"AND EXTRACT_ARG(arg_set_id,'pid')={int(vcpu['tid'])} ORDER BY ts")
+    wake_starts = [int(w["ts"]) for w in wakes]
+    cpus = set()
+    for wait in waits:
+        event = wait["state"]
+        lo = bisect.bisect_left(wake_starts, event["ts"])
+        hi = bisect.bisect_left(wake_starts, event["end_ns"])
+        wait["wake_events"] = wakes[lo:hi]
+        initial = [w for w in wakes[lo:hi] if int(w["ts"]) == event["ts"]]
+        wait["wake_target_cpu"] = (int(initial[0]["target_cpu"]) if initial and
+                                   initial[0]["target_cpu"] != '[NULL]' else None)
+        wait["cpus"] = {}
+        cpus.update(c for c in (wait["wake_target_cpu"], wait["next_running_cpu"])
+                    if c is not None)
+    if not cpus:
+        return dict(minimum_ms=minimum_ms, waits=waits)
+    cpu_list = ','.join(str(c) for c in sorted(cpus))
+    slices = query("SELECT s.ts,s.dur,s.cpu,s.priority,t.tid,t.name,p.pid,p.name AS process "
+                   "FROM sched s LEFT JOIN thread t USING(utid) LEFT JOIN process p USING(upid) "
+                   f"WHERE s.cpu IN ({cpu_list}) AND s.ts<{end} "
+                   f"AND (s.dur=-1 OR s.ts+s.dur>{begin}) ORDER BY s.cpu,s.ts")
+    idle = query("SELECT ts,cpu,EXTRACT_ARG(arg_set_id,'state') AS state FROM ftrace_event "
+                 f"WHERE name='cpu_idle' AND cpu IN ({cpu_list}) AND ts>={begin} "
+                 f"AND ts<{end} ORDER BY ts")
+    by_cpu = {c: [s for s in slices if int(s['cpu']) == c] for c in cpus}
+    for wait in waits:
+        left, right = wait["begin_ns"], wait["end_ns"]
+        for core in {wait["wake_target_cpu"], wait["next_running_cpu"]} - {None}:
+            rows, totals, previous_end = [], dict(idle_task_ms=0.0, other_tasks_ms=0.0,
+                                                vcpu_ms=0.0), left
+            for raw in by_cpu[core]:
+                ts, dur = int(raw['ts']), int(raw['dur'])
+                stop = ts + dur if dur >= 0 else end
+                a, b = max(left, ts), min(right, stop)
+                if b <= a:
+                    continue
+                if dur < 0 or a < previous_end:
+                    raise ValueError('Incomplete/overlapping destination CPU scheduler slices')
+                previous_end = b
+                key = ('idle_task_ms' if raw['tid'] == '0' else
+                       'vcpu_ms' if raw['tid'] == vcpu['tid'] else 'other_tasks_ms')
+                totals[key] += (b-a)/1e6
+                rows.append(dict(raw, overlap_begin_ns=a, overlap_end_ns=b))
+            totals['unknown_ms'] = (right-left)/1e6-sum(totals.values())
+            wait['cpus'][str(core)] = dict(totals, sched=rows,
+                idle_events=[e for e in idle if int(e['cpu']) == core and
+                             left <= int(e['ts']) < right])
+    return dict(minimum_ms=minimum_ms, waits=waits)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("trace", type=Path)
@@ -31,10 +108,14 @@ def main():
                     help="also align recorded CPU frequencies with running intervals")
     ap.add_argument("--all-states", action="store_true",
                     help="retain whole-window vCPU state intervals for address-space residency analysis")
+    ap.add_argument("--runnable-details", action="store_true",
+                    help="inspect wake events and destination CPU occupancy during hitch runnable waits")
+    ap.add_argument("--runnable-min-ms", type=float, default=1.0,
+                    help="minimum in-hitch runnable interval for --runnable-details (default: 1 ms)")
     ap.add_argument("--allow-superseded-initial-state", action="store_true",
                     help="report/exclude an open trace-initial row only if superseded before the frame window")
     args = ap.parse_args()
-    if args.secs <= 0 or args.hitch_ms <= 0:
+    if args.secs <= 0 or args.hitch_ms <= 0 or args.runnable_min_ms <= 0:
         ap.error("duration and hitch threshold must be positive")
 
     def query(sql):
@@ -179,6 +260,9 @@ def main():
                                    "hitches", "hitch_ms", "skipped")}, hitches=hitches)
     if args.all_states:
         report["vcpu_states"] = intervals
+    if args.runnable_details:
+        report['runnable_details'] = runnable_details(query, hitches, intervals, cpu,
+                                                      args.runnable_min_ms)
     report["superseded_initial_states"] = superseded_initial
     if superseded_initial:
         print("WARNING: open trace-initial state superseded before the frame window:", superseded_initial)
@@ -189,6 +273,21 @@ def main():
         print(f"{hitch['relative_end_s']:.3f}s gap {hitch['ms']:.3f} ms: " +
               ", ".join(f"{k} {v:.3f}" for k, v in hitch["vcpu"]["ms"].items()))
     print("Running includes guest/native work. R/R+ is runnable; S/D does not identify a lock.")
+    if args.runnable_details:
+        details = report['runnable_details']
+        totals = dict(idle_task_ms=0.0, other_tasks_ms=0.0, vcpu_ms=0.0, unknown_ms=0.0)
+        missing = 0
+        for wait in details['waits']:
+            core = wait['wake_target_cpu']
+            core = wait['next_running_cpu'] if core is None else core
+            if core is None:
+                missing += 1
+                continue
+            for key in totals:
+                totals[key] += wait['cpus'][str(core)][key]
+        print(f"Hitch runnable intervals >= {args.runnable_min_ms:g} ms: "
+              f"{len(details['waits'])}; missing destination: {missing}; CPU occupancy ms: {totals}")
+        print("Destination occupancy does not identify interrupt work or prove idle-exit causation.")
     if args.json:
         args.json.write_text(json.dumps(report, indent=2) + "\n")
     if args.chart:

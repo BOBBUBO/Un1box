@@ -5,6 +5,19 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Explain delayed host wakeups while the prime core is idle. New offline
+  `hitchsched.py --runnable-details` applied to the existing complete delayed-PC
+  trace finds37 long runnable intervals/55.582ms across9hitches. In36/54.436ms,
+  wake target CPU7 runs only the idle task; every interval has an idle exit before
+  vCPU execution. The remaining1.146ms is frontend ReferenceQueueD preemption.
+  CPU7 sysfs reports C1/rail-pc exit latency1061us, tracing clock boot. Consistent
+  with idle/wakeup latency, not proven: interrupt work can run in idle context.
+  Capture IRQ/softirq/IPI plus wake/idle/frame events next; distinguish this
+  from CPU contention and guest decoder displacement before choosing a fix.
+  No new phone measurement or speedup claimed; prior diagnostic metrics
+  mean51.850,ceiling56,median52,low46,1%low28.172,hitches9/488.681ms,zero skips.
+  Raw intervals/occupancy in poco-guest-pc-delayed-1/hitch-wake.json/txt.
+
 - [ ] Measure Android vCPU display priority (`6971278387`, default-off
   `LT_VCPU_DISPLAY_PRIORITY=on`). Existing Poco traces show host runnable
   delay in some hitches; this requests nice -4 on each vCPU thread at startup,
@@ -15,7 +28,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Check actual nice values during capture; an unsuccessful request is not a
   priority comparison. Keep hflags/cache experiments fixed when measuring.
 
-- [ ] Measure ordinary Jetpack with the guarded ARMv6 hflags calculation
+- [x] Measure ordinary Jetpack with the guarded ARMv6 hflags calculation
   (`e414b9d74a`, default-off `LT_HFLAGS_V6_FAST=on`). Focused timing complete
   with verification off, two reversed pairs, three five-round passes per arm.
   Median of pass best/median, ns: syscall867.8/946.2→763.9/787.7 and
@@ -36,7 +49,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   verification overhead and are not a speed result. Original faults/guest
   handler remain.
   Pre-v7 VMSA only, no EL2/EL3/M/PMSA/AArch64; Linux/Android builds pass.
-  Focused results above; game ceiling/median/low/1%low/hitch/duration pending.
+  Ordinary game comparison complete, three same-APK 60 s pairs, diagnostics /
+  recorder / verification off. Mean54.417/52.833/52.467→54.200/52.717/53.217;
+  ceiling58 throughout;median54/52/52→54/52/54;low50/48/48→50/48/48;
+  1%low28.234/28.206/28.026→28.430/28.432/27.912;hitches6/8/10→6/8/10;
+  full durations335.172/404.651/554.553→346.903/403.703/536.423ms.
+  Aggregate53.239→53.378fps(+0.26%),24→24hitches,1294.377→1287.030ms/180s
+  per mode. No repeatable game/pacing gain; keep default off, do not repeat
+  unchanged. All12 scenes reviewed title/Start profile off,zero skips,
+  clean Stop/no-qemu/exact baseline verified. Full windows/hitches retained.
 
 - [x] Measure exact host-PC lookup caching (`c146d54fad`, default-off
   `LT_HOST_PC_CACHE=on`) in the preserved alignment-fault path. One 1200-round
