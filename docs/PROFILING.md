@@ -182,6 +182,26 @@ stray engines and restore the baseline environment.
 
 ### Identify guest processes and code
 
+#### Follow the delay across frame boundaries
+
+When the vCPU samples are spread across many functions, follow the delayed
+game thread backward from its framebuffer flip. Retain at least the preceding
+two frame intervals: an audio burst or enqueue-to-scheduled delay can begin
+before the long publication interval. Compare actual guest-present, LCD tick,
+flip, engine publication and Android post timestamps first. Then split each
+relevant interval into host running/runnable/sleeping states and the selected
+guest thread. A pmap alone does not identify the selected thread.
+
+For a guest scheduling lead, pair an observed enqueue request with the next
+scheduled-thread boundary and identify the intervening work. These intervals
+include enqueue/dispatch processing; do not label them exact queue residence.
+An overlap or large CPU share alone does not establish causation. Compare
+nearby ordinary frames, preserve decoder-free gaps, and confirm any resulting
+change with diagnostics off. Existing Poco examples and their limitations are
+recorded in PERFORMANCE.md; they do not explain the earlier Pixel captures.
+
+#### Map the same worker
+
 Address-space values can change between boots. Use a snapshot from the same
 worker before identifying an installed page table as a guest process.
 Engine `6d87d27dc8` provides default-off `LT_GUEST_GDB_PORT=PORT` (1024–65535),
@@ -231,6 +251,24 @@ Keep firmware/symbol inputs private. Both tools have processed the real Poco
 captures documented in PERFORMANCE.md; sparse hitch counts remain leads.
 
 ### Focused audio arithmetic and alignment paths
+
+For the host-PC tree lookup within architectural fault restoration,
+`LT_HOST_PC_CACHE_PROF=on` samples one lookup body per256 calls and reports
+five-second blocks. `LT_HOST_PC_CACHE=on` separately enables the default-off
+exact-address cache. Use one APK in both modes and keep Start profile off.
+The long STM benchmark gives enough complete blocks for direct timing:
+
+```sh
+python3 tools/perf/hostpclookup.py ENGINE_LOG --json lookup.json
+```
+
+The parser checks mode/count/time bounds and contiguous per-region blocks,
+selects one completed LT Bench pass, and conservatively excludes its first
+block per region because its beginning can precede the start marker. All
+blocks and sampled maxima are retained. Its mean includes clock overhead and
+descheduling, excludes the region mutex acquisition, and is not a distribution
+of every call. The complete benchmark timing includes diagnostic bookkeeping;
+confirm gains again with this diagnostic off before a game comparison.
 
 `LT_AUDIO_PATH_PROF=on` (engine `6743f6a81b`, default off) selects diagnostic
 helpers during AArch32 VFP translation. Keep Start profile off. Enable

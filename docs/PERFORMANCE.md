@@ -2328,6 +2328,18 @@ log and reviewed result scene. Runner `stm-profile-run.py`; private LT Bench
 IPA SHA-256 `aa24eb583e041fa344404ee71232c1d94f25914d4b11d7807cc92bb21113efb9`.
 Pixel untouched; no tests added/run.
 
+For a visual check using the existing complete delayed-PC trace, local
+`build/perf-codex/hitch-examples.py` produces `hitch-examples.png/json`.
+The three examples (51.198ms with decoder displacement,50.057ms with host
+runnable delay,67.133ms with no decoder) plot selected guest threads only
+while the host vCPU runs, separate host waits, actual LCD ticks, and game
+enqueue-request-to-scheduled intervals. They retain35ms before the gap:
+some displacement starts before its first publication boundary. This is
+offline analysis of existing data, not another measurement or a new cause
+claim. The selected-thread association includes guest kernel/native work;
+enqueue intervals are not exact run-queue timers. See PROFILING.md for the
+approach. Pixel user-capture causes remain unproven by these Poco examples.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,
