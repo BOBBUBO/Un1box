@@ -784,4 +784,8 @@ and frame windows, and retains every snapshot including those outside the
 window. It supplies counts/arguments and frame classes, not an automatic claim
 that audio or a particular scheduler dependency caused a missed deadline.
 Use the same host scheduler trace to split execution from runnable/sleeping
-intervals. Runtime confirmation of this new mode is pending.
+intervals. One delayed real capture now confirms complete triplets and actual
+scheduled-thread transitions. It separates aligned/unaligned converter calls
+and matches kernel enqueue requests to scheduled boundaries; see PERFORMANCE.md
+for measured differences, dispatch/queue timing limits and the remaining
+non-decoder hitches. This is attribution evidence, not an optimization result.

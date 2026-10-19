@@ -139,7 +139,24 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   ceiling58,median54,low50,1%low27.997,hitches13/659.378ms,zero skips;
   not an optimization/overhead A/B. Cleanup verified. `d70057ad74` adds a
   default-zero optional delay for whole PC triplets, preserving80MiB capacity
-  for the focused window. Linux/Android builds pass; delayed capture pending.
+  for the focused window. Linux/Android builds pass. Delayed capture now
+  complete:1,433,952 records,zero drops/incomplete/late markers; complete
+  scheduler coverage and paired snapshots.1879 matched converter calls all
+  length1024/scale1.0. Aligned output (1035 calls) median selected-thread
+  running24.948us;2-mod4 output (844)423.073us. Original faults preserved;
+  this17× observation is not optimization A/B.40 unaligned batches have
+  median spacing1506.323ms;40 additional aligned batches were invisible to
+  fault-only tracing. Decoder thread share normal/hitch1.285/13.058%.
+  Six of nine hitches overlap conversion. Three overlapping Jetpack
+  enqueue-request→scheduled intervals last26.952/22.959/29.150ms and contain
+  15.098/14.993/20.333ms decoder execution. Kernel dispatch callers resolved;
+  these include enqueue processing, not exact run-queue timers. Two longest
+  non-decoder hitches (67.403/67.133ms) include launchd/syslogd execution;
+  next capture actual syslog messages. Third non-decoder hitch includes
+  host runnable delay8.620ms. Diagnostic mean51.850,ceiling56,median52,
+  low46,1%low28.172,hitches9/488.681ms,zero skips. Scenes/cleanup verified.
+  Next: focused benchmark/profile of preserved alignment/return work and
+  identify remaining guest log sources. No direct-store bypass or new gain.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

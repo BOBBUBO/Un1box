@@ -1982,7 +1982,80 @@ boot/settling PC records without increasing the bounded buffer or accepting
 loss. Linux/Android builds pass; no tests run. The new frozen
 `guest-pc-delayed.apk` is app `59d01bc3` / engine `d70057ad74`, SHA-256
 `360faa03e887d4c21150cf24c2b0ebf0df3f9d8772f566ad03c79f38a79a15ef`.
-One delayed capture is in progress; attribution remains unconfirmed.
+The delayed capture completed on worker6912 / vCPU7069. Same-worker process
+mapping detached cleanly; both scenes show the Jetpack title with Start profile
+off. Fault/arithmetic/full accounting and other experiments stayed off. Clean
+Stop/no-qemu/baseline restoration verified. Window
+`[452358854486966,452418854486966)` host monotonic ns.1,433,952 records, zero
+drops/incomplete/late publication markers. Scheduler validation passes with
+complete coverage, no loss counters and156ns clock-offset spread. Paired PC
+analysis retains234,612 observations inside complete frame intervals and142,173
+outside; all triplets are complete. No missing scheduled-thread transition was
+found when comparing every intervening observation against the three selected
+post-TPIDRPRW-write boundaries.
+
+Diagnostic metrics: mean51.850fps,ceiling56,median52,low46,1%low28.172,
+9 hitches/488.681ms,zero skips. This is not an optimization or overhead A/B.
+The complete stream now separates guest threads rather than assuming all
+execution under the media pmap belongs to one decoder.
+
+**Actual converter calls:**1,879 matched calls/returns in the60s window, all
+from one media thread, each with entry length1024 scalar values and scale1.0.
+No unmatched converter entry remains. Its scheduled execution includes guest
+kernel/native work performed while that thread is selected, not just converter
+instructions. Comparing calls by their actual entry output address:
+
+| Output alignment | Calls | Median wall | Median selected-thread running | p99 selected-thread running | Total selected-thread running |
+| --- | --- | --- | --- | --- | --- |
+| 4-byte aligned | 1035 | 24.948us | 24.948us | 70.521us | 27.869ms |
+| 2 mod4 | 844 | 423.073us | 423.073us | 707.553us | 387.910ms |
+
+The roughly17× median difference is an observation within one instrumented
+capture, not an optimization A/B. Matching code uses unaligned STM for the
+second group; the original ARM1176 faults/guest handler remain intact. There
+are80 decode/conversion batches (10ms grouping gap),40 containing unaligned
+outputs; those40 have median spacing1506.323ms. The overall batch-spacing
+median is741.379ms because the fault-only trace missed the aligned batches.
+Do not repeat the rejected direct-store bypass: target the cost while preserving
+faults and sound.
+
+**Scheduling displacement is now observed:** the busy thread consistently
+associated with Jetpack's pmap is0xe0791774; the decoder is0xe078eccc. Decoder-selected running time is1.285%
+of normal-frame execution versus13.058% of hitch execution (453.907ms across
+normal frames,52.758ms across hitches). Six of nine hitches overlap conversion;
+three do not. Kernel `thread_setrun` observations for another, currently
+nonselected thread can be matched to the later post-write scheduled boundary.
+The three examples below are request-to-scheduled intervals overlapping the
+listed frame; they can begin before that frame. They include enqueue/dispatch
+processing and are not exact run-queue-residency timers. The request caller
+resolves to the kernel's `thread_dispatch` in these examples, consistent with
+requeueing a displaced game thread rather than waiting solely for an IPC reply.
+
+| Hitch end | Frame gap | Jetpack enqueue request → scheduled | Decoder running inside that interval |
+| --- | --- | --- | --- |
+| 23.516s | 50.272ms | 26.952ms | 15.098ms |
+| 26.500s | 51.198ms | 22.959ms | 14.993ms |
+| 40.584s | 50.794ms | 29.150ms | 20.333ms |
+
+**Other sources remain:** the67.403ms gap at2.933s and67.133ms gap at48.500s
+contain no decoder execution/converter calls. They include respectively
+9.055/5.643ms selected execution on a thread observed under launchd's pmap,
+plus5.236/3.751ms on one observed under syslogd's pmap. These labels come from
+installed-page-table observations, not a guest thread-owner enumeration; kernel
+threads can borrow a pmap. Capture actual guest syslog messages and confirm
+thread ownership next; the current labels alone do not prove logging or name
+its source. The third decoder-free hitch at11.416s
+includes8.620ms host runnable delay. Guest and host scheduling are separate
+components; no universal single-cause claim is justified.
+
+Raw/reports: `build/perf-codex/poco-guest-pc-delayed-1/`, including validated
+`guest-points.json/txt`, `decode-scheduler.json/txt`, `decode-insights.json/txt`,
+`ready-insights.json/txt`, frame/context/scheduler data, same-worker process
+snapshot and reviewed scenes. Offline reproduction scripts are preserved as
+`guest-pc-report.py`, `guest-pc-insights.py` and `guest-ready-insights.py` in
+`build/perf-codex/`, with matching private disassembly inputs there. Next: a
+focused benchmark/profile for the preserved alignment/return path, plus guest
+syslog message capture for the separate logging bursts. No speedup claimed.
 
 ### Measured and rejected
 
