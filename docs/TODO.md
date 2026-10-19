@@ -99,6 +99,24 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   state totals. No cause or ordinary performance gain proven.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
+  Physical-buffer capture now complete, engine2898270eb9 LT_GLES_SURFACE_PATH=on:
+  102204lossless milestones,3540successful contiguous-mapped presents and3520flips,
+  all fresh write associations (3500single/20multiple). Three real analyzers pass;
+  sameTID/nice0/CFS,good28,bothscenes title/profileoff,cleanStop/exactbaseline.
+  No guest log streaming. Diagnostic58.683fps,ceiling62,median58,low56,
+  1%low29.801,1hitch/51.749ms,zero skips;76gaps>30ms. No A/B gain/overhead claim.
+  Of79repeated-scanout ticks before following flips,76have the matching GL
+  write completed beforehand (median9.443ms lead,71>=1ms/51>=5ms),3after/at.
+  Longest51.749ms gap's matching present0.304ms then12.302ms to flip,
+  9.599ms running in that handoff. Another36.041ms gap has29.830ms write→flip,
+  27.903ms running. But median write→flip11.809ms for held cycles versus12.317ms
+  without a held tick: do not call the handoff uniformly slower or assume a
+  completed write was eligible for display. Next follow IOSurface unlock/CA
+  notification/swap queue and actual guest-thread scheduling across missed
+  ticks. Physical backing does not prove pixel-generation identity; keep
+  multiple/unknown writes explicit and preserve CA synchronization. Full evidence
+  in poco-surface-map-1/summary.json and PERFORMANCE.md; tool surfacemap.py.
+  Pixel's214ms gameplay hitch remains unresolved without its own scheduler trace.
   Offline analysis of poco-fmss-path-1 finds 54 intervals >30 ms (median 33.522 ms,
   max 49.880 ms; standard >50 ms hitches still 0). Each contains one flip after
   one/two earlier vsync ticks. Corresponding frontend intervals are 87.23%

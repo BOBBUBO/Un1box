@@ -3110,6 +3110,77 @@ Pixel remains disconnected; its 214 ms gameplay hitch still needs a matching
 scheduler trace and native samples, and cannot be explained from these Poco
 observations. Ordinary benchmarks keep all diagnostic/user recording off.
 
+#### Physical surface identity (capture complete; handoff narrowed, cause still open)
+
+Engine `2898270eb9` adds default-off `LT_GLES_SURFACE_PATH=on` alongside
+`LT_FRAME_PATH`. Before each present, debug-translate every page of its bounded
+destination span without faulting pages in. Record a physical base only for a
+fully contiguous mapping; failed presents/unknown mappings cannot establish a
+write association. Rendering, guest faults, synchronization and scanout are
+unchanged. Linux/Android builds pass. Frozen surface-map.apk SHA256:
+`9fe509fa0741744c8f39bbef83eba12ea8079d77e3dd2539184b8234c5afc589`,
+app source `d258fa46`, matching libraries/identity retained in build/perf-codex.
+
+New60s `poco-surface-map-1/` uses150us BQL spin, sparse surface milestones and
+host scheduler/frequency tracing. User recorder, accounting, guestPC/context,
+native/AHB/NAND/RAM-pointer diagnostics and idle spin are off. **No guest syslog
+relay**, including after timing. Both scenes reviewed as Jetpack title/
+Startprofileoff, worker3599/vCPU3910 unchanged/nice0/CFS, good28. Clean Stop,
+no remaining qemu and exact debug-env restoration verified; own remote trace
+and milestone files removed after pull. Runner exits0.
+
+102,204 complete milestones/no loss/incomplete/writeerror. All three real
+analyzers pass, with complete scheduler coverage, no trace errors/loss/initial
+exception and clockspread156ns. New tools/perf/surfacemap.py validates mapping/
+present pairing, joins physical backing to **lcd-flip.b (NEW register)** and
+retains preceding buffer uses/calls and following latches. Mode explicitly
+requires n72's physical LCD registers; this join is not valid for every board.
+
+Diagnostic mean58.683,ceiling62,median58,low56,1%low29.801,1hitch/51.749ms,
+zero skips. There are76publication gaps>30ms. This is neither an A/B gain nor
+tracing-overhead evidence. All3540window presents succeed with known contiguous
+backing. All3520flips have a completed matching write after that buffer's
+previous selection:3500single-write/20multiple-write intervals. Page-walk
+spans total128.099ms, median35.677us/max134.062us; these instrumented wall
+durations do not measure the complete overhead of enabling tracing.
+
+Between consecutive flips there are79repeated-scanout ticks. The matching
+write completed **before76ticks**, and at/after3. Completion leads the76ticks
+by median9.443ms (range0.194–28.291ms);71have at least1ms lead,51at least5ms.
+These are successful writes to the actual physical buffer subsequently
+selected, rather than neighboring presents with unknown identity.
+
+| Publication gap ending | Gap ms | Matching present ms | Write completion → flip ms | Host running in that interval ms | Write relative to repeated scanout ticks ms |
+| --- | --- | --- | --- | --- | --- |
+| 2.319s | 51.749 | 0.304 | 12.302 | 9.599 | 6.957after first,10.248before second |
+| 27.750s | 49.831 | 1.229 | 3.024 | 3.024 | 15.067after first,1.603before second |
+| 58.233s | 49.782 | 0.309 | 11.456 | 9.721 | 7.571after first,9.099before second |
+| 54.719s | 36.041 | 2.200 | 29.830 | 27.903 | 25.252before tick |
+
+The longest gap has42.212ms running,5.025ms runnable,4.512ms sleeping;
+its frontend end lag is0.794ms. Whole-window uninterruptible sleep is just
+0.010ms: the older long D waits do not recur without log streaming. This does
+not establish that streaming caused the older waits.
+
+**Limits and next probe:** the write-to-flip median is11.809ms for76cycles
+with a repeated scanout, versus12.317ms for3444without one. Thus this handoff
+is not simply longer in every delayed cycle. A successful GL write is not a
+CoreAnimation submission/eligibility marker, and physical backing is not
+pixel-generation identity: other guest/CPU/DMA writes remain untraced. Source
+GLESPresentView unlocks the IOSurface and calls the drawable's CA present
+callback **after** the host write returns. Follow that notification, swap queue
+and guest thread scheduling against the missed tick before changing pacing or
+synchronization. Do not bypass CoreAnimation or publish buffers early based on
+this trace. The result narrows the missing handoff; it is not a root-cause or
+performance-improvement claim. Pixel's214ms gameplay gap still requires its
+own matching host scheduler capture; Pixel remains disconnected/untouched.
+
+Evidence: rawtrace/frames/milestones/logs/identity, reviewedscenes,
+hitches/milestones/surfaces.json, summary.json with input hashes and all76gaps.
+Reproduce with surface-map-run.py/analyze.py/summary.py in build/perf-codex;
+PROFILING.md documents event semantics and the offline tool. No tests added/run.
+Ordinary comparisons continue with user recording and diagnostics off.
+
 #### TLB refill RAM-pointer lookup (local saving, no hitch improvement established)
 
 Engine `54da21c185` adds independent default-off `LT_TLB_RAM_PTR_FAST=on`

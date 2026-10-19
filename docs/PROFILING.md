@@ -627,6 +627,53 @@ AArch64 regimes or every translation-control register; this diagnostic is for
 the single-vCPU ARMv6 iPod workload. Run only a narrow capture and restore both
 variables afterward.
 
+### Join presents to physical scanout buffers
+
+Engine `2898270eb9` adds default-off `LT_GLES_SURFACE_PATH=on`, requiring
+`LT_FRAME_PATH`. This focused diagnostic resolves every page in the present's
+destination span immediately before the call. It performs debug translations
+without faulting pages in or changing the present's original permission/fault
+handling. Only a successful present with a completely contiguous mapping is
+eligible for a physical-buffer association. Invalid, unmapped, overflowing or
+noncontiguous spans remain unknown; the span is bounded to 16 MiB. Stride padding
+is included, so even an unresolved padding page makes the observation unknown.
+With the switch off there are no diagnostic page walks or clock reads.
+
+This selects the existing 1,048,576-record capacity (about 40 MiB), with deferred
+output after clean Stop. Keep user recording and unrelated diagnostics off;
+the page walks and timestamps add work and their overhead is not established.
+No guest tools update is required.
+
+| Event | a | b | c |
+| --- | --- | --- | --- |
+| `surface-map-begin` | GL context | guest virtual destination | span bytes, 0 for invalid dimensions/format |
+| `surface-map-end` | same context | same virtual destination | physical base, or UINT64_MAX for unknown |
+
+`tools/perf/surfacemap.py` validates the complete trace and consumes each mapping
+for the immediately following matching present. It retains calls and flips
+before/after the selected window, joins successful writes to the **new** LCD
+register (`lcd-flip.b`), and reports subsequent latching and repeated scanouts.
+The explicit mode below is only valid for n72's physical LCD registers. Other
+boards can have an IOMMU or virtual register addresses and need a different join.
+
+```sh
+python3 tools/perf/surfacemap.py surface-map.tsv frames.log \
+    --lcd-address-mode n72-physical --hitch-ms 30 \
+    --scheduler scheduler.json --engine-pid PID --json surfaces.json
+```
+
+Use a matching `hitchsched.py --all-states` report for the optional scheduler
+arguments. The analyzer splits write-completion-to-flip and entire flip cycles
+into host states, clipping scheduler coverage explicitly at the window boundary.
+It preserves unknown mappings, initial uses without prior history, multiple
+writes and writes crossing the previous selection. A fresh association requires
+a completed observed write after that buffer's previous selection. Repeated
+scanout ticks distinguish a write completed before the tick from one completed
+later. This supplies buffer identity, not pixel-generation identity: other guest,
+CPU and DMA writers are untraced. A completed write before a tick does not alone
+prove that frame was eligible for display. Follow the responsible guest handoff
+before changing scheduling or synchronization.
+
 ## Lock diagnostics without instruction accounting
 
 `LT_BQL_PROF=on` (engine `f64fb44e3c`, default off) enables the existing cumulative
