@@ -1961,6 +1961,29 @@ without changing the architectural register handler. Selected scheduler entries
 can separately establish enqueue/block requests, subject to their actual code.
 No new optimization, measured gain or established scheduler dependency yet.
 
+The first real selected-PC capture (app `d89f3697`, engine `1422252ff7`,
+frozen `guest-pc.apk` SHA-256
+`0f0b127415680f454b555d28fff0f845c0785b1e3ddb7502b49b9d3c2157d306`)
+selected decoder/convert entry and return boundaries, three boundaries after
+TPIDRPRW writes, and kernel block/enqueue entries. It **overflowed**:2,097,152
+records retained,705,852 dropped. Both analyzers reject it. Do not use the
+partial selected-PC stream for hitch attribution or infer a scheduling cause.
+The standalone complete frame log measured54.100fps,ceiling58,median54,low50,
+1%low27.997,13 hitches/659.378ms,zero skips; this is neither an optimization
+nor a diagnostic-overhead comparison. Raw evidence:
+`build/perf-codex/poco-guest-pc-1/`. Debugger detached, clean Stop/no-qemu and
+baseline restoration verified. Pixel untouched.
+
+`d70057ad74` addresses the buffer limit with optional
+`LT_GUEST_TRACE_DELAY_MS`: skip whole PC triplets before assigning IDs until
+the specified delay from initial translation/selection setup (0–600000ms,
+default0) expires. Frame/context logging stays active. This removes irrelevant
+boot/settling PC records without increasing the bounded buffer or accepting
+loss. Linux/Android builds pass; no tests run. The new frozen
+`guest-pc-delayed.apk` is app `59d01bc3` / engine `d70057ad74`, SHA-256
+`360faa03e887d4c21150cf24c2b0ebf0df3f9d8772f566ad03c79f38a79a15ef`.
+One delayed capture is in progress; attribution remains unconfirmed.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

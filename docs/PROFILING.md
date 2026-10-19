@@ -769,6 +769,16 @@ python3 tools/perf/guestpoints.py events.tsv frames.log --engine-pid PID \
     --guest-cache /local/dyld_shared_cache_armv6 --json guest-points.json
 ```
 
+`LT_GUEST_TRACE_DELAY_MS` (engine `d70057ad74`) optionally delays whole PC
+observations by0–600000ms from the first AArch32 translation/point-config
+initialization; the default is0. The effective delay is printed in the mode
+line. Whole triplets are skipped before assigning IDs, preserving paired,
+contiguous observations. Frame/context milestones continue through boot and
+settling. Start the focused frame window after the delay has elapsed. This
+preserves the bounded80MiB buffer for the relevant period rather than recording
+all scheduler activity during boot. The first undelayed capture overflowed;
+both analyzers rejected it, so it supplied no attribution result.
+
 The analyzer checks the complete footer, monotonic triplets, context identity
 and frame windows, and retains every snapshot including those outside the
 window. It supplies counts/arguments and frame classes, not an automatic claim

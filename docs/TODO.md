@@ -134,6 +134,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   threads; select actual scheduler enqueue/block points only after disassembly.
   This will distinguish runnable displacement from guest waits; it is not yet
   a proven dependency or a measured speedup.
+  First capture overflowed (2,097,152 retained /705,852 dropped); analyzers
+  reject it, so no attribution result. Complete frame log alone:54.100fps,
+  ceiling58,median54,low50,1%low27.997,hitches13/659.378ms,zero skips;
+  not an optimization/overhead A/B. Cleanup verified. `d70057ad74` adds a
+  default-zero optional delay for whole PC triplets, preserving80MiB capacity
+  for the focused window. Linux/Android builds pass; delayed capture pending.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
