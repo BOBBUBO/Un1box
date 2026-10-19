@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Match completed native waits to a validated vCPU scheduler capture.
 
-Requires LT_NATIVE_WAIT_PROF=on with LT_FRAME_PATH, a clean Stop, the matching
+Requires LT_NATIVE_WAIT_PROF=on or conditions with LT_FRAME_PATH, a clean Stop, the matching
 engine log and hitchsched.py --all-states --runnable-details output. This is
 offline attribution, not an optimization comparison or a complete stack trace.
+With conditions mode, LT_BQL_FALLBACK_PROF=on can additionally record blocking
+BQL acquisitions after the spin budget, preserving the BQL spin hook itself.
 """
 import argparse
 import bisect

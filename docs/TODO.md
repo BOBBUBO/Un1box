@@ -5,6 +5,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Attribute residual BQL spin fallbacks. Engine32d6f75762 adds default-off
+  LT_BQL_FALLBACK_PROF=on with BQLspinON and native conditions trace. Time only
+  the original blocking acquisition after50us budget, retaining source site;
+  preserve hooks, no timers on common lock paths. Existing nativewaits.py joins
+  spans; deferred counts confirm activity, >=10us retention. Builds pass;
+  first capture pending. This targets105unassigned long intervals/184.173ms
+  in the conditions+AHB >30ms report, without asserting their cause in advance.
+  No new speedup; ongoing idle comparison uses its original frozen APK.
+
 - [ ] Measure bounded vCPU0 idle spin (`357fc83aba`, default-off LT_IDLE_SPIN=on).
   Conditions-only capture identifies85long in-gap runnable intervals/133.472ms
   in the guest idle wait; preceding S median198.334us,68/85under250us. New spin

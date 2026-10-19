@@ -700,6 +700,15 @@ condition site is guest idle,85long in-gap runnable intervals/133.472ms;
 105/184.173ms remain outside condition/present stages. Source/limits and all
 diagnostic frame metrics are in PERFORMANCE.md.
 
+With conditions mode and BQL spin active, `LT_BQL_FALLBACK_PROF=on` (engine
+`32d6f75762`) additionally times only blocking BQL acquisition after the spin
+budget expires. Its native kind1 spans retain original source sites and exclude
+time spent spinning. The same nativewaits.py report handles these spans. Both
+hook pointers remain intact. Validate the deferred bql-fallback call count and
+trace status, native completion and hook state; the10us retention threshold
+still excludes short calls. No clocks are added to common acquisitions. Builds
+pass; the first combined fallback capture is pending. Keep off for ordinary FPS.
+
 `LT_GLES_PRESENT_PROF=on` (engine `5b38fec1df`) independently times surface presentations. It defaults
 off and needs neither the manual recorder, `IT_GLES_PROF`, nor full accounting.
 It adds clocks at stage boundaries, never inside the row loop. Every five seconds,

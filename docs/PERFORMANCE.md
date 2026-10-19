@@ -2808,6 +2808,26 @@ reports/charts, `summary.json/txt` with preceding-sleep samples and input hashes
 `condition-wait-summary.py` reproduces combined attribution; nativewaits.py and
 ahbpath.py processed the real capture. No test suites added/run; Pixel untouched.
 
+#### Blocking BQL fallbacks with spin active (first capture pending)
+
+The conditions+AHB capture above leaves105long runnable intervals/184.173ms
+outside traced calls in >30ms gaps. Engine `32d6f75762` adds default-off
+`LT_BQL_FALLBACK_PROF=on`, requiring BQL spin and active native conditions mode
+with LT_FRAME_PATH. It times only the original blocking mutex call after the
+50us spin budget expires, retaining its actual source site in the existing
+bounded native wait recorder. The span excludes the preceding spin. No timers
+are added to uncontended or spin-success acquisitions; off adds no clock reads.
+Native and BQL hook pointers stay intact. The existing>=10us retention threshold
+applies; native completion totals include both condition and fallback calls.
+The deferred bql-fallback line separately counts all timed blocking calls and
+confirms whether tracing was active. Refuse attribution if the trace/hooks or
+completion counters fail validation.
+
+Linux/Android builds pass. First phone capture remains pending; no new speedup
+or ordinary ceiling/median/low/1%low/hitch count/duration result. The running
+idle-spin comparison retains its earlier frozen APK without this diagnostic.
+This does not alter either spin budget. No tests added/run.
+
 #### Bounded vCPU0 idle spin (ordinary comparison in progress)
 
 Engine `357fc83aba` adds default-off `LT_IDLE_SPIN=on`, separate from BQL spin.
