@@ -732,3 +732,46 @@ skipping off. Four Poco Jetpack diagnostic captures completed: reset means
 excludes cleared alignment padding and cannot alone authorize skipping whole-bitmap
 resets/barriers. One off arm is hitch-heavy; no repeatable ordinary game gain or
 diagnostic overhead established. Full metrics/bounds in PERFORMANCE.md.
+
+
+### Selected guest instruction boundaries
+
+`LT_GUEST_TRACE_PC=ADDRESS,ADDRESS,...` (engine `ab08a5d277`, default off)
+selects up to32 AArch32 instruction boundaries. Use a low bit of1 for Thumb and
+0 for ARM, just as with function pointers. Invalid configurations log an error
+and select no points. Set `LT_FRAME_PATH` and `LT_FRAME_PATH_CONTEXT=on` too;
+keep audio/fault/full accounting/user profiling off for scheduling captures.
+There are no generated runtime probes with this switch off. CPU0 snapshots
+read registers only, without guest memory reads or debugger stops. The bounded
+buffer is80MiB in this mode; reject dropped/incomplete traces as usual.
+
+Each three-record observation has a unique ID:
+
+- `guest-pc`: a=ID, b=PC-with-Thumb-bit<<32|TPIDRPRW-with-low-two-bits-masked,
+  c=raw-CIDR<<32|raw-TTBR0.
+- `guest-regs`: a=ID, b=R0<<32|R1, c=R2<<32|R3.
+- `guest-stack`: a=ID, b=LR<<32|SP, c=R12<<32|processor-mode.
+
+These are **before-instruction** observations. A conditional instruction can
+still be skipped, and a reached function/block point does not prove a wait or
+return completes. Choose points and interpret register arguments using the
+matching firmware's disassembly; no firmware addresses are baked into the
+engine. Avoid instruction interiors or large point sets. A boundary after the
+kernel's TPIDRPRW write can identify the scheduled thread, and actual enqueue/
+block paths can provide the complementary state evidence. Installed pmap and
+thread addresses are different identities.
+
+After clean Stop and the same-worker process snapshot:
+
+```sh
+python3 tools/perf/guestpoints.py events.tsv frames.log --engine-pid PID \
+    --guest-processes processes.json --guest-kernel /local/kernel.macho \
+    --guest-cache /local/dyld_shared_cache_armv6 --json guest-points.json
+```
+
+The analyzer checks the complete footer, monotonic triplets, context identity
+and frame windows, and retains every snapshot including those outside the
+window. It supplies counts/arguments and frame classes, not an automatic claim
+that audio or a particular scheduler dependency caused a missed deadline.
+Use the same host scheduler trace to split execution from runnable/sleeping
+intervals. Runtime confirmation of this new mode is pending.

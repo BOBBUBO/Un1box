@@ -1857,7 +1857,7 @@ engine `950a664438`; runtime confirmation pending. Frozen `alignment-args.apk`
 SHA-256 `96441e68ac637aa834319e447b4b7b6e30b959051541ccf70e3691d016002bd0`.
 Ordinary VFP A/B uses the separate frozen `vfp-mla.apk`, without these probes.
 
-#### Non-fused VFP multiply/add helper experiment
+#### Non-fused VFP multiply/add helper experiment (rejected)
 
 `LT_VFP_MLA_FAST=on` (default off) combines each AArch32 single-precision
 VMLA/VMLS/VNMLA/VNMLS into one generated helper call. It still invokes the
@@ -1881,18 +1881,50 @@ No tests added/run. Ordinary measurement setup keeps audio enabled and Start
 profile/full accounting/fault/context/FP diagnostics off, array caching on,
 other experiments off. The focused benchmark times whole loops.
 
-First of three planned interleaved/reversed Poco pairs completed; both game
-scenes reviewed as the Jetpack title with Start profile off. Ten LT Bench rounds
-per arm, then a settled 30 s game window on the same worker. No full accounting,
-perfmaps or focused diagnostics. Subsequent pairs remain in progress.
+Three interleaved/reversed Poco pairs completed (off/on, on/off, off/on), using
+that same frozen APK. All focused benchmark and before/final game scenes were
+reviewed: Jetpack title, Start profile off. Ten LT Bench rounds per arm, then a
+settled 30 s game window on the same worker. No full accounting, perfmaps or
+focused diagnostics. Audio enabled. All arms finished with clean Stop/no-qemu;
+the runner restored and checked the baseline environment.
 
 | Pair | LT Bench best / median ns, off → on | Mean fps | Ceiling | Median | Low | 1% low | Hitches >50 ms | Skipped |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 7.7 / 8.9 → 7.6 / 9.1 | 53.933 → 53.567 | 58 → 58 | 54 → 54 | 48 → 48 | 28.075 → 28.417 | 4 / 203.204 ms → 2 / 101.145 ms | 0 → 0 |
+| 2 | 7.8 / 10.6 → 7.6 / 9.3 | 53.800 → 52.500 | 58 → 56 | 54 → 52 | 48 → 48 | 28.198 → 28.416 | 3 / 172.970 ms → 2 / 100.932 ms | 0 → 0 |
+| 3 | 7.6 / 8.3 → 8.2 / 8.9 | 54.000 → 52.767 | 58 → 58 | 54 → 52 | 48 → 48 | 28.225 → 28.058 | 3 / 153.216 ms → 4 / 221.575 ms | 0 → 0 |
 
-No throughput gain in this first pair; the smaller hitch count needs the
-remaining reversed/interleaved pairs. Evidence: `poco-vfp-mla-1-{off,on}/`,
-`vfp-mla-run.py`, `vfp-mla-results.json` and its report recipe in `build/perf-codex/`.
+Mean **53.911 → 52.944 fps (−1.8%)**, slower in all three pairs. Neither focused
+loop timing nor pacing shows a repeatable gain. Rejected and removed from the
+engine in `3cc8fa6127`; the useful guest benchmark stays. Preserve the original
+separate multiply/add helpers. No tests added/run. Raw evidence:
+`build/perf-codex/poco-vfp-mla-{1,2,3}-{off,on}/`, `vfp-mla-results.json`,
+`vfp-mla-run.py`, and `vfp-mla-rejected.patch`. Scene sheets:
+`vfp-mla-reviewed-scenes-{1,2,3}.png`.
+
+#### Selected guest instruction boundaries for scheduling/decode attribution
+
+Engine `ab08a5d277` adds default-off `LT_GUEST_TRACE_PC`: up to32 comma-separated
+ARM/Thumb instruction addresses, with bit0 selecting Thumb. Translation inserts
+register snapshots only at those addresses; the default generated code contains
+no probe. CPU0 records PC/thread/CIDR/TTBR0, R0–R3, LR/SP/R12 and processor mode
+in three paired bounded frame-path events, without guest reads or breakpoints.
+A reached-PC snapshot precedes the instruction's condition/execution; infer
+function arguments and scheduling semantics only from matching disassembly.
+`1422252ff7` gives this mode the same bounded80MiB trace capacity as the audio
+diagnostic. `guestpoints.py` validates triplets/context/process identity and
+compares observations across exact frame classes, retaining outside-window data.
+Initial and clean final Linux/Android builds pass after removing the rejected
+MLA experiment and adjusting capacity. No tests added/run. Runtime capture pending.
+
+This is the next causal approach: observe actual guest scheduling transitions
+and decoder boundaries, with fault/arithmetic logging off. Installed address
+space alone cannot show whether a game/compositor thread is runnable or blocked.
+Local kernel disassembly identifies the actual TPIDRPRW write in `Switch_context`;
+a selected boundary immediately afterward can observe the scheduled thread
+without changing the architectural register handler. Selected scheduler entries
+can separately establish enqueue/block requests, subject to their actual code.
+No new optimization, measured gain or established scheduler dependency yet.
 
 ### Measured and rejected
 
