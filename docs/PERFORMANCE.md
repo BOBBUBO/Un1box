@@ -3074,6 +3074,42 @@ fmss-path-run.py/analyze.py in build/perf-codex; fmsspath.py validates pairing,
 splits inclusive/exclusive host states and matches hitchD to enclosing calls.
 Pixel untouched. No new optimization or measured gain from this diagnostic.
 
+#### Residual 30–50 ms gaps (offline analysis of the NAND capture)
+
+Reanalyzed the same `poco-fmss-path-1` data at a 30 ms threshold; no new
+phone run or optimization comparison. The standard >50 ms hitch count remains
+zero. There are 54 intervals over 30 ms, median 33.522 ms, maximum 49.880 ms.
+Each engine publication interval contains exactly one LCD framebuffer-register
+flip: 53 contain two vsync ticks with the flip after the first; one contains
+three ticks with the flip after the second. These observations locate a missed
+scanout opportunity before the next flip; they do not identify which game
+surface or guest dependency delayed that flip.
+
+Across the corresponding frontend intervals, the vCPU spends 1605.565 ms running
+(87.23%), 118.019 ms runnable and 116.949 ms sleeping, with no uninterruptible sleep.
+Engine-publication-to-frontend lag at their ends is median 0.500 ms, maximum 5.207 ms.
+The largest overlapping individual host present is 4.162 ms; the median of those
+per-interval maxima is 1.644 ms. Maximum vsync lateness per interval is
+median 0.052 ms, maximum 8.779 ms. These stages can contribute, but no single long
+host present or frontend handoff explains all 54 intervals. Whole-interval CPU
+shares are not a critical-path attribution and can include unrelated guest work.
+
+The 49.880 ms interval ending 27.251 s contains 43.442 ms vCPU running, 4.706 ms
+runnable and 1.733 ms sleeping. Two vsyncs occur before the sole flip, 33.477 ms
+after the earlier publication; both overlapping host presents finish in under
+0.4ms. Follow the guest work preceding that flip rather than adding broad GL
+totals. The 42.945 ms interval ending 18.478 s differs: 12.962 ms sleeping and a
+vsync 8.779 ms late. Preserve those distinctions when selecting the next probe.
+
+Evidence: `hitches-30.json`, `milestones-30.json` and `residual-summary.json`
+under the same capture directory, joined by exact frame boundaries using
+`build/perf-codex/residual-frame-summary.py`; input hashes retained. Milestone
+counts use engine publication boundaries, scheduler totals frontend boundaries.
+No frame identity is inferred from adjacent presents. No tests or phone activity.
+Pixel remains disconnected; its 214 ms gameplay hitch still needs a matching
+scheduler trace and native samples, and cannot be explained from these Poco
+observations. Ordinary benchmarks keep all diagnostic/user recording off.
+
 #### Extended BQL spin budget (ordinary comparison complete)
 
 The residual fallback capture above finds 153 of 163 selected BQL wake delays

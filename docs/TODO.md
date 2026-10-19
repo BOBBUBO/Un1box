@@ -99,11 +99,21 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   state totals. No cause or ordinary performance gain proven.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
-  The latest Poco capture's three >50 ms gaps contain 129.017 ms running
+  Offline analysis of poco-fmss-path-1 finds 54 intervals >30 ms (median 33.522 ms,
+  max 49.880 ms; standard >50 ms hitches still 0). Each contains one flip after
+  one/two earlier vsync ticks. Corresponding frontend intervals are 87.23%
+  vCPU running, 118.019 ms runnable, 116.949 ms sleeping, no D; end frontend lag median 0.500 ms,
+  max 5.207 ms, largest overlapping host present 4.162 ms. The 49.880 ms gap has
+  43.442 ms running/two ticks before flip/both presents under 0.4 ms; the 42.945 ms
+  gap instead has 12.962 ms sleeping and 8.779 ms vsync lateness. Follow preceding guest
+  work and distinguish these paths; adjacent presents do not identify surfaces.
+  No new measurement or performance gain. Exact joined evidence and hashes in
+  residual-summary.json, full limitations in PERFORMANCE.md.
+  The earlier fallback capture's three >50 ms gaps contain 129.017 ms running
   (84.35%), 16.978 ms runnable and 6.960 ms sleeping. Follow the guest work
   across preceding frame intervals to the next flip; native wait enclosure
-  alone does not explain this execution. Separately, residual BQL sleeps
-  support considering a larger spin budget, with ordinary A/B still required.
+  alone does not explain this execution. Extended BQL ordinary pairs are now
+  complete above; their gain leaves residual missed scanout opportunities.
   Capture the Pixel's confirmed gameplay hitches with a matching scheduler
   trace when it reconnects; the Poco title findings do not establish their cause.
 
