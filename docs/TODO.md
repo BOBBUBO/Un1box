@@ -5,8 +5,21 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
-- [ ] Measure single-write tally logging (engine `20857608bb`, default-off
-  `LT_GLES_TALLY_BATCH=on`, guest tools29/version1.1.27). Host policy2 requests
+Resume notes and prioritized leads: [PERFORMANCE-HANDOFF.md](PERFORMANCE-HANDOFF.md)
+(2026-10-19). Current measurements are stopped; experiments retain their defaults.
+
+- [ ] Follow the roughly90-refresh recurring held-frame cadence. Four fresh
+  sparse60s tally captures have50/50/44/45gaps>30ms; adjacent held-tick
+  spacings88–92 occur17/51,22/50,23/44,19/46times. Existing audio capture:
+  AAC running in preceding+current frontend interval for48/87gaps>30ms,
+  >5ms for42,>10ms for28. Overlap/cadence are leads, not causal attribution;
+  widen to exact preceding producer/queue intervals and compare controls.
+  Preserve audio/fault/guest timing semantics. Local reproduction/input hashes:
+  build/perf-codex/wrapup-frame-leads.py/json; full limits in PERFORMANCE.md.
+
+- [x] Measure single-write tally logging (limited comparison; keep off).
+  Engine `20857608bb`, default-off
+  `LT_GLES_TALLY_BATCH=on`, guest tools29/version1.1.27. Host policy2 requests
   the exact tally text in one stderr write and one host log call instead of
   seven fragments; all counters/first/failure logs and rendering remain.
   Existing quiet policy1 takes precedence; original policy0/default/old hosts
@@ -25,8 +38,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   median60→60,low56→56,1%low30.183→30.421,hitches0/0→1/50.497ms,
   0skips. First-pair candidate benefit does not repeat; no repeatable local
   benefit established. All8focused scenes reviewed title/Startprofileoff;
-  serial/policy/lossless/scheduling checks pass. Three ordinary pairs running.
-  FrozenAPK/identity/raw retained; full PERFORMANCE tables.
+  serial/policy/lossless/scheduling checks pass. One ordinary60s/mode pair,
+  on first:mean59.033→59.333,ceiling60→60,median60→60,low56→58,
+  1%low29.981→30.512,hitches1/50.462→0/0ms,longest50.462→35.343ms,
+  gaps>30ms56→40,0skips. One pair is insufficient for repeatability; no
+  confirmed gain. All12completed-arm scenes reviewed. Pairs2/3 canceled at
+  user's wrap-up request before next launch/window; intentionalexit130,
+  finally cleanStop/no-qemu/exact original env restored independently verified.
+  No active runs. Keep defaultoff; require a stronger causal lead before
+  allocating another comparison. FrozenAPK/identity/raw retained; PERFORMANCE.
 
 - [x] Measure the extended BQL spin budget (`5547634eeb`). Default-off
   `LT_BQL_SPIN_EXTENDED=on` selects 150 µs with BQL spin on; off retains 50 µs.
@@ -69,8 +89,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Most selected wake-target occupancy is idle task; precise wake mechanism /
   lock owner unproven. Three standard hitches still84.35% running, so enclosure
   is not a complete hitch explanation. Next follow guest execution to the next
-  framebuffer flip across preceding intervals; a larger BQL budget is supported
-  by the wait measurements, with its benefit unmeasured. Idle spin stays rejected.
+  framebuffer flip across preceding intervals. The 150us BQL budget was
+  subsequently measured above (+2.11%); broader behavior and residual holder
+  attribution remain open. Idle spin stays rejected.
   Full evidence/hashes/sleeps poco-bql-fallback-1/, PERFORMANCE.md. Pixel's
   largest gameplay hitch still needs its own matching scheduler trace.
 

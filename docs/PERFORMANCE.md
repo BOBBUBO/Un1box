@@ -2294,7 +2294,7 @@ engine logs and `tally-path-scenes.png`. Reproduce each complete capture with
 `framepath.py EVENTS FRAMES --json milestones.json` then
 `tallypath.py EVENTS FRAMES --mode off|on --json tallies.json`.
 
-#### Single-write tally logging (`LT_GLES_TALLY_BATCH`; measurement in progress)
+#### Single-write tally logging (`LT_GLES_TALLY_BATCH`; limited comparison, keep off)
 
 Engine `20857608bb` adds default-off `LT_GLES_TALLY_BATCH=on`. Guest tools
 serial29/version1.1.27 recognize policy2 and format the same tally text into a
@@ -2356,14 +2356,71 @@ same scheduling, identity, policy, serial and lossless-trace checks passed.
 All tally texts/counters remain visible and show zero failed presents. The
 first pair's candidate mean/tail reduction does not repeat in the reversed
 pair. No repeatable local benefit, whole-game gain or hitch fix is established.
-Three ordinary pairs are running; do not infer their outcome from diagnostic
-FPS. Across the two focused pairs only, diagnostic mean59.200000→59.183333fps,
+Across the two focused pairs only, diagnostic mean59.200000→59.183333fps,
 hitches1→2 and full hitch time50.463906→100.835677ms per120s/mode.
+
+**Ordinary pair completed before wrap-up:** one60s/mode on/off pair,
+workers5524/6744, same frozen APK/serial29 and BQL150 configuration. All engine
+diagnostics, full accounting and user recording off; only the minimal frame
+publication log enabled. All four before/end scenes reviewed Jetpack title /
+Start profile off. Same active vCPU TID/nice0/CFS at each arm's boundaries;
+expected policies, good29 and unchanged/balanced BQL hook outcomes verified.
+
+| Ordinary title pair1 | Original fragments → single write |
+| --- | --- |
+| Mean fps | 59.033333 →59.333333 |
+| Ceiling / median / low fps | 60/60/56 →60/60/58 |
+| 1%low fps | 29.981169 →30.511933 |
+| Hitches >50ms / full duration ms | 1/50.461719 →0/0 |
+| Longest gap ms | 50.461719 →35.343229 |
+| Gaps >30ms | 56 →40 |
+| Skipped publications | 0 →0 |
+
+This pair favors batching by0.300fps (+0.51%), but a single pair does not
+establish repeatability, and the focused reversal did not repeat the local
+benefit. Keep the switch default off; no confirmed new gain or hitch fix.
+At the user's wrap-up request, remaining ordinary pairs2/3 were canceled after
+pair1 completed. SIGINT interrupted the next arm's process precheck, before
+its launch/window; runner exit130 is intentional. Its finally cleanup completed:
+clean Stop, no qemu processes, exact original debug-env restoration verified
+again independently. Six arms total completed (four focused, two ordinary),
+all twelve saved scenes reviewed. No comparison remains running.
 Raw arms/tallies/frames/logs/identity under
-`build/perf-codex/poco-tally-batch-focus-{1,2}-{off,on}/`; frozen build identity:
+`build/perf-codex/poco-tally-batch-focus-{1,2}-{off,on}/` and
+`build/perf-codex/poco-tally-batch-game-1-{off,on}/`; frozen build identity:
 `tally-batch-build-identity.json`. Reproduction runner/analysis:
 `tally-batch-run.py`/`tally-batch-analyze.py`. Offline `tallypath.py --mode batch`
 validates exact policy2 and preserves it in JSON. No tests added/run.
+
+#### Wrap-up: cadence and earlier audio work (offline leads, no new phone run)
+
+Fresh offline analysis of the four completed sparse tally captures finds
+52/51/45/47 held ticks and50/50/44/45 frontend gaps>30ms for pair1off/on,
+pair2off/on. Of adjacent held-tick spacings,17/51,22/50,23/44 and19/46 fall
+between88 and92 refresh ticks (about1.5s). This recurring cadence deserves
+comparison with guest producer submissions and audio/service work. It is not
+proof of a clock mismatch, a timer defect or one periodic cause; the remaining
+spacings and consecutive held ticks must also be explained.
+
+`poco-tally-batch-focus-2-off/late30.json` retains44gaps>30ms,43 with two
+refresh ticks and one with three; every interval has one pending framebuffer
+base write. Surface presents and LCD writes are distinct milestones, so this
+does not establish which presented image each refresh consumed.
+
+Looking back one additional frontend interval in the existing
+`poco-audio-queue-1/audio-stages.json`,48 of87gaps>30ms have selected-thread
+AAC running somewhere in the preceding+current interval;42 exceed5ms and28
+exceed10ms. Windows overlap and have variable length; these counts are not
+independent events, exclusive audio totals, proof of causality or an A/B result.
+AAC includes conversion. Both>50ms gaps still have no AAC in their previously
+matched producer intervals. Follow exact producer/queue boundaries before
+assigning a delay to audio. A next diagnostic should retain pre-hitch history
+and distinguish the repeatable cadence from service/logging outliers.
+
+Reproduce locally with `python3 build/perf-codex/wrapup-frame-leads.py`;
+`wrapup-frame-leads.json` retains exact windows/counts, held indices, audio
+look-back rows and input hashes. No new implementation or FPS improvement.
+Resume priorities and device/build state: [PERFORMANCE-HANDOFF.md](PERFORMANCE-HANDOFF.md).
 
 #### Focused profile of the preserved alignment-fault path
 

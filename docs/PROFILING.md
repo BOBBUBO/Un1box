@@ -1284,8 +1284,12 @@ exact tally text but writes it once to stderr and once to the host, instead of
 seven fragments. Quiet policy1 takes precedence if explicitly enabled.
 Default policy0 and unrecognized replies keep the original fragments. Older
 guests treat2 as unsuppressed original logging, so verify installed serial29.
-No present/counter/return value changes. The first focused pair completed;
-local candidate intervals improve, ordinary pacing benefit remains unmeasured.
+No present/counter/return value changes. Two focused pairs completed; the
+first pair's candidate benefit did not repeat in reversed order. One ordinary
+60s/mode pair favors batching59.033→59.333fps, hitches1→0, but does not
+establish repeatability. Remaining pairs were canceled at the user's wrap-up
+request after the first completed; clean Stop and exact baseline restored.
+Keep default off; full tables and limitations are in PERFORMANCE.md.
 
 Sparse `shim-tally` markers carry successes, failures, **policy0/1/2** in a/b/c.
 For focused timing run tallypath.py with `--mode batch` (policy2); `--mode off`
