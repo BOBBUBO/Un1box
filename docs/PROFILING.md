@@ -1173,3 +1173,41 @@ with missed refreshes therefore does not justify skipping them. Trace queue
 consumption next. The same capture also identifies Bluetooth-owned execution
 in10of13large hitches using actual post-window task enumeration, without syslog
 streaming; fresh HCI/startup evidence is still needed before changing that path.
+
+### Bluetooth startup and controller exchange
+
+Engine `deb39789e4` supports default-off `LT_BT_PATH=on` together with
+`LT_FRAME_PATH=/absolute/private/path/bt-path.tsv`. Keep user recording off.
+The existing deferred trace retains these events in a bounded40MiB buffer;
+pull it after clean Stop. It records metadata and reply prefixes only, never
+guest firmware command payloads. Controller/UART/timer behavior is unchanged.
+
+| Event | a | b | c |
+| --- | --- | --- | --- |
+| `bt-command` | HCI opcode | parameter byte count | configured latency ns |
+| `bt-queue` | reply chunk bytes | first8bytes, little-endian packed | pending bytes after queue |
+| `bt-flush` | bytes about to inject | first8bytes, little-endian packed | pending bytes before injection |
+| `bt-state`, a=0 | machine reset | partial command bytes | pending bytes before clearing |
+| `bt-state`, a=1 | UART backpressure | pending bytes | configured latency ns |
+| `bt-state`, a=2 | existing overflow/drop | requested bytes | pending bytes |
+
+The injection event is immediately **before** `qemu_chr_be_write`, not a
+measurement of completed UART/DMA handling or userspace receipt. Queue/injection
+events preserve the byte counts even when only a prefix is known.
+
+```sh
+python3 tools/perf/btpath.py CAPTURE/bt-path.tsv --json CAPTURE/bt-report.json
+```
+
+The analyzer requires a complete/lossless footer, checks queue/reset occupancy
+and known prefix agreement, pairs Command Complete opcodes/status and the
+minidriver announcement, and retains every command/reply with injection times,
+unmatched work, input hash and limits. It performs no device interaction.
+If guest syslog is needed, use a bounded `androidsyslog.py capture` from the
+same worker and retain its identity. Its receive timestamps can include a
+backlog, so they do not place message execution within a particular frame.
+
+The first two real captures are healthy startup references: prompt injections and
+successful initialization do not explain a different worker's failing startup.
+Use protocol captures to narrow the missing transition, then ordinary
+interleaved comparisons with diagnostics and user recording off to measure a fix.

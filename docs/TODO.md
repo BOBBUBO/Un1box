@@ -52,6 +52,21 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   largest gameplay hitch still needs its own matching scheduler trace.
 
 - [ ] Confirm Bluetooth-related work in the longest guest flip cycles.
+  Engine `deb39789e4` adds default-off LT_BT_PATH with bounded deferred HCI
+  command/reply-prefix/queue/UART-injection markers; Linux/Android builds pass.
+  First same-worker protocol capture poco-bt-path-1 is healthy: BTServer26
+  enters message loop,55commands/56reply chunks fully injected, no status/
+  backpressure/overflow/pending error; delay median2.028/max3.462ms.
+  Minidriver announcement present;8.916s command span.63,168lossless records,
+  user recorder off, cleanStop/no-qemu/exactbaseline. No FPS measurement/gain.
+  tools/perf/btpath.py retains complete exchange/input hash and unknown bytes.
+  Capture a failing exchange before changing replies or startup timing;
+  guest receipt/UART/scheduling after injection remains unobserved.
+  Second boot-only capture poco-bt-path-2 is also healthy:102,882lossless
+  records,55commands/56fully-injected chunks,median2.034/max2.577ms,
+  command span9.509s, same-worker BTServer26 enters message loop/no retry.
+  Helper reaches300s color-heuristic bound; final guest asleep, not gameplay.
+  No FPS measurement. Runner/analyzer exit0, cleanStop/exactbaseline verified.
   NEW poco-ca-path-1 reproduces large stalls with actual same-worker
   post-window ownership: BTServer82/BlueTool83. No syslog streaming.
   Across13>50ms gaps:284.919ms BTServer +38.382ms BlueTool running;

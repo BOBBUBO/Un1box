@@ -3347,6 +3347,62 @@ ca-path-run.py/analyze.py, ca-handoff.py, ca-gap-threads.py in build/perf-codex;
 ca-order calculation retained in ca-order.py. Ordinary A/B measurements remain
 diagnostic/user-recorder off. No new performance improvement; stable60 unmet.
 
+#### Bluetooth controller exchange (diagnostic; two healthy references)
+
+Engine `deb39789e4` adds default-off `LT_BT_PATH=on`, requiring an active
+`LT_FRAME_PATH`. It records command opcode/length, reply queue occupancy and
+the first eight reply bytes, the UART injection boundary, resets, backpressure
+and overflow. Guest firmware command payloads are never recorded. The bounded
+deferred buffer is 40 MiB in this mode and dumps after clean Stop. Controller
+responses, UART delivery, timers and migration behavior are unchanged. Linux
+and Android builds pass; no tests added/run. Frozen APK SHA256:
+`9006ed229a71ae27665ec606f55f57f04fb3860c00779820e9aee12766cd37d1`.
+
+First capture `build/perf-codex/poco-bt-path-1/`, worker13560, pairs the HCI
+exchange with a 30 s guest syslog relay from that same worker. Context/guest-PC/
+physical-mapping diagnostics, full accounting and user recording are off;
+BQL150us remains on. Both scenes reviewed as Jetpack title/Start profile off,
+guest tools good28. Clean Stop/no-qemu/exact debug-env restoration verified.
+63,168 complete records, no dropped/incomplete records or write error. Relay:
+31,505 bytes/20 chunks. This is a protocol diagnostic, **not an FPS measurement**.
+
+BTServer26 completes startup and enters its message loop; no retained hang or
+retry. All55commands have observed replies:45firmware writes, two each reset,
+baud-rate and sleep-mode, and one each minidriver download/launch/address/name.
+All56reply chunks complete injection, with no nonzero Command Complete status,
+backpressure, overflow or pending bytes. The minidriver's ASCII `00`
+announcement is queued and injected; its delay is2.037292ms. Across all chunks,
+queue-to-first-injection median2.027891/max3.462448ms. First-to-last command
+span8.916137s, with firmware-write commands spread over about7.3s. Long gaps
+between commands despite prompt controller injection need guest/UART scheduling
+evidence; injection is not proof of userspace receipt. This healthy boot does
+not explain the earlier Bluetooth-heavy hitches or prove a missing reply.
+Boot-time diagnostic overhead can also affect the guest's startup deadline.
+
+Second capture `poco-bt-path-2/`, worker14229, uses the same installed frozen
+APK for boot only. The helper's lock-screen color heuristic runs to its300s
+bound; the guest boots and sleeps, confirmed in the reviewed final scene.
+One Power wake was attempted during this wait, retaining the worker. This
+supplies protocol evidence only, not a game scene or measured frame window.
+30s same-worker relay retains23,120bytes/7chunks and successful BTServer26
+initialization/message loop, with no retained hang/retry.102,882complete
+records/no loss/incomplete/writeerror; identical55commands/56reply chunks,
+all replies injected, no status/backpressure/overflow/pending error.
+Queue-to-first-injection median2.034401/max2.577188ms; command span9.508527s.
+Runner and analyzer exit0; good28, user recorder off, clean Stop/no-qemu/exact
+baseline restoration confirmed. Both references are healthy, so **no failing
+exchange has been captured**. Keep the Bluetooth-execution lead open; do not
+change protocol delays or suppress services on this evidence.
+
+`tools/perf/btpath.py` validates complete/lossless trace records, reconstructs
+queue occupancy, compares retained queued/injected prefixes, pairs Command
+Complete replies and the minidriver announcement, and reports unmatched work,
+status and injection delays. It preserves unknown bytes beyond the prefix and
+partial injection/reset outcomes. Real-capture analysis succeeds; JSON retains
+the input hash, all commands/replies/state events and interpretation limits.
+Raw evidence, identity, scenes and decoded same-worker logs remain local.
+No optimization or new performance gain established; stable60 remains unmet.
+
 #### TLB refill RAM-pointer lookup (local saving, no hitch improvement established)
 
 Engine `54da21c185` adds independent default-off `LT_TLB_RAM_PTR_FAST=on`
