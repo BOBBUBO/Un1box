@@ -35,15 +35,30 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   decoder-free66.047ms gap with launchd/syslogd-associated execution. Both
   previous67ms decoder-free gaps also match tally intervals on existing data.
   Owner enumeration and direct log timestamps remain unproven; full evidence
-  and limitations in PERFORMANCE.md. Next: ordinary same-APK suppression A/B.
+  and limitations in PERFORMANCE.md. Ordinary suppression A/B below is mixed;
+  next use exact candidate timestamps.
 
-- [ ] Measure `LT_GLES_TALLY_QUIET=on` (default off), new guest tools serial28.
-  Suppress only periodic all-success tallies; preserve counters, first outcome,
-  failure history, CA/rendering behavior and old-host logging. Policy query
-  runs in both modes and can emit exact `shim-tally` diagnostic milestones.
-  Linux/Android and Mac guest-package builds pass; next install privately on
-  Poco and measure interleaved
-  ordinary Jetpack with relay/diagnostics/user recorder off. No gain claimed.
+- [x] Measure `LT_GLES_TALLY_QUIET=on` (default off), engine `14cead9c5e`,
+  guest tools serial 28. Suppress only periodic all-success tallies; counters,
+  first outcome, failure history, CA/rendering behavior and old-host logging
+  remain. Same APK/package, three ordinary 60 s pairs, off/on,on/off,off/on;
+  relay/diagnostics/user recorder off. Mean 52.07/53.33/53.78 →
+  54.17/53.07/53.73 fps; ceiling 58/58/58 → 58/58/58,
+  median 52/54/54 → 54/54/54, low 44/48/50 → 48/48/50,
+  1% low 21.02/28.31/27.82 → 28.43/28.18/28.31. Hitches 18/11/9 → 8/4/12;
+  durations 1325.7/558.9/488.6 → 439.4/220.4/637.7 ms per 60 s. Aggregate
+  53.06 → 53.66 fps (+1.1%), 38 → 24 hitches,
+  2373.3 → 1297.5 ms/180 s per mode,
+  dominated by the first baseline's long stalls. Mean loses two pairs and
+  pair 3's pacing worsens: no repeatable game/hitch benefit, keep off. All 12
+  scenes reviewed as title/Start profile off; zero skips, good 28 verdicts,
+  success tallies 18→1 each run. Clean Stop/no-qemu/baseline verified. Full
+  evidence and host-runner recovery note in PERFORMANCE.md. Pixel untouched.
+- [ ] Directly time periodic tally candidates using the existing `shim-tally`
+  milestones, before guest stderr writes. Compare candidate/ordinary intervals
+  with sparse frame-path captures; no syslog relay needed. The ordinary A/B
+  above is mixed and does not prove that the entire inferred 66–67 ms gap is
+  logging. Keep audio-conversion and host scheduling stalls separate.
 
 - [ ] Locate the first missed deadline in the frame path. Two Poco Jetpack title
   scheduler traces now align exact 60 s frame windows with vCPU states; user recorder,
@@ -299,10 +314,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   kernel work: four BSD syscalls and two scheduler switches per round trip, against two Mach traps
   with a direct handoff for the RPC. Left open only to compare with a real device.
 - [x] Install the quiet GL shim in place (engine `7f744e80cc`, guest tools serial 27).
-  Serial 27 is installed on both benchmark phones. Linux supports
+  Serial 27 reached both benchmark phones; Poco now has serial 28 for the
+  periodic-tally experiment above, while Pixel remains on serial 27. Linux supports
   `lighttouch-linux --library LIB --record ID --set-guest-package ITPACK`; Android has "Guest tools"
   on a stopped device (details below). A new record is not required.
-- [ ] Prepare guest tools for public distribution. Serial 27 remains private:
+- [ ] Prepare guest tools for public distribution. Serials 27/28 remain private:
   `contrib/appsync/appsync_cert.h` embeds an Apple certificate, and the `contrib/` guest sources
   lack license headers. Do not publish the package or firmware before resolving those issues.
 - [x] Guest package verdicts on Android and Linux. The portable runtime never told the guest's loader

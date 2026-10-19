@@ -2181,7 +2181,7 @@ reports and reviewed scenes. Reproduction: `guest-pc-report.py`,
 `guest-pc-insights.py`, `syslog-tally-report.py`; existing-capture ordinal report
 `prior-tally-ordinal-insights.json`, all under `build/perf-codex/`.
 
-#### Periodic success tally suppression (implementation, measurements pending)
+#### Periodic success tally suppression (`LT_GLES_TALLY_QUIET`)
 
 Engine `14cead9c5e` adds default-off `LT_GLES_TALLY_QUIET=on`, negotiating a
 narrow log policy with the
@@ -2193,9 +2193,53 @@ Both A/B modes use the same guest package and APK; the policy query is common
 to both and runs only at tally candidates. Optional `shim-tally` milestones
 record the query before its stderr writes, removing the ordinal-timing inference
 for future diagnostic captures. Linux/Android and Mac guest-package builds pass
-(including the package build's standard packaging checks). Ordinary Jetpack measurements must use no syslog relay, PC/fault/
-frame-path diagnostics or user recorder. No speedup claimed yet. Built guest
+(including the package build's standard packaging checks). Built guest
 packages remain private; only source changes are pushed.
+
+Ordinary measurements use frozen app `229acef1` / engine `14cead9c5e`, APK
+SHA-256 `6c87420b2bec48426123721703fdb781a471421e321ae1aa020d83b345a4a555`,
+and the same serial 28 package in both modes. The package was imported privately
+through Android's Guest tools action on the stopped Poco; installed bytes and
+record hash match the built package. Array caching stays on; exception-return,
+indirect-L2 and other experiments stay off. No syslog relay, selected-PC/fault/
+frame-path diagnostics, full accounting or user recorder. Minimal publication
+logging (`LT_FRAME_LOG`) supplies metrics. Three 60 s pairs run off/on, on/off,
+off/on on the Snapdragon 865-class Poco. Each window is 60 s:
+
+| Pair | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 52.07 → 54.17 | 58.00 → 58.00 | 52.00 → 54.00 | 44.00 → 48.00 | 21.02 → 28.43 | 18 (1325.7 ms) → 8 (439.4 ms) |
+| 2 | 53.33 → 53.07 | 58.00 → 58.00 | 54.00 → 54.00 | 48.00 → 48.00 | 28.31 → 28.18 | 11 (558.9 ms) → 4 (220.4 ms) |
+| 3 | 53.78 → 53.73 | 58.00 → 58.00 | 54.00 → 54.00 | 50.00 → 50.00 | 27.82 → 28.31 | 9 (488.6 ms) → 12 (637.7 ms) |
+
+Aggregate mean **53.06 → 53.66 fps (+1.1%)**, hitches **38 → 24** and full
+long-frame duration **2373.3 → 1297.5 ms per 180 s per mode**. These aggregate
+changes are dominated by the first baseline's unusually long stalls. Mean fps
+loses in two pairs; ceiling is 58 throughout. Pair 3's hitch count and duration
+worsen. Pair 1's maximum 133.718 ms falls to 66.562 ms, but the other off runs
+already peak at 53.363/67.642 ms versus 68.464/66.154 ms on. Many counted hitches
+are close to the 50 ms threshold. **No repeatable throughput or general hitch
+fix is established; keep the switch off.** The ordinal logging correlation
+remains a lead, rather than a proven explanation for the entire large gap.
+Next use exact pre-log `shim-tally` milestones and per-candidate intervals to
+separate logging cost from coincident audio/scheduling work.
+
+All 12 before/end screenshots reviewed: Jetpack title, Start profile off. All
+six windows have zero skipped publications. Every boot retains `good 28`;
+off logs 18 all-success tallies per run versus only the first tally on. Expected
+mode banners verified, full accounting and focused diagnostics absent. Clean
+Stop/no-qemu and baseline environment readback verified; suppression is off.
+Pixel untouched. No tests added/run; builds and real-device measurements only.
+
+The first on run's host runner exited 143 after the complete 60 s frame log and
+chart were saved. Its full window was retained; the same still-running worker's
+scene/log/mode/verdict were recovered before clean Stop. No partial timing
+window was used. The remaining reversed/interleaved pairs completed normally.
+Evidence: `build/perf-codex/poco-tally-quiet-{1,2,3}-{off,on}/`, frozen
+`tally-quiet-build-identity.json`, exact bounds and every hitch end/duration in
+`tally-quiet-results.json`; reproduce with `tally-quiet-analyze.py`.
+Reviewed `tally-quiet-scenes.png` and `tally-quiet-frame-gaps.png` preserve all
+arms, including pair 1's outlier baseline. Built guest packages remain private.
 
 ### Measured and rejected
 
