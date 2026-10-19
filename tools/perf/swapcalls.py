@@ -44,7 +44,7 @@ def main():
     entries = config['points']
     if (not 1 <= len(entries) <= 32 or len({e['pc'] for e in entries}) != len(entries) or
             not any(e['role'] == 'switch' for e in entries) or
-            any(e['role'] not in {'entry', 'exit', 'surface-id', 'switch', 'enqueue'} or
+            any(e['role'] not in {'entry', 'exit', 'surface-id', 'switch', 'enqueue', 'observation'} or
                 not 0 <= e['pc'] <= 0xffffffff or not e['name'] or
                 (not e['pc'] & 1 and e['pc'] & 3) for e in entries)):
         ap.error('invalid selected point manifest')

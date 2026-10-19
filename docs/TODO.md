@@ -52,6 +52,16 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   largest gameplay hitch still needs its own matching scheduler trace.
 
 - [ ] Confirm Bluetooth-related work in the longest guest flip cycles.
+  NEW poco-ca-path-1 reproduces large stalls with actual same-worker
+  post-window ownership: BTServer82/BlueTool83. No syslog streaming.
+  Across13>50ms gaps:284.919ms BTServer +38.382ms BlueTool running;
+  10gaps contain>5ms Bluetooth-owned execution. Largest166.135ms gap
+  includes83.682ms Bluetooth execution,164.009ms host running. Gaps ending
+  45.116837/55.867064s include42.686/44.548ms. Lifetime continuity caveat;
+  no fresh logs or function attribution from this worker, so controller
+  failure/restarts unproven. Next capture fresh startup/HCI responses to
+  resolve the roughly10–11s activity clusters; preserve daemon behavior.
+  Full evidence/identity/metrics in PERFORMANCE.md and gap-threads.json.
   Follow-up poco-guest-bluetooth-1 complete: fresh same-worker65s relay,
   19tasks/139live threads all direct-owner matches, detached after timing.
   Healthy boot: BTServer26 completes init/no retained retry and remains26;
@@ -99,6 +109,23 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   state totals. No cause or ordinary performance gain proven.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
+  NEW CA callback capture supersedes the hypothesis that secondary-only swaps
+  themselves cause misses. Same frozenAPK,27pinnedPCs, no guest update needed.
+  1680547lossless records/438791triplets, complete scheduler/clockspread53ns,
+  worker10898/vCPU11072,sameTID/nice0/CFS,good28,bothscenes title/profileoff,
+  snapshot detached,cleanStop/no-qemu/exactbaseline. Diagnostic57.767fps,
+  ceiling60,median58,low50,1%low29.560,13hitches/1017.598ms,zero skips;
+  no A/B gain/overhead claim. All3466fresh flips have one matching ordered
+  callback/insert and equal callback IOSurfaceGetID/layer ID. Of3570complete
+  transactions,3466have primary-change flag2;104secondary-only have flag0;
+  all retain the primary descriptor. Of93heldcycles81follow secondary-only,
+  0/3373normal cycles do; in all81 the callback completes AFTER the earlier
+  compositor flags decision (median6.396ms). Do not skip those transactions.
+  Of134heldticks90follow callback completion but precede new layer setup,
+  40precede write completion. Next trace image-queue consumption/update
+  eligibility against producer callbacks. Larger Bluetooth outliers separate,
+  see above; Pixel's old214ms hitch remains unresolved. Pinned manifest
+  n72-7e18-ca-points.json; raw ca-summary/ca-order/gap-threads evidence retained.
   NEW swap-path capture: same frozenAPK/engine2898270eb9, recorderoff,
   no syslog streaming; physical mapping +20guest points +host scheduler.
   1384698lossless records/344565valid triplets, complete scheduler/clockspread364ns.

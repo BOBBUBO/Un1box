@@ -1154,3 +1154,22 @@ proof of runnable state or exact queue residence. Physical backing, layer IDs,
 CA eligibility and pixel-generation identity are distinct. In particular, the
 newly observed secondary-layer-only transactions correlate with missed refreshes
 but must be traced back to the CA notification path before changing behavior.
+
+The follow-up manifest `n72-7e18-ca-points.json` traces QuartzCore's actual
+native_window_swap callback (verified at drawable+0x10 in its constructor),
+IOSurfaceGetID inside that callback, CAImageQueueInsertImage, native buffer
+acquisition and display begin/finish/primary-state branches. Pass it with
+`swapcalls.py --points tools/perf/n72-7e18-ca-points.json`; firmware hashes
+remain pinned. Observation-only points stay in guest-points.json for branch
+and ordering analysis; they are not paired API calls or void-function results.
+The callback's IOSurfaceGetID is separate from the older SetLayer observations
+of CoreSurfaceBufferGetID. Both IDs agree for all3466 observed fresh flips in
+poco-ca-path-1, with one ordered callback/insert association each.
+
+That capture finds primary-state flag0 with the descriptor retained in all104
+secondary-only transactions. In all81 matching held cycles the producer callback
+finishes after the previous compositor primary-state decision. Their association
+with missed refreshes therefore does not justify skipping them. Trace queue
+consumption next. The same capture also identifies Bluetooth-owned execution
+in10of13large hitches using actual post-window task enumeration, without syslog
+streaming; fresh HCI/startup evidence is still needed before changing that path.

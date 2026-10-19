@@ -3265,6 +3265,88 @@ splits and present associations from the real capture exactly. Revised
 audio-swap-timeline.png/svg visualizes the45ms example. No tests added/run;
 ordinary A/B benchmarks continue with user recording and diagnostics off.
 
+#### CoreAnimation notification and Bluetooth-owned execution (capture complete)
+
+Follow-up `poco-ca-path-1/` uses the **same frozen surface-map.apk**, with no
+new engine/guest build. Matching QuartzCore symbols/disassembly identify
+`native_window_swap` at0x31bed1cc; the nativeWindow constructor stores it in
+drawable+0x10. Thus selected PCs can trace the actual notification without a
+guest shim update. New pinned27point manifest
+`tools/perf/n72-7e18-ca-points.json` adds that callback, its IOSurfaceGetID,
+CAImageQueueInsertImage, native buffer acquisition, display begin/finish and
+the primary-descriptor/flag branches; removes unused SwapSurface/SwapSignal
+points. `swapcalls.py` accepts observation-only points; their raw arguments
+remain in guest-points.json, without treating void epilogues as success results.
+
+Worker10898/vCPU11072, sameTID/nice0/CFS, good28, both scenes reviewed as
+Jetpack title/Startprofileoff. BQL150us on, physical mapping/context/guestPC/
+host scheduler tracing on, unrelated diagnostics/full accounting/user recorder
+off. No guest syslog streaming during or after capture. Post-window task/thread
+snapshot detached; clean Stop/no-qemu/exact baseline restoration verified.
+Runner and all four initial analyzers plus API/CA/ownership analyses exit0.
+1,680,547 complete records/no loss/incomplete/writeerror;438,791 valid guest
+triplets (252,147 window), full scheduler coverage/no errors/loss/initial-state
+exception, clockspread53ns. Diagnostic mean57.767,ceiling60,median58,low50,
+1%low29.560,13hitches/1017.598ms,zero skips. No A/B gain/overhead comparison.
+
+3488successful contiguous-mapped writes;3466fresh flips (3444single/22multiple).
+Every flip has exactly one ordered same-thread native-swap callback and one
+image insertion; callback IOSurfaceGetID matches the later layer ID for all3466.
+All3488window callback and insert result observations are1. Native-swap
+median0.305364/max20.383229ms; nested insertion0.282839/20.346459ms; native
+buffer acquisition0.1661195/31.363386ms. These elapsed times include guest
+switches/host scheduling, not just CPU cost of each function.
+
+**The extra transactions are a symptom of stale primary state at the
+compositor's decision boundary, not evidence for skipping a swap.** All3570
+complete window transactions retain a primary descriptor:3466nonnull-layer
+transactions observe flag byte+0xcc=2,104secondary-layer-only transactions
+observe0. None take the descriptor-absent branch during timing. Of93held-refresh
+cycles,81follow a secondary-only transaction;12follow a nonnull one;
+0/3373normal cycles follow a secondary-only one. In **all81** matching cases,
+the game callback finishes **after** that earlier compositor flag observation
+(median6.396ms, range0.603–104.371ms), and after its begin_update/finish_update
+entry. Callback entry and image-insertion entry/end are also after the
+previous flag observation in all81cases. A completed GL write is earlier than
+this notification. This ordering
+does not establish when the server consumes the queue or why scheduling has
+this phase. Do not treat these transactions as an independent bug to bypass.
+
+There are134repeated refresh ticks:40before the matching write completes,
+90after callback completion but before the new layer setup,1inside insertion,
+1after layer setup starts/before SwapEnd,2after SwapEnd starts/before flip.
+The next common-miss probe is the compositor's image-queue consumption and
+update eligibility, with these producer timestamps retained.
+
+**Larger hitches reproduce Bluetooth-owned execution without syslog
+streaming.** Actual same-worker post-window task enumeration maps threads to
+BTServer82/BlueTool83, jetpack55, SpringBoard21 (thread lifetime continuity is
+still required). Across the13>50ms publication gaps, selected-thread running
+time includes284.919ms BTServer and38.382ms BlueTool, versus278.119ms jetpack,
+97.765ms mediaserverd,86.263ms launchd and73.081ms SpringBoard. Ten of13gaps
+contain more than5ms Bluetooth-owned execution. Largest examples:
+
+| Gap ending s | Gap ms | Host running ms | BTServer + BlueTool running ms |
+| --- | --- | --- | --- |
+| 23.783722 | 166.134531 | 164.008541 | 83.681718 |
+| 45.116837 | 100.515469 | 98.813385 | 42.685780 |
+| 55.867064 | 99.883333 | 95.059218 | 44.548126 |
+
+These are actual observed owners, stronger than the earlier pmap-only
+association. They identify a major source of guest execution during outliers,
+not the precise function, a proven daemon restart, or the controller failure.
+No fresh guest log was taken from this worker. The roughly10–11s clusters and
+source's known boot-script retry path motivate a separate HCI/startup capture;
+do not transfer an older worker's logs or suppress the daemons to claim a fix.
+
+Evidence: raw trace/frames/milestones/guest points/identity/scenes and detached
+ownership snapshot under poco-ca-path-1; swap-report.json, ca-summary.json,
+ca-order.json and gap-threads.json retain API associations, branch arguments,
+ordering and per-hitch owner execution with input hashes. Reproduction scripts
+ca-path-run.py/analyze.py, ca-handoff.py, ca-gap-threads.py in build/perf-codex;
+ca-order calculation retained in ca-order.py. Ordinary A/B measurements remain
+diagnostic/user-recorder off. No new performance improvement; stable60 unmet.
+
 #### TLB refill RAM-pointer lookup (local saving, no hitch improvement established)
 
 Engine `54da21c185` adds independent default-off `LT_TLB_RAM_PTR_FAST=on`
