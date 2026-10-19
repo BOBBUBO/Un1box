@@ -5,14 +5,41 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
-- [ ] Attribute residual BQL spin fallbacks. Engine32d6f75762 adds default-off
+- [x] Attribute residual BQL spin fallbacks. Engine32d6f75762 adds default-off
   LT_BQL_FALLBACK_PROF=on with BQLspinON and native conditions trace. Time only
   the original blocking acquisition after50us budget, retaining source site;
   preserve hooks, no timers on common lock paths. Existing nativewaits.py joins
-  spans; deferred counts confirm activity, >=10us retention. Builds pass;
-  first capture pending. This targets105unassigned long intervals/184.173ms
-  in the conditions+AHB >30ms report, without asserting their cause in advance.
-  No new speedup; ongoing idle comparison uses its original frozen APK.
+  spans; deferred counts confirm activity, >=10us retention. Builds/capture and
+  all four real analyzers complete, worker12563/vCPU12721. BQLon,idleoff,
+  conditions/fallback/AHB+scheduler diagnostics on, user recorder off.164832
+  complete milestones,21584completed/21354retained native waits/eight sites,
+  no loss/overflow, hooks unchanged, clock spread104ns. Both scenes title/profileoff,
+  nice0/CFS/sameTID,good28,Stop/no-qemu/exactbaseline verified.
+  Diagnostic mean56.867,ceiling62,median58,low50,1%low28.371;
+  3hitches/152.955ms (50.046/51.582/51.327ms),zero skips. No A/B gain/overhead claim.
+  All10selected >=1ms runnable intervals in >50ms gaps enclosed:4/6.465ms BQL
+  interrupt checks,6/9.234ms guestidle condition. >30ms:180gaps/392intervals:
+  170/283.959ms BQL,178/274.262ms condition,41/48.766ms glFinish,2/3.001ms map,
+  1/2.586ms unmatched (no wake event,frontend on next CPU).163/170BQL matches
+  have exact precedingS:median64.167us,153under100us after existing50usspin.
+  Whole-window BQL2884calls/2647.332ms,2323.452msR/286.281msS/37.600msrunning;
+  condition4503calls/6998.533ms,3560.311msR/3379.732msS/58.490msrunning.
+  Most selected wake-target occupancy is idle task; precise wake mechanism /
+  lock owner unproven. Three standard hitches still84.35% running, so enclosure
+  is not a complete hitch explanation. Next follow guest execution to the next
+  framebuffer flip across preceding intervals; a larger BQL budget is supported
+  by the wait measurements, with its benefit unmeasured. Idle spin stays rejected.
+  Full evidence/hashes/sleeps poco-bql-fallback-1/, PERFORMANCE.md. Pixel's
+  largest gameplay hitch still needs its own matching scheduler trace.
+
+- [ ] Explain the remaining execution time before delayed framebuffer flips.
+  The latest Poco capture's three >50 ms gaps contain 129.017 ms running
+  (84.35%), 16.978 ms runnable and 6.960 ms sleeping. Follow the guest work
+  across preceding frame intervals to the next flip; native wait enclosure
+  alone does not explain this execution. Separately, residual BQL sleeps
+  support considering a larger spin budget, with ordinary A/B still required.
+  Capture the Pixel's confirmed gameplay hitches with a matching scheduler
+  trace when it reconnects; the Poco title findings do not establish their cause.
 
 - [x] Measure bounded vCPU0 idle spin (`357fc83aba`, default-off LT_IDLE_SPIN=on).
   Conditions-only capture identifies85long in-gap runnable intervals/133.472ms

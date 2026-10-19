@@ -2808,7 +2808,7 @@ reports/charts, `summary.json/txt` with preceding-sleep samples and input hashes
 `condition-wait-summary.py` reproduces combined attribution; nativewaits.py and
 ahbpath.py processed the real capture. No test suites added/run; Pixel untouched.
 
-#### Blocking BQL fallbacks with spin active (first capture pending)
+#### Blocking BQL fallbacks with spin active (capture complete)
 
 The conditions+AHB capture above leaves105long runnable intervals/184.173ms
 outside traced calls in >30ms gaps. Engine `32d6f75762` adds default-off
@@ -2823,10 +2823,87 @@ The deferred bql-fallback line separately counts all timed blocking calls and
 confirms whether tracing was active. Refuse attribution if the trace/hooks or
 completion counters fail validation.
 
-Linux/Android builds pass. First phone capture remains pending; no new speedup
-or ordinary ceiling/median/low/1%low/hitch count/duration result. The running
-idle-spin comparison retains its earlier frozen APK without this diagnostic.
-This does not alter either spin budget. No tests added/run.
+Linux/Android builds pass. The idle-spin comparison completed separately with
+its original frozen APK and was rejected below. This diagnostic changes neither
+spin budget. No tests added/run.
+
+**Combined capture complete:** Snapdragon 865-class Poco F3, Jetpack title,
+worker12563/vCPU12721. Frozen bql-fallback.apk, app sourcec584e1fd /
+engine32d6f75762, SHA256
+`abfe277ea5897fb5ff449a58f148f17ddca6d57d0b272d3aa3b7be69c5e2ea09`.
+BQL spin on, idle spin off; conditions/fallback/AHB stages plus sparse milestones
+and scheduler/IRQ/idle trace on. Other diagnostics/accounting/user recorder off.
+Both scenes reviewed as title/Start profile off, same TID/nice0/CFS at both
+boundaries, good28 verdict. Clean Stop/no-qemu/exact baseline restoration
+confirmed; own phone trace and milestone file removed after pulling.
+
+All164832 milestones complete, no drops/incomplete/late publications/write
+errors; all3489 in-window presents and map/unmap operations succeed. Native
+waits21584 completed/21354 retained, eight sites, no site overflow, hooks
+unchanged. Whole-worker BQL113902 contentions=106145 spin successes+7757
+fallbacks; all7757 fallback calls timed with tracing active. These counts
+include boot/settling, not only the60s frame window. Trace has complete coverage,
+no error/data loss, MONOTONIC alignment spread104ns, no initial-state exception.
+
+Diagnostic mean56.867,ceiling62,median58,low50,1%low28.371,zero skips;
+three >50ms gaps totaling152.955ms:3.135s/50.046ms,14.251s/51.582ms,
+53.251s/51.327ms. This is neither a speed comparison nor an overhead estimate.
+Whole-window vCPU:48980.966ms running,4355.366ms S,6662.868ms R,
+0.779ms R+,0.021ms D.
+
+| Native waits clipped to60s | Calls>=10us | Wall ms | Running ms | Sleeping ms | Runnable R ms |
+| --- | --- | --- | --- | --- | --- |
+| Blocking BQL after50us spin | 2884 | 2647.332 | 37.600 | 286.281 | 2323.452 |
+| Guest idle condition, including mutex reacquisition | 4503 | 6998.533 | 58.490 | 3379.732 | 3560.311 |
+
+All ten selected>=1ms runnable intervals inside the three >50ms gaps are now
+enclosed by traced native waits: four/6.465ms blocking BQL acquisitions at
+`cpu_handle_interrupt` (cpu-exec.c:1331) and six/9.234ms guest idle conditions
+(cpus.c:481). Every wake target runs its idle task throughout these intervals.
+The BQL waits have preceding S states52.291–77.604us,median69.480us; conditions
+2.344–205.833us,median166.328us. Enclosure identifies the waiting operation;
+it does not establish the exact kernel/firmware wake mechanism or lock owner.
+
+Separate >30ms analysis has180gaps/392selected runnable intervals:
+
+| Enclosing operation | Intervals | Runnable ms |
+| --- | --- | --- |
+| Blocking BQL after spin | 170 | 283.959 |
+| Guest idle condition | 178 | 274.262 |
+| glFinish | 41 | 48.766 |
+| AHardwareBuffer_lock | 2 | 3.001 |
+| Outside traced calls | 1 | 2.586 |
+
+Of170 BQL matches,151 are interrupt checks, nine MMIO loads, three MMIO stores,
+seven timer register accesses.163 have exact preceding S states:median64.167us,
+min1.823,max1051.719;36under50us,153under100us,158under250us. Seven matches do
+not have an exact preceding-sleep boundary. Nearly all wake-target occupancy is
+idle task; only0.504ms of BQL matched runnable time overlaps another task.
+The single unmatched interval has no wake event/target, with the frontend
+occupying its next-running CPU7 for2.586ms; retain that missing wake evidence.
+The old105unassigned intervals are from a different capture, so do not claim
+these are the same intervals or a measured reduction in unknown time.
+
+**Remaining causal limit:** the three >50ms gaps contain129.017ms running
+(84.35%),16.978ms runnable and6.960ms sleeping. Native wait enclosure accounts
+for the long wake intervals, not the full hitch. Milestones show late engine
+publication, with frontend lag0.237–0.566ms at the boundaries;2/1/3 host presents
+occur within the gaps and their maximum calls are0.417/0.314/2.200ms. Different
+presents, framebuffer flips and changed pixels remain distinct events. Follow
+guest work and the next framebuffer flip across preceding frame intervals to
+explain the execution component. A larger BQL spin budget is now a supported
+candidate (many sleeps are under100us after the existing50us spin), not an
+established improvement; ordinary interleaved comparisons would still be needed.
+The rejected idle-spin result must not be overridden by condition attribution.
+
+Evidence: `build/perf-codex/poco-bql-fallback-1/`, retaining identity, full trace,
+exact frames, engine/sites log, reviewed scenes, hitch/native/stages/milestones
+reports at50ms and separately30ms, `summary.json/txt` with source counts,
+every preceding-sleep sample, wake-target occupancy and raw input hashes.
+Runner bql-fallback-run.py; bql-fallback-summary.py reproduces combined results.
+All four real analyzers completed successfully. No tests added/run; Pixel
+disconnected/untouched. Its214.5ms gameplay gap still lacks a matching scheduler
+trace and is not explained by these Poco title results. No new performance gain.
 
 #### Bounded vCPU0 idle spin (ordinary comparison complete; rejected)
 

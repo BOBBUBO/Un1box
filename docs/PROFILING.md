@@ -711,7 +711,14 @@ time spent spinning. The same nativewaits.py report handles these spans. Both
 hook pointers remain intact. Validate the deferred bql-fallback call count and
 trace status, native completion and hook state; the10us retention threshold
 still excludes short calls. No clocks are added to common acquisitions. Builds
-pass; the first combined fallback capture is pending. Keep off for ordinary FPS.
+pass; the combined capture and all analyzers completed. In its three >50ms gaps,
+all ten selected>=1ms runnable intervals are inside blocking BQL acquisition
+or the guest idle condition. These gaps still contain84.35% running time;
+wait enclosure does not explain the full hitch. Full counts, preceding sleep
+samples, missing evidence and diagnostic frame metrics are in PERFORMANCE.md.
+Keep off for ordinary FPS. For the remaining running component, follow guest
+work and the next framebuffer flip across preceding frame intervals. The
+earlier Pixel gameplay gap still requires its own matching scheduler trace.
 
 `LT_GLES_PRESENT_PROF=on` (engine `5b38fec1df`) independently times surface presentations. It defaults
 off and needs neither the manual recorder, `IT_GLES_PROF`, nor full accounting.
