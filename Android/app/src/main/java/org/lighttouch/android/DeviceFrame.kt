@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -62,7 +63,8 @@ internal data class DeviceSkin(
  * held, so the power-off slider and screenshots work as on hardware).
  */
 @Composable
-internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boolean) -> Unit, screen: @Composable (Modifier) -> Unit, modifier: Modifier = Modifier) {
+internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boolean) -> Unit, screen: @Composable (Modifier) -> Unit,
+                         modifier: Modifier = Modifier, haptics: Boolean = true) {
     BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
         // Leave room around the body for the protruding side buttons.
         val margin = 3f
@@ -75,17 +77,19 @@ internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boole
             Triple(GuestButton.POWER, "Sleep/Wake", floatArrayOf(margin + skin.width * 0.62f, margin - 1.4f, skin.width * 0.2f, 2f)),
             Triple(GuestButton.VOLUME_UP, "Volume up", floatArrayOf(margin - 1.3f, margin + skin.height * 0.13f, 2f, side)),
             Triple(GuestButton.VOLUME_DOWN, "Volume down", floatArrayOf(margin - 1.3f, margin + skin.height * 0.21f, 2f, side)))
-        val haptic = LocalHapticFeedback.current
+        val feedback = LocalHapticFeedback.current
+        val haptic = { if (haptics) feedback.performHapticFeedback(HapticFeedbackType.LongPress) }
         Box(Modifier.size(mm(skin.width + 2 * margin), mm(skin.height + 2 * margin))) {
             for ((_, _, r) in buttons)
                 Box(Modifier.offset(mm(r[0]), mm(r[1])).size(mm(r[2]), mm(r[3])).background(Brush.linearGradient(skin.rim), RoundedCornerShape(mm(0.8f))))
             val body = RoundedCornerShape(mm(skin.corner))
             Box(Modifier.offset(mm(margin), mm(margin)).size(mm(skin.width), mm(skin.height))
+                .shadow(mm(4f), body, ambientColor = Color.Black, spotColor = Color.Black)
                 .background(Brush.linearGradient(skin.rim), body).padding(mm(0.7f))
                 .background(skin.face, RoundedCornerShape(mm(skin.corner - 0.7f)))) {
                 screen(Modifier.offset(mm(skin.screenLeft - 0.7f), mm(skin.screenTop - 0.7f)).size(mm(skin.screenWidth), mm(skin.screenHeight)))
                 HomeButton(Modifier.offset(mm(skin.width / 2 - skin.homeDiameter / 2 - 0.7f), mm(skin.homeCenterY - skin.homeDiameter / 2 - 0.7f))
-                    .size(mm(skin.homeDiameter)), enabled, button)
+                    .size(mm(skin.homeDiameter)), enabled, button, haptic)
             }
             // A drawn side button is a few millimetres; its touch target is at least 48dp, centred on it.
             for ((id, label, r) in buttons) {
@@ -93,13 +97,13 @@ internal fun DeviceFrame(skin: DeviceSkin, enabled: Boolean, button: (Int, Boole
                 Box(Modifier.offset(mm(r[0] + r[2] / 2) - w / 2, mm(r[1] + r[3] / 2) - h / 2).size(w, h)
                     .semantics { contentDescription = label; role = Role.Button }
                     .testTag("device_" + label.lowercase().replace(Regex("[^a-z]+"), "_"))
-                    .held(enabled, id, button) { haptic.performHapticFeedback(HapticFeedbackType.LongPress) })
+                    .held(enabled, id, button, haptic))
             }
         }
     }
 }
 
-private fun Modifier.held(enabled: Boolean, id: Int, button: (Int, Boolean) -> Unit, haptic: () -> Unit) =
+internal fun Modifier.held(enabled: Boolean, id: Int, button: (Int, Boolean) -> Unit, haptic: () -> Unit) =
     pointerInput(enabled, id) {
         if (!enabled) return@pointerInput
         detectTapGestures(onPress = {
@@ -109,13 +113,12 @@ private fun Modifier.held(enabled: Boolean, id: Int, button: (Int, Boolean) -> U
     }
 
 @Composable
-private fun HomeButton(modifier: Modifier, enabled: Boolean, button: (Int, Boolean) -> Unit) {
-    val haptic = LocalHapticFeedback.current
+private fun HomeButton(modifier: Modifier, enabled: Boolean, button: (Int, Boolean) -> Unit, haptic: () -> Unit) {
     val ring = with(LocalDensity.current) { 1.dp }
     Box(modifier.semantics { contentDescription = "Home"; role = Role.Button }.testTag("device_home")
         .background(Brush.radialGradient(listOf(Color(0xFF1C1C1E), Color(0xFF050505))), CircleShape)
         .border(ring, Color(0xFF3A3A3C), CircleShape)
-        .held(enabled, GuestButton.HOME, button) { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+        .held(enabled, GuestButton.HOME, button, haptic),
         contentAlignment = Alignment.Center) {
         BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Box(Modifier.size(maxWidth * 0.34f).border(ring, Color(0xFF8E8E93), RoundedCornerShape(maxWidth * 0.08f)))

@@ -7,31 +7,23 @@ import android.provider.MediaStore
 import org.json.JSONObject
 import android.os.*
 import android.content.pm.ActivityInfo
+import android.view.KeyEvent
 import android.view.WindowInsets as PlatformInsets
 import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.text.style.TextOverflow
-import java.util.Locale
+import androidx.core.view.WindowCompat
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -39,50 +31,71 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-class MainActivity : ComponentActivity(), SensorEventListener {
+class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var engine by mutableStateOf<IEngine?>(null)
-    private var status by mutableStateOf("Stopped")
+    override var status by mutableStateOf("stopped")
+        private set
     private var detail by mutableStateOf("")
-    private var displayAsleep by mutableStateOf(false)
-    private var error by mutableStateOf("")
+    override var displayAsleep by mutableStateOf(false)
+        private set
+    override var error by mutableStateOf("")
+        private set
     private val workerEvidenceDelivery = SessionDeliveryGate()
     private var workerPid by mutableIntStateOf(0)
-    private var sessionOwned by mutableStateOf(false)
+    override var sessionOwned by mutableStateOf(false)
+        private set
     private data class GuestStartRequest(val recordId: String, val coldRecovery: Boolean)
     private var pendingGuestRequest: GuestStartRequest? = null
     private var pendingGuestStart = false
     private var guestStartRequested = false
     private var engineExpectedExit = false
     private var engineRestarting = false
-    private var busy by mutableStateOf(false)
-    private var captureNotice by mutableStateOf("")
-    private var profileRecording by mutableStateOf(false)
-    private var profileBusy by mutableStateOf(false)
-    private var profileNotice by mutableStateOf("")
+    override var busy by mutableStateOf(false)
+        private set
+    /** A passing message (screenshot saved, device renamed), shown as a snackbar. */
+    private var notice by mutableStateOf("")
+    override var profileRecording by mutableStateOf(false)
+        private set
+    override var profileAutomatic by mutableStateOf(false)
+        private set
+    override var profileBusy by mutableStateOf(false)
+        private set
+    override var profileNotice by mutableStateOf("")
+        private set
     private var licensesOpen by mutableStateOf(false)
-    private var performanceOpen by mutableStateOf(false)
-    private var performanceData by mutableStateOf<Bundle?>(null)
-    private var performanceUnavailable by mutableStateOf(false)
-    // Observation identity only; this grants no input/display/control authority.
-    private var performanceEpoch = SystemClock.elapsedRealtimeNanos()
-    private var performanceInFlight = false
-    private var performanceNowMs by mutableLongStateOf(0L)
-    // Guest frames per 250 ms over the last 60 s, from the engine process; null when not running.
-    private var guestFrameBuckets by mutableStateOf<IntArray?>(null)
+    private var devicesOpen by mutableStateOf(false)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
-    private var storeOpen by mutableStateOf(false)
     private val store by lazy { StoreModel(applicationContext) { muxSocket.ifEmpty { null } } }
     private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) store.installLocal(uri) }
     // board-build -> (product type, iOS version), from the bundled firmware catalog.
     @Volatile private var firmwareTargets: Map<String, StoreTarget> = emptyMap()
-    private var fullscreen by mutableStateOf(false)
-    private var tiltEnabled by mutableStateOf(true)
+    private var catalogVersion by mutableIntStateOf(0)
     // Hardware buttons are Binder calls; one thread keeps down/up ordered and off the UI thread.
     private val buttonCalls = Executors.newSingleThreadExecutor { Thread(it, "guest-buttons") }
-    private var devices by mutableStateOf<List<Bundle>>(emptyList())
-    private var selected by mutableStateOf<Bundle?>(null)
-    private var deviceMenu by mutableStateOf(false)
+    private var records by mutableStateOf<List<Bundle>>(emptyList())
+    private var recordsLoaded by mutableStateOf(false)
+    override val devices: List<DeviceSummary> get() { catalogVersion; return records.map { DeviceSummary.of(it, firmwareTargets) } }
+    override val selected: DeviceSummary? get() = devices.firstOrNull { it.selected }
+    override val settings by lazy { AppSettings(this) }
+    private val monitor = PerformanceMonitor { engine }
+    override val perf: PerfSnapshot get() = monitor.snapshot
+    override val storeInstalling get() = store.installing
+    // Save & Stop needs the engine to serialize live GL state on EGL hosts (docs/TODO.md).
+    override val canSaveState = false
+    /** HOME or FULLSCREEN: what is under any full-page overlay. */
+    private var base by mutableStateOf(Screen.HOME)
+    /** LOADING, SETUP, SETTINGS, STORE or HITCH drawn over [base]; null shows the guest. */
+    private var overlay by mutableStateOf<Screen?>(Screen.LOADING)
+    private val setup = SetupState()
+    private var hitchData by mutableStateOf<HitchData?>(null)
+    private var hitchError by mutableStateOf<String?>(null)
+    private var hitchSaving by mutableStateOf(false)
+    private var hitchNotice by mutableStateOf<String?>(null)
+    private var hitchReport by mutableStateOf<Uri?>(null)
+    private var hitchResume = false
+    // The guest was running when LightTouch left the screen; resume it on return (settings.autoResume).
+    private var pausedByBackground = false
     private var firmware: IFirmware? = null
     private var firmwareBound = false
     private var firmwareRestarting by mutableStateOf(false)
@@ -134,7 +147,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var active = false
     private var displayOwnerTicket = 0L
     private var displayResumed = false
-    private fun toggleProfile() {
+    override fun toggleProfile() {
         val worker = engine ?: return
         val recording = !profileRecording
         profileBusy = true
@@ -151,7 +164,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             }
         }, "profile-control").start()
     }
-
     private fun ownsDisplay() = active && DisplayOwners.active.owns(this, displayOwnerTicket)
     private fun mayClaimDisplay() = active && displayResumed && DisplayOwners.active.canClaim(this, displayOwnerTicket)
     private var bound = false
@@ -162,8 +174,8 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             workerEvidenceDelivery.advance()
             engine = IEngine.Stub.asInterface(binder)
-            resetPerformanceObservation()
             refreshDevices()
+            applySettings()
             binder.linkToDeath({ handler.post { if (engine?.asBinder() == binder) workerExited() } }, 0)
             if (pendingGuestStart) {
                 val worker = requireNotNull(engine)
@@ -208,12 +220,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             val reportedError = b.getString("profileError")?.takeIf { it.isNotEmpty() } ?: b.getString("error") ?: ""
                             if (reportedError.isNotEmpty() || status == "running") error = reportedError
                             workerPid = b.getInt("pid")
-                            profileRecording = b.getBoolean("profileRecording")
+                            profileRecording = b.getBoolean("profileRecording"); profileAutomatic = b.getBoolean("profileAutomatic")
                             profileNotice = b.getString("profileNotice") ?: ""
-                            guestFrameBuckets = if (status == "running") b.getIntArray("guestFrameBuckets") else null
                             sessionOwned = b.getBoolean("sessionStarted")
                             val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
-                            if (socket != muxSocket) { muxSocket = socket; if (socket.isNotEmpty() && storeOpen) store.refreshGuest() }
+                            if (socket != muxSocket) { muxSocket = socket; if (socket.isNotEmpty() && overlay == Screen.STORE) store.refreshGuest() }
                             appServicesError = b.getString("appServicesError") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
@@ -229,61 +240,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             }, "worker-status").start()
         }
     }
-    // Independent from Native.status: even a blocked status poll cannot queue PSS
-    // reads or hold up this cached request. At most one UI Binder read is in flight.
-    private val performancePoll = object : Runnable {
-        override fun run() {
-            if (!active || !performanceOpen) return
-            performanceNowMs = SystemClock.elapsedRealtime()
-            val worker = engine
-            if (worker == null) { performanceData = null; performanceUnavailable = true }
-            val epoch = performanceEpoch
-            if (!performanceInFlight && worker != null) {
-                performanceInFlight = true
-                Thread({
-                    val sample = try { worker.performance(epoch) } catch (_: RemoteException) { null }
-                    handler.post {
-                        performanceInFlight = false
-                        if (active && performanceOpen && performanceEpoch == epoch && engine?.asBinder() == worker.asBinder()) {
-                            performanceData = sample
-                            performanceUnavailable = sample == null
-                            performanceNowMs = SystemClock.elapsedRealtime()
-                        }
-                    }
-                }, "performance-cache-read").start()
-            }
-            handler.postDelayed(this, 1_000)
-        }
-    }
-    private fun resetPerformanceObservation() {
-        performanceEpoch++
-        performanceData = null
-        performanceUnavailable = false
-        handler.removeCallbacks(performancePoll)
-        if (active && performanceOpen) handler.post(performancePoll)
-    }
-    private fun togglePerformance() {
-        performanceOpen = !performanceOpen
-        resetPerformanceObservation()
-    }
-    private fun performanceAge(sample: Bundle?, key: String): String {
-        if (sample == null || !sample.containsKey(key)) return ""
-        val stamp = sample.getLong(key)
-        if (performanceNowMs < stamp) return " · age unavailable"
-        return " · ${(performanceNowMs - stamp) / 1_000}s ago"
-    }
-    private fun performanceNumber(value: Double) = String.format(Locale.ROOT, "%.1f", value)
-
-    private val importTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) importDirectory(uri)
-    }
-    private val importArchive = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) importBaseArchive(uri)
-    }
-    private val importFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) copyAsset(uri)
-    }
-    private var assetName = "bootrom.bin"
     /**
      * Run the panel at 60 Hz while LightTouch is in front, the way Google Maps does. The guest is a
      * 60 Hz device: at 120 Hz each of its frames must also land on the right one of two refreshes,
@@ -311,9 +267,17 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (window.attributes.preferredDisplayModeId != mode) window.attributes = window.attributes.apply { preferredDisplayModeId = mode }
         if (Build.VERSION.SDK_INT >= 35) window.setFrameRateBoostOnTouchEnabled(!guestInFront)
     }
+    private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) scanFolder(uri) }
+    private val pickSystem = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) setup.system = picked(uri) }
+    private val pickTools = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) setup.tools = picked(uri) }
+    private val pickRom = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) setup.rom = picked(uri) }
+    private val pickGuestToolsFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) copyAsset(uri, "guest.itpack") }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        preferSixtyHertz(guestInFront = true)
+        // The guest is a portrait device; its landscape apps rotate inside the portrait screen.
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        preferSixtyHertz(guestInFront = false)
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
@@ -327,24 +291,38 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             preparation = retainedPreparation(); preparedImported = retainedPreparedOutput
             preparedImportError = "Completed preparation is retained; retry importing it as a device."
         }
-        val ui = getSharedPreferences("ui", MODE_PRIVATE)
-        tiltEnabled = ui.getBoolean("tilt", true)
-        fullscreen = ui.getBoolean("fullscreen", false)
         Thread({
             try {
                 val entries = JSONObject(assets.open("firmware-catalog.json").bufferedReader().use { it.readText() }).getJSONArray("entries")
                 firmwareTargets = (0 until entries.length()).map { entries.getJSONObject(it) }
                     .filter { it.has("product_type") && it.has("version") }
                     .associate { "${it.getString("board")}-${it.getString("build")}" to StoreTarget.of(it.getString("product_type"), it.getString("version")) }
-                handler.post { if (storeOpen) store.useRecord(recordTarget()) }
+                handler.post { catalogVersion++; if (overlay == Screen.STORE) store.useRecord(recordTarget()) }
             } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
         }, "store-targets").start()
         bindWorker()
         setContent {
-            val guestInFront = !(storeOpen || licensesOpen || preparationOpen)
+            val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
-            MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF71DCC8))) {
-                // One SurfaceView moves between the windowed and device layouts, keeping its display lease.
+            val immersive = base == Screen.FULLSCREEN && overlay == null
+            LaunchedEffect(immersive) { applyWindowMode(immersive) }
+            // A guest that stops while full screen drops back to the device view.
+            LaunchedEffect(status) { if (base == Screen.FULLSCREEN && status in listOf("stopped", "failed")) base = Screen.HOME }
+            // First run: no devices yet, so set one up.
+            LaunchedEffect(recordsLoaded, records.isEmpty()) {
+                if (recordsLoaded && overlay == Screen.LOADING) overlay = if (records.isEmpty()) Screen.SETUP.also { setup.reset(firstRun = true) } else null
+            }
+            val showOverlay = settings.overlay != OverlayLevel.OFF && status == "running" &&
+                ((overlay == null && (base == Screen.FULLSCREEN || settings.overlayInDeviceView)) || overlay == Screen.SETTINGS)
+            LaunchedEffect(showOverlay, settings.overlay) { monitor.setActive(showOverlay, settings.overlay == OverlayLevel.FULL) }
+            LightTouchTheme(settings.theme) {
+                val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+                LaunchedEffect(dark, immersive) {
+                    WindowCompat.getInsetsController(window, window.decorView).apply {
+                        isAppearanceLightStatusBars = !dark && !immersive; isAppearanceLightNavigationBars = !dark && !immersive
+                    }
+                }
+                // One SurfaceView moves between the device and full-screen layouts, keeping its display lease.
                 val guestSurface = remember { movableContentOf { modifier: Modifier ->
                     WorkerGuestSurface(worker = engine, currentWorker = { engine },
                         mayClaim = { view -> mayClaimDisplay() && displayView === view },
@@ -354,189 +332,203 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                         keepScreenOn = active && status in listOf("starting", "running", "stopping"),
                         modifier = modifier.background(Color.Black).testTag("guest_display"))
                 } }
-                if (fullscreen) {
-                    BackHandler { showDeviceView(false) }
-                    Box(Modifier.fillMaxSize().background(Color.Black).semantics { testTagsAsResourceId = true }) {
-                        DeviceFrame(DeviceSkin.forBoard(selected?.getString("board")), enabled = status == "running",
-                            button = ::sendButton, screen = { guestSurface(it) }, modifier = Modifier.fillMaxSize().padding(8.dp))
-                        TextButton(onClick = { showDeviceView(false) }, modifier = Modifier.align(Alignment.TopEnd).testTag("exit_fullscreen")) { Text("Exit", color = Color(0xFF8E8E93)) }
-                        if (status != "running") Text(status, Modifier.align(Alignment.BottomCenter).padding(16.dp), color = Color(0xFF8E8E93))
+                val snackbar = remember { SnackbarHostState() }
+                LaunchedEffect(notice) { if (notice.isNotEmpty()) { snackbar.showSnackbar(notice); notice = "" } }
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    // The guest layout stays composed under full-page overlays so its Surface and lease survive them.
+                    if (base == Screen.FULLSCREEN) FullscreenScreen(this@MainActivity, guestSurface) else HomeScreen(this@MainActivity, guestSurface)
+                    when (overlay) {
+                        Screen.LOADING -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp)
+                        }
+                        Screen.SETUP -> SetupWizard(setup, canCancel = records.isNotEmpty(),
+                            onPickFolder = { pickFolder.launch(null) }, onPickSystem = { pickSystem.launch(arrayOf("application/octet-stream", "*/*")) },
+                            onPickTools = { pickTools.launch(arrayOf("application/octet-stream", "*/*")) }, onPickRom = { pickRom.launch(arrayOf("application/octet-stream", "*/*")) },
+                            onCreate = ::createDevice, onPrepare = { openPreparation() },
+                            onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
+                        Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
+                        Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
+                            onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { overlay = null }
+                        Screen.HITCH -> HitchInspector(hitchData, hitchError, onResume = ::closeHitch, onSave = ::saveHitch, saving = hitchSaving,
+                            savedNotice = hitchNotice, onShare = hitchReport?.let { uri -> { shareReport(uri) } })
+                        else -> {}
                     }
-                } else
-                Surface(Modifier.fillMaxSize()) {
-                    Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp).semantics { testTagsAsResourceId = true }) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("LightTouch", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f), maxLines = 1)
-                            TextButton(onClick = { openStore() }, modifier = Modifier.testTag("open_store"), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Store") }
-                            TextButton(onClick = { togglePerformance() }, modifier = Modifier.testTag("toggle_performance").semantics { stateDescription = if (performanceOpen) "Expanded" else "Collapsed" }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Performance") }
-                            TextButton(onClick = { licensesOpen = true }, modifier = Modifier.testTag("open_licenses"), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Licenses") }
-                        }
-                        if (performanceOpen) {
-                            val sample = performanceData?.takeIf { engine != null && workerPid > 0 && it.getInt("pid") == workerPid }
-                            val unavailable = performanceUnavailable || engine == null
-                            val cpu = if (sample?.containsKey("workerCpuPercentOfOneCore") == true)
-                                performanceNumber(sample.getDouble("workerCpuPercentOfOneCore")) + "% of one core"
-                                else if (unavailable) "unavailable" else sample?.getString("cpuState") ?: "warming up"
-                            val cpuSeconds = PerformanceCpuReading.cumulativeSeconds(sample?.getInt("pid") ?: 0, workerPid,
-                                sample?.takeIf { it.containsKey("processCpuMs") }?.getLong("processCpuMs"))
-                            val cpuTotal = cpuSeconds?.let { performanceNumber(it) + "s total" }
-                                ?: if (!unavailable && sample?.containsKey("processCpuMs") != true) "warming up" else "unavailable"
-                            val pss = if (sample?.containsKey("workerPssKiB") == true)
-                                performanceNumber(sample.getLong("workerPssKiB") / 1024.0) + " MiB PSS" else if (sample == null && !unavailable) "warming up" else "unavailable"
-                            val ram = if (sample?.containsKey("deviceTotalBytes") == true)
-                                performanceNumber(sample.getLong("deviceAvailableBytes") / 1048576.0) + " / " + performanceNumber(sample.getLong("deviceTotalBytes") / 1048576.0) + " MiB available/total" else if (sample == null && !unavailable) "warming up" else "unavailable"
-                            // Constant row geometry: changing samples do not resize the guest.
-                            listOf(
-                                "QEMU worker CPU: $cpu" + performanceAge(sample, "cpuSampleElapsedMs"),
-                                "QEMU worker CPU time: $cpuTotal" + performanceAge(sample, "cpuSampleElapsedMs"),
-                                "Emulator memory: $pss" + performanceAge(sample, "pssSampleElapsedMs"),
-                                "Android RAM: $ram" + performanceAge(sample, "deviceMemorySampleElapsedMs"),
-                                "Android whole-device CPU: unavailable",
-                                "iOS guest CPU / RAM: unavailable",
-                                "Worker PID: " + (sample?.getInt("pid")?.toString() ?: "unavailable") + " · sampled every 2s while open"
-                            ).forEach { line -> Text(line, modifier = Modifier.fillMaxWidth().height(22.dp), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        }
-                        Box {
-                            OutlinedButton(onClick = { refreshDevices(); deviceMenu = true }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping"), modifier = Modifier.testTag("device_selector")) {
-                                Text(selected?.let { "${it.getString("name")} · ${it.getString("board")} ${it.getString("build")}" } ?: "Select or import device")
-                            }
-                            DropdownMenu(expanded = deviceMenu, onDismissRequest = { deviceMenu = false }) {
-                                for (device in devices) DropdownMenuItem(text = { Text("${device.getString("name")} · ${device.getString("board")} ${device.getString("build")}") }, onClick = {
-                                    busy = true; deviceMenu = false
-                                    val worker = engine
-                                    Thread({
-                                        val result = try { worker?.select(device.getString("id")) ?: "Worker unavailable" }
-                                            catch (e: RemoteException) { e.message ?: "Device selection failed" }
-                                        handler.post { error = result; busy = false; refreshDevices() }
-                                    }, "device-selection").start()
-                                })
-                            }
-                        }
-                        selected?.let { record ->
-                            val sensors = listOfNotNull("accelerometer".takeIf { record.getBoolean("acceleration") }, "gyroscope".takeIf { record.getBoolean("gyro") })
-                            Text("${record.getString("contacts")}-finger touch" + if (sensors.isEmpty()) "" else "; " + sensors.joinToString(" and "), style = MaterialTheme.typography.bodySmall)
-                        }
-                        Text(status, Modifier.testTag("session_status"), style = MaterialTheme.typography.titleMedium)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(detail, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                            // Reserve the control and graph space across guest start/stop.
-                            Column(horizontalAlignment = Alignment.End, modifier = Modifier.width(144.dp)) {
-                                Box(Modifier.height(40.dp), contentAlignment = Alignment.CenterEnd) {
-                                    if (status == "running" || profileRecording) {
-                                        TextButton(onClick = { toggleProfile() }, enabled = !profileBusy,
-                                            modifier = Modifier.height(40.dp).testTag("profile_capture"),
-                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                                            Text(if (profileBusy) "Please wait…" else if (profileRecording) "Stop profile" else "Start profile")
-                                        }
-                                    }
-                                }
-                                FpsGraph(guestFrameBuckets, Modifier.size(144.dp, 40.dp).testTag("fps_graph"))
-                            }
-                        }
-                        Text(profileNotice, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.height(20.dp).semantics { liveRegion = LiveRegionMode.Polite })
-                        if (captureNotice.isNotEmpty()) Text(captureNotice, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                        if (error.isNotEmpty()) Text(error, Modifier.testTag("session_error").semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error)
-                        if (status !in listOf("running", "paused", "starting", "stopping")) {
-                        TextButton(onClick = { preparationOpen = true; bindFirmware() }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping"), modifier = Modifier.testTag("prepare_firmware")) { Text("Prepare from stock IPSW") }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { importArchive.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping"), contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.testTag("import_base")) { Text("Import base") }
-                            Button(onClick = { assetName = "bootrom.bin"; importFile.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !busy, contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.semantics { contentDescription = "Import optional ROM" }) { Text("ROM") }
-                            Button(onClick = { assetName = "guest.itpack"; importFile.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !busy, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Guest tools") }
-                        }
-                        TextButton(onClick = { importTree.launch(null) }, enabled = !busy && status !in listOf("running", "paused", "starting", "stopping")) { Text("Import prepared folder instead") }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { startGuest() }, enabled = !busy && selected != null && selected?.getBoolean("dirty") != true && status !in listOf("running", "starting", "stopping", "paused"), modifier = Modifier.testTag("start_guest")) { Text("Start") }
-                            Button(onClick = { stopGuest() }, enabled = sessionOwned && status in listOf("starting", "running", "paused", "failed") && !store.installing, modifier = Modifier.testTag("stop_guest")) { Text("Stop") }
-                            Button(onClick = {
-                                val pausing = status != "paused"
-                                if (pausing) displayView?.cancelOwnedGesture()
-                                engine?.pause(pausing)
-                            }, enabled = status in listOf("running", "paused")) { Text(if (status == "paused") "Resume" else "Pause") }
-                        }
-                        if (selected != null && status !in listOf("running", "paused", "starting", "stopping")) {
-                            TextButton(onClick = { startGuest(coldRecovery = true) }, enabled = !busy,
-                                modifier = Modifier.testTag("recover_guest")) { Text("Recover retained state") }
-                            if (selected?.getBoolean("dirty") == true) Text(
-                                "The previous shutdown was unconfirmed. Recovery boots retained writable data and keeps private diagnostics.",
-                                style = MaterialTheme.typography.bodySmall)
-                            else if (status == "failed") Text(
-                                "Recovery boots retained writable data and keeps private diagnostics; it does not confirm a previous shutdown.",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        // The asleep notice overlays the (black) guest view: inserting it above shifted the
-                        // view on every sleep and wake, under the user's finger.
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
-                            guestSurface(Modifier.fillMaxSize())
-                            if (displayAsleep && status == "running") Text("Guest screen asleep; use Power to wake.",
-                                modifier = Modifier.align(Alignment.Center).padding(16.dp).testTag("guest_screen_asleep"), color = Color(0xFF8E8E93))
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { pulse(0) }, enabled = status == "running", modifier = Modifier.testTag("home_button")) { Text("Home") }
-                            Button(onClick = { pulse(1) }, enabled = status == "running", modifier = Modifier.testTag("power_button")) { Text("Power") }
-                            Button(onClick = { capture() }, enabled = status in listOf("running", "paused"), modifier = Modifier.testTag("screenshot_button")) { Text("Screenshot") }
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(tiltEnabled, { setTilt(it) }, Modifier.testTag("tilt_toggle"))
-                            Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                                Text("Tilt controls", style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                if (tiltReadout.isNotEmpty()) Text(tiltReadout, style = MaterialTheme.typography.bodySmall, maxLines = 1, modifier = Modifier.testTag("tilt_readout"))
-                            }
-                            FilledTonalButton(onClick = { showDeviceView(true) }, modifier = Modifier.testTag("fullscreen_button")) { Text("Full screen", maxLines = 1, softWrap = false) }
-                        }
-                        Text("Backgrounding pauses the guest. Reopen and tap Resume.", style = MaterialTheme.typography.bodySmall)
-                    }
+                    SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(bottom = 96.dp))
                 }
-                // Inside the theme: dialogs composed outside it rendered in the default light scheme.
-                if (storeOpen && !fullscreen) StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(), onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { storeOpen = false }
+                if (devicesOpen) DevicesSheet(this@MainActivity) { devicesOpen = false }
                 if (preparationOpen) PreparationDialog()
                 if (licensesOpen) LicenseDialog { licensesOpen = false }
             }
         }
     }
-    /**
-     * Guest fps over the last 60 s on a fixed 0-60 scale: each point is the rate over 500 ms, so a dip
-     * shows as a dip instead of being averaged into the second around it. The current rate (last 1 s)
-     * floats at the head of the trace; the corner has the average and the lowest point over the last 10 s.
-     */
-    @Composable
-    private fun FpsGraph(buckets: IntArray?, modifier: Modifier) {
-        val trace = MaterialTheme.colorScheme.primary
-        Canvas(modifier) {
-            val first = buckets?.indexOfFirst { it > 0 } ?: -1
-            if (buckets == null || first < 0) return@Canvas
-            drawRect(Color(0xFF1C1C1E))
-            val top = 2f
-            fun y(fps: Float) = size.height - fps.coerceIn(0f, 60f) / 60f * (size.height - top)
-            drawLine(Color(0xFF48484A), Offset(0f, y(30f)), Offset(size.width, y(30f)), 1f)
-            drawLine(Color(0xFF48484A), Offset(0f, y(60f)), Offset(size.width, y(60f)), 1f)
-            val step = size.width / (buckets.size - 1)
-            val start = maxOf(first, 1)
-            val points = (start until buckets.size).map { i -> i * step to (buckets[i - 1] + buckets[i]) * 2f }
-            if (points.size >= 2) {
-                val line = Path(); val fill = Path()
-                points.forEachIndexed { k, (x, fps) -> if (k == 0) line.moveTo(x, y(fps)) else line.lineTo(x, y(fps)) }
-                fill.addPath(line); fill.lineTo(points.last().first, size.height); fill.lineTo(points.first().first, size.height); fill.close()
-                drawPath(fill, trace.copy(alpha = 0.25f))
-                drawPath(line, trace, style = Stroke(1.5f))
-            }
-            val now = buckets.takeLast(4).sum().toFloat()
-            val recent = maxOf(first, buckets.size - 40)
-            val avg = buckets.drop(recent).sum() * 4f / (buckets.size - recent)
-            val low = points.filter { it.first >= recent * step }.minOfOrNull { it.second } ?: now
-            drawIntoCanvas { canvas ->
-                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                    textSize = 11.dp.toPx(); color = trace.toArgb(); textAlign = android.graphics.Paint.Align.RIGHT
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    setShadowLayer(3f, 0f, 0f, android.graphics.Color.BLACK)
-                }
-                val label = String.format(Locale.ROOT, "%.0f", now)
-                val headY = (y(now) + paint.textSize / 2).coerceIn(paint.textSize, size.height - 1f)
-                canvas.nativeCanvas.drawText(label, size.width - 3f, headY, paint)
-                paint.apply { textSize = 9.dp.toPx(); color = 0xFFAEAEB2.toInt(); textAlign = android.graphics.Paint.Align.LEFT; typeface = android.graphics.Typeface.DEFAULT }
-                canvas.nativeCanvas.drawText(String.format(Locale.ROOT, "10 s avg %.0f  low %.0f", avg, low), 3f, paint.textSize + 1f, paint)
-            }
+
+    // GuestHost: the screens' requests.
+    override fun dismissError() { error = "" }
+    override fun start() = startGuest()
+    override fun recover() = startGuest(coldRecovery = true)
+    override fun stop() = stopGuest()
+    override fun saveAndStop() = stopGuest()
+    override fun setPaused(paused: Boolean) {
+        val worker = engine ?: return
+        if (paused) displayView?.cancelOwnedGesture()
+        pausedByBackground = false
+        try { worker.pause(paused) } catch (_: RemoteException) { error = "Guest worker unavailable" }
+    }
+    override fun button(id: Int, down: Boolean) = sendButton(id, down)
+    override fun screenshot() = capture()
+    override fun navigate(screen: Screen) {
+        when (screen) {
+            Screen.HOME, Screen.FULLSCREEN -> { base = screen; overlay = null }
+            Screen.STORE -> openStore()
+            else -> overlay = screen
         }
+    }
+    override fun openDevices() { refreshDevices(); devicesOpen = true }
+    override fun addDevice() { setup.reset(firstRun = false); overlay = Screen.SETUP }
+    override fun openLicenses() { licensesOpen = true }
+    override fun openPreparation() { preparationOpen = true; bindFirmware() }
+    override fun pickGuestTools() { pickGuestToolsFile.launch(arrayOf("application/octet-stream", "*/*")) }
+    override fun applySettings() {
+        if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
+        val worker = engine ?: return
+        val scale = settings.scaling.native; val detailed = settings.detailedTiming
+        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed) } catch (_: RemoteException) { } }, "apply-settings").start()
+    }
+    override fun selectDevice(id: String) {
+        busy = true
+        val worker = engine
+        Thread({
+            val result = try { worker?.select(id) ?: "Worker unavailable" } catch (e: RemoteException) { e.message ?: "Device selection failed" }
+            handler.post { error = result; busy = false; refreshDevices() }
+        }, "device-selection").start()
+    }
+    override fun renameDevice(id: String, name: String) {
+        val worker = engine ?: return
+        Thread({
+            val result = try { worker.rename(id, name) } catch (e: RemoteException) { e.message ?: "Rename failed" }
+            handler.post { if (result.isEmpty()) notice = "Renamed to $name" else error = result; refreshDevices() }
+        }, "device-rename").start()
+    }
+    override fun deleteDevice(id: String) {
+        val worker = engine ?: return
+        busy = true
+        Thread({
+            val result = try { worker.remove(id) } catch (e: RemoteException) { e.message ?: "Delete failed" }
+            handler.post { busy = false; if (result.isEmpty()) notice = "Device deleted" else error = result; refreshDevices(afterDelete = true) }
+        }, "device-delete").start()
+    }
+
+    /** Pause the guest, freeze the frame history and open the inspector over it. */
+    override fun openHitch() {
+        val worker = engine ?: return
+        if (status !in listOf("running", "paused")) return
+        hitchResume = status == "running"
+        if (hitchResume) setPaused(true)
+        hitchData = null; hitchError = null; hitchNotice = null; hitchReport = null
+        overlay = Screen.HITCH
+        Thread({
+            try {
+                val data = HitchData.load(worker.hitchSnapshot())
+                handler.post { if (overlay == Screen.HITCH) hitchData = data }
+            } catch (e: Exception) { handler.post { hitchError = e.message ?: "Frame history unavailable" } }
+        }, "hitch-snapshot").start()
+    }
+    private fun closeHitch() {
+        overlay = null; hitchData = null
+        if (hitchResume) setPaused(false)
+    }
+    private fun saveHitch(from: Long, to: Long) {
+        val data = hitchData ?: return
+        hitchSaving = true
+        Thread({
+            try {
+                val uri = saveHitchReport(applicationContext, data, from, to)
+                handler.post { hitchSaving = false; hitchReport = uri; hitchNotice = "Saved to Download/LightTouch" }
+            } catch (e: Exception) { handler.post { hitchSaving = false; hitchNotice = "Could not save: ${e.message}" } }
+        }, "hitch-report").start()
+    }
+    private fun shareReport(uri: Uri) {
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("application/zip").putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Share hitch report"))
+    }
+
+    // Setup wizard: find the files, copy them in, create and name the device.
+    private fun displayName(uri: Uri) = DocumentFile.fromSingleUri(this, uri)?.name ?: uri.lastPathSegment ?: "file"
+    private fun picked(uri: Uri) = PickedFile(uri, displayName(uri))
+    private fun scanFolder(tree: Uri) {
+        val root = DocumentFile.fromTreeUri(this, tree) ?: return
+        Thread({
+            // The folder itself, then one level down (e.g. LightTouch-assets/ inside the chosen folder).
+            val candidates = root.listFiles().toList() + root.listFiles().filter { it.isDirectory }.flatMap { it.listFiles().toList() }
+            val files = candidates.filter { it.isFile }
+            val system = files.firstOrNull { it.name?.endsWith(".itbase", true) == true }?.let { PickedFile(it.uri, it.name ?: "") }
+                ?: (listOf(root) + root.listFiles().filter { it.isDirectory }).firstOrNull { it.findFile("device.lock.json") != null }
+                    ?.let { PickedFile(it.uri, (it.name ?: "folder") + "/", folder = true) }
+            val tools = files.filter { it.name?.endsWith(".itpack", true) == true }.minByOrNull { if (it.name?.contains("armv6") == true) 0 else 1 }
+                ?.let { PickedFile(it.uri, it.name ?: "") }
+            val rom = files.firstOrNull { it.name?.lowercase()?.startsWith("bootrom") == true }?.let { PickedFile(it.uri, it.name ?: "") }
+            handler.post {
+                system?.let { setup.system = it }; tools?.let { setup.tools = it }; rom?.let { setup.rom = it }
+                val found = listOfNotNull("iOS system".takeIf { system != null }, "guest tools".takeIf { tools != null }, "boot file".takeIf { rom != null })
+                setup.scanned = if (found.isEmpty()) "Nothing found in ${root.name}" else "Found " + found.joinToString(", ") + " in ${root.name}"
+            }
+        }, "setup-scan").start()
+    }
+    private fun copyWithProgress(uri: Uri, target: File, label: String) {
+        val total = DocumentFile.fromSingleUri(this, uri)?.length() ?: 0L
+        contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { output ->
+            val buffer = ByteArray(1 shl 20); var done = 0L; var shown = -1L
+            while (true) {
+                val n = input.read(buffer); if (n < 0) break
+                output.write(buffer, 0, n); done += n
+                val percent = if (total > 0) done * 100 / total else -1
+                if (percent != shown) { shown = percent; handler.post { setup.phase = if (percent >= 0) "$label… $percent%" else "$label… ${done shr 20} MB" } }
+            }
+        } } ?: error("Cannot read $label")
+    }
+    private fun createDevice() {
+        val system = setup.system ?: return
+        val worker = engine ?: run { setup.error = "LightTouch is still starting; try again in a moment."; return }
+        val tools = setup.tools; val rom = setup.rom; val requested = setup.name.trim()
+        val before = records.mapNotNull { it.getString("id") }.toSet()
+        setup.step = SetupStep.CREATING; setup.error = ""; setup.phase = ""; busy = true
+        Thread({
+            val staging = File(filesDir, "setup-${System.nanoTime()}").apply { mkdirs() }
+            try {
+                val romPath = rom?.let { File(staging, "bootrom.bin").also { f -> copyWithProgress(it.uri, f, "Copying the boot file") }.absolutePath } ?: ""
+                val toolsPath = tools?.let { File(staging, "guest.itpack").also { f -> copyWithProgress(it.uri, f, "Copying guest tools") }.absolutePath } ?: ""
+                val source = if (system.folder) File(staging, "base").also { handler.post { setup.phase = "Copying the iOS system…" }
+                    copyTree(DocumentFile.fromTreeUri(this, system.uri) ?: error("Cannot read the folder"), it) }
+                    else File(staging, "system.itbase").also { copyWithProgress(system.uri, it, "Copying the iOS system") }
+                handler.post { setup.phase = "Checking the iOS system…" }
+                val result = worker.importDevice(source.absolutePath, "", romPath, toolsPath)
+                require(result.isEmpty()) { result }
+                val all = worker.records().toList()
+                val created = all.firstOrNull { it.getString("id") !in before } ?: error("The new device did not appear in the library")
+                val id = created.getString("id") ?: ""
+                val name = requested.ifEmpty { defaultDeviceName(created.getString("board") ?: "", created.getString("build") ?: "", firmwareTargets,
+                    all.filter { it.getString("id") != id }.mapNotNull { it.getString("name") }) }
+                worker.rename(id, name).takeIf { it.isNotEmpty() }?.let { error(it) }
+                worker.select(id).takeIf { it.isNotEmpty() }?.let { error(it) }
+                handler.post { setup.created = name; setup.step = SetupStep.DONE; refreshDevices() }
+            } catch (e: Exception) {
+                handler.post { setup.error = e.message ?: "Could not create the device"; setup.step = SetupStep.FILES }
+            } finally { staging.deleteRecursively(); handler.post { busy = false } }
+        }, "setup-create").start()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val volume = when (keyCode) { KeyEvent.KEYCODE_VOLUME_UP -> GuestButton.VOLUME_UP; KeyEvent.KEYCODE_VOLUME_DOWN -> GuestButton.VOLUME_DOWN; else -> -1 }
+        if (volume >= 0 && settings.volumeKeys && status == "running" && overlay == null && !devicesOpen) {
+            if (event.repeatCount == 0) sendButton(volume, true)
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        val volume = when (keyCode) { KeyEvent.KEYCODE_VOLUME_UP -> GuestButton.VOLUME_UP; KeyEvent.KEYCODE_VOLUME_DOWN -> GuestButton.VOLUME_DOWN; else -> -1 }
+        if (volume >= 0 && settings.volumeKeys && status == "running" && overlay == null && !devicesOpen) { sendButton(volume, false); return true }
+        return super.onKeyUp(keyCode, event)
     }
     @Composable
     private fun PreparationDialog() {
@@ -644,7 +636,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 if (result.isEmpty()) {
                     retainedPreparedOutput = ""
                     getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("preparedImported", destination).remove("pendingPrepared").apply()
-                    detail = "Prepared firmware imported as a new device"; refreshDevices(); firmwareExpectedExit = true; firmware?.finish()
+                    notice = "Prepared firmware imported as a new device"; refreshDevices(); firmwareExpectedExit = true; firmware?.finish()
                 }
             }
         }, "prepared-device-import").start()
@@ -679,11 +671,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             } catch (e: Exception) { target.deleteRecursively(); handler.post { error = e.message ?: "Tools import failed"; busy = false } }
         }, "trusted-tools-import").start()
     }
-    private fun refreshDevices() {
+    private fun refreshDevices(afterDelete: Boolean = false) {
         Thread({
             try {
-                val loaded = engine?.records()?.toList() ?: emptyList()
-                handler.post { devices = loaded; selected = loaded.firstOrNull { it.getBoolean("selected") } }
+                val loaded = engine?.records()?.toList() ?: return@Thread
+                handler.post {
+                    records = loaded; recordsLoaded = true
+                    if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = false); overlay = Screen.SETUP }
+                }
             } catch (e: RemoteException) { handler.post { error = "Device library unavailable: ${e.message}" } }
         }, "device-library").start()
     }
@@ -701,11 +696,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         val unexpected = !engineExpectedExit && (guestStartRequested || sessionOwned || status in listOf("running", "starting", "paused"))
         val exitedPid = workerPid
         profileRecording = false; profileBusy = false
-        engine = null; resetPerformanceObservation(); workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
+        engine = null; workerPid = 0; sessionOwned = false; displayAsleep = false; stopSensors(); displayView?.keepScreenOn = false
         status = if (unexpected) "failed" else "stopped"
         detail = ""
         if (unexpected) error = "Guest worker exited unexpectedly; writable state retained. Start creates a fresh worker. Private diagnostics are retained."
-        else if (engineExpectedExit) error = "Guest worker disposed; writable state retained. Shutdown confirmation receipt is unavailable."
         Thread({
             WorkerExitEvidence.capture(applicationContext, exitedPid)
             val terminal = try {
@@ -725,7 +719,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private fun startGuest(coldRecovery: Boolean = false, retainedRequest: GuestStartRequest? = null) {
         if (engineRestarting) return
         val request = retainedRequest ?: GuestStartRequest(
-            selected?.getString("id") ?: run { error = "Select a device"; status = "stopped"; return }, coldRecovery)
+            selected?.id ?: run { error = "Select a device"; status = "stopped"; return }, coldRecovery)
         // Preserve the exact record and explicit recovery choice across worker
         // disposal/rebinding; later device-list refreshes cannot change the request.
         pendingGuestRequest = request
@@ -771,20 +765,18 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     try { old.stop() } catch (_: DeadObjectException) { died.countDown() }
                     check(!binder.isBinderAlive || died.await(45, TimeUnit.SECONDS)) { "Previous guest worker has not exited. Retry after it stops." }
                 }
-                handler.post { engine = null; resetPerformanceObservation(); sessionOwned = false; engineRestarting = false; bindWorker() }
+                handler.post { engine = null; sessionOwned = false; engineRestarting = false; bindWorker() }
             } catch (failure: Exception) { handler.post { engineRestarting = false; pendingGuestStart = false; error = failure.message ?: "Guest worker restart failed"; status = "failed" } }
             finally { try { binder.unlinkToDeath(recipient, 0) } catch (_: java.util.NoSuchElementException) { } }
         }, "guest-worker-restart").start()
     }
-    private fun pulse(button: Int) {
+    override fun pulse(id: Int) = pulse(id, 100)
+    private fun pulse(button: Int, holdMs: Long) {
         val worker = engine ?: return
-        try {
-            worker.button(button, true)
-            handler.postDelayed({
-                try { worker.button(button, false) }
-                catch (_: RemoteException) { error = "Guest worker exited during button release; Start a fresh worker." }
-            }, 100)
-        } catch (_: RemoteException) { error = "Guest worker unavailable; Start a fresh worker." }
+        buttonCalls.execute {
+            try { worker.button(button, true); Thread.sleep(holdMs); worker.button(button, false) }
+            catch (_: RemoteException) { handler.post { error = "Guest worker unavailable; Start a fresh worker." } }
+        }
     }
     private fun capture() {
         val path = File(filesDir, "screenshots/guest-${System.currentTimeMillis()}.png").absolutePath
@@ -804,12 +796,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     values.clear(); values.put(MediaStore.Images.Media.IS_PENDING, 0)
                     contentResolver.update(uri, values, null, null)
                 } catch (e: Exception) { contentResolver.delete(uri, null, null); throw e }
-                handler.post { captureNotice = "Screenshot saved in Pictures/LightTouch" }
+                handler.post { notice = "Screenshot saved to Pictures/LightTouch" }
             } catch (e: Exception) { handler.post { error = e.message ?: "Screenshot failed" } }
         }, "screenshot").start()
     }
-    private fun copyAsset(uri: Uri) {
-        val targetName = assetName
+    private fun copyAsset(uri: Uri, targetName: String) {
         busy = true
         Thread({
             try {
@@ -819,42 +810,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 check(temporary.renameTo(target)) { "Could not publish imported file" }
                 // Guest tools also replace the selected device's package; the guest
                 // installs the newer serial at its next boot.
-                val device = if (targetName == "guest.itpack") selected?.getString("id") else null
+                val device = if (targetName == "guest.itpack") selected?.id else null
                 if (device != null) {
                     val result = engine?.setGuestPackage(device, target.absolutePath) ?: error("Worker unavailable")
                     require(result.isEmpty()) { result }
                 }
-                handler.post { if (device != null) captureNotice = "Guest tools updated; they install at the next boot" else detail = "Imported $targetName"; busy = false }
+                handler.post { notice = if (device != null) "Guest tools updated; they install at the next start" else "Imported $targetName"; busy = false }
             } catch (e: Exception) { handler.post { error = e.message ?: "Import failed"; busy = false } }
         }, "asset-import").start()
-    }
-    private fun importBaseArchive(uri: Uri) {
-        busy = true
-        detail = "Copying and validating prepared base archive"
-        Thread({
-            val staging = File(filesDir, "base-import-${System.nanoTime()}.itbase")
-            try {
-                contentResolver.openInputStream(uri)?.use { input -> staging.outputStream().use { input.copyTo(it) } } ?: error("Cannot read selected base")
-                val result = engine?.importBase(staging.absolutePath, DocumentFile.fromSingleUri(this, uri)?.name ?: "Imported device") ?: error("Worker unavailable")
-                require(result.isEmpty()) { result }
-                handler.post { detail = "Prepared base validated and imported as a new device"; busy = false; refreshDevices() }
-            } catch (e: Exception) { handler.post { error = e.message ?: "Import failed"; busy = false } }
-            finally { staging.delete() }
-        }, "base-archive-import").start()
-    }
-    private fun importDirectory(uri: Uri) {
-        busy = true
-        Thread({
-            val staging = File(filesDir, "import-${System.nanoTime()}")
-            try {
-                val source = DocumentFile.fromTreeUri(this, uri) ?: error("Cannot read selected directory")
-                copyTree(source, staging)
-                val result = engine?.importBase(staging.absolutePath, source.name ?: "Imported device") ?: error("Worker unavailable")
-                require(result.isEmpty()) { result }
-                handler.post { detail = "Prepared base validated and imported as a new device"; busy = false; refreshDevices() }
-            } catch (e: Exception) { handler.post { error = e.message ?: "Import failed"; busy = false } }
-            finally { staging.deleteRecursively() }
-        }, "base-import").start()
     }
     private fun copyTree(source: DocumentFile, destination: File) {
         check(destination.mkdirs())
@@ -871,19 +834,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private val sensorThread by lazy { HandlerThread("guest-motion").apply { start() } }
     @Volatile private var motionWorker: IEngine? = null
     @Volatile private var displayRotation = 0
-    // Last accelerometer sample sent (m/s², device axes), shown beside the switch at a few Hz so tilt can be checked by eye.
-    @Volatile private var lastAcceleration: FloatArray? = null
-    private var tiltReadout by mutableStateOf("")
-    private val tiltReadoutTick = object : Runnable {
-        override fun run() {
-            tiltReadout = lastAcceleration?.let { v -> String.format(Locale.ROOT, "x %+.1f  y %+.1f  z %+.1f", v[0], v[1], v[2]) } ?: ""
-            if (listening) handler.postDelayed(this, 250)
-        }
-    }
     /** Only the sensors the guest board models are opened; the 2G has an accelerometer and no gyroscope. */
     private fun startSensors() {
-        val record = selected
-        if (!tiltEnabled || listening || record == null) return
+        val record = records.firstOrNull { it.getBoolean("selected") }
+        if (!settings.tilt || listening || record == null) return
         motionWorker = engine
         displayRotation = (display?.rotation ?: 0) * 90
         val thread = Handler(sensorThread.looper)
@@ -892,49 +846,37 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         if (record.getBoolean("acceleration")) sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sensors.registerListener(this, it, 10_000, thread) }
         if (record.getBoolean("gyro")) sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)?.let { sensors.registerListener(this, it, 10_000, thread) }
         listening = true
-        handler.removeCallbacks(tiltReadoutTick); handler.post(tiltReadoutTick)
     }
-    private fun stopSensors() { sensors.unregisterListener(this); listening = false; motionWorker = null; lastAcceleration = null; tiltReadout = "" }
+    private fun stopSensors() { sensors.unregisterListener(this); listening = false; motionWorker = null }
     override fun onSensorChanged(event: SensorEvent) {
         val kind = if (event.sensor.type == Sensor.TYPE_GYROSCOPE) 2 else 1
-        if (kind == 1) lastAcceleration = event.values.copyOf(3)
         try { motionWorker?.motion(kind, event.timestamp, event.values.copyOf(3), displayRotation) } catch (_: RemoteException) { }
-    }
-    private fun setTilt(on: Boolean) {
-        tiltEnabled = on
-        getSharedPreferences("ui", MODE_PRIVATE).edit().putBoolean("tilt", on).apply()
-        if (!on) stopSensors() else if (status == "running") startSensors()
     }
     private fun sendButton(id: Int, down: Boolean) {
         val worker = engine ?: return
         buttonCalls.execute { try { worker.button(id, down) } catch (_: RemoteException) { } }
     }
-    /** Device view: the guest in a drawn device, system bars hidden, held in portrait like the real device. */
-    private fun showDeviceView(on: Boolean) {
-        fullscreen = on
-        getSharedPreferences("ui", MODE_PRIVATE).edit().putBoolean("fullscreen", on).apply()
-        applyWindowMode()
-    }
-    private fun applyWindowMode() {
-        val on = fullscreen
-        requestedOrientation = if (on) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    /** Full screen hides the system bars; a swipe from the edge shows them briefly. */
+    private fun applyWindowMode(immersive: Boolean) {
         if (Build.VERSION.SDK_INT >= 30) window.insetsController?.let { controller ->
-            if (on) { controller.hide(PlatformInsets.Type.systemBars()); controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
+            if (immersive) { controller.hide(PlatformInsets.Type.systemBars()); controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
             else controller.show(PlatformInsets.Type.systemBars())
         } else @Suppress("DEPRECATION") {
-            window.decorView.systemUiVisibility = if (on) (android.view.View.SYSTEM_UI_FLAG_FULLSCREEN or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE) else 0
+            window.decorView.systemUiVisibility = if (immersive) (android.view.View.SYSTEM_UI_FLAG_FULLSCREEN or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN) else (android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
         }
     }
-    private fun recordTarget(): StoreTarget? = selected?.let { firmwareTargets["${it.getString("board")}-${it.getString("build")}"] }
+    private fun recordTarget(): StoreTarget? = records.firstOrNull { it.getBoolean("selected") }?.let { firmwareTargets["${it.getString("board")}-${it.getString("build")}"] }
     private fun openStore() {
-        storeOpen = true
+        overlay = Screen.STORE
         store.close(); store.dismissJob() // Reopen on the search, not a finished install's details.
         store.useRecord(recordTarget())
         if (muxSocket.isNotEmpty()) store.refreshGuest()
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-    override fun onStart() { super.onStart(); active = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll); resetPerformanceObservation() }
+    override fun onStart() { super.onStart(); active = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
     override fun onResume() {
         super.onResume(); displayResumed = true
         displayOwnerTicket = DisplayOwners.active.resumed(this, hasWindowFocus())
@@ -944,10 +886,15 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         super.onPostResume()
         displayOwnerTicket = DisplayOwners.active.focusChanged(this, hasWindowFocus())
         displayView?.attachActiveSurface()
+        // Coming back to a guest LightTouch paused on the way out: carry on, once the display is reattached.
+        if (pausedByBackground && settings.autoResume) handler.postDelayed({
+            if (pausedByBackground && active && displayResumed && status == "paused") setPaused(false)
+            pausedByBackground = false
+        }, 300)
     }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) applyWindowMode() // Transient bars shown by a swipe hide again.
+        if (hasFocus) applyWindowMode(base == Screen.FULLSCREEN && overlay == null) // Transient bars shown by a swipe hide again.
         // Consult actual Activity focus too: an old callback alone is not authority.
         displayOwnerTicket = DisplayOwners.active.focusChanged(this, hasFocus && hasWindowFocus())
         displayView?.attachActiveSurface()
@@ -961,11 +908,13 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         active = false; displayView?.keepScreenOn = false; stopSensors()
         // Owner validation also occurs inside the native guard; a handoff after
         // this UI check still cannot make old A pause/cancel/detach new B.
-        if (wasOwner && ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting")))
+        if (wasOwner && ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting"))) {
+            pausedByBackground = status == "running" && overlay != Screen.HITCH
             displayView?.backgroundOwnedDisplay()
+        }
         else displayView?.retireDisplay()
         DisplayOwners.active.stopped(this, displayOwnerTicket)
-        handler.removeCallbacks(poll); resetPerformanceObservation(); super.onStop()
+        handler.removeCallbacks(poll); monitor.setActive(false, false); super.onStop()
     }
-    override fun onDestroy() { buttonCalls.shutdown(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    override fun onDestroy() { buttonCalls.shutdown(); monitor.close(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }
