@@ -52,11 +52,14 @@ internal fun FullscreenScreen(host: GuestHost, guestSurface: @Composable (Modifi
         val screenHeight = if (docked) min(fitHeight, maxHeight - bar) else min(fitHeight, maxHeight)
         val screenWidth = screenHeight * aspect
         if (docked) {
-            Column(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    GuestScreen(host, guestSurface, Modifier.size(screenWidth, screenHeight), overlayScale = 1f, inDeviceView = false)
-                }
-                ButtonBar(host, Modifier.fillMaxWidth().height(bar).navigationBarsPadding()) { confirmStop = true }
+            // The gap above the guest matches the gap between it and the buttons, so the guest sits
+            // centred in what the buttons leave rather than high in a fixed-height bar's space.
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.weight(1f))
+                GuestScreen(host, guestSurface, Modifier.size(screenWidth, screenHeight), overlayScale = 1f, inDeviceView = false)
+                Spacer(Modifier.weight(1f))
+                ButtonBar(host, Modifier.fillMaxWidth().height(64.dp)) { confirmStop = true }
+                Spacer(Modifier.navigationBarsPadding().height(24.dp))
             }
         } else {
             var visible by remember { mutableStateOf(true) }

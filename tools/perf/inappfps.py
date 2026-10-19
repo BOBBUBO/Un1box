@@ -32,6 +32,9 @@ def wake(): return tap_id("guest_screen_asleep", "power_button") or tap_text("Po
 def home(): return tap_id("device_home", "home_button") or tap_text("Home")
 def stop():
     if tap_id("stop_guest"): time.sleep(1); return tap_id("confirm_stop")
+    if tap_id("fullscreen_menu"):  # full screen keeps Stop in its menu
+        time.sleep(1)
+        if tap_text("Stop"): time.sleep(1); return tap_id("confirm_stop")
     return tap_text("Stop")
 def state():
     xml = ui()
