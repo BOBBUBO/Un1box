@@ -2460,6 +2460,18 @@ Linux library SHA-256
 `58f2831e691e324cc217f93e07c9a7bec5a75c7e942acdc54975f68d7dbc7e9f`;
 APK SHA-256 `977785fcf61c8a6e32eefcbdaca0d9a383a43c2029643fefe3fe7ea0861b96d3`.
 
+A separate Poco reference capture with that frozen APK also completed, fast
+and verification on, host-PC cache and user recorder off. Worker 7849 executed
+three short LT Bench passes, returned Home, then ran the Jetpack title for
+60 s. At least **9,437,184 eligible rebuilds matched both original flag words**;
+no assertion failure. All byte/guard/writeback checks passed, the benchmark,
+Home and Jetpack scenes were reviewed with Start profile off, and clean Stop /
+no-qemu were confirmed. Serial28 verdict remained good. This covers the states
+executed in that capture, not every possible control-register value. Its
+benchmark values include verification overhead and are not an optimization
+timing result. Evidence: `build/perf-codex/poco-hflags-v6-reference/`, including
+the completed engine log, mode/identity, benchmark passes, result and scenes.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

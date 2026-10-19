@@ -11,7 +11,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   desktop copied-record capture: at least 1,048,576 matching rebuilds, clean
   Stop/worker/frontend exit 0; end screenshot asleep, no active-UI claim. This
   covers executed states, not all possible register values. Scratch record
-  removed. Original faults/guest handler remain.
+  removed. A separate Poco capture also matched at least 9,437,184 rebuilds
+  through three focused passes, Home and 60 s of Jetpack title; all byte checks
+  passed, three scenes reviewed, clean Stop/no-qemu. Reference timings include
+  verification overhead and are not a speed result. Original faults/guest
+  handler remain.
   Pre-v7 VMSA only, no EL2/EL3/M/PMSA/AArch64; Linux/Android builds pass.
   No measured speedup or game ceiling/median/low/1%low/hitch/duration result.
 
