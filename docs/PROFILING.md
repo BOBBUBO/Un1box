@@ -200,6 +200,34 @@ nearby ordinary frames, preserve decoder-free gaps, and confirm any resulting
 change with diagnostics off. Existing Poco examples and their limitations are
 recorded in PERFORMANCE.md; they do not explain the earlier Pixel captures.
 
+#### Choose the next capture from the unexplained time
+
+Use the longest confirmed gameplay gap to choose instrumentation. Keep loading,
+menus and ordinary gameplay labeled separately. Broad CPU or GL totals can
+nominate work without explaining why a particular frame missed its deadline.
+
+| Observation in the delayed interval | Next evidence |
+| --- | --- |
+| Long vCPU execution wall time but much less vCPU CPU time | Align a Perfetto scheduler trace with the frame log. Split runnable delay from sleeping/blocked time before choosing a CPU optimization. |
+| Mostly host running time, game thread displaced | Observe guest enqueue and scheduled-thread boundaries; identify the intervening guest threads and calls. Include earlier frame intervals. |
+| Game finishes presenting promptly but the flip/publication is late | Follow the compositor and framebuffer flip, then LCD publication and Android posting. Nearby presents alone do not prove which surface a flip needed. |
+| A long individual GL or present operation | Sample its native call stack and host scheduling interval; distinguish driver CPU work from blocking. |
+
+For example, the existing Pixel Jetpack 214.5 ms gap has approximately
+205.9 ms inside vCPU execution but only 83.2 ms of vCPU CPU time, with 3.2 ms
+of completed GL work. The roughly 123 ms difference nominates host scheduling
+or blocking, not a particular GL call or guest function. Counter snapshots can
+lag an execution slice; use the aligned scheduler trace to resolve the interval.
+No matching scheduler trace was captured in that manual recording, so its
+cause cannot be recovered from the existing counters alone.
+
+The scheduler report retains waker identities and blocked functions when the
+kernel supplies them. A null blocked function is missing evidence; a waker name
+does not identify the lock owner or prove why the thread went to sleep. If the
+trace establishes blocking but cannot name the wait, narrow the next diagnostic
+to that interval and capture the relevant native wait entry/return stack.
+Keep Start profile off during ordinary A/B performance measurements.
+
 #### Map the same worker
 
 Address-space values can change between boots. Use a snapshot from the same
@@ -269,6 +297,17 @@ blocks and sampled maxima are retained. Its mean includes clock overhead and
 descheduling, excludes the region mutex acquisition, and is not a distribution
 of every call. The complete benchmark timing includes diagnostic bookkeeping;
 confirm gains again with this diagnostic off before a game comparison.
+
+`LT_HFLAGS_V6_FAST=on` selects a separate, guarded pre-v7 flag calculation.
+`LT_HFLAGS_V6_VERIFY=on` additionally compares both result words against the
+generic builder on every eligible rebuild and asserts on a mismatch. Its
+`[hflags-v6] verified=N` lines report every 1,048,576 comparisons, so the last
+line is a lower bound on comparisons completed. Unsupported CPU configurations
+use the generic builder. A completed capture covers only the states executed
+there; it does not establish equivalence for every possible register value.
+Keep verification off for timing and use one frozen APK for both fast modes.
+Both switches default off. See PERFORMANCE.md for build identities and the
+completed desktop boot capture.
 
 `LT_AUDIO_PATH_PROF=on` (engine `6743f6a81b`, default off) selects diagnostic
 helpers during AArch32 VFP translation. Keep Start profile off. Enable

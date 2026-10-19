@@ -7,15 +7,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 - [ ] Time the guarded ARMv6 hflags calculation (`e414b9d74a`, default-off
   `LT_HFLAGS_V6_FAST=on`) in focused syscall/fault/STM paths with verification
-  off before game A/B. Independent `LT_HFLAGS_V6_VERIFY=on` completed a90s
-  desktop copied-record capture: at least1,048,576 matching rebuilds, clean
-  Stop/worker/frontend exit0; end screenshot asleep, no active-UI claim. This
+  off before game A/B. Independent `LT_HFLAGS_V6_VERIFY=on` completed a 90 s
+  desktop copied-record capture: at least 1,048,576 matching rebuilds, clean
+  Stop/worker/frontend exit 0; end screenshot asleep, no active-UI claim. This
   covers executed states, not all possible register values. Scratch record
   removed. Original faults/guest handler remain.
   Pre-v7 VMSA only, no EL2/EL3/M/PMSA/AArch64; Linux/Android builds pass.
   No measured speedup or game ceiling/median/low/1%low/hitch/duration result.
 
-- [ ] Measure exact host-PC lookup caching (`c146d54fad`, default-off
+- [x] Measure exact host-PC lookup caching (`c146d54fad`, default-off
   `LT_HOST_PC_CACHE=on`) in the preserved alignment-fault path. One 1200-round
   STM diagnostic completed at best/median1498.5/1542.0ns with all byte/guard/
   writeback checks passing. Native call chains nominate `tcg_tb_lookup`5.89%
@@ -28,10 +28,22 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   best improves4.46/4.13%, median3.79/1.46%, full pass durations mixed.
   All byte/guard/writeback checks pass and four scenes reviewed, Start profile
   off. Original short LT Bench restored, clean Stop/no-qemu/baseline verified.
-  Timings include diagnostic bookkeeping; next confirm sampling-off.
+  Sampling-off confirmation now complete: three pairs, three short five-round
+  passes per arm. STM best/median (median of pass bests/medians), ns:
+  1534.2/1576.6→1469.7/1522.0,1553.9/1577.4→1459.3/1486.5,
+  1528.6/1542.2→1466.8/1520.2. Aligned stores unchanged; syscall mixed,
+  page fault timings worse. Same-APK ordinary Jetpack title, three 60 s pairs:
+  mean54.23/53.40/53.48→54.08/53.00/53.35; ceiling58 throughout,median54,
+  low50/48/48→48/48/48;1%low28.154/28.443/28.311→28.466/28.067/27.786.
+  Hitches14/6/9→6/10/15;full durations778.937/302.354/455.194→
+  353.200/527.450/812.890ms. Aggregate53.706→53.478fps(−0.42%),
+  29→31 hitches,1536.485→1693.540ms/180s per mode. Local saving confirmed,
+  no repeatable game/hitch benefit; keep default off, do not repeat unchanged.
+  All18 scenes reviewed,zero skips/failed byte checks,clean Stop/no-qemu/exact
+  baseline restoration verified. User recorder/all diagnostics off.
   Clear the cache before tree mutations under the original mutex; preserve
-  faults/audio. No game ceiling/median/low/1%low/hitch count/duration gain
-  measured or claimed. Focused profile and provenance in PERFORMANCE.md.
+  faults/audio. Focused profile and all game/focused results/provenance in
+  PERFORMANCE.md; `host-pc-ordinary-results.json` retains every pass/hitch.
 
 - [ ] Measure duplicate exception-return hflags removal, default-off
   `LT_ERET_HFLAGS_FAST=on`. `cpsr_write()` already rebuilds flags before

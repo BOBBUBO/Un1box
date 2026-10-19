@@ -2366,6 +2366,52 @@ Original short LT Bench restored; final clean Stop/no-qemu and baseline
 environment readback verified. Cache and lookup sampling are off. Pixel
 untouched; no test suites added/run.
 
+**Sampling-off confirmation and ordinary Jetpack:** the same frozen APK and
+serial28 package completed three pairs in off/on, on/off, off/on order on the
+Snapdragon 865-class Poco F3. Lookup sampling, user recorder, accounting and
+other diagnostics stayed off; only the cache switch changed. Each arm ran
+three short LT Bench passes (five rounds each), then the same Jetpack title
+scene, settling for 50 s before a 60 s frame window. All byte/guard/writeback
+checks passed. All 18 benchmark/before/end scenes were reviewed; Start profile
+remained off. Zero skipped publications in all six windows.
+
+| Ordinary Jetpack, off → on | Pair 1 | Pair 2 (reversed) | Pair 3 |
+| --- | --- | --- | --- |
+| Mean fps | 54.23 → 54.08 | 53.40 → 53.00 | 53.48 → 53.35 |
+| Ceiling fps | 58 → 58 | 58 → 58 | 58 → 58 |
+| Median fps | 54 → 54 | 54 → 54 | 54 → 54 |
+| Low fps | 50 → 48 | 48 → 48 | 48 → 48 |
+| 1% low fps | 28.154 → 28.466 | 28.443 → 28.067 | 28.311 → 27.786 |
+| Hitches >50 ms | 14 → 6 | 6 → 10 | 9 → 15 |
+| Full hitch duration, ms | 778.937 → 353.200 | 302.354 → 527.450 | 455.194 → 812.890 |
+| Longest gap, ms | 68.506 → 67.861 | 51.080 → 66.725 | 51.932 → 75.756 |
+
+Focused values below are the median of three pass bests / median of three pass
+medians, in ns/op; they are not pooled round percentiles. Every pass is retained.
+
+| Sampling off, off → on | Pair 1 | Pair 2 | Pair 3 |
+| --- | --- | --- | --- |
+| STM unaligned best / median | 1534.2 / 1576.6 → 1469.7 / 1522.0 | 1553.9 / 1577.4 → 1459.3 / 1486.5 | 1528.6 / 1542.2 → 1466.8 / 1520.2 |
+| STM aligned best / median | 6.5 / 6.6 → 6.5 / 6.6 | 6.5 / 6.6 → 6.5 / 6.6 | 6.6 / 6.6 → 6.6 / 6.7 |
+| Syscall best / median | 880.4 / 898.9 → 883.7 / 897.9 | 874.5 / 915.2 → 866.7 / 899.8 | 902.4 / 930.2 → 854.5 / 997.5 |
+| Fault best / median | 15824.0 / 16609.1 → 16034.1 / 17361.5 | 16329.8 / 17961.4 → 17420.9 / 19209.7 | 17340.1 / 17906.7 → 20355.1 / 20638.1 |
+
+Unaligned STM best improves 4.20/6.09/4.04%, median 3.46/5.76/1.43% with
+lookup sampling off. This confirms a small local saving while retaining the
+guest fault path. It does not establish a game benefit: aggregate Jetpack mean
+53.706 → 53.478 fps (−0.42%), slightly lower in every pair; hitches 29 → 31,
+full duration 1536.485 → 1693.540 ms per 180 s per mode. Pacing improves only
+in pair 1 and worsens in pairs 2/3. **Keep default off; no repeatable Jetpack
+throughput or hitch improvement. Do not repeat this unchanged experiment.**
+This comparison does not include the later hflags specialization below.
+
+Evidence: `build/perf-codex/poco-host-pc-ordinary-{1,2,3}-{off,on}/`,
+`host-pc-ordinary-results.json` (exact windows, all passes and every hitch's
+bounds/duration), reviewed `host-pc-ordinary-scenes.png`, runners
+`host-pc-ordinary-run.py` / `host-pc-ordinary-analyze.py`. Clean Stop/no-qemu and
+exact baseline restoration confirmed; original short LT Bench remains installed.
+Pixel disconnected and untouched; no new test suites added/run.
+
 For a visual check using the existing complete delayed-PC trace, local
 `build/perf-codex/hitch-examples.py` produces `hitch-examples.png/json`.
 The three examples (51.198ms with decoder displacement,50.057ms with host
@@ -2392,22 +2438,22 @@ guest fault handling. Single-step-active requires an AArch64 debug target,
 which the guarded CPU class lacks.
 
 Independent default-off `LT_HFLAGS_V6_VERIFY=on` compares both flag words
-against the generic builder at every eligible rebuild and reports each
-million comparisons. This diagnostic is for a separate runtime capture;
+against the generic builder at every eligible rebuild and reports every
+1,048,576 comparisons. This diagnostic is for a separate runtime capture;
 ordinary measurements keep it off. Linux/Android builds pass. Focused timing
 and game A/B remain pending. No speedup claimed;
 game ceiling/median/low/1%low/hitches/durations are unmeasured. The concurrent
 host-PC cache comparisons use their earlier frozen APK, not this new code.
 
-A separate90s Linux headless capture on a copy of an idle prepared n72ap/7E18
-record completed with fast/verify on and host-PC cache off. At least1,048,576
+A separate 90 s Linux headless capture on a copy of an idle prepared n72ap/7E18
+record completed with fast/verify on and host-PC cache off. At least 1,048,576
 eligible rebuilds matched both original flag words, with no assertion failure.
-The guest agent reports state2 during the capture; final controller status
-confirms state0/clean, worker exit0 and frontend return0. The end screenshot
+The guest agent reports state 2 during the capture; final controller status
+confirms state 0/clean, worker exit 0 and frontend return 0. The end screenshot
 is asleep/black, so it supplies no active-UI visual evidence. These observations
 cover the executed boot/runtime states, not all possible control-register values
-or a performance result. No test suite added/run. Both input and worker records
-were idle before the copy; the private scratch copy was removed after clean
+or a performance result. No test suite added/run. The source record was idle
+before the copy; the private scratch copy was removed after clean
 Stop. Evidence retained as `build/perf-codex/hflags-v6-desktop{.txt,.png,-serial.log,
 -record.json,-result.json}` and frozen build identity `hflags-v6-build-identity.json`.
 Linux library SHA-256
