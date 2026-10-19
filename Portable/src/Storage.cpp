@@ -502,6 +502,24 @@ static void sparse_write(int fd, const uint8_t *bytes, size_t size) {
     else
         write_all(fd, bytes, size);
 }
+// n72 NAND arrives as ~110,000 4160-byte page files, nand/csN/N.page. Extracted one file each (with a
+// sync per file on Android) that took minutes; the importer packs them instead, as the desktop one
+// does, into one indexed ITNAND01 file that the engine maps directly: a 24-byte header, a slot
+// table of 4 x 524288 little-endian record numbers (0 = never written) and the records in order.
+constexpr uint32_t packed_pages_per_cs = 524288, packed_record = 4160;
+constexpr uint64_t packed_index_bytes = 4ull * packed_pages_per_cs * 4, packed_records_at = 24 + packed_index_bytes;
+static bool packed_page(const std::string &name, uint32_t &slot) {
+    if (name.size() < 15 || name.compare(0, 7, "nand/cs") || name[7] < '0' || name[7] > '3' || name[8] != '/' ||
+        name.compare(name.size() - 5, 5, ".page"))
+        return false;
+    const std::string digits = name.substr(9, name.size() - 14);
+    if (digits.empty() || digits.size() > 7 || digits.find_first_not_of("0123456789") != std::string::npos ||
+        (digits.size() > 1 && digits[0] == '0'))
+        return false;
+    const uint32_t page = uint32_t(std::stoul(digits));
+    slot = uint32_t(name[7] - '0') * packed_pages_per_cs + page;
+    return page < packed_pages_per_cs;
+}
 static uint64_t limit(const lt_import_config *c) {
     return c->max_bytes ? std::min<uint64_t>(c->max_bytes, 64ull << 30) : 64ull << 30;
 }
@@ -683,7 +701,32 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
             for (size_t p = name.find('/'); p != std::string::npos; p = name.find('/', p + 1))
                 lt::require(!names.count(name.substr(0, p)), "file/directory conflict");
         }
+        // A NAND made only of full n72 pages is packed; the lock is checked once extracted. Anything
+        // else (n81's few large files) is extracted as it is.
+        bool pack = false;
+        for (const auto &entry : entries.array) {
+            const std::string name = entry.at("name").string();
+            uint32_t slot = 0;
+            if (name.rfind("nand/", 0) != 0)
+                continue;
+            if (!lt::packed_page(name, slot) || entry.at("size").integer() != lt::packed_record) {
+                pack = false;
+                break;
+            }
+            pack = true;
+        }
         lt::Stage stage(c->destination, true);
+        std::unique_ptr<lt::Fd> packed;
+        std::vector<uint8_t> slots;
+        std::map<std::string, std::string> page_digests;  // "csN/N.page" -> sha256, sorted like a listing
+        uint32_t records = 0;
+        if (pack) {
+            packed = std::make_unique<lt::Fd>(
+                open((stage.path / "nand").c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+            lt::io(packed->n >= 0, "create packed NAND");
+            slots.assign(lt::packed_index_bytes, 0);
+            lt::io(lseek(packed->n, off_t(lt::packed_records_at), SEEK_SET) >= 0, "seek packed NAND records");
+        }
         observation.begin("extracting", total);
         z_stream z{};
         lt::require(inflateInit(&z) == Z_OK, "inflate initialization failed", LT_IO);
@@ -697,7 +740,17 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         size_t next = 0;
         uint64_t remaining = 0, target_size = 0;
         std::unique_ptr<lt::Fd> target;
+        std::string page_name;
+        uint32_t page_slot = 0;
+        lt::Sha256 page_hash;
         auto finish_target = [&] {
+            if (!page_name.empty()) {
+                page_digests.emplace(page_name.substr(5), page_hash.finish());
+                ++records;
+                for (int byte = 0; byte < 4; ++byte)
+                    slots[size_t(page_slot) * 4 + byte] = uint8_t(records >> (8 * byte));
+                page_name.clear();
+            }
             if (target) {
                 lt::io(ftruncate(target->n, off_t(target_size)) == 0, "size sparse archive entry");
                 if (!stage.bulk_sync)
@@ -710,12 +763,18 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
                 observation.checkpoint();
                 finish_target();
                 const auto &entry = entries.array[next++];
+                remaining = target_size = entry.at("size").integer();
+                if (pack && entry.at("name").string().rfind("nand/", 0) == 0) {
+                    page_name = entry.at("name").string();
+                    lt::packed_page(page_name, page_slot);
+                    page_hash = lt::Sha256();
+                    continue;
+                }
                 auto path = stage.path / entry.at("name").string();
                 lt::fs::create_directories(path.parent_path());
                 target = std::make_unique<lt::Fd>(
                     open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
                 lt::io(target->n >= 0, "create archive entry");
-                remaining = target_size = entry.at("size").integer();
             }
             return remaining > 0;
         };
@@ -736,7 +795,9 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
             while (offset < count) {
                 lt::require(advance(), "payload exceeds index");
                 size_t take = size_t(std::min<uint64_t>(remaining, count - offset));
-                lt::sparse_write(target->n, out.data() + offset, take);
+                if (!page_name.empty())
+                    page_hash.update(out.data() + offset, take);
+                lt::sparse_write(page_name.empty() ? target->n : packed->n, out.data() + offset, take);
                 remaining -= take;
                 offset += take;
                 written += take;
@@ -751,6 +812,48 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         lt::require(!advance() && written == total, "payload shorter than index");
         finish_target();
         lt::progress(c, total, total);
+        if (pack) {
+            auto lock = lt::parse(lt::read_file(stage.path / "device.lock.json"));
+            lt::require(lock.at("board").string() == "n72ap", "packed NAND pages on a board other than n72");
+            const auto &source = lock.at("outputs").at("nand");
+            lt::require(source.at("path").string() == "nand" && source.at("pages").integer() == records,
+                        "NAND page count mismatch");
+            lt::Sha256 listing;
+            for (const auto &page : page_digests) {
+                const std::string line = page.first + " " + page.second + "\n";
+                listing.update(line.data(), line.size());
+            }
+            lt::require(listing.finish() == source.at("listing_sha256").string(), "NAND listing checksum mismatch");
+            uint8_t header[24] = {'I', 'T', 'N', 'A', 'N', 'D', '0', '1'};
+            const uint32_t geometry[4] = {4096, 64, 4, lt::packed_pages_per_cs};
+            for (int field = 0; field < 4; ++field)
+                for (int byte = 0; byte < 4; ++byte)
+                    header[8 + field * 4 + byte] = uint8_t(geometry[field] >> (8 * byte));
+            lt::io(pwrite(packed->n, header, sizeof header, 0) == ssize_t(sizeof header), "write packed NAND header");
+            lt::io(pwrite(packed->n, slots.data(), slots.size(), 24) == ssize_t(slots.size()), "write packed NAND index");
+            lt::io(ftruncate(packed->n, off_t(lt::packed_records_at + uint64_t(records) * lt::packed_record)) == 0,
+                   "size packed NAND");
+            lt::io(fsync(packed->n) == 0, "sync packed NAND");
+            packed.reset();
+            observation.begin("packing");
+            lt::Json record;
+            record.kind = lt::Json::Object;
+            auto text = [](const std::string &value, lt::Json::Kind kind = lt::Json::String) {
+                lt::Json j;
+                j.kind = kind;
+                j.text = value;
+                return j;
+            };
+            record.object.emplace("path", text("nand"));
+            record.object.emplace("format", text("ITNAND01"));
+            record.object.emplace("sha256", text(lt::digest_file(stage.path / "nand")));
+            record.object.emplace("pages", text(std::to_string(records), lt::Json::Number));
+            record.object.emplace("source_listing_sha256", text(source.at("listing_sha256").string()));
+            lt::io(rename((stage.path / "device.lock.json").c_str(), (stage.path / "source-device.lock.json").c_str()) == 0,
+                   "keep source device lock");
+            lock.object.at("outputs").object.at("nand") = record;
+            lt::atomic_write(stage.path / "device.lock.json", lt::dump(lock) + "\n");
+        }
         stage.finish(&observation);
     });
 }

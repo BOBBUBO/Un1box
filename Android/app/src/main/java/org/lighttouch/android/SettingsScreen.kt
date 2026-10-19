@@ -40,7 +40,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).testTag("settings")) {
                 Group("Controls") {
                     SwitchRow(LtIcons.Tilt, "Tilt controls", "Your phone's motion sensors move the device's accelerometer", s.tilt, "tilt_toggle") { s.tilt = it; host.applySettings() }
-                    SwitchRow(LtIcons.VolumeUp, "Volume buttons", "Your phone's volume keys press the device's volume buttons while it's on screen", s.volumeKeys) { s.volumeKeys = it }
+                    SwitchRow(LtIcons.VolumeUp, "Phone volume keys control the device", "Off, they set your phone's volume as usual; the device's own volume buttons are on screen", s.volumeKeys) { s.volumeKeys = it }
                     SwitchRow(LtIcons.Vibrate, "Haptic feedback", "A tap when you press Home, Sleep/Wake or volume", s.haptics) { s.haptics = it }
                 }
                 Group("Display") {

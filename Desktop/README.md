@@ -32,6 +32,7 @@ an alpha format change: reimport existing devices; no migration is provided.
 Windows packed NAND import is user-confirmed. One real n72 streaming import
 measured 4.6 seconds on Linux; this is not a
 Windows/macOS speed measurement or a complete setup-time claim.
+Android's importer (Portable `lt_import_archive`) packs n72 NAND into the same `ITNAND01` file.
 Android retains its touch UI; APK orchestration remains a future entrypoint
 adapter rather than an advertised output of this initial desktop foundation.
 

@@ -11,6 +11,9 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   `ipod_touch_lcd_frame_log` trace while flicking Settings). `--wrap` prefixes
   the engine (e.g. `taskset f0`, `perf stat ...`); `--vcpu-mask` pins only the
   vCPU thread. Set `ANDROID_SERIAL` when several phones are attached.
+- `uirate.py` flings the app's own UI (Settings, the Store...) and reports the panel rate and the
+  UI's real frame rate from gfxinfo framestats, with how many frames took 2+ refreshes. Use it
+  to check that the 60 Hz cap lifts off the guest view and that scrolling stays smooth.
 - `devbench.sh SERIAL RECORD tag:binary:mask[:vcpumask] ...` runs boot + fling
   per spec on one phone; engines go in the app's `files/bench/`.
 - `appab.py label=apk ...` installs APKs in turn and times an in-app boot to

@@ -52,8 +52,8 @@ class EngineService : Service() {
     private val binder = object : IEngine.Stub() {
         override fun rename(recordId: String, name: String): String = Native.rename(File(filesDir, "library").absolutePath, recordId, name)
         override fun remove(recordId: String): String = Native.remove(File(filesDir, "library").absolutePath, recordId)
-        override fun importDevice(source: String, displayName: String, rom: String, guest: String): String =
-            Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, guest)
+        override fun importDevice(source: String, displayName: String, rom: String, guest: String, sha256: String): String =
+            Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, guest, sha256)
         override fun frameStats(sinceSequence: Long): Bundle = Bundle().apply {
             putLongArray("frames", Native.frameTimeline(sinceSequence))
             putLong("nowNs", System.nanoTime())
@@ -63,6 +63,7 @@ class EngineService : Service() {
             if (detailedTiming && detailedTimingError.isNotEmpty()) putString("detailedError", detailedTimingError)
         }
         override fun setPresentScale(mode: Int) = Native.setPresentScale(mode)
+        override fun setPresentVisible(visible: Boolean) = Native.setPresentVisible(visible)
         override fun setDetailedTiming(enabled: Boolean) {
             detailedTiming = enabled; detailedTimingError = ""
             if (!enabled && profileCapture.automatic) profileCapture.finish("detailed-timing-off")

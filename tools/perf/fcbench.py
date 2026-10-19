@@ -33,11 +33,11 @@ subprocess.run([sys.executable, os.path.join(D, "inappfps.py"), "--boot-only"], 
 # swipe at once; tapping Power again before the wake shows (slow on the Poco) puts it back to sleep.
 # Read the wake layout here, then refresh before taps: status/profile controls
 # can reflow while the guest starts or changes orientation.
-rect = guest_rect(); _, power = find(ui(), "Power")
+rect = guest_rect()
 def unlocked():
     for _ in range(3):
-        if sum(avg(rect, .1, .1, .9, .9)) < 15:
-            sh("input", "tap", *map(str, power)); t = time.monotonic()
+        if sum(avg(rect, .1, .1, .9, .9)) < 15 or 'resource-id="guest_screen_asleep"' in ui():
+            wake(); t = time.monotonic()
             while time.monotonic()-t < 8 and sum(avg(rect, .1, .1, .9, .9)) < 15: pass
         for _ in range(3):
             if not is_lock(rect): break

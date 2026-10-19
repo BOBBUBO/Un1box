@@ -4,6 +4,7 @@
 #include <vector>
 #include <stdexcept>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 namespace lt {
 // Strict bounded JSON reader. Numeric lexemes remain exact (no double rounding
@@ -261,4 +262,43 @@ class JsonReader {
     }
 };
 inline Json parse(const std::string &s) { return JsonReader(s).parse(); }
+// Writes a parsed document back out; numbers keep their exact lexemes and keys come out sorted.
+inline std::string dump(const Json &j) {
+    switch (j.kind) {
+    case Json::String: {
+        std::string o = "\"";
+        for (unsigned char c : j.text) {
+            if (c == '"' || c == '\\')
+                o += '\\', o += char(c);
+            else if (c < 0x20) {
+                char escape[8];
+                snprintf(escape, sizeof escape, "\\u%04x", c);
+                o += escape;
+            } else
+                o += char(c);
+        }
+        return o + "\"";
+    }
+    case Json::Array: {
+        std::string o = "[";
+        for (size_t i = 0; i < j.array.size(); ++i)
+            o += (i ? "," : "") + dump(j.array[i]);
+        return o + "]";
+    }
+    case Json::Object: {
+        std::string o = "{";
+        for (const auto &pair : j.object) {
+            Json key;
+            key.kind = Json::String;
+            key.text = pair.first;
+            o += (o.size() > 1 ? "," : "") + dump(key) + ":" + dump(pair.second);
+        }
+        return o + "}";
+    }
+    case Json::Null:
+        return "null";
+    default:
+        return j.text;
+    }
+}
 } // namespace lt

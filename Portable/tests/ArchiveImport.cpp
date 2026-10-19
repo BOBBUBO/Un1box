@@ -237,6 +237,69 @@ int main() {
     config.expected_sha256 = expected.c_str();
     assert(lt_import_archive(&config, &error) == LT_INVALID);
     no_staging();
+    // Full 4160-byte n72 pages are packed into one ITNAND01 file, in archive order, with the
+    // source lock kept beside the rewritten one.
+    std::map<std::string, std::string> pages{{"cs0/0.page", std::string(4160, 'a')},
+                                             {"cs1/7.page", std::string(4160, '\0')},
+                                             {"cs3/524287.page", std::string(4159, '\0') + "z"}};
+    std::string page_listing;
+    for (const auto &page : pages)
+        page_listing += page.first + " " + sha(page.second) + "\n";
+    auto packed_lock = [&](const std::string &board, const std::string &listing_sha) {
+        return "{\"format\":1,\"board\":\"" + board + "\",\"build\":\"synthetic\",\"outputs\":{"
+               "\"nor\":{\"path\":\"nor.bin\",\"sha256\":\"" + sha(nor) +
+               "\"},\"iboot\":{\"path\":\"iBoot.bin\",\"sha256\":\"" + sha(boot) +
+               "\"},\"kboot\":{\"path\":\"kboot.bin\",\"sha256\":\"" + sha(boot) +
+               "\"},\"gid_blobs\":{\"path\":\"gid-blobs.bin\",\"sha256\":\"" + sha(gid) +
+               "\"},\"nand\":{\"path\":\"nand\",\"listing_sha256\":\"" + listing_sha + "\",\"pages\":3}}}";
+    };
+    auto packed_entries = [&](const std::string &lock_text) {
+        std::vector<std::pair<std::string, std::string>> list{{"nand/cs3/524287.page", pages.at("cs3/524287.page")},
+                                                             {"device.lock.json", lock_text}, {"nor.bin", nor},
+                                                             {"iBoot.bin", boot}, {"kboot.bin", boot},
+                                                             {"gid-blobs.bin", gid},
+                                                             {"nand/cs0/0.page", pages.at("cs0/0.page")},
+                                                             {"nand/cs1/7.page", pages.at("cs1/7.page")}};
+        return list;
+    };
+    const std::string n72_lock = packed_lock("n72ap", sha(page_listing));
+    archive(input, packed_entries(n72_lock));
+    expected = sha(read(input));
+    config.expected_sha256 = expected.c_str();
+    Observation packing;
+    assert(lt_import_archive_observed(&config, Observation::notify, &packing, &error) == LT_OK);
+    assert((packing.phases == std::vector<std::string>{"hashing", "extracting", "packing", "verifying"}));
+    assert(fs::is_regular_file(root / "base/nand") && read(root / "base/source-device.lock.json") == n72_lock);
+    const std::string image = read(root / "base/nand");
+    const size_t index_bytes = 4 * 524288 * 4, records_at = 24 + index_bytes;
+    assert(image.size() == records_at + 3 * 4160 && image.compare(0, 8, "ITNAND01") == 0);
+    auto slot = [&](size_t chip, size_t page) {
+        const auto *p = reinterpret_cast<const unsigned char *>(image.data() + 24 + (chip * 524288 + page) * 4);
+        return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+    };
+    assert(slot(3, 524287) == 1 && slot(0, 0) == 2 && slot(1, 7) == 3 && slot(0, 1) == 0);
+    assert(image.compare(records_at, 4160, pages.at("cs3/524287.page")) == 0);
+    assert(image.compare(records_at + 4160, 4160, pages.at("cs0/0.page")) == 0);
+    assert(image.compare(records_at + 2 * 4160, 4160, pages.at("cs1/7.page")) == 0);
+    const std::string rewritten = read(root / "base/device.lock.json");
+    assert(rewritten.find("\"format\":\"ITNAND01\"") != std::string::npos &&
+           rewritten.find("\"source_listing_sha256\":\"" + sha(page_listing) + "\"") != std::string::npos &&
+           rewritten.find("listing_sha256\":\"" + sha(page_listing) + "\",\"path\"") == std::string::npos);
+    const std::string state = (root / "packed-state").string();
+    lt_device_config device{sizeof(device), 1, destination.c_str(), state.c_str(), 0};
+    lt_device *opened = nullptr;
+    assert(lt_device_open(&device, &opened, &error) == LT_OK);
+    lt_device_close(opened);
+    discard(root / "base");
+    discard(state);
+    // The packed pages must still match the source listing, and only n72 is packed.
+    for (const auto &bad_lock : {packed_lock("n72ap", std::string(64, '0')), packed_lock("n81ap", sha(page_listing))}) {
+        archive(input, packed_entries(bad_lock));
+        expected = sha(read(input));
+        config.expected_sha256 = expected.c_str();
+        assert(lt_import_archive(&config, &error) == LT_INVALID);
+        no_staging();
+    }
     discard(root);
     std::cout << "production archive importer: sparse/mixed/trailing/empty integrity, three phase cancellations, "
                  "malformed cleanup PASS; allzero allocated=" << allocated << " bytes\n";

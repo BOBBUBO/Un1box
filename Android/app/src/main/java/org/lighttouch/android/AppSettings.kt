@@ -25,7 +25,7 @@ class AppSettings(context: Context) {
     private val tiltState = mutableStateOf(prefs.getBoolean("tilt", true))
     var tilt: Boolean get() = tiltState.value; set(v) { tiltState.value = v; prefs.edit().putBoolean("tilt", v).apply() }
 
-    private val volumeKeysState = mutableStateOf(prefs.getBoolean("volumeKeys", true))
+    private val volumeKeysState = mutableStateOf(prefs.getBoolean("volumeKeys", false))
     var volumeKeys: Boolean get() = volumeKeysState.value; set(v) { volumeKeysState.value = v; prefs.edit().putBoolean("volumeKeys", v).apply() }
 
     private val hapticsState = mutableStateOf(prefs.getBoolean("haptics", true))

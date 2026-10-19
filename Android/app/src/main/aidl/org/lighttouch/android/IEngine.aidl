@@ -39,9 +39,11 @@ interface IEngine {
     String debugSelectTcgIrCache(boolean enabled);
     String rename(String recordId, String name);
     String remove(String recordId);
-    String importDevice(String source, String displayName, String rom, String guest);
+    /** sha256: the archive's checksum when the caller hashed it while copying; empty to hash it here. */
+    String importDevice(String source, String displayName, String rom, String guest, String sha256);
     Bundle frameStats(long sinceSequence);
     void setPresentScale(int mode);
+    void setPresentVisible(boolean visible);
     void setDetailedTiming(boolean enabled);
     Bundle hitchSnapshot();
 }

@@ -18,6 +18,21 @@ def tap_text(text):
     en, pos = find(ui(), text)
     if en: sh("input", "tap", str(pos[0]), str(pos[1]))
     return bool(en)
+def tap_id(*tags):
+    """Taps the first enabled control with one of these resource ids (the current UI's tags)."""
+    xml = ui()
+    for tag in tags:
+        m = re.search(r'resource-id="' + tag + r'"[^>]*?enabled="(true|false)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
+        if m and m.group(1) == "true":
+            x0, y0, x1, y1 = map(int, m.groups()[1:])
+            sh("input", "tap", str((x0+x1)//2), str((y0+y1)//2)); return True
+    return False
+def start(): return tap_id("recover_guest", "start_guest") or tap_text("Recover retained state") or tap_text("Start")
+def wake(): return tap_id("guest_screen_asleep", "power_button") or tap_text("Power")
+def home(): return tap_id("device_home", "home_button") or tap_text("Home")
+def stop():
+    if tap_id("stop_guest"): time.sleep(1); return tap_id("confirm_stop")
+    return tap_text("Stop")
 def state():
     xml = ui()
     m = re.search(r'text="([a-z]+)" resource-id="session_status"', xml)
@@ -100,21 +115,23 @@ if not a.no_start:
     st = state()
     if st == "paused": tap_text("Resume")
     elif st in ("stopped", "?"):
-        if not tap_text("Recover retained state"): tap_text("Start")
+        start()
         t0 = time.monotonic(); time.sleep(4); rect = guest_rect()  # layout changes once running
         samples = []
         while time.monotonic()-t0 < 300 and not is_lock(rect):
+            # The guest can sleep before the lock screen is seen; the app then covers it with a wake card.
+            if time.monotonic()-t0 > 8 and state() == "running" and wake(): time.sleep(2)
             if a.threads and len(samples) < 6 and time.monotonic()-t0 > 8:
                 samples.append(sh("sh", "-c", f"ps -T -o TID,PSR,PCPU,CMD -p $(pidof {PKG}:engine) | sort -k3 -rn | head -3 | tr '\\n' ';'"))
             time.sleep(1)
         for x in samples: print("  threads:", x.strip(), flush=True)
         print("lock screen after", round(time.monotonic()-t0, 1), flush=True)
 if a.boot_only:
-    if a.stop: tap_text("Stop")
+    if a.stop: stop()
     sys.exit(0)
 rect = guest_rect()
 for _ in range(4):
-    if sum(avg(rect, .1, .1, .9, .9)) < 15: tap_text("Power"); time.sleep(3)
+    if sum(avg(rect, .1, .1, .9, .9)) < 15 or wake(): time.sleep(3)
     if is_lock(rect):
         sh("input", "swipe", *gpt(rect, .2, .89), *gpt(rect, .95, .89), "400"); time.sleep(3)
     elif sum(avg(rect, .1, .1, .9, .9)) >= 15: break
@@ -128,7 +145,7 @@ def timestats():
     hist = re.search(r"present2present histogram is as below:\n([^\n]*)", blk).group(1)
     h = {int(k): int(v) for k, v in re.findall(r"(\d+)ms=(\d+)", hist) if int(v)}
     return int(re.search(r"totalFrames = (\d+)", blk).group(1)), h
-tap_text("Home"); time.sleep(2); tap_text("Home"); time.sleep(2)
+home(); time.sleep(2); home(); time.sleep(2)
 sh("dumpsys", "SurfaceFlinger", "--timestats", "-enable", "-clear")
 time.sleep(0.3)
 # Home has one page on 3.1.3: alternate Home -> Spotlight -> Home.
@@ -148,8 +165,8 @@ def proc_ticks():
     f = st[st.rindex(")")+2:].split()
     return int(f[11]) + int(f[12]), float(up.split()[0])
 if a.idle:
-    tap_text("Home"); time.sleep(3)
+    home(); time.sleep(3)
     t0, u0 = proc_ticks(); time.sleep(a.idle); t1, u1 = proc_ticks()
     print(f"idle engine process CPU {100*(t1-t0)/100/(u1-u0):.1f}% of one core over {u1-u0:.0f}s", flush=True)
 if a.stop:
-    tap_text("Stop")
+    stop()

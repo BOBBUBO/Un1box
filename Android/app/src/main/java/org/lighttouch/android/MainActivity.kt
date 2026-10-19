@@ -307,6 +307,12 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         setContent {
             val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
+            // A full page hides the guest surface: the presenter stops drawing into it and drops its 60 Hz request.
+            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE)
+            LaunchedEffect(guestCovered, engine) {
+                val worker = engine ?: return@LaunchedEffect
+                Thread({ try { worker.setPresentVisible(!guestCovered) } catch (_: RemoteException) { } }, "present-visibility").start()
+            }
             val immersive = base == Screen.FULLSCREEN && overlay == null
             LaunchedEffect(immersive) { applyWindowMode(immersive) }
             // A guest that stops while full screen drops back to the device view.
@@ -477,17 +483,20 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             }
         }, "setup-scan").start()
     }
-    private fun copyWithProgress(uri: Uri, target: File, label: String) {
+    /** Copies [uri] to [target] and returns the copy's SHA-256 (hex). */
+    private fun copyWithProgress(uri: Uri, target: File, label: String): String {
         val total = DocumentFile.fromSingleUri(this, uri)?.length() ?: 0L
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
         contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { output ->
             val buffer = ByteArray(1 shl 20); var done = 0L; var shown = -1L
             while (true) {
                 val n = input.read(buffer); if (n < 0) break
-                output.write(buffer, 0, n); done += n
+                output.write(buffer, 0, n); digest.update(buffer, 0, n); done += n
                 val percent = if (total > 0) done * 100 / total else -1
                 if (percent != shown) { shown = percent; handler.post { setup.phase = if (percent >= 0) "$label… $percent%" else "$label… ${done shr 20} MB" } }
             }
         } } ?: error("Cannot read $label")
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
     private fun createDevice() {
         val system = setup.system ?: return
@@ -500,11 +509,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 val romPath = rom?.let { File(staging, "bootrom.bin").also { f -> copyWithProgress(it.uri, f, "Copying the boot file") }.absolutePath } ?: ""
                 val toolsPath = tools?.let { File(staging, "guest.itpack").also { f -> copyWithProgress(it.uri, f, "Copying guest tools") }.absolutePath } ?: ""
+                var sha256 = ""
                 val source = if (system.folder) File(staging, "base").also { handler.post { setup.phase = "Copying the iOS system…" }
                     copyTree(DocumentFile.fromTreeUri(this, system.uri) ?: error("Cannot read the folder"), it) }
-                    else File(staging, "system.itbase").also { copyWithProgress(system.uri, it, "Copying the iOS system") }
-                handler.post { setup.phase = "Checking the iOS system…" }
-                val result = worker.importDevice(source.absolutePath, "", romPath, toolsPath)
+                    else File(staging, "system.itbase").also { sha256 = copyWithProgress(system.uri, it, "Copying the iOS system") }
+                handler.post { setup.phase = "Setting up the iOS system…" }
+                val started = System.nanoTime()
+                val result = worker.importDevice(source.absolutePath, "", romPath, toolsPath, sha256)
+                android.util.Log.i("LightTouch", "Device import took ${(System.nanoTime() - started) / 1_000_000} ms")
                 require(result.isEmpty()) { result }
                 val all = worker.records().toList()
                 val created = all.firstOrNull { it.getString("id") !in before } ?: error("The new device did not appear in the library")

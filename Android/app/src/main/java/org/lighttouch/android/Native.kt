@@ -5,7 +5,7 @@ import android.view.Surface
 /** Loaded only in :engine. UI never loads QEMU or constructs boot arguments. */
 internal object Native {
     init { System.loadLibrary("lighttouch_jni") }
-    external fun importBase(source: String, libraryRoot: String, displayName: String, rom: String, guest: String): String
+    external fun importBase(source: String, libraryRoot: String, displayName: String, rom: String, guest: String, sha256: String = ""): String
     external fun setGuestPackage(libraryRoot: String, id: String, path: String): String
     external fun records(libraryRoot: String): Array<Array<String>>
     external fun select(libraryRoot: String, id: String): String
@@ -13,6 +13,7 @@ internal object Native {
     external fun remove(libraryRoot: String, id: String): String
     external fun frameTimeline(since: Long): LongArray
     external fun setPresentScale(mode: Int)
+    external fun setPresentVisible(visible: Boolean)
     external fun start(libraryRoot: String, id: String): String
     external fun recoverStart(libraryRoot: String, id: String): String
     external fun status(): Array<String>

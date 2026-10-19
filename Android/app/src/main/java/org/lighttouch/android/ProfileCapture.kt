@@ -72,7 +72,8 @@ internal class ProfileCapture(private val context: android.content.Context, priv
     @Synchronized fun startAutomatic(guestState: String): String {
         if (directory != null || guestState != "running") return ""
         change(true, guestState, automatic = true)
-        if (directory == null) return lastError.ifEmpty { "Detailed timing could not start" }
+        // The overlay reports this as timing unavailable; it is not an error banner.
+        if (directory == null) return lastError.ifEmpty { "Detailed timing could not start" }.also { lastError = "" }
         val root = File(filesDir, "profiles")
         root.listFiles()?.filter { dir ->
             dir != directory && try {

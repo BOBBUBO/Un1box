@@ -75,6 +75,12 @@ void request_guest_frame_rate(ANativeWindow *window) {
     constexpr int8_t fixed_source=1;  // ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE
     if(set)set(window,60.0f,fixed_source);
 }
+// A frame rate of 0 withdraws the request, so a covered guest leaves the panel to the UI on top.
+void withdraw_guest_frame_rate(ANativeWindow *window) {
+    using SetFrameRate=int32_t(*)(ANativeWindow *,float,int8_t);
+    static const auto set=reinterpret_cast<SetFrameRate>(dlsym(RTLD_DEFAULT,"ANativeWindow_setFrameRate"));
+    if(set)set(window,0.0f,0);
+}
 // LT_FRAME_PACING=off (debug-env) posts frames on arrival, for A/B runs.
 bool frame_pacing_enabled() {
     static const bool enabled=[] { const char *v=getenv("LT_FRAME_PACING"); return !v || strcmp(v,"off")!=0; }();
@@ -113,6 +119,10 @@ void timeline_presented(uint64_t sequence,uint64_t now,uint64_t work) {
 // display hardware; the CPU mode is the old full-resolution nearest-neighbour upscale,
 // which wrote every panel pixel (~10 MB a frame at 1080x2400). LT_PRESENT_SCALE=cpu for A/B.
 enum PresentScale : int { ScaleSmooth=0, ScaleSharp=1, ScaleCpu=2 };
+// False while a full page (Settings, the Store, setup) covers the guest surface. The guest keeps
+// running; the presenter stops posting frames nobody can see and withdraws its 60 Hz request,
+// which otherwise held the whole panel at 60 Hz under the page's scrolling (Pixel 10).
+std::atomic<bool> present_visible{true};
 std::atomic<int> present_scale{[] {
     const char *v=getenv("LT_PRESENT_SCALE");
     return v && !strcmp(v,"cpu")?int(ScaleCpu):v && !strcmp(v,"sharp")?int(ScaleSharp):int(ScaleSmooth);
@@ -243,10 +253,12 @@ void present() {
     uint32_t configured_width=0,configured_height=0;
     uint64_t woken_sequence = 0;
     uint64_t phase_generation=0,phase_epoch=0;
+    uint64_t withdrawn_generation=0;
     for (;;) {
         // The snapshot outlives both guarded scopes, so its release is outside
         // the control mutex even when a stale platform operation returns late.
-        std::optional<WindowSnapshot> snapshot;
+        std::optional<WindowSnapshot> snapshot,covered;
+        const bool visible=present_visible.load(std::memory_order_relaxed);
         lt_frame_info source = LT_INIT(lt_frame_info);
         uint64_t begin = 0;
         const uint64_t observe_begin=monotonic_ns();
@@ -279,7 +291,9 @@ void present() {
                     }
                 }
             }
-            if (runtime && window) {
+            if (window && !visible && withdrawn_generation!=surface_generation)
+                covered.emplace(window, surface_generation, presentation_epoch);
+            if (runtime && window && visible) {
                 copy_begin=monotonic_ns();
                 present_stage(PresentPhase::FrameCopy,phase_generation,phase_epoch);
                 lt_error error = LT_INIT(lt_error);
@@ -311,6 +325,13 @@ void present() {
             if(!snapshot)present_stage(runtime&&window?PresentPhase::IdleNoNewFrame:PresentPhase::IdleNoTarget,
                 phase_generation,phase_epoch);
         }
+        if (covered) {
+            // Uncovered, the next frame reconfigures the window, which asks for 60 Hz again.
+            withdraw_guest_frame_rate(covered->get());
+            withdrawn_generation=covered->generation();configured_generation=0;
+            covered.reset();
+        }
+        if (visible) withdrawn_generation=0;
         if (snapshot) {
             ANativeWindow *target_window=snapshot->get();
             int geometry_code=0, geometry_width=0, geometry_height=0, geometry_format=0;
@@ -465,9 +486,9 @@ void present() {
 }
 }
 #define JNI(name) extern "C" JNIEXPORT
-JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JNIEnv *env,jobject,jstring source,jstring root,jstring name,jstring rom,jstring guest) {
+JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JNIEnv *env,jobject,jstring source,jstring root,jstring name,jstring rom,jstring guest,jstring sha256) {
     std::lock_guard<std::mutex> lock(library_guard);
-    Utf src(env,source),path(env,root),label(env,name),bootrom(env,rom),package(env,guest);
+    Utf src(env,source),path(env,root),label(env,name),bootrom(env,rom),package(env,guest),hashed(env,sha256);
     lt_error error=LT_INIT(lt_error);auto status=open_library(path.value,&error);
     if(status!=LT_OK)return string(env,result(status,error));
     lt_library_import_config config=LT_INIT(lt_library_import_config);
@@ -478,7 +499,9 @@ JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JN
     struct stat info;if(!src.value||stat(src.value,&info)!=0)return string(env,"Cannot inspect imported base");
     char checksum[65];
     if(S_ISREG(info.st_mode)) {
-        status=lt_sha256_file(src.value,checksum,&error);if(status!=LT_OK)return string(env,result(status,error));
+        // The app hashes the archive while copying it in; hashing it here again cost another full read.
+        if(hashed.value && strlen(hashed.value)==64)snprintf(checksum,sizeof checksum,"%s",hashed.value);
+        else if((status=lt_sha256_file(src.value,checksum,&error))!=LT_OK)return string(env,result(status,error));
         config.expected_sha256=checksum;
     }
     lt_record_info record=LT_INIT(lt_record_info);
@@ -1112,6 +1135,11 @@ JNI(frameTimeline) jlongArray JNICALL Java_org_lighttouch_android_Native_frameTi
     auto array=env->NewLongArray(jsize(out.size()));
     if(array && !out.empty())env->SetLongArrayRegion(array,0,jsize(out.size()),out.data());
     return array;
+}
+JNI(setPresentVisible) void JNICALL Java_org_lighttouch_android_Native_setPresentVisible(JNIEnv *,jobject,jboolean visible) {
+    present_visible.store(visible,std::memory_order_relaxed);
+    {std::lock_guard<std::mutex> lock(frame_wake_mutex);++frame_wake_sequence;}
+    frame_wake.notify_one();
 }
 JNI(setPresentScale) void JNICALL Java_org_lighttouch_android_Native_setPresentScale(JNIEnv *,jobject,jint mode) {
     if(mode>=ScaleSmooth && mode<=ScaleCpu)present_scale.store(mode,std::memory_order_relaxed);

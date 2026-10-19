@@ -9,8 +9,8 @@ exec(open(os.path.join(os.environ.get("PERF_DIR", "."), "inappfps.py")).read().s
 sh("input", "keyevent", "KEYCODE_WAKEUP"); sh("am", "start", "-n", f"{PKG}/.MainActivity"); time.sleep(2)
 st = state()
 if st not in ("stopped", "?"):
-    if st == "paused": tap_text("Resume"); time.sleep(2)
-    tap_text("Stop"); t = time.monotonic()
+    if st == "paused": tap_id("resume_overlay") or tap_text("Resume"); time.sleep(2)
+    stop(); t = time.monotonic()
     while state() != "stopped" and time.monotonic() - t < 90: time.sleep(2)
 print("state", state(), flush=True)
 PY
