@@ -5,13 +5,24 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
-- [ ] Measure the extended BQL spin budget (`5547634eeb`). Default-off
+- [x] Measure the extended BQL spin budget (`5547634eeb`). Default-off
   `LT_BQL_SPIN_EXTENDED=on` selects 150 µs with BQL spin on; off retains 50 µs.
   Residual short sleeps motivate it; the uncontended path and original blocking
   fallback remain. Builds pass, frozen APK/identity retained, three ordinary
-  60 s pairs launched on/off, off/on, on/off. Diagnostics, accounting, idle spin
-  and user recorder off; no performance gain or completed metrics yet.
-  Preserve all arms and report frame metrics, hitch counts and durations.
+  60 s pairs complete on/off, off/on, on/off. Diagnostics, accounting, idle spin
+  and user recorder off. All12scenes title/Startprofileoff, sameTID/nice0/CFS,
+  good28, zero skips; cleanStop/no-qemu/exactbaseline verified, runner exit0.
+  Before50 → after150µs by pair: mean58.033/57.033/56.400 →
+  59.117/58.183/57.783; ceiling60/60/60 →60/62/60;
+  median58/58/56 →60/58/58; low54/52/52 →58/54/54;
+  1%low29.056/28.940/28.762 →30.143/29.615/29.292;
+  hitches2/6/8 →1/2/8; full duration100.592/335.978/455.911 →
+  50.094/134.248/408.657ms. Equal180s/mode aggregate57.156 →58.361fps
+  (+2.11%),16 →11hitches,892.481 →592.998ms. Every pair improves FPS/low/
+  1%low, but third hitch count flat and second longest gap81.642 →84.133ms.
+  Stable60/good1%low remains unmet; keep experimental/defaultoff, no Pixel gain
+  inferred. Rawarms, exactwindows and every hitchduration retained in
+  bql-extended-game-results.json; full table/limits in PERFORMANCE.md.
 
 - [x] Attribute residual BQL spin fallbacks. Engine32d6f75762 adds default-off
   LT_BQL_FALLBACK_PROF=on with BQLspinON and native conditions trace. Time only

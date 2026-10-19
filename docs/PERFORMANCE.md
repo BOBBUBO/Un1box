@@ -2971,7 +2971,7 @@ intervals), plus summary.json. Runner guest-spin-run.py, existing guest-PC
 report scripts and new guest-flip-report.py retain reproduction. All real
 analyzers passed. No tests added/run; Pixel untouched. No new performance gain.
 
-#### Extended BQL spin budget (ordinary comparison in progress)
+#### Extended BQL spin budget (ordinary comparison complete)
 
 The residual fallback capture above finds 153 of 163 selected BQL wake delays
 with preceding sleeps under 100 µs, after the existing 50 µs spin has expired.
@@ -2985,12 +2985,43 @@ the thread is descheduled. Startup logs requested/effective extended mode.
 Linux/Android builds pass. Frozen bql-extended.apk, app source `c401dc6c` /
 engine `5547634eeb`, SHA256
 `e37a37773f8fcb6cd9f78a5d7a8f32edfc513331ee774b9419824997aa77c0cb`;
-identity and matching libraries retained. Three ordinary 60 s pairs started in
+identity and matching libraries retained. Three ordinary 60 s pairs completed in
 on/off, off/on, on/off order, after 50 s title settling. BQL spin is on in both
 modes; only the extended budget changes. Idle spin, diagnostics, accounting and
 the user recorder are off. This uses a separate APK from the completed guest
-thread diagnostic. No new performance gain or completed ceiling/median/low/
-1% low/hitch count/duration result yet. No tests added/run.
+thread diagnostic. All twelve before/end screenshots reviewed as Jetpack title,
+Start profile off. Every arm has the same vCPU TID/nice0/CFS across its window,
+serial28 good verdict, zero skipped frames and unchanged BQL hook. Clean Stop,
+no stray qemu processes and exact baseline restoration confirmed.
+
+| Pair | Mean fps 50 → 150 µs | Ceiling | Median | Low | 1% low | Hitches >50ms | Full hitch time ms | Longest gap ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 58.033 → 59.117 | 60 → 60 | 58 → 60 | 54 → 58 | 29.056 → 30.143 | 2 → 1 | 100.592 → 50.094 | 50.320 → 50.094 |
+| 2 | 57.033 → 58.183 | 60 → 62 | 58 → 58 | 52 → 54 | 28.940 → 29.615 | 6 → 2 | 335.978 → 134.248 | 81.642 → 84.133 |
+| 3 | 56.400 → 57.783 | 60 → 60 | 56 → 58 | 52 → 54 | 28.762 → 29.292 | 8 → 8 | 455.911 → 408.657 | 84.752 → 55.841 |
+
+Equal 180 s per mode: mean **57.156 → 58.361 fps (+2.11%)**, hitches
+**16 → 11**, full hitch time **892.481 → 592.998 ms**. Every pair improves
+throughput, low and 1% low; hitch count is unchanged in the third pair, and the
+longest gap is worse in the second pair. This is a repeatable incremental gain
+over the existing 50 µs spin, not stable60 or a result for Pixel/other games.
+The remaining ~34 ms 1% low frames and 84.133 ms outlier leave the goal unmet.
+Keep both spin switches experimental/default off pending broader validation.
+
+Whole-worker (including boot/settling) contended/acquired/fallback outcomes:
+50 µs 105029/98691/6338,110785/104120/6665,114877/107616/7261;
+150 µs 105335/104329/1006,108561/107632/929,112059/111200/859.
+These are not 60 s window counts; each tuple balances and the original hook
+remains installed. The longer budget substantially reduces blocking fallbacks,
+consistent with the previously observed short sleeps and delayed host wakeups.
+It does not establish the lock owner or explain the guest execution bursts.
+
+Evidence: `build/perf-codex/poco-bql-extended-game-{1,2,3}-{off,on}/`, frozen
+build identity and libraries, `bql-extended-game-results.json` with exact
+windows and individual hitch durations, analyzer/runner scripts, reviewed
+`bql-extended-game-scenes.png` and cleanup marker. Runner completed exit0.
+No tests added/run; Pixel untouched. Next capture fresh same-worker Bluetooth
+logs and task/thread owners for the longer guest execution gaps.
 
 #### Bounded vCPU0 idle spin (ordinary comparison complete; rejected)
 
