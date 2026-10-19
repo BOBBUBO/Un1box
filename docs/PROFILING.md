@@ -660,6 +660,32 @@ and windows in PERFORMANCE.md; no steady 60 or eliminated 1% low frames claimed.
 
 ## Focused GL presentation stages
 
+For exact Android mapped-buffer wait attribution, engine `669353072a` adds
+default-off `LT_GLES_AHB_PATH=on` together with `LT_FRAME_PATH=PATH`.
+It appends begin/end markers for `glFinish`, `AHardwareBuffer_describe`,
+`AHardwareBuffer_lock` and `AHardwareBuffer_unlock`, retaining buffer identity
+and returned map/unmap status. GPU completion and pixel readiness are preserved.
+There are no added clock reads with this switch off. Enabled producers append
+only to the bounded memory trace; disk output waits until clean Stop. This
+mode reserves 40 MiB for milestones (80 MiB if native/audio/guest-PC tracing
+also requests it). A failed or overflowing trace must be discarded.
+
+Run `hitchsched.py --all-states --runnable-details` for the same worker and
+frame window, then:
+
+```sh
+python3 tools/perf/ahbpath.py MILESTONES ENGINE_LOG SCHEDULER_JSON \
+    --engine-pid PID --json OUT
+```
+
+The analyzer rejects incomplete/lost stages and missing scheduler coverage,
+retains input hashes and per-operation running/sleeping/runnable time, and
+matches selected long in-hitch runnable intervals to their enclosing operation.
+It also retains stages clipped to each long frame. Wall times include clock
+overhead and descheduling. Enclosure locates a wait; it does not prove a driver
+defect. Keep this diagnostic and the user recorder off for ordinary benchmarks.
+Linux/Android builds pass; the first stage capture is pending.
+
 `LT_GLES_PRESENT_PROF=on` (engine `5b38fec1df`) independently times surface presentations. It defaults
 off and needs neither the manual recorder, `IT_GLES_PROF`, nor full accounting.
 It adds clocks at stage boundaries, never inside the row loop. Every five seconds,

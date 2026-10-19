@@ -2700,6 +2700,28 @@ frames, identities, engine/sites log, reviewed scenes, validated milestones,
 and `native-waits-summary.json`. Runner `native-wait-run.py`; both analyzers
 processed this real capture. No test suites added/run; Pixel untouched.
 
+#### Android mapped-present wait boundaries (first capture pending)
+
+The 26 wrapper-unmatched long runnable intervals above are enclosed by surface
+presents, but existing acquire timing combines GPU completion and CPU mapping.
+Engine `669353072a` adds default-off `LT_GLES_AHB_PATH=on`, requiring a configured
+LT_FRAME_PATH. Begin/end pairs surround glFinish, AHardwareBuffer_describe,
+AHardwareBuffer_lock and AHardwareBuffer_unlock, retaining buffer identity and
+map/unmap results. Synchronization, copies and error behavior are preserved.
+Disabled stages add no clock reads. Enabled producers only append to bounded
+memory, with output after clean Stop; this mode reserves40MiB for milestones
+(80MiB when native/audio/guest-PC tracing also requests it).
+
+`tools/perf/ahbpath.py` rejects loss/incomplete spans and missing scheduler
+coverage, retains input hashes, splits operation wall times into running /
+sleeping / runnable, and matches long in-hitch runnable intervals to exact
+enclosing operations. Per-hitch clipped stages remain in its report. It does
+not attribute driver internals or infer a synchronization defect. Linux/Android
+builds pass; first phone capture and analyzer exercise remain pending. No FPS,
+ceiling/median/low/1%low/hitch count/duration improvement is claimed. User
+recorder and this diagnostic remain off during ordinary BQL comparisons;
+their frozen APK is unchanged. No test suites added/run.
+
 #### Bounded vCPU0 BQL spin (ordinary comparison in progress)
 
 Engine `23041226e7` adds default-off `LT_BQL_SPIN=on`. Only vCPU0 tries a

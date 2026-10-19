@@ -5,6 +5,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Split remaining mapped-present waits into native stages. Engine
+  `669353072a` adds default-off `LT_GLES_AHB_PATH=on` with LT_FRAME_PATH;
+  glFinish/describe/map/unmap boundaries retain buffer/status. Producers only
+  append bounded memory; output deferred until Stop, original synchronization
+  preserved. `ahbpath.py` joins stages to scheduler states and long frames.
+  Linux/Android builds pass; first phone capture/analyzer exercise pending.
+  No speedup or exact driver-call cause claimed; ordinary comparisons keep off.
+
 - [ ] Measure bounded vCPU0 BQL spin (`23041226e7`, default-off LT_BQL_SPIN=on).
   Short observed sleeps preceding long idle wakes justify trying a50us spin
   on contended acquisition before the original blocking call. Uncontended
