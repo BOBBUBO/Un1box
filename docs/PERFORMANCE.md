@@ -17,6 +17,7 @@ The harness is in [`tools/perf/`](../tools/perf):
 | `framestats.py` | Frame pacing from a per-frame log: the **ceiling** (95th percentile of 500 ms windows: what the game sustains when nothing gets in the way), median, **low** (5th percentile: how deep the dips go), 1% low, **hitches** (frames over 50 ms), share of time at ≥55 / <30 fps, and a chart. `fcbench.py` with `FC_FRAMES=chart.png` turns on the runtime's `LT_FRAME_LOG` and reports it for the same window. Given the engine's `IT_FRAME_TRACE` (with `IT_VCPU_ACCT` and `IT_GLES_PROF`) it also splits each class of frame (on time / late / hitch) into guest code, GL, BQL wait, idle and off-CPU time. |
 | `guestsyslog.py` | Desktop: the guest's syslog during a headless run (through the app's USB bridge), counted by sender and text. Every line an app writes to stderr becomes a syslogd message the guest has to relay and parse. |
 | `androidsyslog.py` | Android: bounded guest `syslog_relay` capture through the private USB bridge (`--seconds 1..600`). Preserves raw bytes/NULs, receive bounds in Android monotonic time, target/worker identity and completion counts. Message arrival can lag execution or include backlog; receive/frame overlap alone does not establish causation. |
+| `tallypath.py` | Direct `shim-tally` markers within a complete sparse frame-path capture: compares periodic tally post-present intervals with other intervals and lists hitch overlaps. These intervals include guest work and scheduling; they do not time stderr writes alone. |
 | `gameprof.sh` / `inappprof.sh` | `simpleperf` of the `:engine` process during play / swipes: per-thread split, vCPU DSOs and symbols. |
 | `abtimer.sh`, `appab.py`, `scrollab.sh` | Interleaved A/B runs. |
 
@@ -2240,6 +2241,57 @@ Evidence: `build/perf-codex/poco-tally-quiet-{1,2,3}-{off,on}/`, frozen
 `tally-quiet-results.json`; reproduce with `tally-quiet-analyze.py`.
 Reviewed `tally-quiet-scenes.png` and `tally-quiet-frame-gaps.png` preserve all
 arms, including pair 1's outlier baseline. Built guest packages remain private.
+
+#### Exact tally timestamps without the syslog relay
+
+The next diagnostic pair uses the same frozen APK/package as the ordinary
+comparison above, with only sparse `LT_FRAME_PATH` milestones enabled. No
+context/selected-PC/fault/FP tracing, syslog relay, accounting or user recorder.
+New offline `tools/perf/tallypath.py` validates completion/counts, publication
+coverage/order and adjacent native calls, then places each `shim-tally` marker
+between the actual preceding native present end and following begin. It keeps
+the exact marker, counter, surrounding interval and overlapping hitch bounds;
+it does not infer marker time from the counter or relay arrival.
+
+Both 60 s Poco Jetpack title captures complete, workers 21277/22220. The raw
+streams contain 78,083/78,827 records, zero dropped/incomplete/write errors or
+late publication markers. One native context; all tally failure counters zero.
+Counter/native ordinals agree in this workload. The full frame windows are
+`[456195418373524,456255418373524)` and
+`[456399692288810,456459692288810)` host monotonic ns.
+
+| Sparse diagnostic | Tally logs off → suppressed on |
+| --- | --- |
+| Mean / ceiling / median / low fps | 51.733 / 56 / 52 / 46 → 52.700 / 58 / 52 / 48 |
+| 1% low fps | 28.027 → 28.220 |
+| Hitches >50 ms / full duration | 11 / 554.659 ms → 11 / 586.507 ms |
+| Skipped publications | 0 → 0 |
+| Periodic candidates | 11 → 11 |
+| Candidate post-present median / max | 18.847 / 62.136 ms → 16.416 / 28.868 ms |
+| Other post-present intervals, count | 3142 → 3205 |
+| Other post-present median / max | 16.396 / 65.049 ms → 16.327 / 60.341 ms |
+| Candidate intervals overlapping a hitch | 1 → 0 |
+| Actual tally markers inside a hitch | 0 → 0 |
+
+These are diagnostic observations, **not an ordinary FPS improvement or a
+matched overhead comparison**. One off candidate, counter 2400 at 8.633 s,
+has a 62.136 ms native interval and 59.770 ms after the marker. Its interval
+partly overlaps a 50.011 ms published gap ending 8.716 s, but the marker itself
+precedes that gap's engine beginning by 32.167 ms. The whole interval includes
+other guest work and host waits; do not call it 62 ms of logging. Most candidates
+are ordinary, and all 11 hitches persist in the suppression minute. Direct
+timestamps weaken logging as the dominant remaining source. Keep suppression
+off; prioritize the separately observed audio conversion/fault path and host
+scheduling work rather than repeat unchanged whole-game tally comparisons.
+
+Both before/end scenes reviewed: title, Start profile off. Off emits 19 total
+all-success tally lines through shutdown; on retains the first only. Each
+clean Stop/no-qemu/baseline readback passes; Pixel untouched. No tests added/run.
+Evidence: `build/perf-codex/poco-tally-path-1-{off,on}/`, including raw events,
+frames, validated `milestones.json/txt`, `tallies.json/txt`, exact worker PIDs,
+engine logs and `tally-path-scenes.png`. Reproduce each complete capture with
+`framepath.py EVENTS FRAMES --json milestones.json` then
+`tallypath.py EVENTS FRAMES --mode off|on --json tallies.json`.
 
 ### Measured and rejected
 

@@ -56,6 +56,10 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
 - `framepath.py MILESTONES FRAMES --json OUT` joins default-off `LT_FRAME_PATH`
   engine milestones to frontend publications by serial, retaining guest presents,
   LCD flips/ticks and frontend lag for each hitch. Pull milestones after clean Stop.
+- `tallypath.py EVENTS FRAMES --mode off|on --json OUT` compares directly marked
+  periodic tally candidates with other post-present intervals in a complete sparse
+  frame-path trace. Run `framepath.py` first. It distinguishes interval/hitch overlap
+  from a marker actually inside a hitch; surrounding guest/scheduling work is included.
 - `frameresidency.py FRAMEPATH_JSON SCHEDULER_JSON --json OUT` joins optional
   guest address-space markers to vCPU scheduler states during hitches. Generate
   inputs with `framepath.py --residency-intervals` and `hitchsched.py --all-states`

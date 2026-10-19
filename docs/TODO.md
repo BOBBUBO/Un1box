@@ -54,11 +54,19 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   scenes reviewed as title/Start profile off; zero skips, good 28 verdicts,
   success tallies 18→1 each run. Clean Stop/no-qemu/baseline verified. Full
   evidence and host-runner recovery note in PERFORMANCE.md. Pixel untouched.
-- [ ] Directly time periodic tally candidates using the existing `shim-tally`
-  milestones, before guest stderr writes. Compare candidate/ordinary intervals
-  with sparse frame-path captures; no syslog relay needed. The ordinary A/B
-  above is mixed and does not prove that the entire inferred 66–67 ms gap is
-  logging. Keep audio-conversion and host scheduling stalls separate.
+- [x] Directly time periodic tally candidates with existing `shim-tally`
+  milestones, no syslog relay. Offline `tallypath.py` validates full sparse
+  streams and places markers between adjacent native presents. Same frozen
+  APK/package, two 60 s diagnostics: 78,083/78,827 records, zero drops/incomplete/
+  late publication markers; 11 candidates each. Candidate median/max 18.847/
+  62.136 → 16.416/28.868 ms; control median 16.396 → 16.327 ms. Only 1 → 0 candidate
+  intervals overlap hitches; actual markers inside hitches 0 → 0. The off marker
+  precedes its overlapping gap by 32.167 ms, so the full interval is not logging
+  time. Diagnostic mean 51.733 → 52.700, ceiling 56 → 58, median 52 → 52, low 46 → 48,
+  1% low 28.027 → 28.220; hitches 11 → 11, 554.659 → 586.507 ms, zero skips.
+  All four scenes reviewed title/Start profile off, cleanup/baseline verified.
+  No ordinary FPS/overhead claim. Logging is not the dominant remaining
+  explanation; keep suppression off and prioritize audio/fault/scheduling work.
 
 - [ ] Locate the first missed deadline in the frame path. Two Poco Jetpack title
   scheduler traces now align exact 60 s frame windows with vCPU states; user recorder,
