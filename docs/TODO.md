@@ -34,6 +34,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   mean52.250,ceiling58,median52,low46,1%low19.847,hitches37/2514.512ms,zero skips;
   no before/after or overhead claim. Both scenes reviewed,cleanStop/no-qemu/
   exactbaseline restored,serial28good. Evidence poco-native-wait-1/.
+  All26 wrapper-unmatched intervals are enclosed by host surface presents
+  (1.981–2.484ms), now retained by nativewaits.py. AHardwareBuffer path confirmed;
+  exact glFinish vs buffer-map stage unproven. Preserve GPU completion semantics.
 
 - [ ] Explain delayed host wakeups while the prime core is idle. New offline
   `hitchsched.py --runnable-details` applied to the existing complete delayed-PC

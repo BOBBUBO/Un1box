@@ -266,7 +266,10 @@ recursive-mutex entry points or QemuEvent's direct futex waits. Short calls and
 incomplete calls are not represented as spans. Keep it and Start profile off
 for ordinary A/B measurements. Linux/Android builds pass; the first complete phone capture mapped57 selected
 long runnable intervals to BQL acquisition and11 to the guest idle condition,
-with26 unmatched. Full counts/limitations in PERFORMANCE.md; no speedup claim.
+with26 unmatched by the wrappers. All26 are enclosed by host surface presents;
+the analyzer retains those context/target spans too. Outer present markers do
+not name the exact driver operation. Full limitations in PERFORMANCE.md; no
+speedup claim.
 
 After a clean Stop and a matching scheduler analysis:
 

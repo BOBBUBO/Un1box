@@ -52,17 +52,29 @@ def main():
                           lines[-1])
     if not footer or int(footer[2]) or int(footer[3]) or len(lines)-2 != int(footer[1]):
         ap.error('missing completion, frame-path loss/incomplete or count mismatch')
-    waits = []
+    waits, presents, pending = [], [], {}
     for line in lines[1:-1]:
         fields = line.split()
         if len(fields) != 5 or not all(fields[i].isdigit() for i in (0, 2, 3, 4)):
             ap.error('invalid frame-path record')
+        marker, a, b = (int(fields[i]) for i in (0, 2, 3))
+        if fields[1] == 'present-begin':
+            if (a, b) in pending:
+                ap.error('overlapping surface presents')
+            pending[(a, b)] = marker
+        elif fields[1] == 'present-end':
+            begin = pending.pop((a, b), None)
+            if begin is None or begin > marker:
+                ap.error('surface present end without valid begin')
+            presents.append(dict(begin_ns=begin, end_ns=marker, context=a, target=b))
         if fields[1] != 'native-wait':
             continue
         marker, begin, end, site = (int(fields[i]) for i in (0, 2, 3, 4))
         if site not in sites or not begin < end <= marker or end-begin < 10000:
             ap.error('invalid native wait interval/site')
         waits.append(dict(begin_ns=begin, end_ns=end, site=site, marker_ns=marker))
+    if pending:
+        ap.error('incomplete surface present')
     waits.sort(key=lambda w: w['begin_ns'])
     if len(waits) != int(retained) or int(count) < int(retained):
         ap.error('native-wait completion count mismatch')
@@ -105,7 +117,9 @@ def main():
         match = waits[index] if index >= 0 and waits[index]['end_ns'] >= b else None
         wake_matches.append(dict(hitch_end_s=wake['hitch_end_s'], begin_ns=a, end_ns=b,
                                   runnable_ms=(b-a)/1e6, scheduler_state=wake['state']['state'],
-                                  wait=match, site=sites[match['site']] if match else None))
+                                  wait=match, site=sites[match['site']] if match else None,
+                                  surface_presents=[p for p in presents
+                                                    if p['begin_ns'] <= a and p['end_ns'] >= b]))
     report = dict(engine_pid=args.engine_pid, vcpu=sched['vcpu'], window=window,
                   input_sha256={name: hashlib.sha256(path.read_bytes()).hexdigest()
                                 for name, path in [('events', args.events),
@@ -119,9 +133,11 @@ def main():
     for site, group in sorted(summary.items(), key=lambda pair: -pair[1]['wall_ms']):
         print(sites[site], group)
     for match in wake_matches:
-        print(f"{match['hitch_end_s']:.3f}s runnable {match['runnable_ms']:.3f}ms:", match['site'])
+        print(f"{match['hitch_end_s']:.3f}s runnable {match['runnable_ms']:.3f}ms:",
+              match['site'], 'enclosing presents:', len(match['surface_presents']))
     print('Durations include scheduling; condition waits include mutex reacquisition.')
     print('Unmatched runnable intervals and direct library/driver waits remain unattributed.')
+    print('An enclosing surface present does not identify the exact driver wait function.')
 
 
 if __name__ == '__main__':

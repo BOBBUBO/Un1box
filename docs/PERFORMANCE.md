@@ -2683,6 +2683,17 @@ can include direct library/driver waits outside the wrappers. Enclosure alone
 is not a complete dependency proof, but repeated short BQL sleeps followed by
 millisecond-scale idle wakes now justify a bounded BQL-acquisition experiment.
 
+Further offline matching on the same complete capture places **all26 native-
+wrapper-unmatched intervals/32.219ms inside host surface presents**, each
+1.981–2.484ms long. `nativewaits.py` now retains enclosing present spans and
+their context/target alongside native matches. The init log confirms the mapped
+Android AHardwareBuffer path (reported generically as IOSurface). Its source
+calls `glFinish` before `AHardwareBuffer_lock`; the existing outer present
+markers do not distinguish those two operations. Do not call this an exact
+GL-function attribution or a synchronization defect; pixel readiness must
+still be preserved. It nominates stage-level present timing if BQL improvement
+leaves these wake delays significant. No additional phone measurement.
+
 Evidence: `build/perf-codex/poco-native-wait-1/`, retaining full trace, exact
 frames, identities, engine/sites log, reviewed scenes, validated milestones,
 `hitch-wake.json/txt`, `native-waits.json/txt` (all spans and raw input hashes)
