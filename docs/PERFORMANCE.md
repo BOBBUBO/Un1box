@@ -948,15 +948,25 @@ stutter fix established. The completed runner handed the phone to LCD stage capt
 Artifacts: `build/perf-codex/poco-tb-confirm-{1,2,3}-{off,on}/`, summarized by
 `tb-confirm-analyze.py` / `tb-confirm-results.json`, with exact frame windows and hitches.
 
-The combined baseline is now queued after the independent BQL comparison and focused
+The combined baseline is running after the independent BQL comparison and focused
 VFP captures/cleanups. It uses current engine `f43fbe4986` in frozen `vfp-mul-zero.apk`
 (identity/SHA256 in the VFP section), three 30 s pairs off/on, on/off, off/on. Both
 `LT_GLES_ARRAY_CACHE` and `LT_TB_LOOKUP_INLINE` vary together; all diagnostics, other
 experiments and the live recorder/full accounting are off, including both VFP switches.
 This measures their combined effect rather than adding the earlier percentages.
-Raw results will be `poco-combined-baseline-{1,2,3}-{off,on}/`, with exact windows,
-scenes and settings; analyzer `combined-baseline-analyze.py`. No result yet; default
-lookup remains off. The runner ends with a clean stop and baseline readback.
+Raw results: `poco-combined-baseline-{1,2,3}-{off,on}/`, with exact windows,
+scenes and settings; analyzer `combined-baseline-analyze.py`. First pair complete,
+both title/recorder-off scenes reviewed, zero publisher skips:
+
+| Pair | Mean fps both off → both on | Ceiling | Median | Low | 1% low | Hitches (>50 ms) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 53.63 → 53.07 | 58 → 58 | 54 → 54 | 50 → 48 | 28.33 → 28.16 | 3 (150.7 ms) → 7 (360.9 ms) |
+
+First-pair FPS bounds: off [432873115121118, 432903115121118), on
+[433040687255169, 433070687255169) ns. This pair is slightly slower enabled;
+remaining reversed/interleaved pairs are still running. No combined benefit
+established; lookup remains off by default. Reviewed montage:
+`combined-baseline-scenes.png`. The runner ends with a clean stop and baseline readback.
 
 Evidence: `build/perf-codex/poco-tb-lookup-inline-{1,2,3}-{off,on}/` contains exact frame logs,
 screenshots, environment, LT Bench and engine logs. `tb-lookup-inline-results.json` records exact
@@ -966,6 +976,53 @@ Its symbolized vCPU report has 13,357 samples with 45.6% call-chain unwind error
 hit now appears in callers (`helper_lookup_tb_ptr_cached` 4.08% self, `cpu_exec_loop` 1.00%);
 `tb_lookup_legacy` is 0.09% self / 2.74% inclusive. This is one enabled-arm CPU profile, not a
 matched profile A/B. TLS remains 0.95% self; dirty-flag queries 0.60%, `find_next_bit` 0.42%.
+
+### Cache in the indirect miss helper (2026-10-19, experimental, default off)
+
+The recent Poco native profile puts `helper_lookup_tb_ptr_cached` at 4.08% self
+after lookup hit-path inlining. Source inspection found that every generated
+two-entry site miss still fetches the full architectural state and performs the
+validated global lookup, even for a target this same source site recently used.
+
+Engine `6a71c1842f`, `LT_IBTC_L2=on`, adds a bounded 16K-entry side table in the
+C miss helper, allocated only when enabled: **384 KiB on the 64-bit builds**.
+Each entry checks both the source site's address and its complete generated key
+(target PC/Thumb plus the address-space/invalidation generation). A hit promotes
+the target into the existing two-entry site cache. Misses use the original full
+lookup and fill only under its existing context/breakpoint guards and for
+`CF_PCREL` targets. Their invalidation path renews the generation; non-PCREL
+invalidation need not do so and cannot safely populate this table. ARM targets
+always use PC-relative TBs. Accounting, execution logging and breakpoints use
+the original lookup. Only machines with
+one current and one maximum vCPU can enable the table or its diagnostic.
+
+This differs from the rejected generated global probe and embedded indexed-site
+cache: the generated path and TB layout are unchanged, and disabled mode allocates
+no table. Existing jump-cache geometry and invalidation rules are unchanged;
+old generation keys cannot hit after invalidation. The site address is essential:
+the generated key alone omits architectural flags implicit in the source TB and
+cannot safely validate a global hit. No attempt to retain hits across TLBI.
+
+Independent default-off `LT_IBTC_L2_PROF=on` counts CPU-0 helper attempts/hits
+and samples one in 256 attempted helper calls, with hit/fallback subsets and exact
+approximately five-second bounds. Clocks/descheduling are included. Longjmps can
+leave an attempted call without a completed timing sample. Ordinary helpers have
+no clocks or counter updates; the cache and profiler switches are checked there.
+
+Linux/Android builds succeeded (`build/perf-codex/ibtc-l2-pcrel-build.txt`), no
+tests added/run. Disassembly confirms the common body is inlined into the helper
+(`ibtc-l2-pcrel-disassembly.txt`); no extra common-path wrapper call. Frozen APK/symbols:
+`ibtc-l2-pcrel.apk`, `ibtc-l2-pcrel-symbols/`; build identity
+`ibtc-l2-pcrel-build-identity.json` (app documentation dirty only, engine clean),
+app `b636084a`, engine `6a71c1842f`. APK SHA256:
+`c133324d9064025139861d413df894703d854f4e6c2115838bf9c5363ee182d4`.
+Library SHA256: `93fe8be855d7ac586ecd38f548376a0567d28b7cd85fbb8b042c7c90b2ef88fe`.
+
+Focused runner/analyzer `ibtc-l2-run.py` / `ibtc-l2-analyze.py` are prepared only,
+not started. Prioritize the running combined comparison and pending interrupt
+experiment before assigning this experiment the phone. No hit rate, local saving,
+FPS or pacing result established; keep off pending direct timings and ordinary
+diagnostic-off comparisons. Settings/fields are documented in PROFILING.md.
 
 ### Measured and rejected
 

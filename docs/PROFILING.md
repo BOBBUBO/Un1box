@@ -124,6 +124,33 @@ diagnostics remain off for ordinary optimization FPS comparisons. The completed 
 put actual vCPU waits at 9.08/8.74% wall, dominated by interrupt handling at
 6.09/5.84%; these are instrumented observations, not uninstrumented cost estimates.
 
+## Focused indirect miss-helper cache
+
+`LT_IBTC_L2=on` enables a default-off, site-keyed cache reached after generated
+two-entry site misses (engine `6a71c1842f`). It allocates 384 KiB on the current
+64-bit builds and leaves TB layout/generated code unchanged. Only single-vCPU
+machines with maximum vCPUs also one can enable it. Full instruction accounting,
+breakpoints and execution logging use the original lookup. Every hit checks the
+source site's address plus full generated key; invalidation generation changes
+prevent old entries from matching. Only `CF_PCREL` targets populate the table:
+that invalidation path always renews the generation; the non-PCREL path need not.
+ARM always selects PC-relative TBs. The generated key alone is insufficient.
+
+Independent `LT_IBTC_L2_PROF=on` logs CPU-0 `[ibtc-l2] on=MODE` blocks with exact
+`begin-ns`/`end-ns`, attempted `calls`, `hits`, completed `samples`, summed `ns`
+and `max-ns`, plus `hit-samples`/`hit-ns` and `miss-samples`/`miss-ns` subsets.
+One in 256 attempted helper calls is timed. Longjmps bypass sample completion;
+the attempt counter is not decremented. Timings include clock overhead and host
+descheduling. Blocks are emitted after at least five seconds, checked every 1024
+attempts, with explicit contiguous boundaries. Select complete blocks wholly
+inside each exact frame window and preserve outliers. The diagnostic does not
+enable full accounting, BQL tables or the manual recorder.
+
+Compare hit rate and direct helper costs in interleaved off/on pairs with profiling
+on in both, then use separate diagnostic-off ordinary FPS pairs. Do not extrapolate
+sample timings to whole-game savings or treat diagnostic FPS as an ordinary baseline.
+Runtime measurement is pending; the prepared local runner has not been started.
+
 ## Focused interrupt checks
 
 `LT_MASKED_IRQ_FAST=on` enables the default-off ARM physical IRQ/FIQ precheck

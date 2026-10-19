@@ -62,10 +62,25 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   All six final scenes reviewed, recorder off, zero skips. Six of six pairs across
   both sets favor throughput; no consistent pacing gain. Combined baseline remains
   outstanding before enabling by default. LCD stage diagnostics now follow.
-  Combined cache+lookup baseline now queued after BQL and focused VFP captures on
+  Combined cache+lookup baseline now running after BQL and focused VFP captures on
   current engine `f43fbe4986` / frozen `vfp-mul-zero.apk`: three 30 s pairs, second
   reversed, both switches off versus both on; all diagnostics and other experiments
-  off (including VFP). Exact windows/screenshots/settings retained; no result yet.
+  off (including VFP). First pair: 53.63 → 53.07 fps, ceiling 58 → 58, median
+  54 → 54, low 50 → 48, 1% low 28.33 → 28.16; hitches 3 (150.7 ms) → 7
+  (360.9 ms). Both scenes reviewed title/recorder off, zero skips. Remaining
+  reversed/interleaved pairs running; no combined benefit established yet.
+- [ ] Measure cache in the indirect miss helper (`6a71c1842f`, `LT_IBTC_L2=on`,
+  default off). The existing two-entry generated path and TB layout are unchanged;
+  a 384 KiB table allocated only when enabled checks source-site address plus
+  complete generated key and promotes hits into the existing site cache. Invalidation
+  generation changes prevent old hits; no retention/geometry change. A key without
+  the site is unsafe because source-TB flags are implicit. Fill only PC-relative targets,
+  whose invalidation renews that generation (all ARM targets qualify). Single-vCPU machines only;
+  accounting/breakpoints/execution logging retain full lookup. Independent
+  `LT_IBTC_L2_PROF` counts hits/attempts and samples one in 256 helper calls.
+  Linux/Android builds pass, frozen `ibtc-l2-pcrel.apk`/symbols/identity retained. Focused
+  runner/analyzer prepared, not started; prioritize combined and masked-IRQ results.
+  No measured hit rate/local/FPS/pacing saving yet. Details in PERFORMANCE/PROFILING.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
