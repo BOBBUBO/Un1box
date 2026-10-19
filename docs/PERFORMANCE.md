@@ -2294,6 +2294,57 @@ engine logs and `tally-path-scenes.png`. Reproduce each complete capture with
 `framepath.py EVENTS FRAMES --json milestones.json` then
 `tallypath.py EVENTS FRAMES --mode off|on --json tallies.json`.
 
+#### Single-write tally logging (`LT_GLES_TALLY_BATCH`; measurement in progress)
+
+Engine `20857608bb` adds default-off `LT_GLES_TALLY_BATCH=on`. Guest tools
+serial29/version1.1.27 recognize policy2 and format the same tally text into a
+fixed stack buffer, then issue one stderr write and one host log call instead
+of seven fragments. Counters, first/failure visibility, CA calls and present
+returns remain. Quiet policy1 takes precedence; policy0/default/unrecognized
+host replies keep fragments. Older guests treat2 as original unsuppressed
+logging. This preserves logs, unlike the earlier suppression experiment.
+Linux/Android and private Mac guest-package builds completed. Built packages
+remain private. The stopped Poco's record hash and installed package bytes
+match the serial29 build; the runtime verdict is `good 29`.
+
+Frozen APK app `3ab7fb07` / engine `20857608bb`, SHA256
+`60fe67e03c51e403477f0e8b567abbea86e453c4d72783c9f6cb0b10e03ac0c9`.
+Both modes use that APK and serial29, BQL150us on, quiet suppression off,
+nice0/CFS. User recording/full accounting/other experiments off. Focused runs
+have only sparse frame-path/tally timestamps (no context, selected-PC, host
+scheduler, fault/arithmetic trace or syslog relay). Their FPS is diagnostic,
+not an ordinary improvement comparison. Normal candidate intervals include
+all intervening guest execution and host waits, not logging alone.
+
+First60s focused pair, off then on, workers31050/32197: same active vCPU TID
+and nice0/CFS at each arm's boundaries, complete/lossless traces, expected
+policy0→2, unchanged hook, serial29. Saved before/end scenes show Jetpack title
+and Start profile off. Both arms stop cleanly before switching modes.
+
+| Focused pair1 | Original fragments → single write |
+| --- | --- |
+| Periodic candidate intervals | 12 →12 |
+| Candidate mean/median ms | 20.014219/16.330521 →15.845877/15.613438 |
+| Candidate p95/max ms | 34.966562/43.835625 →18.122344/20.538125 |
+| Candidates >40ms | 1 →0 |
+| Other intervals: count | 3561 →3550 |
+| Other intervals median/p95/max ms | 16.083281/19.807395/46.431822 →15.972344/20.002292/44.652448 |
+| Other intervals >40ms | 3 →5 |
+| Mean/ceiling/median/low fps (diagnostic) | 59.133333/60/60/58 →59.150000/60/60/56 |
+| 1%low fps | 30.188537 →30.046196 |
+| Hitches >50ms/full duration ms | 1/50.463906 →1/50.338542 |
+| Skipped publications | 0 →0 |
+
+All tally texts/counters remain visible and show zero failed presents. There
+is a promising local reduction in candidate intervals but no established
+whole-game gain or hitch fix. A reversed focused pair and three ordinary pairs
+are running/planned; do not infer the broader outcome from this first pair.
+Raw arms/tallies/frames/logs/identity under
+`build/perf-codex/poco-tally-batch-focus-1-{off,on}/`; frozen build identity:
+`tally-batch-build-identity.json`. Reproduction runner/analysis:
+`tally-batch-run.py`/`tally-batch-analyze.py`. Offline `tallypath.py --mode batch`
+validates exact policy2 and preserves it in JSON. No tests added/run.
+
 #### Focused profile of the preserved alignment-fault path
 
 The long `stm-unaligned` LT Bench variant (1200 rounds, original ARM1176

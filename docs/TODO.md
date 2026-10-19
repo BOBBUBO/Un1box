@@ -13,8 +13,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   retain fragments. Older guests treat2 as unsuppressed original logging.
   This differs from rejected whole-line suppression. Wider producer intervals
   now place exact tally markers before two hitches with25.7ms launchd/syslogd
-  execution. Builds, private in-place guest update and interleaved focused /
-  ordinary pacing comparison pending; no gain claimed.
+  execution. Linux/Android/Mac builds completed; private package imported on
+  stopped Poco, record/bytes hashmatch and good29 verified. First sparse60s
+  off→on pair:12candidates each, mean20.014→15.846ms,median16.331→15.613ms,
+  p95/max34.967/43.836→18.122/20.538ms;>40ms1→0 (controls3→5).
+  Diagnosticmean59.133→59.150,ceiling60→60,median60→60,low58→56,
+  1%low30.189→30.046,hitches1/50.464→1/50.339ms,0skips. No ordinary
+  gain/hitch fix established. Reversed focused pair and3ordinary pairs in
+  progress/planned. FrozenAPK/identity/raw retained; full PERFORMANCE table.
 
 - [x] Measure the extended BQL spin budget (`5547634eeb`). Default-off
   `LT_BQL_SPIN_EXTENDED=on` selects 150 µs with BQL spin on; off retains 50 µs.
