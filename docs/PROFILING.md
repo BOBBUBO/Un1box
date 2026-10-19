@@ -699,6 +699,10 @@ preexisting mutex hooks. First combined capture/analyzers complete: the only
 condition site is guest idle,85long in-gap runnable intervals/133.472ms;
 105/184.173ms remain outside condition/present stages. Source/limits and all
 diagnostic frame metrics are in PERFORMANCE.md.
+The resulting250us idle-spin experiment completed three ordinary pairs:
+57.833→57.878fps,5→16hitches,273.846→815.859ms/180s per mode. It is rejected;
+keep off and do not repeat unchanged. Wait enclosure is not proof that a
+proposed scheduling mitigation improves the game.
 
 With conditions mode and BQL spin active, `LT_BQL_FALLBACK_PROF=on` (engine
 `32d6f75762`) additionally times only blocking BQL acquisition after the spin

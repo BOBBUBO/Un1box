@@ -14,7 +14,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   in the conditions+AHB >30ms report, without asserting their cause in advance.
   No new speedup; ongoing idle comparison uses its original frozen APK.
 
-- [ ] Measure bounded vCPU0 idle spin (`357fc83aba`, default-off LT_IDLE_SPIN=on).
+- [x] Measure bounded vCPU0 idle spin (`357fc83aba`, default-off LT_IDLE_SPIN=on).
   Conditions-only capture identifies85long in-gap runnable intervals/133.472ms
   in the guest idle wait; preceding S median198.334us,68/85under250us. New spin
   releases BQL, polls only a separate host-kick sequence for250us, reacquires
@@ -23,8 +23,16 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   stop/nonhalted cases original. Startup and deferred outcomes logged.
   Linux/Android builds pass. Three ordinary60s pairs launched on/off,off/on,
   on/off, BQLspinON in both arms; all diagnostics/accounting/user recorder off.
-  Mean/ceiling/median/low/1%low/hitches/durations not yet established; keep off.
-  Frozen identity/runner/evidence idle-spin*. Source/provenance PERFORMANCE.md.
+  Complete/rejected: mean58.333/57.583/57.583→58.783/57.517/57.333;
+  ceiling60/62/62→60/60/60;median58/58/58→60/58/58;low54/52/54→56/52/52;
+  1%low29.183/28.790/29.028→29.774/28.810/28.722;
+  hitches0/1/4→4/5/7;full durations0/68.268/205.578→204.620/254.319/356.920ms.
+  Aggregate57.833→57.878fps(+0.077%,flat),5→16hitches,
+  273.846→815.859ms/180s/mode. >30ms gaps97/141/136→67/145/148, only first wins.
+  No repeatable FPS/pacing gain; keep OFF, do not repeat unchanged. All12scenes
+  reviewed,zero skips,TID/nice0/CFS preserved,good28,Stop/no-qemu/exactbaseline.
+  Whole-worker resumed31.89–34.18% does not override negative game result.
+  Frozen identity/runner/evidence idle-spin*. Full source/results PERFORMANCE.md.
 
 - [ ] Split remaining mapped-present waits into native stages. Engine
   `669353072a` adds default-off `LT_GLES_AHB_PATH=on` with LT_FRAME_PATH;

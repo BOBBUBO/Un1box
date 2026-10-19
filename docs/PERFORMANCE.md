@@ -2828,7 +2828,7 @@ or ordinary ceiling/median/low/1%low/hitch count/duration result. The running
 idle-spin comparison retains its earlier frozen APK without this diagnostic.
 This does not alter either spin budget. No tests added/run.
 
-#### Bounded vCPU0 idle spin (ordinary comparison in progress)
+#### Bounded vCPU0 idle spin (ordinary comparison complete; rejected)
 
 Engine `357fc83aba` adds default-off `LT_IDLE_SPIN=on`, separate from BQL spin.
 Before vCPU0 sleeps for guest work, it releases the BQL and observes a separate
@@ -2851,6 +2851,50 @@ on/off,off/on,on/off after50s title settling, BQL spin on in both modes; all
 diagnostics/accounting/user recorder off, hflags/cache off, arrays on, priority
 off. Ceiling/median/low/1%low/hitches/durations and benefit remain unmeasured.
 Keep experimental default off. No tests added/run.
+
+**Ordinary comparison complete:** same frozen APK/package on the Snapdragon
+865-class Poco F3, three60s pairs on/off,off/on,on/off after50s title settling.
+BQL spin on in both modes; only idle spin changed. Native/fallback/AHB/other
+diagnostics/accounting and user recorder off, hflags/cache off, arrays on,
+priority off. Same vCPU TID/nice0/CFS checked at both boundaries of each arm.
+All twelve before/end scenes reviewed as Jetpack title/Start profile off;
+zero skipped publications, good28 verdicts, clean Stop/no-qemu and exact
+baseline restoration confirmed. The later fallback build did not replace this
+comparison's APK.
+
+| Ordinary Jetpack, off → on | Pair1 | Pair2 (reversed) | Pair3 |
+| --- | --- | --- | --- |
+| Mean fps | 58.333 → 58.783 | 57.583 → 57.517 | 57.583 → 57.333 |
+| Ceiling fps | 60 → 60 | 62 → 60 | 62 → 60 |
+| Median fps | 58 → 60 | 58 → 58 | 58 → 58 |
+| Low fps | 54 → 56 | 52 → 52 | 54 → 52 |
+| 1% low fps | 29.183 → 29.774 | 28.790 → 28.810 | 29.028 → 28.722 |
+| Hitches >50ms | 0 → 4 | 1 → 5 | 4 → 7 |
+| Full hitch duration, ms | 0 → 204.620 | 68.268 → 254.319 | 205.578 → 356.920 |
+| Longest gap, ms | 49.616 → 52.274 | 68.268 → 51.811 | 51.873 → 52.030 |
+| Gaps >30ms (separate diagnostic count) | 97 → 67 | 141 → 145 | 136 → 148 |
+
+Aggregate **57.833 → 57.878fps (+0.077%, effectively flat)**. Hitches **5 → 16**,
+full duration **273.846 → 815.859ms per180s per mode**. Throughput improves only
+in pair1; hitch count/duration worsen in every pair. The >30ms gap count falls
+only in pair1,374 → 360 overall; this does not establish repeatable pacing
+improvement. **Reject this250us idle-spin experiment, keep off and do not
+repeat it unchanged.** Attributing delayed wakes to a condition wait did not
+establish that this mitigation would improve game pacing. Stable60/good1% lows
+remain unmet; the measured BQL-spin gain remains a separate completed result.
+
+Whole-worker enabled attempts/resumed/fallback are16667/5339/11328,
+15043/4797/10246,12857/4395/8462 (31.89–34.18% resumed without the condition
+wait). They include boot/settling, not just the60s windows. BQL spin hooks remain
+unchanged in every arm, with valid outcomes. These mechanism counters do not
+override the negative ordinary-game result.
+
+Evidence: `build/perf-codex/poco-idle-spin-game-{1,2,3}-{off,on}/`,
+idle-spin-build-identity.json, reviewed idle-spin-game-scenes.png,
+idle-spin-game-results.json (exact windows, every >50ms hitch and >30ms gap),
+runner idle-spin-game-run.py and analyzer idle-spin-game-analyze.py. Pixel
+disconnected/untouched; no test suites added/run. Next attribute the residual
+blocking BQL fallbacks with idle spin off and the proven BQL spin on.
 
 #### Bounded vCPU0 BQL spin (ordinary comparison complete)
 
