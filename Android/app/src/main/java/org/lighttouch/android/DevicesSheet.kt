@@ -1,5 +1,12 @@
 package org.lighttouch.android
 
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import android.os.Build
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
@@ -23,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /** Every device in the library: pick one, add another, rename or delete. */
@@ -63,7 +71,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
     renaming?.let { device -> RenameDialog(device, { renaming = null }) { host.renameDevice(device.id, it); renaming = null } }
     deleting?.let { device ->
         AlertDialog(onDismissRequest = { deleting = null }, modifier = DialogTags, icon = { Icon(Icons.Filled.Delete, null) },
-            title = { Text("Delete ${device.name}?") },
+            title = { Text("Delete ${device.name}?", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) },
             text = { Text("Its apps, settings and data are removed from this phone. This can't be undone.") },
             confirmButton = { Button(onClick = { host.deleteDevice(device.id); deleting = null },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error), modifier = Modifier.testTag("confirm_delete")) { Text("Delete") } },
@@ -102,11 +110,16 @@ private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Bool
 
 @Composable
 internal fun RenameDialog(device: DeviceSummary, onDismiss: () -> Unit, onRename: (String) -> Unit) {
-    var name by remember { mutableStateOf(device.name) }
-    AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags, title = { Text("Rename device") },
-        text = { OutlinedTextField(name, { if (it.length <= 60) name = it }, singleLine = true, label = { Text("Name") },
-            modifier = Modifier.fillMaxWidth().testTag("rename_field")) },
-        confirmButton = { TextButton(onClick = { onRename(name.trim()) }, enabled = name.isNotBlank()) { Text("Save") } },
+    // Opens with the whole name selected, so typing replaces it and a tap places the cursor.
+    var name by remember { mutableStateOf(TextFieldValue(device.name, TextRange(0, device.name.length))) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    val save = { if (name.text.isNotBlank()) onRename(name.text.trim()) }
+    AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags, title = { Text("Rename device", style = MaterialTheme.typography.titleMedium) },
+        text = { OutlinedTextField(name, { if (it.text.length <= 60) name = it }, singleLine = true, label = { Text("Name") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { save() }),
+            modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag("rename_field")) },
+        confirmButton = { TextButton(onClick = save, enabled = name.text.isNotBlank(), modifier = Modifier.testTag("rename_save")) { Text("Save") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }
 

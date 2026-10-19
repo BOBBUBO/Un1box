@@ -173,6 +173,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash
   automatically after a quick quit. Linux/Windows Apps now has a version picker; it has no Last crash.
 
+## Android front end (dev/ui)
+
+- [ ] Save & Stop: keep the guest's state across app close and phone reboot. The engine has
+  `qemu_ios_snapshot_save2` and `-incoming`, but `gles_save_blocker` refuses migration while GL
+  contexts are live on EGL hosts, and the GL serializer (`hw/arm/gles-host-snapshot.c.inc`) is
+  CGL-only. Needs: an ES1/ES2 state capture (no `glGetTexImage`, so read textures back through an
+  FBO), a runtime save + "suspended" marker per record, and `-incoming` restore on start. The UI
+  hook exists: `MainActivity.canSaveState` turns the Stop dialog's primary action into Save & Stop.
+
 ## Guest graphics
 
 - [x] Untextured white or grey geometry on Android (engine 4ae00eaca8): Jetpack Joyride's lab

@@ -116,7 +116,9 @@ private fun InspectorBody(data: HitchData, onSave: (Long, Long) -> Unit, saving:
             Spacer(Modifier.height(16.dp))
             SectionLabel("Slow engine events in range")
             if (slow.isEmpty()) Text("None over 0.5 ms.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            for (event in slow) EventRow(event, start)
+            var all by remember(range) { mutableStateOf(false) }
+            for (event in if (all) slow else slow.take(8)) EventRow(event, start)
+            if (slow.size > 8) TextButton(onClick = { all = !all }) { Text(if (all) "Show fewer" else "Show all ${slow.size}") }
         } else {
             Spacer(Modifier.height(16.dp))
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {

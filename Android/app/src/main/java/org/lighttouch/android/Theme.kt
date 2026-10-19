@@ -2,12 +2,14 @@ package org.lighttouch.android
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -76,12 +78,16 @@ internal val MonoStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize =
 /** Full screen is always dark: its menus sit on black around the guest. */
 @Composable
 internal fun DarkTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = Dark, typography = Type,
-    shapes = MaterialTheme.shapes, content = content)
+    shapes = MaterialTheme.shapes) { OnBackground(content) }
+
+/** Screens drawn straight on the background, outside a Surface, still get readable text and icons. */
+@Composable
+private fun OnBackground(content: @Composable () -> Unit) =
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground, content = content)
 
 @Composable
 internal fun LightTouchTheme(mode: ThemeMode, content: @Composable () -> Unit) {
     val dark = when (mode) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.DARK -> true; ThemeMode.LIGHT -> false }
     MaterialTheme(colorScheme = if (dark) Dark else Light, typography = Type,
-        shapes = Shapes(small = RoundedCornerShape(10.dp), medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp)),
-        content = content)
+        shapes = Shapes(small = RoundedCornerShape(10.dp), medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp))) { OnBackground(content) }
 }

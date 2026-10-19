@@ -34,8 +34,8 @@ def capture_readiness(xml, package='org.lighttouch.android'):
         raise CaptureReadinessError('Only starting or running sessions may be observed')
     starting = status.get('text') == 'starting'
     for resource_id, expected_text, enabled in [
-        ('start_guest', 'Start', False), ('stop_guest', 'Stop', True),
-        ('home_button', 'Home', not starting), ('power_button', 'Power', not starting),
+        # The home screen's session dock.
+        ('stop_guest', 'Stop', True), ('pause_guest', 'Pause', not starting),
         ('screenshot_button', 'Screenshot', not starting),
     ]:
         node = one(resource_id)

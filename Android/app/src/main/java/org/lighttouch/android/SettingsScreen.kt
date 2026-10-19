@@ -55,7 +55,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         OverlayPreview(host)
                         ChoiceRow(null, "Graph", OverlayGraph.entries, s.overlayGraph, { it.label }) { s.overlayGraph = it }
                         ChoiceRow(null, "Position", OverlayCorner.entries, s.overlayCorner, { it.glyph }, s.overlayCorner.label) { s.overlayCorner = it }
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Column(Modifier.padding(start = 54.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)) {
                             Text("Background", style = MaterialTheme.typography.bodyLarge)
                             Slider(s.overlayOpacity, { s.overlayOpacity = it }, valueRange = 0f..0.9f)
                         }
@@ -161,7 +161,7 @@ private fun OverlayPreview(host: GuestHost) {
             vcpuCore = 7, vcpuMHz = 2840, workerPercent = 131f, pssMiB = 412f, glMsPerFrame = 3.1f, bqlMsPerFrame = 0.3f, runPercent = 82f,
             intervals = FloatArray(160) { i -> 16.7f + (if (i % 37 == 0) 18f else 0f) + (i % 5) * 0.4f }, detailedAvailable = s.detailedTiming)
     }
-    Box(Modifier.padding(start = 54.dp, end = 16.dp, top = 4.dp, bottom = 8.dp).fillMaxWidth().height(if (s.overlay == OverlayLevel.FULL) 196.dp else 84.dp)
+    Box(Modifier.padding(start = 54.dp, end = 16.dp, top = 4.dp, bottom = 8.dp).fillMaxWidth().height(when (s.overlay) { OverlayLevel.FULL -> 196.dp; OverlayLevel.COMPACT -> 72.dp; else -> 48.dp })
         .clip(RoundedCornerShape(14.dp)).background(Color(0xFF1B3A4B)).testTag("overlay_preview")) {
         PerformanceOverlay(sample, s.overlay, s.overlayGraph, s.overlayOpacity, s.detailedTiming,
             Modifier.align(Alignment.of(s.overlayCorner)).padding(8.dp))

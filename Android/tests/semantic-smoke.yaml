@@ -1,16 +1,16 @@
 appId: org.lighttouch.android
 ---
+# Home screen with a device selected and stopped.
 - launchApp
-- assertVisible: "LightTouch"
 - assertVisible:
-    id: "import_base"
+    id: "device_selector"
+- assertVisible:
+    id: "open_store"
+- assertVisible:
+    id: "open_settings"
+- assertVisible:
+    id: "guest_screen"
 - assertVisible:
     id: "start_guest"
 - assertVisible:
-    id: "home_button"
-- assertVisible:
-    id: "power_button"
-- assertVisible:
-    id: "screenshot_button"
-- assertVisible: "Guest display"
-# Shell-only. Never use this flow as guest boot/input acceptance.
+    id: "device_home"

@@ -1,5 +1,10 @@
 package org.lighttouch.android
 
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -47,7 +52,9 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
                     screen = { modifier -> GuestScreen(host, guestSurface, modifier, overlayScale = 0.85f, inDeviceView = true) },
                     modifier = Modifier.fillMaxSize(), haptics = host.settings.haptics)
             }
-            Dock(host) { confirmStop = true }
+            // Stopped, the screen itself offers Start or Recover; the dock is for a running session.
+            AnimatedVisibility(host.active, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) { Dock(host) { confirmStop = true } }
+            if (!host.active) Spacer(Modifier.height(16.dp))
         }
         // For automation (tools/perf): the raw session state as text.
         Text(host.status, Modifier.align(Alignment.TopStart).size(1.dp).testTag("session_status"), color = Color.Transparent, fontSize = 1.sp)
@@ -59,7 +66,7 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
 private fun TopBar(host: GuestHost) {
     Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         val device = host.selected
-        Row(Modifier.weight(1f, fill = false).clip(RoundedCornerShape(12.dp)).clickable { host.openDevices() }
+        Box(Modifier.weight(1f)) { Row(Modifier.clip(RoundedCornerShape(12.dp)).clickable { host.openDevices() }
             .padding(horizontal = 8.dp, vertical = 6.dp).testTag("device_selector"), verticalAlignment = Alignment.CenterVertically) {
             StatusDot(host.status)
             Spacer(Modifier.width(10.dp))
@@ -69,8 +76,7 @@ private fun TopBar(host: GuestHost) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Filled.KeyboardArrowDown, "Devices", Modifier.padding(start = 4.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Spacer(Modifier.weight(0.01f))
+        } }
         IconButton(onClick = { host.navigate(Screen.STORE) }, modifier = Modifier.testTag("open_store")) { Icon(LtIcons.Bag, "Legacy Store") }
         IconButton(onClick = { host.navigate(Screen.SETTINGS) }, modifier = Modifier.testTag("open_settings")) { Icon(Icons.Filled.Settings, "Settings") }
     }
@@ -92,7 +98,7 @@ internal fun StatusDot(status: String) {
 @Composable
 internal fun GuestScreen(host: GuestHost, guestSurface: @Composable (Modifier) -> Unit, modifier: Modifier,
                          overlayScale: Float, inDeviceView: Boolean) {
-    Box(modifier.background(Color.Black)) {
+    Box(modifier.background(Color.Black).testTag("guest_screen")) {
         guestSurface(Modifier.fillMaxSize())
         val s = host.settings
         if (host.running && (!inDeviceView || s.overlayInDeviceView))
@@ -117,11 +123,11 @@ internal fun GuestScreen(host: GuestHost, guestSurface: @Composable (Modifier) -
                         Text("iOS stopped unexpectedly", color = Color.White, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center)
                         Spacer(Modifier.height(12.dp))
                         if (host.sessionOwned) TextButton(onClick = host::stop) { Text("Close session") }
-                        else ScreenAction(LtIcons.History, "Recover", host::recover, tag = "recover_overlay")
+                        else ScreenAction(LtIcons.History, "Recover", host::recover, tag = "recover_guest")
                     }
-                    else -> if (host.selected == null) Text("Add a device to begin", color = Color.White.copy(alpha = 0.8f))
-                        else if (host.selected?.dirty == true) ScreenAction(LtIcons.History, "Recover and start", host::recover, tag = "recover_overlay")
-                        else ScreenAction(LtIcons.Play, "Start", host::start, tag = "start_overlay")
+                    else -> if (host.selected == null) ScreenAction(LtIcons.Phone, "Add a device", host::addDevice, tag = "add_device")
+                        else if (host.selected?.dirty == true) ScreenAction(LtIcons.History, "Recover and start", { if (!host.busy) host.recover() }, tag = "recover_guest")
+                        else ScreenAction(LtIcons.Play, "Start", { if (!host.busy) host.start() }, tag = "start_guest")
                 }
             }
         }
@@ -141,19 +147,7 @@ private fun Busy(label: String) {
 private fun Dock(host: GuestHost, onStop: () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(24.dp), tonalElevation = 2.dp,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp).testTag("dock")) {
-        if (!host.active) {
-            // Stopped: one obvious action.
-            val recover = host.selected?.dirty == true || host.status == "failed"
-            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { if (recover && !host.sessionOwned) host.recover() else if (host.sessionOwned) host.stop() else host.start() },
-                    enabled = host.selected != null && !host.busy, shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.weight(1f).height(52.dp).testTag(if (recover) "recover_guest" else "start_guest")) {
-                    Icon(if (recover) LtIcons.History else LtIcons.Play, null, Modifier.size(22.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(when { host.sessionOwned -> "Close session"; recover -> "Recover"; else -> "Start" }, style = MaterialTheme.typography.titleMedium)
-                }
-            }
-        } else Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
             val canControl = host.status in listOf("running", "paused")
             DockButton(if (host.paused) LtIcons.Play else LtIcons.Pause, if (host.paused) "Resume" else "Pause",
                 { host.setPaused(!host.paused) }, Modifier.weight(1f), enabled = canControl, tag = "pause_guest")
@@ -171,7 +165,7 @@ private fun Dock(host: GuestHost, onStop: () -> Unit) {
 internal fun StopDialog(host: GuestHost, onDismiss: () -> Unit) {
     AlertDialog(onDismissRequest = onDismiss, modifier = DialogTags,
         icon = { Icon(LtIcons.Power, null) },
-        title = { Text("Stop ${host.selected?.name ?: "device"}?") },
+        title = { Text("Stop ${host.selected?.name ?: "device"}?", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) },
         text = {
             Column {
                 Text(if (host.canSaveState) "Save & Stop keeps everything as it is, open apps included, and picks up right here next time."

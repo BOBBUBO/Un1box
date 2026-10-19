@@ -103,7 +103,7 @@ private fun Welcome(onNext: () -> Unit) {
         Need(LtIcons.Puzzle, "Guest tools", ".itpack, which lets LightTouch install apps")
         Need(LtIcons.Chip, "Boot file", "bootrom.bin, the device's boot ROM")
         Spacer(Modifier.height(40.dp))
-        Button(onClick = onNext, modifier = Modifier.fillMaxWidth().height(54.dp).testTag("setup_start"), shape = RoundedCornerShape(16.dp)) {
+        Button(onClick = onNext, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_start"), contentPadding = PaddingValues(horizontal = 32.dp)) {
             Text("Get started", style = MaterialTheme.typography.titleMedium)
         }
         GuideLink(Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp))
@@ -166,8 +166,8 @@ private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () 
             label = { Text("Name (optional)") }, placeholder = { Text("Named after the model and iOS version") })
         if (state.error.isNotEmpty()) Text(state.error, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         Spacer(Modifier.height(20.dp))
-        Button(onClick = onCreate, enabled = state.system != null, modifier = Modifier.fillMaxWidth().height(54.dp).testTag("setup_create"),
-            shape = RoundedCornerShape(16.dp)) { Text("Create device", style = MaterialTheme.typography.titleMedium) }
+        Button(onClick = onCreate, enabled = state.system != null, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_create"),
+            contentPadding = PaddingValues(horizontal = 32.dp)) { Text("Create device", style = MaterialTheme.typography.titleMedium) }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             GuideLink()
             TextButton(onClick = onPrepare) { Text("Prepare from an IPSW") }
@@ -213,13 +213,13 @@ private fun Done(name: String, onFinish: (Boolean) -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(Icons.Filled.CheckCircle, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(24.dp))
-        Text("$name is ready", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Text("$name is ready", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text("The first start takes longer while iOS sets itself up.", style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         Spacer(Modifier.height(36.dp))
-        Button(onClick = { onFinish(true) }, modifier = Modifier.fillMaxWidth().height(54.dp).testTag("setup_launch"), shape = RoundedCornerShape(16.dp)) {
-            Icon(LtIcons.Play, null); Spacer(Modifier.width(8.dp)); Text("Start it now", style = MaterialTheme.typography.titleMedium)
+        Button(onClick = { onFinish(true) }, modifier = Modifier.height(52.dp).testTag("setup_launch"), contentPadding = PaddingValues(start = 24.dp, end = 32.dp)) {
+            Icon(LtIcons.Play, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text("Start it now", style = MaterialTheme.typography.titleMedium)
         }
         TextButton(onClick = { onFinish(false) }, modifier = Modifier.padding(top = 8.dp)) { Text("Not now") }
     }

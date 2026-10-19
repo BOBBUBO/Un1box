@@ -17,16 +17,19 @@ appId: org.lighttouch.android
 - launchApp:
     stopApp: false
     clearState: false
-- assertVisible: "paused"
-- tapOn: "Resume"
-- assertVisible: "running"
+# Resume automatically (on by default) picks the session back up on return.
+- extendedWaitUntil:
+    visible: "running"
+    timeout: 10000
 - tapOn:
     id: "screenshot_button"
 - extendedWaitUntil:
-    visible: "Screenshot saved in Pictures/LightTouch"
+    visible: "Screenshot saved to Pictures/LightTouch"
     timeout: 10000
 - tapOn:
     id: "stop_guest"
+- tapOn:
+    id: "confirm_stop"
 - extendedWaitUntil:
     visible: "stopped"
     timeout: 20000
@@ -37,6 +40,8 @@ appId: org.lighttouch.android
     timeout: 120000
 - tapOn:
     id: "stop_guest"
+- tapOn:
+    id: "confirm_stop"
 - extendedWaitUntil:
     visible: "stopped"
     timeout: 20000

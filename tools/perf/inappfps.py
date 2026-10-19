@@ -37,6 +37,9 @@ def box_from_layout(xml):
     # Guest view sits between the controls above it and the Home/Power row.
     ids = dict((m.group(1), tuple(map(int, m.groups()[1:]))) for m in
                re.finditer(r'resource-id="([a-z_]+)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml))
+    if "guest_screen" in ids:
+        x0, y0, x1, y1 = ids["guest_screen"]
+        return x0, y0, x1 - x0, y1 - y0
     if "stop_guest" in ids and "home_button" in ids:
         # Tagged controls (current app): Start/Stop row above, Home row below; the view spans
         # the content width, from the Start button's left edge to the same margin on the right.

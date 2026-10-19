@@ -14,9 +14,8 @@ def ui(state='starting'):
     package = 'org.lighttouch.android'
     ET.SubElement(root, 'node', {'resource-id': 'session_status', 'package': package,
                                'enabled': 'true', 'text': state})
-    for rid, text, enabled in [('start_guest', 'Start', False), ('stop_guest', 'Stop', True),
-                              ('home_button', 'Home', state == 'running'),
-                              ('power_button', 'Power', state == 'running'),
+    for rid, text, enabled in [('stop_guest', 'Stop', True),
+                              ('pause_guest', 'Pause', state == 'running'),
                               ('screenshot_button', 'Screenshot', state == 'running')]:
         parent = ET.SubElement(root, 'node', {'resource-id': rid, 'package': package,
             'enabled': str(enabled).lower(), 'clickable': 'true', 'bounds': '[10,20][110,120]'})
@@ -63,7 +62,7 @@ class CaptureReadinessTests(unittest.TestCase):
 
     def test_every_inconsistent_control_rejected(self):
         for state in ['starting', 'running']:
-            for rid in ['start_guest', 'stop_guest', 'home_button', 'power_button', 'screenshot_button']:
+            for rid in ['stop_guest', 'pause_guest', 'screenshot_button']:
                 root = ui(state)
                 node = root.find("node[@resource-id='%s']" % rid)
                 node.set('enabled', 'false' if node.get('enabled') == 'true' else 'true')
