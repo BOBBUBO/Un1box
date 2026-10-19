@@ -57,9 +57,12 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `lighttouch-linux --library LIB --record ID --set-guest-package ITPACK`, Android "Guest tools" on a
   stopped device. Both benchmark phones have it; the Poco has the private serial 29 from the rejected
   tally experiment, which behaves as 27 against the current host.
-- [ ] Prepare guest tools for public distribution. Serial 27 is private: `contrib/appsync/appsync_cert.h`
-  embeds an Apple certificate, and the `contrib/` guest sources lack license headers. Don't publish
-  the package or firmware before both are resolved.
+- [x] Prepare guest tools for public distribution (serial 30, engine `e95888e9cb`). AppSync's signer
+  certificate was Apple's "iPhone Activation" certificate; it is now a self-signed LightTouch one.
+  The `contrib/` sources carry no per-file headers, which qemu-ios's LICENSE covers as
+  GPL-2.0-or-later. Tested on the Poco: serial 30 installed at boot (good 30), and Enigmo 4.1
+  installed through AppSync and opened. The armv7 package was built but not run. The helpers still
+  build against Apple's iPhoneOS 3.1.3/3.2 SDK headers and link stubs from a third-party mirror.
 - [x] Guest package verdicts on Android and Linux. The portable runtime never told the guest's loader
   (qemu-ios `contrib/it-boot`) that a package was good, so `it_boot` reverted any package newer than
   the record's after two boots (`MAX_TRIES`) and refused that serial from then on. That is why serial

@@ -83,6 +83,16 @@ The app checks the files itself; you never type hashes. Each saved device has it
 writable storage, and the imported system stays read-only, so one import can back several
 devices (**New from selected** on desktop).
 
+### Newer guest tools
+
+Since v0.0.6, each [LightTouch release](https://github.com/blake-lucas/LightTouch/releases) attaches
+its own `armv6.itpack` (and `armv7.itpack` for the iPod touch 4G), newer than the upstream app's;
+games draw faster with it. Use it in place of the upstream file when you set up a device, or give
+it to an existing device, which keeps its apps and data: on Android stop the device and tap
+**Guest tools**; on Linux run `lighttouch-linux --library LIB --record ID --set-guest-package
+armv6.itpack`. The new tools install the next time iOS starts. Windows and macOS cannot update an
+existing device yet.
+
 ## 5. Prepare a system from an IPSW instead
 
 Preparation turns Apple's stock firmware into an emulator-ready system. Importing a stock
