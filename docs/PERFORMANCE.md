@@ -2057,6 +2057,25 @@ snapshot and reviewed scenes. Offline reproduction scripts are preserved as
 focused benchmark/profile for the preserved alignment/return path, plus guest
 syslog message capture for the separate logging bursts. No speedup claimed.
 
+#### Exception-return duplicate hflags rebuild (measurement pending)
+
+Static inspection found that `helper_cpsr_write_eret` calls `cpsr_write` with
+`CPSRWriteExceptionReturn` and a valid mask that always includes `CPSR_M`.
+That function already rebuilds hflags in TCG; the helper then aligns PC and
+rebuilds the same flags again. PC is not an input to the hflags calculation.
+Engine `9171922768` adds default-off `LT_ERET_HFLAGS_FAST=on`, skipping only
+the second rebuild. Linux/Android builds and the focused Mac LT Bench build pass.
+Architectural alignment faults, guest handler execution, CPSR/mode updates,
+PC alignment and EL hooks remain intact. No measured speedup yet.
+
+LT Bench adds `stm-aligned` / `stm-unaligned`: the converter's exact
+`STMIA r1!, {r8,r9}` store into pre-touched 2 KiB output, at 0/2 mod4.
+Each round times 32,768 stores as one loop; byte/guard/writeback checks run
+after timing. `ONLY` accepts a comma-separated exact list, enabling a
+focused `syscall,fault,stm-aligned,stm-unaligned` build without GL work.
+These measurements target preserved exception handling, not the rejected
+unaligned-store bypass. Same-APK interleaved measurements are pending.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

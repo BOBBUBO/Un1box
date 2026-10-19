@@ -31,6 +31,7 @@ repeatable figure, a median well above it means interference).
 | `rpc-64p` | the same, writing 64 of this process's pages between calls | what an address-space switch costs this process in TLB refills (QEMU's TLB is not ASID-tagged): compare with `touch-64p` |
 | `touch-64p` | writing 64 pages, no switch | the warm-TLB cost of the same writes |
 | `fault` | an anonymous page fault (map 256 pages, write each, unmap) | data abort, page-table update, TLB invalidation |
+| `stm-aligned` / `stm-unaligned` | `STMIA r1!, {r8,r9}` into a pre-touched 2 KiB buffer, 4-byte aligned / 2 mod4 | the audio converter's store instruction; the misaligned case preserves ARM1176 alignment faults and iOS's handler/return |
 | `mmap` | `mmap` + `munmap` of one untouched page | VM system calls and their TLB maintenance |
 | `tlb-32p` / `tlb-1024p` | a dependent load chasing a pointer through 32 / 1024 pages in scrambled order | softmmu TLB hits vs. a working set beyond its reach |
 | `fork` | `fork` + `_exit` + `waitpid` | address-space creation; reports `unavailable` in an app, whose sandbox denies `fork` |
@@ -52,6 +53,11 @@ Not covered yet: audio, touch input.
 A pass takes ~6 s on a Poco F3 and ~3 s on the desktop. To profile one test, build a variant that
 runs only it, for many rounds: `LTB_CFLAGS='-DONLY="rpc" -DROUNDS=60' build.sh OUT_DIR` (same bundle
 id, so it replaces the full one when installed).
+`ONLY` also accepts comma-separated exact names, for example
+`LTB_CFLAGS='-DONLY="syscall,fault,stm-aligned,stm-unaligned"'`.
+The STM benchmarks time the complete loop, with no per-fault clocks, then check
+all stored bytes, surrounding guards and base-register writeback outside timing.
+`unavailable` means one of those checks failed.
 
 Naming guest addresses from a profile: a build with `LTB_CFLAGS='-DSYMS=0x33989748,0x3398719d
 -DONLY="loop" -DROUNDS=1'` prints one `[ltbench] sym 0x33989748 libSystem.B.dylib regexec+0x…`

@@ -5,6 +5,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Measure duplicate exception-return hflags removal, default-off
+  `LT_ERET_HFLAGS_FAST=on`. `cpsr_write()` already rebuilds flags before
+  the helper's second rebuild; intervening PC alignment does not affect
+  hflags. Preserve original ARM faults, guest handler, CPSR and EL hooks.
+  New LT Bench `stm-aligned` / `stm-unaligned` time the converter's store
+  across a pre-touched 2 KiB buffer with byte/guard/writeback checks after
+  timing. Focused same-APK A/B, then ordinary Jetpack; no measured gain yet.
+
 - [ ] Locate the first missed deadline in the frame path. Two Poco Jetpack title
   scheduler traces now align exact 60 s frame windows with vCPU states; user recorder,
   full accounting and focused engine timing off. In 8 / 7 long gaps, execution is
