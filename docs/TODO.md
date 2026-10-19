@@ -8,9 +8,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
-- [ ] Android: steady target frame rate in common period games. Jetpack Joyride's title is the Poco
-  benchmark (Flight Control, Doodle Jump and JellyCar hold their targets on both phones and have left the
-  set). Poco, guest tools serial 27: 53.4 fps without the BQL spin (ceiling 58, median 54, 1% low ~28, 8–13
+- [ ] Android: steady target frame rate in common period games. Jetpack Joyride's title is the default
+  benchmark on both phones, the heaviest scene found on the iPod 2G (Flight Control, Doodle Jump and
+  JellyCar hold their targets on both phones and have left the set). Poco, guest tools serial 27: 53.4 fps without the BQL spin (ceiling 58, median 54, 1% low ~28, 8–13
   hitches per 60 s); 57.5 with a 50 µs spin and 58.4 with the 150 µs budget, now the Android default (median 58–60, 1% low
   ~29–30, 1–8 hitches per 60 s). Desktop Jetpack 59. The 1% low (~33 ms frames) is what is left; see
   the hitch leads below.

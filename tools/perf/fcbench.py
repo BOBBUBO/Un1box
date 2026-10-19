@@ -2,7 +2,7 @@
 """Game fps for an APK: install it, boot to the lock screen, unlock, open Home page 2, run a
 game's launch steps and measure delivered fps with gamefps.py.
 usage: fcbench.py APK [SECONDS] [GAME] (ANDROID_SERIAL set; the game installed in the guest)
-GAME: a preset below; each follows one phone's Home page 2 (Poco: Flight Control, Pocket God, JellyCar,
+GAME: a preset below, default jetpack (Jetpack Joyride's title, the standard benchmark); each follows one phone's Home page 2 (Poco: Flight Control, Pocket God, JellyCar,
 Doodle Jump, Jetpack Joyride, LT Bench; Pixel: Doodle Jump, JellyCar). Check what was measured with FC_SHOT=file.png; FC_SERIES=1 prints fps per second.
 FC_FRAMES=chart.png also logs every guest frame (LT_FRAME_LOG) and reports framestats.py's ceiling,
 dips and hitches for the same window, with a chart.
@@ -23,7 +23,7 @@ GAMES = {
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
 }
 apk = sys.argv[1]; secs = sys.argv[2] if len(sys.argv) > 2 else "30"
-steps = GAMES[sys.argv[3] if len(sys.argv) > 3 else "flightcontrol"]
+steps = GAMES[sys.argv[3] if len(sys.argv) > 3 else "jetpack"]
 subprocess.run(["bash", os.path.join(D, "swapapk.sh"), apk], check=True)
 if os.environ.get("FC_FRAMES"):  # read by the engine at start; kept beside any other debug-env lines
     line = "LT_FRAME_LOG=/data/user/0/org.lighttouch.android/files/frames.log"
