@@ -357,8 +357,19 @@ store/erase; do not add overlapping durations. End means the call returned,
 not that I/O succeeded. Require balanced IDs/coordinates, the full trace footer
 and no I/O errors before joining calls to scheduler D/S/R/running intervals.
 Off takes no diagnostic clocks; flush/sync/rename/error behavior is preserved.
-Build/device exercise pending. This tests a storage lead; a D-state interval
-alone does not identify storage or page faults. Keep guest PC/context/native/
+Linux/Android builds and a Poco capture completed; PERFORMANCE.md records the
+no-write/no-D frame window separately from boot/post-capture persistence.
+After producing `hitchsched.py --all-states` JSON, analyze the same worker:
+
+```sh
+python3 tools/perf/fmsspath.py fmss-path.tsv hitches.json --engine-pid PID --json nand.json
+```
+
+The tool requires matching worker identity, balanced nested IDs/coordinates and
+a lossless trace. It retains calls outside the frame window, per-operation
+inclusive/exclusive scheduler states and enclosing calls for>=1ms hitchD spans.
+This tests a storage lead; a D-state interval alone does not identify storage
+or page faults. Keep guest PC/context/native/
 user profiling off unless independently required, and confirm any later
 optimization in ordinary interleaved comparisons.
 

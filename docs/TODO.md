@@ -86,7 +86,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   no blocked-function attribution. Source has synchronous FMSS persistence
   in MMIO handling. Enginebb5132a264 adds default-off LT_FMSS_PATH=on to
   time loads/stores/erases and nested fsyncs with no persistence changes.
-  Build and direct call/scheduler capture pending; no cause or gain proven.
+  Linux/Android builds and poco-fmss-path-1 complete, all3real analyzers pass:
+  160596records/34194balancedcalls, no loss/late markers,clockspread103ns;
+  bothscenes title/profileoff,nice0/CFS/sameTID,good28,clean baseline restored.
+  Diagnostic59.050fps,ceiling60,median60,low58,1%low30.026,0hitches/0ms,
+  0skips,max49.880ms; no A/B gain or overhead claim. NoD in window;
+  just32loads/528.431us total/max189.010us, no stores/fsyncs. Syslog only
+  AFTER timing. Boot/post-capture stores and nested fsyncs reach28/27ms,
+  but these are outside gameplay and do not attribute the older D spans.
+  Preserve durability; reproduce an ordinary hitch before async storage work.
+  tools/perf/fmsspath.py retains inside/outside spans and exclusive/inclusive
+  state totals. No cause or ordinary performance gain proven.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
   The latest Poco capture's three >50 ms gaps contain 129.017 ms running

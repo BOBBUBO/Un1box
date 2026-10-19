@@ -2974,7 +2974,7 @@ analyzers passed. No tests added/run; Pixel untouched. No new performance gain.
 #### Bluetooth owner capture (complete; retry pattern not reproduced)
 
 Fresh same-worker capture `poco-guest-bluetooth-1/` uses the frozen extended APK
-above, original50us BQL spin on/extended off, six selected guest PCs plus
+documented below, original50us BQL spin on/extended off, six selected guest PCs plus
 context/scheduler/IRQ/idle tracing, and a concurrent65s guest syslog relay.
 Idle spin, native/AHB/fault/arithmetic diagnostics, accounting and user recorder
 are off. Worker23185/vCPU23341, sameTID/nice0/CFS, good28; both scenes reviewed
@@ -3015,7 +3015,8 @@ Source inspection finds synchronous file persistence in FMSS MMIO handling;
 it is a candidate for D-state waits, not a confirmed cause. Engine `bb5132a264`
 adds default-off `LT_FMSS_PATH=on` boundaries in the bounded deferred frame
 trace. It preserves each fsync/flush/rename and error path, including errno
-across the fsync marker. Linux/Android build and a real capture are pending.
+across the fsync marker. Linux/Android builds and a real capture are complete
+as documented in the next section.
 No new performance gain from this diagnostic. Keep the Bluetooth lead open
 for fresh same-worker logs/owners when the periodic failure recurs.
 
@@ -3024,6 +3025,54 @@ process enumeration/detach log, reviewed scenes, syslog raw/JSONL/text/receive
 bounds, hitches/milestones/guest-points, decode/flip/owner reports and summary.
 Scripts guest-bluetooth-run.py/analyze.py/summary.py and guest-owner-report.py
 are in build/perf-codex. Pixel untouched and its largest hitch still unresolved.
+
+#### NAND call attribution (capture complete; long sleeps not reproduced)
+
+Engine `bb5132a264`, app source `642a6ae9`; Linux/Android builds pass. Frozen
+fmss-path.apk SHA256
+`b2e1c3c250d82dfbc4a9fd7f01c1731a9561f224f15ca5a90c062883328509b3`,
+build identity and matching libraries retained. New60s capture
+`poco-fmss-path-1/`, worker25549/vCPU25706, uses150us BQL spin, NAND/sparse
+milestones and scheduler/frequency tracing. Guest PC/context/native/AHB/idle
+spin/accounting/user recorder are off. Guest syslog is captured for3s only
+AFTER the timed window, followed by clean Stop. Both scenes reviewed as title/
+Startprofileoff, sameTID/nice0/CFS, good28; Stop/no-qemu/exact baseline verified.
+Runner exits0; own phone trace/milestone files removed after pull.
+
+160,596 complete milestone records, no loss/incomplete/writeerror or late
+publication markers. All3556host presents succeed. Scheduler coverage complete,
+no error/loss/initial exception, clockspread103ns. All34,194 NAND call IDs and
+coordinates validate, nested calls balanced. No erase calls occur. Three real
+analyzers complete, including new `tools/perf/fmsspath.py`; no tests added/run.
+
+Diagnostic mean59.050,ceiling60,median60,low58,1%low30.026,0hitches/0ms,
+zero skips; longest gap49.880ms. This is not A/B or tracing-overhead evidence.
+The full window contains50057.345ms running,5339.017msS,4603.396msR,
+0.243msR+ and **noD**. Just32NAND loads occur in the window, median9.349us,
+max189.010us,528.431us total, all running; **no stores or fsyncs occur**.
+Therefore this capture does not reproduce or attribute the older long sleeps.
+
+The complete trace does exercise persistence outside the frame window:
+before timing,33249loads/347stores/347nestedfsyncs, maxima43.522/28.834/
+28.290ms; afterward179loads/20stores/20fsyncs, maxima0.149/27.888/27.467ms.
+Those times belong to boot and post-capture activity. The after-window relay's
+receive interval starts8.545s/ends11.546s after the frame window; fsyncs occur
+at7.632–17.765s after it. This includes connection and Stop activity and does
+not prove which guest request triggered each write. Never count these as game
+hitches or add nested fsync time to its parent store. The retained log reports
+successful Bluetooth startup with BTServer26, no retained timeout/relaunch.
+
+Storage can block the vCPU, but there is no demonstrated ordinary-game benefit
+from changing it here. Preserve persistence semantics; the prior75.377msD
+remains unattributed. Investigate a reproduced ordinary hitch before choosing
+an asynchronous storage change. Stable60/clean1%low remains unmet.
+
+Evidence: frozen identity/libs, rawframes/trace/milestones/engine/syslog,
+reviewed scenes, hitches/milestones/nand reports, summary.json with hashes,
+all outside-window NAND spans and cleanup marker. Reproduce with
+fmss-path-run.py/analyze.py in build/perf-codex; fmsspath.py validates pairing,
+splits inclusive/exclusive host states and matches hitchD to enclosing calls.
+Pixel untouched. No new optimization or measured gain from this diagnostic.
 
 #### Extended BQL spin budget (ordinary comparison complete)
 
