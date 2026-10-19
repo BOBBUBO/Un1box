@@ -25,9 +25,25 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   helper `syslog --seconds 1..600` and `tools/perf/androidsyslog.py` now add
   bounded raw relay capture with monotonic receive bounds, byte/count/footer
   validation and worker identity. Native helper/Android builds pass; real
-  capture pending. Relay
-  receive times can include backlog/delivery delay; confirm thread ownership
-  and execution before assigning a hitch to a message source.
+  capture completed:34,632bytes/25chunks/70s,316 lines including startup
+  backlog. Validated1,474,148 frame-path records, zero drops/incomplete/late
+  publications; full scheduler coverage/no loss. Mean52.283,ceiling56,median52,
+  low46,1%low27.910,hitches14/824.208ms,zero skips (diagnostic, not A/B).
+  Eight hitches overlap decoding. Serial27 still emits a seven-fragment
+  present tally every300 frames; live relay delivery lags1.04–1.15s.
+  Inferred ordinal tally intervals overlap three hitches, including the
+  decoder-free66.047ms gap with launchd/syslogd-associated execution. Both
+  previous67ms decoder-free gaps also match tally intervals on existing data.
+  Owner enumeration and direct log timestamps remain unproven; full evidence
+  and limitations in PERFORMANCE.md. Next: ordinary same-APK suppression A/B.
+
+- [ ] Measure `LT_GLES_TALLY_QUIET=on` (default off), new guest tools serial28.
+  Suppress only periodic all-success tallies; preserve counters, first outcome,
+  failure history, CA/rendering behavior and old-host logging. Policy query
+  runs in both modes and can emit exact `shim-tally` diagnostic milestones.
+  Linux/Android and Mac guest-package builds pass; next install privately on
+  Poco and measure interleaved
+  ordinary Jetpack with relay/diagnostics/user recorder off. No gain claimed.
 
 - [ ] Locate the first missed deadline in the frame path. Two Poco Jetpack title
   scheduler traces now align exact 60 s frame windows with vCPU states; user recorder,

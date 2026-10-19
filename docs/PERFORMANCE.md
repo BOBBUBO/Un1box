@@ -2125,7 +2125,77 @@ It rejects incomplete footer/count/time bounds and a changed engine worker.
 Relay timestamps are arrival bounds, not guest message execution timestamps;
 historical backlog and transport delay remain possible. Use message contents
 to nominate sources, then verify execution/ownership for hitch attribution.
-Real Poco capture and message-source identification are pending.
+The first real Poco capture completed: frozen app `f47ab798` / engine
+`9171922768`, `guest-syslog.apk` SHA-256
+`88e7caa852d60e6150d180f78c4fa6e2df7becbb50717fbce836c9f4489e0656`.
+Worker12896/vCPU13053; frame window
+`[453873798205868,453933798205868)` monotonic ns. Relay completed70s,
+34,632 bytes/25chunks/316 readable lines, with historical startup backlog.
+1,474,148 frame-path records, zero drops/incomplete/late publication markers;
+all PC triplets and thread-switch continuity validate. Perfetto covers the
+complete window with no error/loss counters and156ns clock-offset spread.
+Scenes reviewed as Jetpack title, Start profile off. Debugger attached only
+after both captures, detached, clean Stop/no-qemu/baseline verified.
+
+Diagnostic metrics: mean52.283fps, ceiling56, median52, low46,
+1%low27.910,14 hitches/824.208ms,zero skips. Not an optimization or recorder
+overhead comparison. Decoder execution overlaps8/14 hitches. Converter
+medians remain25.364us aligned versus426.224us at2 mod4 (1,005/872 calls),
+an observation within this capture, not a before/after speedup.
+
+**A concrete logging source is now visible:** the supposedly quiet serial27
+GL shim still writes `[mbxshim] present tally` every300 CA presents. Source
+`contrib/it-gles/mbxshim.c` emits it through seven `w`/`wd` fragments, each
+making a guest stderr write and a host log call. The relay shows those fragments
+as separate Jetpack syslog messages. This differs from the previously fixed
+per-surface reporting. Live tally messages arrive about1.04–1.15s after the
+corresponding native present, so arrival/frame overlap would misattribute them.
+
+The complete native stream has one context,6,093 presents and no failed native
+returns. Using the source's cumulative counter to infer each tally's interval
+between native present N's end and N+1's beginning gives three overlapping
+hitches out of ten in-window tally candidates:
+
+| CA present count | Post-present interval | Overlapping frame gap | Decoder running in frame |
+| --- | --- | --- | --- |
+| 2400 | 82.191ms | 81.825ms at5.618s | 8.610ms |
+| 4200 | 57.842ms | 66.047ms at39.225s | 0 |
+| 5100 | 60.586ms | 68.814ms at56.069s | 5.359ms |
+
+The decoder-free39.225s gap includes9.155ms on a launchd-associated thread,
+5.952ms and3.853ms on two syslogd-associated threads. These remain pmap
+associations, not an owner enumeration. The post-present interval also includes
+CA/other execution and host waits: do not label its full duration as logging.
+Ordinal matching is inferred, not a direct log timestamp.
+
+Reanalyzing the **existing** delayed-PC capture (no old commit remeasured),
+both previously unexplained decoder-free67ms gaps overlap the inferred tally
+intervals: counter2100 at2.839s (69.214ms interval;67.403ms frame gap),
+counter4500 at48.412s (51.576ms interval;67.133ms frame gap). This strengthens
+the periodic-tally lead; an ordinary same-APK A/B is still required to establish
+the benefit of suppressing it.
+
+Raw evidence/reports: `build/perf-codex/poco-guest-syslog-1/` including relay
+JSONL/raw/text/identity/summary, validated frame/context/PC/scheduler/decoder
+reports and reviewed scenes. Reproduction: `guest-pc-report.py`,
+`guest-pc-insights.py`, `syslog-tally-report.py`; existing-capture ordinal report
+`prior-tally-ordinal-insights.json`, all under `build/perf-codex/`.
+
+#### Periodic success tally suppression (implementation, measurements pending)
+
+Engine `14cead9c5e` adds default-off `LT_GLES_TALLY_QUIET=on`, negotiating a
+narrow log policy with the
+guest shim. New guest tools serial28/version1.1.26 still count every CA result,
+log the first outcome, and keep periodic logs if any failure has occurred.
+Only all-success periodic tallies are skipped after an exact opt-in host reply;
+older hosts retain the log. Rendering, CA calls and return values are unchanged.
+Both A/B modes use the same guest package and APK; the policy query is common
+to both and runs only at tally candidates. Optional `shim-tally` milestones
+record the query before its stderr writes, removing the ordinal-timing inference
+for future diagnostic captures. Linux/Android and Mac guest-package builds pass
+(including the package build's standard packaging checks). Ordinary Jetpack measurements must use no syslog relay, PC/fault/
+frame-path diagnostics or user recorder. No speedup claimed yet. Built guest
+packages remain private; only source changes are pushed.
 
 ### Measured and rejected
 
