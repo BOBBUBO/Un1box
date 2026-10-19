@@ -5,6 +5,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Attribute the native waits preceding delayed host wakes. Engine
+  `bd8af24c10` adds default-off `LT_NATIVE_WAIT_PROF=on`, requiring LT_FRAME_PATH.
+  BQL/ordinary mutex and condition wrappers time only vCPU0; completed>=10us
+  spans retain source site/object identities, deferred until cleanup. With it
+  off, existing wait function pointers are unchanged. Existing hooks cause
+  refusal; reject site/buffer loss, replaced hooks or mismatched TID. The80MiB
+  bounded trace and `nativewaits.py` support matching scheduler intervals.
+  Linux/Android builds pass; one focused phone capture in progress, no runtime
+  attribution or speedup claimed. Ordinary game ceiling/median/low/1%low/
+  hitch count/duration unmeasured for this diagnostic; keep out of normal A/B.
+
 - [ ] Explain delayed host wakeups while the prime core is idle. New offline
   `hitchsched.py --runnable-details` applied to the existing complete delayed-PC
   trace finds37 long runnable intervals/55.582ms across9hitches. In36/54.436ms,

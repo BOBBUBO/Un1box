@@ -245,6 +245,42 @@ trace establishes blocking but cannot name the wait, narrow the next diagnostic
 to that interval and capture the relevant native wait entry/return stack.
 Keep Start profile off during ordinary A/B performance measurements.
 
+### Native wait source locations
+
+`LT_NATIVE_WAIT_PROF=on` (engine `bd8af24c10`, default off) requires
+`LT_FRAME_PATH=/private/path/events.tsv`. It interposes the existing QEMU BQL /
+ordinary mutex and condition-wait function pointers after the frame buffer is
+ready. With it off, those pointers remain unchanged. Only vCPU0 is timed;
+completed calls >=10us produce one `native-wait` record: a=begin_ns,b=end_ns,
+c=site ID. The record timestamp is after completion. Source file/line, wait
+kind, object and associated mutex addresses are printed as `[native-wait-site]`
+only after vCPUs stop. Condition durations include mutex reacquisition.
+
+This allocates the80MiB bounded frame buffer; it does not enable context or
+instruction sampling. Existing QSP/interposed wait hooks cause refusal.
+`[native-wait] finished` records the vCPU TID, total/retained calls, site overflow
+and whether hooks remained installed. Reject missing completion, site/buffer
+loss, replaced hooks or a mismatched TID. It clocks every selected QEMU wait
+call, so it is for attribution only. It does not cover direct driver/libc waits,
+recursive-mutex entry points or QemuEvent's direct futex waits. Short calls and
+incomplete calls are not represented as spans. Keep it and Start profile off
+for ordinary A/B measurements. No runtime attribution result yet; Linux/Android
+builds pass, and one phone capture is in progress.
+
+After a clean Stop and a matching scheduler analysis:
+
+```sh
+python3 tools/perf/nativewaits.py events.tsv engine.log hitch-wake.json \
+    --engine-pid PID --json native-waits.json
+```
+
+Use `hitchsched.py --all-states --runnable-details` first. The tool validates
+completed spans/sites and matches selected in-hitch runnable intervals to
+enclosing native calls, retaining unmatched intervals. Durations include
+scheduling; a slow mutex call need not have slept, and a source location alone
+does not prove why the kernel delayed a wake. Preserve the exact APK identity,
+scenes, full frame window and scheduler trace.
+
 `LT_VCPU_DISPLAY_PRIORITY=on` (engine `6971278387`, default off) is a separate
 Android scheduling experiment. At vCPU startup it requests ordinary display
 nice -4 on that thread, retaining CFS and the existing CPU mask; an existing

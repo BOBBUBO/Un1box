@@ -2625,6 +2625,31 @@ ticks, retaining all candidate rows. Prepared priority runner corrected too;
 priority performance comparison remains unstarted. Pixel disconnected/untouched.
 No test suites added/run.
 
+#### Completed native wait attribution (first phone capture pending)
+
+Engine `bd8af24c10` adds default-off `LT_NATIVE_WAIT_PROF=on`, requiring a
+working `LT_FRAME_PATH`. It interposes existing BQL/ordinary mutex and condition
+wait function pointers after trace initialization, timing only vCPU0 and
+retaining completed calls>=10us. Off leaves the function pointers unchanged;
+preexisting interposers cause refusal. Source site/object/mutex metadata and
+completion counters are emitted only after vCPUs stop; each bounded trace
+record stores actual call begin/end and site ID. The80MiB buffer is selected
+without enabling guest context/instruction sampling. It preserves the original
+wait calls, faults and audio behavior. Durations include scheduler delay and
+condition-variable mutex reacquisition, not merely time holding a lock.
+
+Linux/Android builds pass. Frozen `native-wait.apk`, app37637548 /
+enginebd8af24c10, SHA256
+`3b9c9cbf46f1f45c1f9023db8d0da6debbdc2ce848907579e4c2f4d6a20f2897`;
+identity/symbols in `build/perf-codex/native-wait-build-identity.json`.
+`nativewaits.py` validates completion, TID, sites and buffer counts, then matches
+selected in-hitch runnable waits to enclosing completed native calls. Unmatched
+intervals remain explicit. Direct driver/libc waits, recursive mutex entry and
+direct QemuEvent futex waits are not covered. One phone attribution capture is
+in progress; no runtime result, speedup or ordinary game ceiling/median/low/
+1%low/hitch count/duration claim yet. No test suites added/run. User profiler
+remains off; this diagnostic is separate from ordinary A/B measurements.
+
 #### Android vCPU display priority (runtime measurements pending)
 
 The scheduler captures above include host runnable delay, including 8.620 ms
