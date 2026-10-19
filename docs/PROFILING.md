@@ -332,6 +332,19 @@ applying it to earlier events requires that thread to have remained alive.
 Keep unknown and mismatched rows. This optional lookup is prepared for the next
 diagnostic capture; it has not yet been exercised in a phone attachment.
 
+To enumerate live threads when their addresses are not known before attachment,
+append `--task-thread-layout HEAD,COUNT,NEXT` and
+`--task-thread-kernel-sha256 HASH`. Supply byte offsets in decimal or hex from
+the matching kernel's `task_threads` disassembly: task's first thread, task's
+thread count, and thread's next link. There are no default offsets. The helper
+rejects a kernel hash mismatch before connecting, bounds enumeration to 4096
+threads, rejects repeated/unreadable pointers and task-owner disagreements,
+and requires the current thread in the resulting lists. JSON retains the
+layout, each task's list and every thread's owner lookup. These are post-window
+observations; exited/reused threads remain a limitation when joining earlier
+events. Enumeration is prepared for the next phone capture and has not yet
+been exercised at runtime.
+
 Generate framepath JSON with `--residency-intervals` and context tracing, then
 add these options to the `hitchcpu.py` command above:
 
