@@ -218,6 +218,10 @@ typedef struct {
 } lt_runtime_io_stats;
 lt_status lt_runtime_io_statistics(lt_runtime *, lt_runtime_io_stats *, lt_error *);
 
+/* Optional engine recording; one active host-path capture per worker. Empty
+ * path stops and flushes it. Status is 1 active, 0 idle, negative host errno. */
+lt_status lt_runtime_profile(lt_runtime *, const char *path, lt_error *);
+lt_status lt_runtime_profile_status(lt_runtime *, int32_t *status, lt_error *);
 lt_status lt_runtime_pause(lt_runtime *, uint32_t paused, lt_error *);
 /* Stop requests semantic guest shutdown; poll confirmation. Timeout/kill leaves
  * dirty marker. destroy only after terminal state; returns LT_BUSY otherwise. */

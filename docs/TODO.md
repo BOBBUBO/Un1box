@@ -8,36 +8,58 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
-- [ ] Android: steady target frame rate in common period games. Now (engine 4de4ae5ba1): Flight Control
-  55.8 of 60 fps on the Poco (six runs 53.6–57.7; ceiling 60, median 56–60, ≥55 fps 58–86% of the
-  time, 7–28 hitches per 30 s; 56.1 with 1997c1a488); Jetpack Joyride title 35 fps (ceiling 42–46,
-  guest-code bound: GL is ~12% of the vCPU; the desktop runs it at ~54). With the quiet GL shim
-  (engine 7f744e80cc, real guest package serial 27, kept by the verdicts in 995ce258): Flight Control
-  59.0 (median 60, 1 hitch per 30 s, ≥55 fps 98–100% of the time: at its ceiling, dropped as a
-  benchmark), Jetpack 50.5 (ceiling 56, 1% low 21–28, 6–7 hitches per 30 s; was 39.4 with 114
-  hitches), desktop Jetpack 59; 52.2 with engine 0addc3e156 + 2df170ca78 (+6%, three pairs). Jetpack is the Poco benchmark now; a game that holds a steady 60 on
-  both phones leaves the set (Flight Control, Doodle Jump). Pixel with serial 27: JellyCar menu 30.0
-  of 30 (8–45 hitches per 30 s), Doodle Jump menu 57.6–58.0. Poco, g3 = 64d111110b: Doodle
-  Jump menu 57.2 of 60 (median 58, 0 hitches), JellyCar menu 29.8 of 30; Doodle Jump menu 55.5 of 60 on the Pixel (a62f05bae3); JellyCar menu
-  23 of 30 (974c213352, not re-measured).
+- [ ] Android: steady target frame rate in common period games. Jetpack Joyride's title is the Poco
+  benchmark (Flight Control, Doodle Jump and JellyCar hold their targets on both phones and have left the
+  set). Poco, guest tools serial 27: 53.4 fps by default (ceiling 58, median 54, 1% low ~28, 8–13
+  hitches per 60 s); 57.5 with `LT_BQL_SPIN=on` and 58.4 with the 150 µs budget (median 58–60, 1% low
+  ~29–30, 1–8 hitches per 60 s). Desktop Jetpack 59. The 1% low (~33 ms frames) is what is left; see
+  the hitch leads below.
+- [ ] Turn the BQL spin on by default (`LT_BQL_SPIN=on`, `LT_BQL_SPIN_EXTENDED=on`; engine
+  `23041226e7`, `5547634eeb`). +7.6% and hitches 30 → 8 on the Poco, then +2.1% for 150 µs
+  (PERFORMANCE.md). Before switching it on: interleaved pairs on the Pixel (JellyCar, and a 60 fps
+  scene), one more Poco game, and idle engine CPU with the spin on, since it burns up to 150 µs per
+  contended take.
+- [ ] Confirm the two open engine leads (both default off, PERFORMANCE.md): the indirect miss-helper
+  cache (`LT_IBTC_L2=on`, +2.2% in 3 of 3 pairs) and the inlined TB lookup hit (`LT_TB_LOOKUP_INLINE=on`,
+  ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin.
+- [ ] Jetpack hitches on the Poco (PERFORMANCE.md, "Hitches in Jetpack's title"; capture tools in
+  PROFILING.md). Leads, by evidence:
+  1. Held refreshes recur 88–92 ticks (~1.5 s) apart in four sparse captures (`LT_FRAME_PATH`). Follow
+     the guest present and compositor queue boundaries before each one, including the work that starts
+     before the visible gap, and compare with ordinary intervals.
+  2. Audio: the AAC decoder runs before 48 of 87 gaps over 30 ms, and its converter's 2-mod-4 output
+     batches take ~420 µs a call through ARM1176 alignment traps (25 µs aligned). Join exact converter
+     batches to the recurring misses. Keep the traps and iOS's handler (architectural).
+  3. Logging: the two longest gaps in one capture follow ~26 ms of launchd + syslogd work. Find which
+     stderr or IPC request it serves before changing logging again (the tally experiments were rejected).
+  4. Bluetooth: a 166 ms gap with 84 ms of BTServer work, and a 10 s BTServer timeout and relaunch at
+     one boot (`LT_BT_PATH` shows every HCI reply injected). Capture UART FIFO drain, timeout and IRQ
+     state around a reproduced failure. Don't log firmware payloads.
+  5. The rest of the BQL waits: the 150 µs spin removes most short sleeps, but longer waits and slow
+     wakeups from guest idle remain. Find the lock owners and main-loop work first; the PL080's
+     per-element audio dispatch and the LCD's dirty tracking are the known holders.
+- [ ] Pixel gameplay pauses: a 214 ms Jetpack gap had 206 ms of execution wall time and 83 ms of vCPU
+  CPU time. Capture a scheduler trace with CPU samples during the scene. Don't assume the Poco's causes.
+- [ ] Recording overhead: the Android Start/Stop profile costs 6–7% of the Jetpack frame rate on the
+  Poco (54.0 → 50.0 and 52.7 → 48.6 fps in pairs). Make it cheaper, or say in the UI that recorded rates
+  run low. Consider Android 15's `ProfilingManager` for host scheduling traces next to it.
 - [ ] Indirect branches with many targets (`objc_msgSend`'s final jump goes to every method): LT Bench
-  `icall` is 3–6× a direct call, because a site's 2-entry cache misses and `helper_lookup_tb_ptr` runs
-  (TB lookup is still ~12% of the vCPU in Flight Control on the Poco, ~4% in `qht` after jump-cache
-  misses, 57% of them on empty slots). Candidates: probe the jump cache inline in the generated code.
-  What empties the slots (desktop, Flight Control play): 95% are one kernel routine's TLBIASID of the
-  current ASID (~60/s, each empties the 16K-entry cache); revalidating entries instead cut misses 40%
-  and lost 2% on the Poco (rejected, PERFORMANCE.md). Misses are not the cost any more.
+  `icall` is 3–6× a direct call. Rejected so far (PERFORMANCE.md): 2-way and 64K jump caches,
+  revalidation across TLBIASID, an inline jump-cache probe in generated code (`icall` 32 → 15 ns, no game
+  gain) and an eight-bucket per-site cache (+96 bytes per TB). Untried: promoting an inline probe's hit
+  into the site's two-entry cache. `LT_IBTC_L2` (above) is the open lead.
 - [ ] LT Bench `thread-switch`: a pipe round trip between two threads takes 65 µs on the Poco (26 µs on
   the desktop), 4× a Mach RPC to another process. Not a wait: during the test the vCPU runs ~95% of
   the time and is halted <1%, and a desktop profile is flat (no emulator hotspot), so it is guest
   kernel work: four BSD syscalls and two scheduler switches per round trip, against two Mach traps
   with a direct handoff for the RPC. Left open only to compare with a real device.
-- [ ] Ship the quiet GL shim (engine `7f744e80cc`, guest package serial 27). Built 2026-10-18 on the Mac
-  with Xcode 27.1 (`~/Documents/LightTouch-Development/guest-package-27/`, not uploaded; how: qemu-ios
-  `contrib/armv6-toolchain/README.md`, "Setting up a Mac to build the guest package"). The apps do not
-  bundle guest tools: a record keeps the `armv6.itpack` it was imported with (pinned by
-  `guest_package_sha256` in `record.json`), so users get it only through a new Guest tools file and the
-  update below. Installed by hand on the Poco and Pixel records (backups in `files/pkg-backup-*`).
+- [x] Install the quiet GL shim in place (engine `7f744e80cc`, guest tools serial 27): Linux
+  `lighttouch-linux --library LIB --record ID --set-guest-package ITPACK`, Android "Guest tools" on a
+  stopped device. Both benchmark phones have it; the Poco has the private serial 29 from the rejected
+  tally experiment, which behaves as 27 against the current host.
+- [ ] Prepare guest tools for public distribution. Serial 27 is private: `contrib/appsync/appsync_cert.h`
+  embeds an Apple certificate, and the `contrib/` guest sources lack license headers. Don't publish
+  the package or firmware before both are resolved.
 - [x] Guest package verdicts on Android and Linux. The portable runtime never told the guest's loader
   (qemu-ios `contrib/it-boot`) that a package was good, so `it_boot` reverted any package newer than
   the record's after two boots (`MAX_TRIES`) and refused that serial from then on. That is why serial
@@ -57,13 +79,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   installed serial), and add the action to the Windows and macOS apps.
 - [x] LT Bench GL tests (`gl-get`, `gl-state`, `gl-draw`, `gl-sprite`, `gl-upload`, `gl-present`), run on
   the desktop, the Poco and the Pixel (docs/GUEST-BENCHMARKS.md, PERFORMANCE.md).
-- [ ] Fewer host GL calls per draw (the next lead for Jetpack on the Poco). For each draw,
-  `gles_bind_all_arrays` enables and points every client array, and `gles_unbind_arrays` disables them
-  again. Strict mode adds 4–5 `glGetError` checks. A two-array sprite is ~12 host GL calls, and on Adreno
-  each pays `validateShadowState` plus a context lookup (`pthread_getspecific`). These were ~8% of the
-  vCPU in a Poco `gl-sprite` profile, with `glGetError` alone ~4%. Idea: track the host's
-  client-array enables and pointers and skip calls that change nothing. Strict mode off alone did not
-  move Jetpack (PERFORMANCE.md, rejected), so measure `gl-sprite` first.
+- [x] Fewer host GL calls per draw: the client-array cache (engine `6762325419`, on by default) skips
+  pointer, enable and client-unit calls that change nothing (setup + cleanup 0.619 → 0.228 µs per draw on
+  the Pixel). Strict `glGetError` checks stay (`IT_GLES_STRICT=0` was rejected).
 - [ ] Dynamic TLS in the engine. `libqemu-arm.so` is `dlopen`ed, so each `__thread` access in QEMU's
   hot paths (`current_cpu`, the RCU reader) goes through `tlsdesc_resolver_dynamic`: 1.2% of the vCPU
   in Jetpack, 3.2% in `gl-sprite` on the Poco. Find the hot accessors (a call-graph profile), then cache
@@ -73,19 +91,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Profile it before testing a game that streams textures.
 - [ ] The guest kernel is 22% of the vCPU in Jetpack on the Poco (half the time in translated code).
   It is spread thin: locks, Mach IPC, the scheduler, timers, IOKit work loops. `0addc3e156` made its
-  lock and interrupt-mask instructions cheaper. Next to look at: how many exceptions and Mach messages
-  the game makes per frame, and which of them the emulator makes expensive.
+  lock and interrupt-mask instructions cheaper. `LT_EXCEPTION_PROF=on` counts exceptions, SVCs and
+  Mach messages; next, find which of them the emulator makes expensive.
 - [ ] Desktop IPA install rejects archives Android accepts: Jetpack Joyride 1.3.5 (Legacy Store copy
   5997) has an entry whose central-directory name differs from its local header (an OpenFeint
   `.norm` file aliasing `Default-Portrait~ipad.png`), and Python's `zipfile` refuses it ("File name in
   directory ... and header ... differ"). Skip or tolerate such entries like the Android installer.
-- [ ] Pixel: check the AHardwareBuffer present (engine 4de4ae5ba1) renders correctly and which path
-  it takes (the GL init line in the engine log names `IOSurface` or `readback`).
-- [ ] The vCPU still waits ~9% of wall time for the BQL, behind main-loop holds. What the main loop
-  does under it: the PL080 moves audio to the I2S FIFO one 4-byte element per full
-  `address_space_read`/`write` dispatch (~44K/s); the LCD converts lines and resets TLB dirty
-  tracking. Remaining vCPU takes: interrupt delivery (cpu-exec.c), timer IRQ ack writes, VIC, LCD.
-  Measure with the `[acct]` BQL tables and `tools/perf/bqlsites.py`.
+- [x] Pixel: the AHardwareBuffer present (engine 4de4ae5ba1) takes the `IOSurface` path on the Pixel's
+  PowerVR driver and renders correctly (LT Bench).
 - [ ] Pixel: the user sees Doodle Jump's menu swing between fast and stuttering. Per-second fps
   (`FC_SERIES=1`, 60 s, 974c213352 + b11ef28b): ADPF on 31.3 and 29.5 mean, each second 19–44; ADPF off
   17.3 and 18.6, 11–29. The swing is the same proportion (about ±25%) either way and no second
@@ -97,6 +110,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   frame-published wakeups like Android.
 - [x] Document every performance change and its measurement: [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Guest fps readout and 60 s graph in the Android app (b11ef28b).
+- [x] Manual Start/Stop profile in the Android app, next to the fps graph (engine `50a08eb2d2`):
+  frontmost app, per-frame GL totals, slow GL calls, BQL waits and holds, Android present stages
+  ([PROFILING.md](PROFILING.md)).
 
 ## Firmware and assets
 

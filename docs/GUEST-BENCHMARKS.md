@@ -19,6 +19,7 @@ repeatable figure, a median well above it means interference).
 | Test | One operation | Path it exercises |
 | --- | --- | --- |
 | `loop` | an integer LCG step | translated straight-line code (baseline) |
+| `vfp-mla` | one scalar VMLA/VMLS/VNMLA/VNMLS | eight independent VFP2 accumulators, separately rounded multiply/add and generated helper calls; long loop timing, no per-operation clocks |
 | `icall` | an indirect call through a 4-entry table, and its return | indirect branches: TB exits, the per-site branch cache, `helper_lookup_tb_ptr` |
 | `fib` | a recursive call and return | returns to many sites |
 | `memcpy` | 1 KiB copied (libSystem `memcpy`, 256 KiB blocks) | guest loads/stores through the softmmu TLB fast path |
@@ -30,6 +31,7 @@ repeatable figure, a median well above it means interference).
 | `rpc-64p` | the same, writing 64 of this process's pages between calls | what an address-space switch costs this process in TLB refills (QEMU's TLB is not ASID-tagged): compare with `touch-64p` |
 | `touch-64p` | writing 64 pages, no switch | the warm-TLB cost of the same writes |
 | `fault` | an anonymous page fault (map 256 pages, write each, unmap) | data abort, page-table update, TLB invalidation |
+| `stm-aligned` / `stm-unaligned` | `STMIA r1!, {r8,r9}` into a pre-touched 2 KiB buffer, 4-byte aligned / 2 mod4 | the audio converter's store instruction; the misaligned case preserves ARM1176 alignment faults and iOS's handler/return |
 | `mmap` | `mmap` + `munmap` of one untouched page | VM system calls and their TLB maintenance |
 | `tlb-32p` / `tlb-1024p` | a dependent load chasing a pointer through 32 / 1024 pages in scrambled order | softmmu TLB hits vs. a working set beyond its reach |
 | `fork` | `fork` + `_exit` + `waitpid` | address-space creation; reports `unavailable` in an app, whose sandbox denies `fork` |
@@ -51,6 +53,11 @@ Not covered yet: audio, touch input.
 A pass takes ~6 s on a Poco F3 and ~3 s on the desktop. To profile one test, build a variant that
 runs only it, for many rounds: `LTB_CFLAGS='-DONLY="rpc" -DROUNDS=60' build.sh OUT_DIR` (same bundle
 id, so it replaces the full one when installed).
+`ONLY` also accepts comma-separated exact names, for example
+`LTB_CFLAGS='-DONLY="syscall,fault,stm-aligned,stm-unaligned"'`.
+The STM benchmarks time the complete loop, with no per-fault clocks, then check
+all stored bytes, surrounding guards and base-register writeback outside timing.
+`unavailable` means one of those checks failed.
 
 Naming guest addresses from a profile: a build with `LTB_CFLAGS='-DSYMS=0x33989748,0x3398719d
 -DONLY="loop" -DROUNDS=1'` prints one `[ltbench] sym 0x33989748 libSystem.B.dylib regexec+0x…`
@@ -82,7 +89,8 @@ tools/guestbench/android.sh install OUT_DIR/LTBench.ipa
 tools/guestbench/android.sh results          # the newest pass's lines from the engine log
 ```
 
-Poco F3 layout preset: `tools/perf/fcbench.py APK 1 ltbench` boots, unlocks and taps the icon.
+Poco F3 layout preset: `python3 tools/perf/fcbench.py APK 0 ltbench` boots, unlocks and taps the icon
+without sampling fps on the static results screen.
 
 On the desktop, install the IPA through the app's Install IPA path (or headless: start the guest
 with the app-services bridge, `app_services.bridge.Bridge`, and run `python -m app_services.helper

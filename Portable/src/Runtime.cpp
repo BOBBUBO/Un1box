@@ -122,6 +122,9 @@ struct Engine {
     decltype(&qemu_ios_audio_capture_start) audio_start = nullptr;
     decltype(&qemu_ios_audio_capture_read) audio_read = nullptr;
     decltype(&qemu_ios_audio_capture_stop) audio_stop = nullptr;
+    decltype(&qemu_ios_profile_start) profile_start = nullptr;
+    decltype(&qemu_ios_profile_stop) profile_stop = nullptr;
+    decltype(&qemu_ios_profile_status) profile_status = nullptr;
     // Optional: older engines lack it and are polled instead.
     decltype(&qemu_ios_ui_attach) attach = nullptr;
     // Optional: engines before the guest-package hypercalls lack it.
@@ -178,6 +181,9 @@ struct Engine {
             LOAD(audio_read, qemu_ios_audio_capture_read);
             LOAD(audio_stop, qemu_ios_audio_capture_stop);
 #undef LOAD
+            profile_start = reinterpret_cast<decltype(profile_start)>(dlsym(library, "qemu_ios_profile_start"));
+            profile_stop = reinterpret_cast<decltype(profile_stop)>(dlsym(library, "qemu_ios_profile_stop"));
+            profile_status = reinterpret_cast<decltype(profile_status)>(dlsym(library, "qemu_ios_profile_status"));
             attach = reinterpret_cast<decltype(attach)>(dlsym(library, "qemu_ios_ui_attach"));
             package_report =
                 reinterpret_cast<decltype(package_report)>(dlsym(library, "qemu_ios_guest_package_report"));
@@ -709,6 +715,24 @@ lt_status lt_runtime_poll(lt_runtime *r, lt_runtime_status *out, lt_error *e) {
         if (issue == lt::TerminalIssue::dirty_state)
             throw lt::Failure(LT_ENGINE, "guest shutdown was confirmed but state could not be finalized cleanly; "
                                          "recover in a fresh worker");
+    });
+}
+lt_status lt_runtime_profile(lt_runtime *r, const char *path, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->started, "guest runtime inactive", LT_AGAIN);
+        lt::require(r->engine->profile_start && r->engine->profile_stop,
+                    "engine profiling unavailable", LT_UNSUPPORTED);
+        bool start = path && *path;
+        lt::require(!start || (!r->done && !r->stopping), "guest runtime stopping", LT_AGAIN);
+        int code = start ? r->engine->profile_start(path) : r->engine->profile_stop();
+        lt::require(code == 0, "Profile capture: " + std::string(strerror(-code)), LT_ENGINE);
+    });
+}
+lt_status lt_runtime_profile_status(lt_runtime *r, int32_t *status, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && status, "guest runtime inactive", LT_AGAIN);
+        lt::require(r->engine->profile_status, "engine profiling unavailable", LT_UNSUPPORTED);
+        *status = r->engine->profile_status();
     });
 }
 lt_status lt_runtime_pause(lt_runtime *r, uint32_t paused, lt_error *e) {

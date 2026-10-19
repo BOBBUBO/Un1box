@@ -6,6 +6,7 @@ GAME: a preset below; each follows one phone's Home page 2 (Poco: Flight Control
 Doodle Jump, Jetpack Joyride, LT Bench; Pixel: Doodle Jump, JellyCar). Check what was measured with FC_SHOT=file.png; FC_SERIES=1 prints fps per second.
 FC_FRAMES=chart.png also logs every guest frame (LT_FRAME_LOG) and reports framestats.py's ceiling,
 dips and hitches for the same window, with a chart.
+SECONDS=0 launches without sampling fps (useful for LT Bench's static results screen).
 Guest coordinates are fractions of the guest screen, so they work on any phone."""
 import os, subprocess, sys, time
 D = os.path.dirname(os.path.abspath(__file__))
@@ -30,7 +31,8 @@ if os.environ.get("FC_FRAMES"):  # read by the engine at start; kept beside any 
 subprocess.run([sys.executable, os.path.join(D, "inappfps.py"), "--boot-only"], check=True)
 # One Power tap wakes the guest to the lock screen, which re-sleeps within ~5 s, so poll for it and
 # swipe at once; tapping Power again before the wake shows (slow on the Poco) puts it back to sleep.
-# The guest view no longer moves when it wakes, so the layout is read once.
+# Read the wake layout here, then refresh before taps: status/profile controls
+# can reflow while the guest starts or changes orientation.
 rect = guest_rect(); _, power = find(ui(), "Power")
 def unlocked():
     for _ in range(3):
@@ -45,15 +47,23 @@ def unlocked():
 if not unlocked(): sys.exit("could not unlock the guest")
 sh("input", "swipe", *gpt(rect, .9, .5), *gpt(rect, .15, .5), "300"); time.sleep(3)  # Home page 1 -> 2
 for step in steps:
-    if isinstance(step, tuple): sh("input", "tap", *gpt(rect, *step))
+    if isinstance(step, tuple):
+        rect = guest_rect()
+        sh("input", "tap", *gpt(rect, *step))
     else: time.sleep(step)
+def save_shot():
+    if os.environ.get("FC_SHOT"):
+        with open(os.environ["FC_SHOT"], "wb") as f:
+            f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True, check=True).stdout)
+if float(secs) == 0:
+    save_shot()
+    sys.exit(0)
 frames = None
 if os.environ.get("FC_FRAMES"):  # matplotlib may live only in the system python
     py = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
     frames = subprocess.Popen([py, os.path.join(D, "framestats.py"), "--device", secs, "--chart", os.environ["FC_FRAMES"],
-                               "--label", os.path.basename(apk.rstrip("/").rsplit("/", 1)[0])])
+                               "--label", os.path.basename(apk.rstrip("/").rsplit("/", 1)[0]),
+                               "--save", os.environ["FC_FRAMES"] + ".frames.log"])
 subprocess.run([sys.executable, os.path.join(D, "gamefps.py"), secs] + (["--series"] if os.environ.get("FC_SERIES") else []))
 if frames: frames.wait()
-if os.environ.get("FC_SHOT"):
-    with open(os.environ["FC_SHOT"], "wb") as f:
-        f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True).stdout)
+save_shot()

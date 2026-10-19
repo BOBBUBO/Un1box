@@ -9,6 +9,7 @@
  *   liblt_appservice.so info    --socket <mux.sock>
  *   liblt_appservice.so install --socket <mux.sock> --ipa <path> --bundle-id <id>
  *   liblt_appservice.so list    --socket <mux.sock>
+ *   liblt_appservice.so syslog  --socket <mux.sock> --seconds <1..600>
  *
  * Output is JSON Lines on stdout (one object per line, flushed):
  *   {"target":{"product_type":"iPod2,1","ios":"3.1.3"}}       always first
@@ -51,6 +52,7 @@
 #include <libimobiledevice/lockdown.h>
 #include <libimobiledevice/afc.h>
 #include <libimobiledevice/installation_proxy.h>
+#include <libimobiledevice/syslog_relay.h>
 #include <plist/plist.h>
 
 #define CLIENT_LABEL "LightTouchAndroid"
@@ -371,6 +373,84 @@ static instproxy_client_t instproxy_open(struct session *s)
 		return NULL;
 	}
 	return client;
+}
+
+/* ---------- bounded diagnostic syslog relay ---------- */
+
+static int64_t monotonic_ns(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+static int action_syslog(struct session *s, unsigned seconds)
+{
+	lockdownd_service_descriptor_t service = start_service(s, SYSLOG_RELAY_SERVICE_NAME);
+	if (!service)
+		return 1;
+	syslog_relay_client_t client = NULL;
+	syslog_relay_error_t err = syslog_relay_client_new(s->device, service, &client);
+	lockdownd_service_descriptor_free(service);
+	if (err != SYSLOG_RELAY_E_SUCCESS) {
+		emit_error("connect syslog relay failed (device error %d).", (int)err);
+		return 1;
+	}
+	int64_t started = monotonic_ns();
+	int64_t deadline = started + (int64_t)seconds * 1000000000;
+	uint64_t chunks = 0, bytes = 0;
+	struct buf b = {0};
+	buf_printf(&b, "{\"syslog_start\":{\"monotonic_ns\":%" PRId64 ",\"seconds\":%u}}", started, seconds);
+	emit(&b);
+	int rc = 0;
+	for (;;) {
+		int64_t before = monotonic_ns();
+		if (before >= deadline)
+			break;
+		unsigned timeout = (unsigned)((deadline - before + 999999) / 1000000);
+		if (timeout > 250)
+			timeout = 250;
+		char data[8192];
+		uint32_t got = 0;
+		err = syslog_relay_receive_with_timeout(client, data, sizeof(data), &got, timeout);
+		int64_t after = monotonic_ns();
+		if (got) {
+			/* Hex preserves NUL separators and arbitrary bytes exactly. Receive
+			 * bounds use the same Android monotonic clock as frame logs, but are
+			 * transport times, not guest message execution timestamps. */
+			buf_printf(&b, "{\"syslog_chunk\":{\"begin_ns\":%" PRId64 ",\"end_ns\":%" PRId64
+			           ",\"bytes\":%u,\"hex\":\"", before, after, got);
+			static const char hex[] = "0123456789abcdef";
+			for (uint32_t i = 0; i < got; i++) {
+				unsigned char c = (unsigned char)data[i];
+				char pair[] = { hex[c >> 4], hex[c & 15] };
+				buf_put(&b, pair, 2);
+			}
+			buf_puts(&b, "\"}}");
+			emit(&b);
+			chunks++;
+			bytes += got;
+		}
+		if (err != SYSLOG_RELAY_E_SUCCESS && err != SYSLOG_RELAY_E_TIMEOUT &&
+		    err != SYSLOG_RELAY_E_NOT_ENOUGH_DATA) {
+			emit_error("receive syslog failed (device error %d); capture incomplete.", (int)err);
+			rc = 1;
+			break;
+		}
+		if (!got && err == SYSLOG_RELAY_E_SUCCESS) {
+			emit_error("syslog relay closed; capture incomplete.");
+			rc = 1;
+			break;
+		}
+	}
+	syslog_relay_client_free(client);
+	if (!rc) {
+		buf_printf(&b, "{\"result\":{\"complete\":true,\"begin_ns\":%" PRId64
+		           ",\"end_ns\":%" PRId64 ",\"chunks\":%" PRIu64 ",\"bytes\":%" PRIu64 "}}",
+		           started, monotonic_ns(), chunks, bytes);
+		emit(&b);
+	}
+	return rc;
 }
 
 /* Browse User applications on a fresh instproxy client. Caller frees *apps. */
@@ -843,7 +923,7 @@ static void parent_death_guard(void)
 
 static void usage_error(const char *detail)
 {
-	emit_error("%s Usage: info|list --socket PATH, or install --socket PATH --ipa PATH --bundle-id ID", detail);
+	emit_error("%s Usage: info|list|crashlog --socket PATH, install --socket PATH --ipa PATH --bundle-id ID, or syslog --socket PATH --seconds 1..600", detail);
 }
 
 int main(int argc, char **argv)
@@ -856,7 +936,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	const char *action = argv[1];
-	const char *socket_path = NULL, *ipa = NULL, *bundle_id = NULL;
+	const char *socket_path = NULL, *ipa = NULL, *bundle_id = NULL, *seconds_text = NULL;
 	int verbose = 0;
 	for (int i = 2; i < argc; i++) {
 		const char **slot = NULL;
@@ -866,6 +946,8 @@ int main(int argc, char **argv)
 			slot = &ipa;
 		else if (strcmp(argv[i], "--bundle-id") == 0)
 			slot = &bundle_id;
+		else if (strcmp(argv[i], "--seconds") == 0)
+			slot = &seconds_text;
 		else if (strcmp(argv[i], "--verbose") == 0) {
 			verbose = 1;
 			continue;
@@ -880,7 +962,8 @@ int main(int argc, char **argv)
 		*slot = argv[++i];
 	}
 	int is_install = strcmp(action, "install") == 0;
-	if (!is_install && strcmp(action, "info") != 0 && strcmp(action, "list") != 0 && strcmp(action, "crashlog") != 0) {
+	int is_syslog = strcmp(action, "syslog") == 0;
+	if (!is_install && !is_syslog && strcmp(action, "info") != 0 && strcmp(action, "list") != 0 && strcmp(action, "crashlog") != 0) {
 		usage_error("Unknown action.");
 		return 1;
 	}
@@ -898,6 +981,21 @@ int main(int argc, char **argv)
 	}
 	if (!is_install && (ipa || bundle_id)) {
 		usage_error("--ipa/--bundle-id apply to install only.");
+		return 1;
+	}
+	unsigned seconds = 0;
+	if (is_syslog) {
+		char *end = NULL;
+		errno = 0;
+		unsigned long value = seconds_text ? strtoul(seconds_text, &end, 10) : 0;
+		if (!seconds_text || !*seconds_text || *seconds_text < '0' || *seconds_text > '9' ||
+		    errno || !end || *end || value < 1 || value > 600) {
+			usage_error("syslog requires --seconds 1..600.");
+			return 1;
+		}
+		seconds = (unsigned)value;
+	} else if (seconds_text) {
+		usage_error("--seconds applies to syslog only.");
 		return 1;
 	}
 	if (check_socket(socket_path) != 0)
@@ -924,6 +1022,8 @@ int main(int argc, char **argv)
 			rc = action_list(&s);
 		} else if (strcmp(action, "crashlog") == 0) {
 			rc = action_crashlog(&s);
+		} else if (is_syslog) {
+			rc = action_syslog(&s, seconds);
 		} else {
 			struct buf b = {0};
 			buf_puts(&b, "{\"result\":{\"ready\":true}}");

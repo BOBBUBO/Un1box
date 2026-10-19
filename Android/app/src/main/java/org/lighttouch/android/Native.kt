@@ -38,6 +38,8 @@ internal object Native {
     external fun capture(): android.graphics.Bitmap?
     external fun observations(): LongArray
     external fun audioInfo(): IntArray
+    external fun profile(path: String): String
+    external fun profileStatus(): Int
     external fun guestRequest(operation: Int, argument: String, timeoutMs: Int): Array<String>
     external fun guestPoll(requestId: Long): Array<String>
     external fun guestCancel(requestId: Long)

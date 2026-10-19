@@ -29,6 +29,8 @@
 #include "touch_mapping_result.h"
 #include "experimental_tcg_cache.h"
 #include "performance_hint.h"
+#include "profile_writer.h"
+#include <memory>
 
 namespace {
 std::mutex guard;
@@ -48,6 +50,8 @@ uint64_t presentation_epoch = 0, surface_request = 0;
 DisplayLease display_lease;
 constexpr const char *retired_display="Display ownership retired";
 uint64_t presented_frames=0,first_present_ns=0,last_present_ns=0,previous_present_ns=0,max_present_gap_ns=0;
+std::unique_ptr<ProfileWriter> profile_presentation; // guard owns the producer handle.
+uint64_t profile_presentation_started=0;
 uint64_t max_present_work_ns=0,window_failures=0,frame_copy_failures=0,surface_generation=0,pcm_failures=0;
 uint64_t present_intervals[6]={};
 uint64_t frame_sample_pixels=0,frame_nonzero_rgb_samples=0,frame_rgb_sample_sum=0;
@@ -212,9 +216,12 @@ void present() {
         std::optional<WindowSnapshot> snapshot;
         lt_frame_info source = LT_INIT(lt_frame_info);
         uint64_t begin = 0;
+        const uint64_t observe_begin=monotonic_ns();
+        uint64_t guard_acquired=0,copy_begin=0;
         present_stage(PresentPhase::GuardWait,phase_generation,phase_epoch);
         {
             std::lock_guard<std::mutex> lock(guard);
+            guard_acquired=monotonic_ns();
             phase_generation=surface_generation;phase_epoch=presentation_epoch;
             if (runtime) {
                 present_stage(PresentPhase::InputStatus,phase_generation,phase_epoch);
@@ -240,6 +247,7 @@ void present() {
                 }
             }
             if (runtime && window) {
+                copy_begin=monotonic_ns();
                 present_stage(PresentPhase::FrameCopy,phase_generation,phase_epoch);
                 lt_error error = LT_INIT(lt_error);
                 const auto status = frame_cache.latest(sequence, error,
@@ -287,7 +295,10 @@ void present() {
             }
             ANativeWindow_Buffer target{};
             present_stage(PresentPhase::WindowLock,phase_generation,phase_epoch);
+            const uint64_t lock_begin=monotonic_ns();
             const int lock_code=ANativeWindow_lock(target_window,&target,nullptr);
+            const uint64_t lock_end=monotonic_ns();
+            uint64_t scale_end=lock_end,post_begin=lock_end,post_end=lock_end;
             int post_code=0;
             bool valid_buffer=false;
             if(lock_code==0) {
@@ -337,6 +348,7 @@ void present() {
                         previous=row;previous_sy=sy;
                     }
                 }
+                scale_end=monotonic_ns();
                 if(valid_buffer && frame_pacing_enabled()) {
                     static FramePacer pacer;  // this thread only
                     static DisplayVsync display_vsync;
@@ -352,7 +364,9 @@ void present() {
                 // Exactly one post for every successful lock, including invalid
                 // layouts and a window detached while the call was in flight.
                 present_stage(PresentPhase::WindowPost,phase_generation,phase_epoch);
+                post_begin=monotonic_ns();
                 post_code=post.finish();
+                post_end=monotonic_ns();
             }
             const auto now=monotonic_ns();
             present_stage(PresentPhase::CommitWait,phase_generation,phase_epoch);
@@ -371,6 +385,17 @@ void present() {
                             ++invalid_buffers;++window_failures;window_error("buffer layout",-1);sequence=0;
                             if(post_code){last_post_error=post_code;if(!first_post_error)first_post_error=post_code;window_error("post invalid buffer",post_code);}
                         } else if(post_code==0) {
+                            if(profile_presentation && observe_begin>=profile_presentation_started) {
+                                // Post completion is observable here; physical scanout is not.
+                                profile_presentation->append("P %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",
+                                    (unsigned long long)now,(unsigned long long)source.sequence,
+                                    (unsigned long long)source.timestamp_ns,(unsigned long long)observe_begin,
+                                    (unsigned long long)guard_acquired,(unsigned long long)copy_begin,
+                                    (unsigned long long)begin,(unsigned long long)lock_begin,
+                                    (unsigned long long)lock_end,(unsigned long long)scale_end,
+                                    (unsigned long long)post_begin,(unsigned long long)post_end,
+                                    (unsigned long long)monotonic_ns());
+                            }
                             ++presented_frames;
                             if(!first_present_ns)first_present_ns=now;
                             if(previous_present_ns) {
@@ -862,6 +887,45 @@ JNI(audio) jint JNICALL Java_org_lighttouch_android_Native_audio(JNIEnv *env,job
 JNI(audioInfo) jintArray JNICALL Java_org_lighttouch_android_Native_audioInfo(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);jint data[2]={jint(pcm.sample_rate),jint(pcm.channels)};
     jintArray arr=env->NewIntArray(2);env->SetIntArrayRegion(arr,0,2,data);return arr;
+}
+
+JNI(profile) jstring JNICALL Java_org_lighttouch_android_Native_profile(JNIEnv *env,jobject,jstring path) {
+    std::unique_ptr<ProfileWriter> stopped;
+    std::unique_lock<std::mutex> lock(guard);Utf text(env,path);lt_error error=LT_INIT(lt_error);
+    const bool start=text.value && *text.value;
+    auto status=runtime?lt_runtime_profile(runtime,text.value,&error):LT_AGAIN;
+    if(status==LT_OK && start) {
+        const std::string capture_path=text.value;
+        const std::string present_path=capture_path.substr(0,capture_path.find_last_of('/')+1)+"presentation.tsv";
+        FILE *output=fopen(present_path.c_str(),"wx");
+        if(!output) {
+            lt_error stop_error=LT_INIT(lt_error);lt_runtime_profile(runtime,"",&stop_error);
+            return string(env,"Could not create Android presentation capture");
+        }
+        setvbuf(output,nullptr,_IOFBF,65536);
+        const char *sync=getenv("LT_PROFILE_SYNC");
+        const bool synchronous=sync && strcmp(sync,"off") && strcmp(sync,"0");
+        try { profile_presentation=std::make_unique<ProfileWriter>(output,synchronous); }
+        catch(...) {
+            fclose(output);
+            lt_error stop_error=LT_INIT(lt_error);lt_runtime_profile(runtime,"",&stop_error);
+            return string(env,"Could not start Android presentation writer");
+        }
+        profile_presentation_started=monotonic_ns();
+        profile_presentation->append("# P post-complete-ns serial guest-due-ns observe-begin guard-acquired copy-begin copy-end lock-begin lock-end scale-end post-begin post-end commit-ns\n");
+    }
+    if(!start) stopped=std::move(profile_presentation);
+    const auto message=result(status,error);
+    lock.unlock();
+    if(stopped && !stopped->finish() && status==LT_OK)
+        return string(env,"Could not finish Android presentation capture (storage or capture limit)");
+    return string(env,message);
+}
+JNI(profileStatus) jint JNICALL Java_org_lighttouch_android_Native_profileStatus(JNIEnv *,jobject) {
+    std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);int32_t state=0;
+    if(profile_presentation && profile_presentation->failed())return -1;
+    if(!runtime || lt_runtime_profile_status(runtime,&state,&error)!=LT_OK)return 0;
+    return state;
 }
 
 JNI(guestRequest) jobjectArray JNICALL Java_org_lighttouch_android_Native_guestRequest(JNIEnv *env,jobject,jint operation,jstring argument,jint timeout) {

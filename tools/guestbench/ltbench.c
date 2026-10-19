@@ -125,6 +125,36 @@ typedef struct { const char *name, *what; Bench run; u32 n; } Test;
 
 static volatile u32 sink;
 
+/* Eight independent accumulators model the scalar VFP2 unrolling in libvDSP.
+ * Exercise all four non-fused forms; no per-instruction host timers. The
+ * non-exact product quickly establishes the sticky inexact flag used in audio.
+ * n is a multiple of eight in the table below. */
+static u64 b_vfp_mla(u32 n)
+{
+    static const float values[10] = {1, 2, 3, 4, 5, 6, 7, 8, .1f, .3f};
+    u32 loops = n / 8, result;
+    u64 start = now_ns();
+    __asm__ volatile(
+        "vldmia %2, {s0-s9}\n"
+        "1:\n"
+        "vmla.f32 s0, s8, s9\n"
+        "vmls.f32 s1, s8, s9\n"
+        "vnmla.f32 s2, s8, s9\n"
+        "vnmls.f32 s3, s8, s9\n"
+        "vmla.f32 s4, s8, s9\n"
+        "vmls.f32 s5, s8, s9\n"
+        "vnmla.f32 s6, s8, s9\n"
+        "vnmls.f32 s7, s8, s9\n"
+        "subs %0, %0, #1\n"
+        "bne 1b\n"
+        "vmov %1, s0\n"
+        : "+r"(loops), "=r"(result) : "r"(values)
+        : "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "cc", "memory");
+    u64 elapsed = now_ns() - start;
+    sink = result;
+    return elapsed;
+}
+
 /* ------------------------------------------------------------- objc/UIKit --- */
 
 static Object (*get_class)(const char *);
@@ -508,6 +538,49 @@ static u64 b_fault(u32 n)
     return total;
 }
 
+/* The audio converter uses STMIA r1!, {r8,r9} even when its output is only
+ * 2-byte aligned. ARM1176 traps on that instruction; iOS emulates the store
+ * and returns. Time whole loops with the original faults/handler intact.
+ * Both cases cycle through the same 2 KiB, pre-touched before timing. */
+static unsigned char stm_area[2064] __attribute__((aligned(4096)));
+static u64 stm_pairs(u32 n, u32 offset)
+{
+    unsigned char *start = stm_area + 8 + offset;
+    unsigned char *end = start + 2048;
+    register unsigned char *dst __asm__("r1") = start;
+    u32 left = n;
+    if (!n) return 0;
+    memset(stm_area, 0xcc, sizeof(stm_area));
+    u64 t = now_ns();
+    __asm__ volatile(
+        "mov r8, #0x5a\n\t"
+        "mov r9, #0xa5\n\t"
+        "1: stmia %0!, {r8, r9}\n\t"
+        "cmp %0, %3\n\t"
+        "moveq %0, %2\n\t"
+        "subs %1, %1, #1\n\t"
+        "bne 1b"
+        : "+&r"(dst), "+&r"(left)
+        : "r"(start), "r"(end)
+        : "r8", "r9", "cc", "memory");
+    u64 elapsed = now_ns() - t;
+    /* Check bytes, guards and writeback after timing, using byte accesses
+     * so the check itself never adds an unaligned word load. */
+    u32 bytes = (n < 256 ? n : 256) * 8;
+    if (dst != start + (n % 256) * 8) return 0;
+    for (u32 i = 0; i < sizeof(stm_area); i++) {
+        unsigned char expected = 0xcc;
+        if (i >= 8 + offset && i < 8 + offset + bytes) {
+            u32 lane = (i - 8 - offset) & 7;
+            expected = lane == 0 ? 0x5a : lane == 4 ? 0xa5 : 0;
+        }
+        if (stm_area[i] != expected) return 0;
+    }
+    return elapsed;
+}
+static u64 b_stm_aligned(u32 n) { return stm_pairs(n, 0); }
+static u64 b_stm_unaligned(u32 n) { return stm_pairs(n, 2); }
+
 /* mmap + munmap of one page, never touched: the VM system calls alone. */
 static u64 b_mmap(u32 n)
 {
@@ -570,6 +643,7 @@ static u64 b_sleep(u32 n)
 
 static const Test tests[] = {
     {"loop", "integer loop iteration", b_loop, 4000000},
+    {"vfp-mla", "VFP2 non-fused multiply/add", b_vfp_mla, 2000000},
     {"icall", "indirect call + return", b_icall, 2000000},
     {"fib", "recursive call + return", b_fib, 500000},
     {"memcpy", "KiB copied", b_memcpy, 20480},
@@ -581,6 +655,8 @@ static const Test tests[] = {
     {"rpc-64p", "Mach RPC, 64 pages written between calls", b_rpc_touch, 2000},
     {"touch-64p", "writing 64 pages, no switch", b_touch, 20000},
     {"fault", "anonymous page fault (map, write, unmap)", b_fault, 2048},
+    {"stm-aligned", "8-byte STMIA, 4-byte aligned", b_stm_aligned, 32768},
+    {"stm-unaligned", "8-byte STMIA, 2-mod4 output, architectural trap", b_stm_unaligned, 32768},
     {"mmap", "mmap + munmap, untouched", b_mmap, 4000},
     {"tlb-32p", "dependent load, 32-page working set", b_tlb32, 2000000},
     {"tlb-1024p", "dependent load, 1024-page working set", b_tlb1024, 2000000},
@@ -611,10 +687,17 @@ static void run_all(void)
     for (u32 i = 0; i < NTESTS; i++) {
         u64 r[ROUNDS];
         const Test *t = &tests[i];
-#ifdef ONLY   /* build.sh with LTB_CFLAGS='-DONLY=\"rpc\" -DROUNDS=50': one test, for profiling */
-        const char *a = t->name, *b = ONLY;
-        while (*a && *a == *b) a++, b++;
-        if (*a || *b) continue;
+#ifdef ONLY   /* Comma-separated exact names, e.g. -DONLY=\"syscall,fault\". */
+        const char *b = ONLY;
+        int selected = 0;
+        while (*b) {
+            const char *a = t->name;
+            while (*a && *a == *b) a++, b++;
+            if (!*a && (!*b || *b == ',')) selected = 1;
+            while (*b && *b != ',') b++;
+            if (*b) b++;
+        }
+        if (!selected) continue;
 #endif
         u64 ns = 1;
         for (u32 k = 0; k < ROUNDS && ns; k++) {

@@ -35,6 +35,7 @@ class EngineService : Service() {
         requestNativeStop = { Native.stop() }, cancelNativeContacts = { Native.cancelInput() },
         nativeStatus = { Native.status() }, dispose = { receipt -> disposeAfterShutdown(receipt) },
         persistTerminal = { receipt -> persistTerminalReceipt(receipt) })
+    private val profileCapture by lazy { ProfileCapture(applicationContext, ::observations) }
     private val performanceSampler by lazy { WorkerPerformanceSampler(applicationContext) }
     private val usb by lazy { UsbBridge(applicationContext) }
     // The daemon's parent-death signal follows the thread that forked it, so fork from one that never exits.
@@ -125,6 +126,8 @@ class EngineService : Service() {
             }, 1000)
             return response
         }
+        override fun profile(recording: Boolean): Bundle =
+            profileCapture.change(recording, Native.status().firstOrNull() ?: "stopped")
         override fun status(): Bundle {
             val s = Native.status()
             s.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { error = it }
@@ -133,6 +136,7 @@ class EngineService : Service() {
                 Thread({ persistStopError(retainedError); persistObservations("unexpected-engine-exit") }, "guest-failure-record").start()
             }
             return Bundle().apply {
+                putAll(profileCapture.snapshot(s.getOrElse(0) { "stopped" }))
                 putString("state", s.getOrElse(0) { "stopped" })
                 putString("detail", s.getOrElse(1) { "" })
                 putString("engineLog", s.getOrElse(3) { "" })
@@ -200,6 +204,7 @@ class EngineService : Service() {
         } }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
+            profileCapture.finish("guest-stop")
             shutdownWatchdog.request()
         }
         override fun button(button: Int, down: Boolean) {

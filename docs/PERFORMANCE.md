@@ -2,7 +2,7 @@
 
 Every performance change, what it fixed, and how it was measured. Newest first within each
 section. Test phones: **Pixel 10** (Tensor G5: 2×A520, 5×A725, 1×X925; GrapheneOS) and
-**Poco F3** (Snapdragon 870; LineageOS, Android 16). Guest: iPod touch 2G, iOS 3.1.3
+**Poco F3** (Snapdragon 865-class; LineageOS, Android 16), the low-end target. Guest: iPod touch 2G, iOS 3.1.3
 (`n72ap-7E18`).
 
 ## How to measure
@@ -13,15 +13,22 @@ The harness is in [`tools/perf/`](../tools/perf):
 | --- | --- |
 | `inappfps.py` | In-app boot to lock screen, then Home ↔ Spotlight swipes; delivered fps from SurfaceFlinger `--timestats` for the guest SurfaceView (`--idle SECS` adds idle engine CPU). |
 | `gamefps.py SECS` | Delivered fps while a game runs on screen. |
-| `fcbench.py APK SECS [GAME]` | Installs an APK, boots, unlocks, starts a game from Home page 2; presets follow each phone's layout (Poco: `jetpack`, `flightcontrol`; Pixel: `jellycar`, `doodlejump`; a game that holds a steady 60 on both phones leaves the benchmark set, so Flight Control and Doodle Jump are no longer run; check with `FC_SHOT=file.png`) and runs `gamefps.py`. Debug builds read `files/debug-env` (`KEY=VALUE`), e.g. `LT_CROSS_PAGE_CHAIN=off` or `LT_ADPF=off`, for same-APK A/B runs. |
+| `fcbench.py APK SECS [GAME]` | Installs an APK, boots, unlocks, starts a game from Home page 2; presets follow each phone's layout (Poco: `jetpack`, `flightcontrol`; Pixel: `jellycar`, `doodlejump`; a game that holds a steady 60 on both phones leaves the benchmark set, so Flight Control, Doodle Jump and JellyCar are no longer run; check with `FC_SHOT=file.png`) and runs `gamefps.py`. Debug builds read `files/debug-env` (`KEY=VALUE`), e.g. `LT_CROSS_PAGE_CHAIN=off` or `LT_ADPF=off`, for same-APK A/B runs. |
 | `framestats.py` | Frame pacing from a per-frame log: the **ceiling** (95th percentile of 500 ms windows: what the game sustains when nothing gets in the way), median, **low** (5th percentile: how deep the dips go), 1% low, **hitches** (frames over 50 ms), share of time at ≥55 / <30 fps, and a chart. `fcbench.py` with `FC_FRAMES=chart.png` turns on the runtime's `LT_FRAME_LOG` and reports it for the same window. Given the engine's `IT_FRAME_TRACE` (with `IT_VCPU_ACCT` and `IT_GLES_PROF`) it also splits each class of frame (on time / late / hitch) into guest code, GL, BQL wait, idle and off-CPU time. |
 | `guestsyslog.py` | Desktop: the guest's syslog during a headless run (through the app's USB bridge), counted by sender and text. Every line an app writes to stderr becomes a syslogd message the guest has to relay and parse. |
+| `androidsyslog.py` | Android: the guest's syslog for 1–600 s through the app's USB bridge, with receive times on the same clock as the frame logs. |
+| `guestprocs.py` | Guest process, task and pmap pointers read with LLDB through `LT_GUEST_GDB_PORT`, to name the guest threads in a capture ([PROFILING.md](PROFILING.md)). |
 | `gameprof.sh` / `inappprof.sh` | `simpleperf` of the `:engine` process during play / swipes: per-thread split, vCPU DSOs and symbols. |
+| `profile.py` and the other analyzers in `tools/perf/` | Read the Android app's Start/Stop profile captures and the engine's opt-in hitch diagnostics; see [PROFILING.md](PROFILING.md). |
 | `abtimer.sh`, `appab.py`, `scrollab.sh` | Interleaved A/B runs. |
 
 "Delivered fps" is frames the guest surface actually presented, from SurfaceFlinger, not a
 counter inside the app. It counts guest screen updates, not a fixed refresh: a static screen
 publishes almost nothing.
+
+Keep the measured frame samples with `framestats.py --device 30 --save frames.log`; the saved
+window can be analysed again with `framestats.py frames.log --secs 30`. Use `fcbench.py APK 0 ltbench`
+to launch LT Bench without sampling fps on its static results screen.
 
 **What full speed is.** The iPod touch 2G panel refreshes at 60 Hz, and a game's own cap is
 60 or 30 fps. Find a game's cap on a host fast enough to reach it: the Linux frontend runs the
@@ -59,7 +66,9 @@ a direct measure of the work it removes (time per call, per frame) alongside the
 
 | Change | Commit | Effect |
 | --- | --- | --- |
-| Guest GL shim: report each CoreAnimation surface once instead of on every frame (guest package serial 27) | `7f744e80cc` | `surface_capture` in the guest's OpenGLES logged two lines per surface CA handed out, and CA rotates its buffers, so every frame cost ~12 `write(2)`s plus ~12 `GLES_OP_LOG` traps, and launchd relayed each write to syslogd as a message of its own, which syslogd parsed with regexes (`asl_parse_time` → `regexec`: the top shared-cache page in a Poco Flight Control profile). Found by sampling guest stacks at IRQs, naming the addresses with LT Bench `-DSYMS`, and reading the guest syslog through `syslog_relay` (6348 lines in 66 s of Flight Control, all but ~300 these). Measured with the shipped OpenGLES binary-patched to skip the lines vs unpatched, each installed into a copy of the same record. **Desktop, Flight Control at 57.4–57.8 fps either way: vCPU busy 72.2/69.3/71.3/73.5% → 50.9/54.3/52.1% of wall (~3.3 ms less guest work per frame). Desktop, Jetpack title: 55.7/56.9/53.6/56.0 → 59.2/58.9/58.8/58.9 fps (vCPU 90–94% → 73–77%). Poco, Flight Control, four interleaved pairs: 55.4/57.5/56.1/57.1 → 59.0/57.2/58.6/58.1 fps (56.5 → 58.2); low 46–48 → 52–56, hitches 9–16 → 1–9 per 30 s, ≥55 fps 63–83% → 85–97% of the time.** **Poco, Jetpack title, three interleaved pairs: 39.6/36.1/35.5 → 51.3/50.9/48.6 fps (37.1 → 50.3, +36%); ceiling 44–48 → 54–56, low 26–32 → 42–46, hitches 117–121 → 2–11 per 30 s** (screenshots: the same title scene). Jetpack draws more and presents the same, so the fixed per-frame cost was a larger share of its frame, and its hitches were the syslog work bunching up. **The real build (serial 27, Xcode 27.1, installed into the record and kept by the new package verdicts), Poco, verdict APK (`995ce258`) on engine `64d111110b`, two runs each against the record's own package: Jetpack title 39.4/39.4 → 50.4/50.7 fps (ceiling 48 → 56, low 30–32 → 44–46, 1% low 12 → 21–28, hitches 114 → 6–7 per 30 s); Flight Control 55.1/55.4 → 58.8/59.1 (median 56 → 60, ≥55 fps 58–66% → 98–100% of the time, hitches 12–15 → 1).** **Pixel, same build and APK: JellyCar menu 30.0/30.0 → 30.0/30.0/30.0 (its 30 fps target either way; hitches 147/41 → 8/45 per 30 s, too noisy to call); Doodle Jump menu 58.8/59.7 → 58.0/57.6 (no hitches either way; ≥55 fps 95–100% → 87–90% of the time, a small loss or noise, not chased: Doodle Jump has left the benchmark set).** Serial 27 stayed installed through six boots on the Pixel and five on the Poco (`state/guest-verdicts`: `good 27`). Not shipped yet: users get it only with a new Guest tools file (TODO). |
+| Spin up to 50 µs (150 µs with `LT_BQL_SPIN_EXTENDED=on`) before vCPU 0 sleeps on a contended BQL. **Opt-in: `LT_BQL_SPIN=on`** | `23041226e7`, `5547634eeb` | A short BQL wait that sleeps pays the host's wakeup, which on the Poco is often a millisecond or more. Spinning first acquires the lock in ~94% of contended takes with 50 µs and ~99% with 150 µs. Other threads, guest time, IRQs and audio are unchanged. **Poco, Jetpack title, three interleaved 60 s pairs (one reversed), off → 50 µs: 53.62/53.30/53.35 → 57.57/57.68/57.17 fps (53.42 → 57.47, +7.6%, 3/3); ceiling 58 → 60, median 54 → 58, low 48–50 → 52–54, 1% low 28.0–28.2 → 29.0–29.2, hitches 30 → 8 per 180 s (1570 → 411 ms).** A separate session, 50 → 150 µs: 57.16 → 58.36 fps (+2.1%, 3/3), low 52–54 → 54–58, hitches 16 → 11. Not measured on the Pixel or in other games, so it is still off by default (TODO). |
+| Keep each GL context's host client-array enables, pointers and client-active unit, and skip host calls that change nothing (`LT_GLES_ARRAY_CACHE=off` for A/B) | `6762325419` | A two-array draw made 2 pointer, 4 enable/disable and 4 client-unit host calls, each paying driver state validation. Guest data is still refreshed every draw and changed pointers are still checked. **Pixel, array setup + cleanup per draw 0.619 → 0.228 µs (`IT_GLES_PROF=1`, 50 000 draws); the calls drop to ~0 after warm-up. LT Bench `gl-draw` best time −10% in all five pairs (Poco 7.81/8.92/7.93 → 7.49/7.38/7.05 µs); `gl-sprite` within the spread. Poco, Jetpack title, three pairs: 51.6 → 52.5 fps (+1.7%, 2 of 3), ceiling 56–58 either way, hitches 6–7 → 1–8.** Kept on for the per-call saving; no game-level change is claimed. |
+| Guest GL shim: report each CoreAnimation surface once instead of on every frame (guest package serial 27) | `7f744e80cc` | `surface_capture` in the guest's OpenGLES logged two lines per surface CA handed out, and CA rotates its buffers, so every frame cost ~12 `write(2)`s plus ~12 `GLES_OP_LOG` traps, and launchd relayed each write to syslogd as a message of its own, which syslogd parsed with regexes (`asl_parse_time` → `regexec`: the top shared-cache page in a Poco Flight Control profile). Found by sampling guest stacks at IRQs, naming the addresses with LT Bench `-DSYMS`, and reading the guest syslog through `syslog_relay` (6348 lines in 66 s of Flight Control, all but ~300 these). Measured with the shipped OpenGLES binary-patched to skip the lines vs unpatched, each installed into a copy of the same record. **Desktop, Flight Control at 57.4–57.8 fps either way: vCPU busy 72.2/69.3/71.3/73.5% → 50.9/54.3/52.1% of wall (~3.3 ms less guest work per frame). Desktop, Jetpack title: 55.7/56.9/53.6/56.0 → 59.2/58.9/58.8/58.9 fps (vCPU 90–94% → 73–77%). Poco, Flight Control, four interleaved pairs: 55.4/57.5/56.1/57.1 → 59.0/57.2/58.6/58.1 fps (56.5 → 58.2); low 46–48 → 52–56, hitches 9–16 → 1–9 per 30 s, ≥55 fps 63–83% → 85–97% of the time.** **Poco, Jetpack title, three interleaved pairs: 39.6/36.1/35.5 → 51.3/50.9/48.6 fps (37.1 → 50.3, +36%); ceiling 44–48 → 54–56, low 26–32 → 42–46, hitches 117–121 → 2–11 per 30 s** (screenshots: the same title scene). Jetpack draws more and presents the same, so the fixed per-frame cost was a larger share of its frame, and its hitches were the syslog work bunching up. **The real build (serial 27, Xcode 27.1, installed into the record and kept by the new package verdicts), Poco, verdict APK (`995ce258`) on engine `64d111110b`, two runs each against the record's own package: Jetpack title 39.4/39.4 → 50.4/50.7 fps (ceiling 48 → 56, low 30–32 → 44–46, 1% low 12 → 21–28, hitches 114 → 6–7 per 30 s); Flight Control 55.1/55.4 → 58.8/59.1 (median 56 → 60, ≥55 fps 58–66% → 98–100% of the time, hitches 12–15 → 1).** **Pixel, same build and APK: JellyCar menu 30.0/30.0 → 30.0/30.0/30.0 (its 30 fps target either way; hitches 147/41 → 8/45 per 30 s, too noisy to call); Doodle Jump menu 58.8/59.7 → 58.0/57.6 (no hitches either way; ≥55 fps 95–100% → 87–90% of the time, a small loss or noise, not chased: Doodle Jump has left the benchmark set).** Serial 27 stayed installed through six boots on the Pixel and five on the Poco (`state/guest-verdicts`: `good 27`). Serial 27 can now be installed in place through Linux `--set-guest-package` or Android "Guest tools" on a stopped device. It remains private pending the certificate and source license work in TODO. |
 | CPSR writes that change only the interrupt masks or flags skip the hflags rebuild; `cpsid` no longer ends the TB; `VMRS APSR_nzcv` sets the flags inline (`LT_PSR_FAST=off` for A/B) | `0addc3e156` | iOS's kernel masks and restores interrupts around every lock (`hw_lock_try`: `cpsid if` … `msr CPSR_fc`). A Jetpack profile on the Poco put the hflags rebuild at ~3% of the vCPU and the guest kernel at 22%. **LT Bench, Poco, two interleaved pairs, best ns/op off → on: `syscall` 1165 → 991, `thread-switch` 79.6 → 70.2 µs, `rpc` 18.2 → 14.4 µs, `fault` 22.0 → 16.1 µs; compute tests unchanged.** Jetpack alone: 49.6 fps either way (within the spread). |
 | QEMU_CALL request blocks (every GL call) read and written through the TLB instead of a debug page-table walk (`LT_QCALL_FAST=off`) | `2df170ca78` | A Poco `gl-sprite` profile had ~12% of the vCPU in `get_phys_addr`, `S1_ptw_translate`, `address_space_*` and the like: two full walks per GL call. **LT Bench, best ns/op off → on: Poco `gl-get` 3778/3608 → 1823, `gl-sprite` 19 736/20 569 → 15 731; Pixel `gl-get` 1024/915 → 619/377, `gl-sprite` 5557/5470 → 3755/3515.** **With `0addc3e156`, Poco Jetpack title, three interleaved pairs, both off → both on: 51.4/48.6/48.1 → 51.9/50.9/53.8 fps (49.4 → 52.2, +6%, ahead in every pair; low 36–46 → 42–50).** |
 | GL calls that carry guest pointers copy through the TLB's host pointers instead of a page-table walk per page | `924e6839d5` | `gles_guest_rw` probed each page through the caller's TLB, then re-read it with `cpu_memory_rw_debug`, which walks the page tables again. Plain-RAM pages are now copied through the host pointers the probe returns. Poco, Jetpack Joyride title (232 client-array draws a frame): binding a draw's arrays 4.5 → 2.0 µs. Measured with the next row. |
@@ -94,6 +103,49 @@ desktop either: the headless Linux frontend on the Ryzen 7 3700X VM runs the sam
 (Legacy Store copy 5997, version 1.3.5) at ~54 fps, so the Poco's ~35–36 is about two thirds of that.
 In it the guest kernel is 21% of the vCPU (44% of the time in translated code): Mach IPC, the
 scheduler and locks, ~5 300 syscalls a second.
+
+### Engine experiments of 2026-10-18/19
+
+A second working branch (`dev/perf-codex`, merged into `dev/perf` on 2026-10-19) tried about twenty
+engine changes behind environment switches. Each was measured against the same frozen APK on the
+Snapdragon 865-class Poco, Jetpack title, in interleaved pairs with all diagnostics off. The two
+wins are in the engine table above (BQL spin, client-array cache). Two more are **open leads, still
+in the engine behind default-off switches**:
+
+| Switch | Engine | Result | Next |
+| --- | --- | --- | --- |
+| `LT_IBTC_L2=on`: a 16K-entry side table behind each indirect branch site's two-entry cache, keyed by the site and its full generated key; a hit refills the site cache without a TB lookup (single vCPU only; `LT_IBTC_L2_PROF=on` samples one helper call in 256) | `6a71c1842f` | Miss-helper call 526 → 498 ns (−5%, hit rate ~67%). **Three ordinary pairs: 52.39 → 53.53 fps (+2.2%, 3/3), 1% low 20.3–28.1 → 26.8–28.6, hitches 28 → 21 per 90 s.** Pair 1 nearly flat. | A longer, independent confirmation, then a default |
+| `LT_TB_LOOKUP_INLINE=on`: inline the fully validated jump-cache hit into `tb_lookup`'s callers; misses and accounting use the existing lookup | `164ec930cc` | **Two sets of three pairs, one reversed: 53.14 → 54.43 (+2.4%) and 52.74 → 53.47 (+1.4%), ahead in 6 of 6; hitches 16 → 16 and 22 → 25.** Together with the array cache, against both off: 53.39 → 53.69 (+0.6%, 2 of 3). | Measure on top of the BQL spin |
+
+Removed after measurement. Their code stays on `dev/perf-codex` at the commit given (`git show`), with
+full tables in that branch's `docs/PERFORMANCE.md` (app `55498790`). Don't retry one unchanged.
+
+| Experiment (switch) | Engine | Result |
+| --- | --- | --- |
+| Deliver ARMv6 physical IRQs without the BQL (`LT_IRQ_DELIVERY_FAST`) | `5b956fc6ae` | 53.74 → 51.69 fps (−3.8%), hitches 12 → 50 per 70 s |
+| Skip the BQL for interrupts the CPU has masked (`LT_MASKED_IRQ_FAST`) | `e82b9e770b` | 53.09 → 53.00, hitches 16 → 19; the masked check itself got cheaper |
+| Bounded idle spin before vCPU 0 sleeps for guest work (`LT_IDLE_SPIN`, 250 µs) | `357fc83aba` | 57.83 → 57.88 with the BQL spin on, hitches 5 → 16 per 180 s |
+| vCPU at Android's display nice level −4 (`LT_VCPU_DISPLAY_PRIORITY`) | `6971278387` | 59.05 → 59.13 with the 150 µs BQL spin on, hitches 2 → 5 per 180 s |
+| ARMv6-only hflags rebuild (`LT_HFLAGS_V6_FAST`, with an equivalence checker) | `e414b9d74a` | 53.24 → 53.38 (+0.3%), hitches 24 → 24 per 180 s |
+| Drop the duplicate hflags rebuild on exception return (`LT_ERET_HFLAGS_FAST`) | `9171922768` | LT Bench `fault` −8 to −13% best, `syscall` −1 to −3%; no game gain |
+| Cache the last host-PC → TB lookup for fault restoration (`LT_HOST_PC_CACHE`) | `c146d54fad` | Lookup 380 → 289 ns, LT Bench `stm-unaligned` −4%; Jetpack 53.71 → 53.48 (−0.4%), hitches 29 → 31 |
+| TLB refill RAM pointer without a second RCU lock (`LT_TLB_RAM_PTR_FAST`) | `54da21c185` | Refill call 365–373 → 348–351 ns; 59.16 → 59.07, hitches 2 → 4 |
+| Lazy full-entry reads in the LCD's TLB dirty reset (`LT_TLB_DIRTY_FAST`) | `42d50e5d2e` | Snapshot 509.1 → 509.0 µs; 52.38 → 53.00, reversed pair −1.07 fps |
+| Skip the dirty snapshot on forced LCD repaints | `9400ab1b68` | 52.73 → 51.77 (−1.8%), hitches 23 → 54 per 90 s (removed in `197f75d7ae`) |
+| Single-page dirty-bit queries (`LT_DIRTY_QUERY_FAST`) | `cc6063a40f` | Query faster; 53.33 → 53.67 (+0.6%), one pair −1.3 |
+| Exact-zero VFP single multiply (`LT_VFP_MUL_ZERO_FAST`) | `f43fbe4986` | 53.36 → 53.06 (−0.6%) |
+| One helper for non-fused VFP multiply-add (`LT_VFP_MLA_FAST`) | `f235c93372` | 53.91 → 52.94 (−1.8%), slower in 3 of 3 (removed in `3cc8fa6127`) |
+| Eight-bucket indexed indirect-site cache (`LT_IBTC_INDEXED`) | `7b4a86c9f1` | `icall` 42 → 15 ns; 49.66 → 50.86, carried by one hitch-heavy baseline, 2 of 3 lose; +96 bytes per TB (removed in `fd92f34185`) |
+| Inline jump-cache probe in generated code (`LT_INLINE_JC`) | patch only | `icall` 32 → 15 ns (Poco), 21 → 7 ns (Pixel); Jetpack 52.93 → 52.60 |
+| GL batch buffers through the TLB's RAM pointer (`LT_GLES_BATCH_FAST`) | `d99e32c8eb` | Copy 0.20 → 0.04 µs; 53.07 → 53.50 (+0.8%), pacing unchanged |
+| Android ES contexts without dummy pbuffers | `e9e13d795e` | None of the Poco's ES1 contexts has `GL_OES_surfaceless_context` (removed in `2e79c09b2e`) |
+| Runtime publisher keeps a frame notice that arrives during its work (`LT_PUBLISH_WAKE_EARLY`, app) | app `5fdf8e94` | 53.49 → 53.39 |
+| Guest GL shim: no periodic success-only present tallies (`LT_GLES_TALLY_QUIET`, guest serial 28) | `14cead9c5e` | 53.06 → 53.66 (+1.1%), hitches 38 → 24 per 180 s, carried by one pair |
+| Guest GL shim: each tally in one stderr write (`LT_GLES_TALLY_BATCH`, guest serial 29) | `20857608bb` | The first pair's shorter post-tally intervals did not repeat in reverse order |
+
+The two tally experiments bumped the guest package to serials 28 and 29, which were built only
+privately and are reverted (the source is serial 27 again). A device with 28 or 29 installed keeps
+working: the host answers the unknown tally op with 0, and the shim then logs as serial 27 does.
 
 ### Measured and rejected
 
@@ -187,6 +239,30 @@ host preemption or the guest waiting on a device. Faster guest code and less BQL
 that is how the LCD refresh (5.7% of wall) and I2S pacing (4.7%) were found as the holders the vCPU
 waited behind.
 
+**Hitches in Jetpack's title (Poco, 2026-10-19).** With the BQL spin on, the title runs at 57–59 fps
+with a median of 60, but the 1% low stays near 30 fps and a few frames a minute take 50–90 ms. What
+the diagnostics in [PROFILING.md](PROFILING.md) found so far:
+
+- Inside the >50 ms gaps the vCPU is running 83–84% of the time, runnable 9–11% and sleeping 5–8%
+  (Perfetto scheduler traces). The long frames are mostly execution, not a host wait. CPU samples in
+  the hitches spread like those in ordinary frames, with no single hot function.
+- Audio conversion. The guest's AAC decoder converts with `STMIA r1!, {r8, r9}` into 2-byte-aligned
+  buffers, which traps on an ARM1176, and iOS performs each store in its alignment handler. A
+  converter call with output 2 mod 4 takes a median 420 µs, against 25 µs aligned. The decoder runs in
+  the frontend interval before 48 of 87 gaps over 30 ms. The faults are architectural, so they stay.
+- Logging. The two longest gaps in one capture follow ~26 ms of launchd and syslogd work right
+  after a guest GL shim tally line. Making those lines quiet or a single write did not give a
+  repeatable gain (rejected above), so other log sources may be involved.
+- Bluetooth. One 166 ms gap contained 84 ms of BTServer execution, and one boot hit a 10 s BTServer
+  timeout and relaunch even though every HCI reply was injected. Neither has reproduced.
+- Many held refreshes come 88–92 ticks (~1.5 s) apart. This is a cadence observation, not yet a cause.
+- Pixel: a 214 ms gameplay gap had 206 ms of execution wall time but only 83 ms of vCPU CPU time, so
+  the Pixel's long frames need a scheduler trace of their own. Poco conclusions don't carry over.
+
+The manual Start/Stop profile in the Android app (engine `50a08eb2d2`, `ProfileCapture.kt`) records
+these gaps from real play, but it costs 6–7% of the frame rate while recording. Don't use a recorded
+rate as a baseline.
+
 ### Guest benchmarks
 
 [LT Bench](GUEST-BENCHMARKS.md) times one guest path at a time inside iOS (best of 5 rounds, ns per
@@ -227,7 +303,9 @@ measured at that point):
 With the quiet GL shim (`7f744e80cc`, the real guest package serial 27, engine `64d111110b`, Poco):
 **Flight Control 59.0** (median 60, 1 hitch per 30 s, ≥55 fps 98–100% of the time) and **Jetpack
 Joyride's title 50.5 of 60** (was 39.4; ceiling 56, 1% low 21–28, 6–7 hitches). Flight Control is
-now at its ceiling, so Jetpack is the Poco's game benchmark from here. Doodle Jump holds 58–60 on both
+now at its ceiling, so Jetpack is the Poco's game benchmark from here. With the opt-in BQL spin (`LT_BQL_SPIN=on`,
+2026-10-19) the Jetpack title runs at **57.5** (50 µs) to **58.4** (150 µs), median 58–60, 1% low ~29–30;
+without it 53.4 in the same sessions. Doodle Jump holds 58–60 on both
 phones and is dropped too (a game that holds a steady 60 on both phones leaves the benchmark set). Doodle Jump
 and JellyCar on the Poco were already 57.2 of 60 and 29.8 of 30 before it.
 

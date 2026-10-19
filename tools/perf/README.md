@@ -17,18 +17,30 @@ phones over adb. Measurements behind the 2026-10-16 `dev/perf` changes.
   the lock screen (buttons found by text via uiautomator).
 - `gamefps.py SECS` reads delivered guest fps while a game is on screen;
   `fcbench.py APK SECS` installs an APK, boots, unlocks, starts Flight Control
-  (first icon on Home page 2) and measures it. See docs/PERFORMANCE.md.
-- `guestsyslog.py` (desktop) runs a headless guest and reads its syslog through the
-  app's USB bridge, then counts messages by sender: a guest that logs every frame pays
-  for launchd and syslogd handling each line (found this way: engine `7f744e80cc`).
-- `build-apk.sh ENGINE_DIR NAME` builds an arm64-only debug APK from this
-  working tree. Paths are this workstation's; adjust before reuse.
+  (first icon on Home page 2) and measures it. `FC_FRAMES=chart.png` also saves
+  the exact frame window as `chart.png.frames.log`. See docs/PERFORMANCE.md.
+- `gameprof.sh OUTDIR [SECONDS]` attaches simpleperf to the running engine worker
+  (`SP_CALLGRAPH=fp` or `dwarf` for call stacks, `SP_FREQ` for the rate, default 4000 Hz).
+  Resolve samples with the matching unstripped engine library.
+- Hitch analyzers (`hitchsched.py`, `hitchcpu.py`, `framepath.py`, `guestpc.py`,
+  `guestsymbols.py`, `guestprocs.py` and the per-diagnostic readers such as `audiopath.py`
+  and `btpath.py`) read the engine's opt-in diagnostics and Perfetto traces offline. Which
+  switch each one reads, and how to capture it: [PROFILING.md](../../docs/PROFILING.md).
+  Each script's `--help` lists its inputs.
+
+## Manual hitch captures
+
+Use **Start profile / Stop profile** above the Android FPS graph. Each recording saves the
+frontmost iOS app name, engine frames, GL totals/outliers, BQL waits/holds and Android presentation
+stages. `profile.py --pull build/profiles` retrieves them; `profile.py CAPTURE --chart report.png
+--json report.json` reports the longest frames and expensive calls. See
+[PROFILING.md](../../docs/PROFILING.md) for capture workflow, file formats and timing limitations.
 
 ## Results (n72ap-7E18, boot to lock screen / Settings fling fps)
 
 | Host | Original engine, unpinned | dev/perf, big cores |
 | --- | --- | --- |
-| Poco F3 (SD870) | 55 s / 18-22 | 36-40 s / 25-28 |
+| Poco F3 (Snapdragon 865-class) | 55 s / 18-22 | 36-40 s / 25-28 |
 | Pixel 10 (Tensor G5) | 57-74 s / 15-24 | 19-20 s / 27-29 |
 | Ryzen 3700X | 23-24 s / 40-42 | 21 s (19-20 s with LTO) |
 
