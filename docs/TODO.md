@@ -82,7 +82,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   `c5cc5be3b9` now implements fault-only mode and optional matched, sampled
   architectural fault/return markers (`LT_ALIGNMENT_PATH_PROF=on|returns`).
   `alignmentlatency.py` splits same-worker intervals by scheduler state while
-  retaining failed/outside-window matches. Runtime confirmation pending.
+  retaining failed/outside-window matches. Clean final Linux/Android builds pass.
+  Fault-only confirmation (`LT_AUDIO_PATH_PROF=off`): 227,047 conversion faults,
+  41 bursts / median spacing 1497.628 ms, 22/25 hitches overlap faults.
+  Media normal/hitch execution share 14.58/53.58%; zero VFP samples/counters.
+  Diagnostic mean52.500, ceiling58, median52, low48, 1%low20.158;
+  25 hitches/1448.322 ms, zero skips. Same-worker process mapping, complete
+  scheduler coverage and clean Stop verified. Three fault-free hitches remain;
+  host runnable delays also contribute. Full provenance in PERFORMANCE.md.
+  Return timing capture/analysis pending; no new optimization or gain claimed.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

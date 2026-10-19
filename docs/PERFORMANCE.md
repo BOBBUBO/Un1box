@@ -1745,8 +1745,54 @@ cases are observable, and the pending table is bounded. Default/fault-only
 generated exception-return code uses the original helper.
 `alignmentlatency.py` joins matched intervals to the same scheduler timeline;
 time excludes triggering access/unwind and includes waits/diagnostic work.
-Initial Linux/Android builds pass (`alignment-path-build.txt`); clean final
-build/captures pending. No tests added/run or speedup claimed.
+Clean final Linux/Android builds pass (`alignment-path-build-final.txt`). Frozen
+`alignment-path.apk`: app `46d69408`, engine `c5cc5be3b9`, both clean at freeze;
+APK SHA-256 `bee59aea573c6989821356203383e7b1b4369b1b78a4c0781546d237b3a2ed0c`.
+No tests added/run or speedup claimed.
+
+**Fault-only confirmation:** one completed 60 s Snapdragon 865-class Poco
+Jetpack title capture, `LT_ALIGNMENT_PATH_PROF=on`, `LT_AUDIO_PATH_PROF=off`.
+User recorder/full accounting/perfmaps off, audio and array caching on, other
+experiments off. Exact window `[449606694435620,449666694435620)`, engine
+25086 / vCPU 25243. Same-worker post-window debugger snapshot identifies
+mediaserverd PID 14, CIDR 0x13 / TTBR0 0xb2ed018. Final scene reviewed as the
+Jetpack title with Start profile off; debugger detached, clean Stop/no-qemu/
+baseline restoration confirmed. Phone trace removed after pull.
+
+| Mean fps | Ceiling | Median | Low | 1% low | Hitches >50 ms | Skipped |
+| --- | --- | --- | --- | --- | --- | --- |
+| 52.500 | 58 | 52 | 48 | 20.158 | 25 / 1448.322 ms | 0 |
+
+708,421 complete milestone records, zero dropped/incomplete/write errors and
+zero late publication markers. Perfetto has complete scheduler coverage and
+no error/loss counters; clock-offset spread 52 ns. Default scheduler validation
+passes. All 3,212 explicit presents succeed. This remains a diagnostic capture,
+not an A/B improvement or instrumentation-overhead comparison.
+
+All **227,047 faults** belong to mediaserverd's `convertScaledFloatToS16`:
+223,499 at PC 0x303f4e2c, 887 each at the same four tail PCs as above. There
+are **zero VFP samples/counters**. Faults overlap **22/25 hitches**. The same
+10 ms grouping yields **41 bursts**, median start spacing **1497.628 ms**.
+
+| Frame class | mediaserverd running | Share of class execution | Faults |
+| --- | --- | --- | --- |
+| Normal <=20 ms | 5227.913 ms | 14.58% | 31,339 |
+| Late 20–50 ms | 1885.086 ms | 17.49% | 91,431 |
+| Hitch >50 ms | 683.264 ms | 53.58% | 104,277 |
+
+This reproduces the audio-conversion association without arithmetic counters.
+All hitches contain 1275.308 ms running, 116.541 ms runnable and 56.473 ms
+sleeping. The three fault-free hitches (50.988/50.223/51.702 ms) still contain
+39.409/40.526/42.765 ms running and 7.052/8.129/5.730 ms runnable delay;
+the conversion burst cannot explain every long frame. Next: sampled full
+architectural handler timing, then guest scheduling/IO behind the periodic work.
+Preserve original faults; the rejected unaligned-store bypass remains rejected.
+
+Evidence: `build/perf-codex/poco-alignment-path-on-1/` retains raw events,
+Perfetto, same-worker process snapshot, milestones/audio/scheduler/residency
+reports, `summary.json` and reviewed `audio-bursts.png`. Capture/report recipes
+are `alignment-path-run.py` and `alignment-path-report.py` beside it. Pixel
+untouched. No new optimization or measured gain; stable 60 fps remains unmet.
 
 ### Measured and rejected
 

@@ -314,7 +314,10 @@ and sleeping time. The interval begins **after** restoring fault state and
 ends after the original exception-return helper: it excludes the triggering
 memory probe/state unwind and includes diagnostic/wait time. Target-pmap time
 can still include other guest threads; a pmap is not a thread execution trace.
-Runtime confirmation pending; these are diagnostics, not optimizations.
+Fault-only mode has reproduced the conversion bursts with zero VFP counters:
+22/25 hitches overlap faults in one 60 s Poco capture; see PERFORMANCE.md for
+the exact window, scheduler split and limitations. Return timing confirmation
+is pending. These are diagnostics, not optimizations.
 
 ## Sparse frame milestones
 
