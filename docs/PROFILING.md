@@ -1174,6 +1174,20 @@ consumption next. The same capture also identifies Bluetooth-owned execution
 in10of13large hitches using actual post-window task enumeration, without syslog
 streaming; fresh HCI/startup evidence is still needed before changing that path.
 
+### Compositor queue consumption
+
+For queue consumption, `n72-7e18-queue-points.json` extends the CA manifest to
+32points: generation comparison, CopyImageInfo with its selected serial, render
+comparison and shared-queue update. SwapWait/native buffer acquisition/absence
+points are removed. Run swapcalls.py with this manifest after the same raw
+analyzers. The insertion serial probe precedes a later conditional increment;
+its notes specify the pinned native caller's always-set bit1 and preserve the
+base+1 derivation. Do not treat raw base serial equality or process-local queue
+pointers as independent image/queue identity. Void update boundaries carry no
+success result. The real queue capture validates3590ordered serial candidates
+and separates pre-query insertion timing from two post-selection audio delays;
+full evidence and local report scripts are recorded in PERFORMANCE.md.
+
 ### Bluetooth startup and controller exchange
 
 Engine `deb39789e4` supports default-off `LT_BT_PATH=on` together with
@@ -1207,7 +1221,8 @@ If guest syslog is needed, use a bounded `androidsyslog.py capture` from the
 same worker and retain its identity. Its receive timestamps can include a
 backlog, so they do not place message execution within a particular frame.
 
-The first two real captures are healthy startup references: prompt injections and
-successful initialization do not explain a different worker's failing startup.
+The first two real captures are healthy startup references. The later queue
+capture retains a same-worker timeout/relaunch despite complete prompt reply
+injections; successful injection is insufficient proof of userspace receipt.
 Use protocol captures to narrow the missing transition, then ordinary
 interleaved comparisons with diagnostics and user recording off to measure a fix.

@@ -3347,6 +3347,83 @@ ca-path-run.py/analyze.py, ca-handoff.py, ca-gap-threads.py in build/perf-codex;
 ca-order calculation retained in ca-order.py. Ordinary A/B measurements remain
 diagnostic/user-recorder off. No new performance improvement; stable60 unmet.
 
+#### Compositor image selection and a retained startup failure (capture complete)
+
+`poco-queue-path-1/` uses the frozen bt-path.apk/engine `deb39789e4`.
+New `n72-7e18-queue-points.json` pins32PCs to the same kernel/cache hashes.
+It retains producer notification, insertion, swap transactions and guest
+scheduling; adds render-queue generation checks, CopyImageInfo entry/epilogue,
+selected serials and shared-queue update boundaries. SwapWait/native buffer
+acquisition/descriptor-absence points are removed to stay within32points.
+No new engine/guest build. BQL150us, physical mapping/context/guest-PC/HCI/
+host scheduler tracing on; user recorder/full accounting/other diagnostics off.
+Worker16763/vCPU16940, sameTID/nice0/CFS, good28. Both scenes reviewed as
+Jetpack title/Start profile off; initial scene approved before recording.
+Process snapshot detached after timing. Syslog relay only **after** the frame
+window and detach, from the same worker. Clean Stop/no-qemu/exact env restored.
+Runner, four raw analyzers, API/queue/order and HCI analyses all exit0.
+2,012,202 complete records/no dropped/incomplete/writeerror;536,892 valid PC
+triplets (271,844 window), full scheduler coverage/no errors or loss,52ns clock
+spread. Exact window `[476488113449689,476548113449689)`.
+
+| Mean fps | Ceiling | Median | Low | 1% low | Hitches >50ms/full duration | Skips |
+| --- | --- | --- | --- | --- | --- | --- |
+| 59.116667 | 62 | 60 | 56 | 30.032191 | 0/0ms | 0 |
+
+This is a diagnostic capture, not an A/B improvement/overhead comparison.
+There are53held cycles/54repeated ticks, despite no standard >50ms hitch.
+
+All3590window render updates observe a changed generation, query the image
+queue and return one image. CopyImageInfo median10.365us/max177.552us; this
+query itself is not the long wait. The renderer compares a changed image
+serial3546times and the previous serial44times; there are3546fresh physical
+flips (3528single-write/18multiple-write) and3565successful mapped writes.
+Every window query has one preceding producer serial candidate, and its selected
+serial matches the renderer's subsequent comparison. **Serial derivation:**
+the insertion probe observes the initial slot serial; matching disassembly
+conditionally increments it later at0x31b84140. The pinned native caller always
+sets flag bit1, so successful nested inserts predict base+1 modulo32bits.
+The report retains base and derivation; this is not a direct post-increment
+snapshot or independent proof of shared-memory identity across processes.
+
+| Repeated-tick phase | Ticks | Ordering evidence |
+| --- | --- | --- |
+| Callback complete, image not yet selected | 48 | Insertion starts after the preceding consumer query in every case; insertion ends1.295–15.879ms after that query (median5.810ms). |
+| Callback still pending | 3 | Insertion starts after preceding query; image can be selected before the native callback epilogue. |
+| Host write pending | 1 | Insertion starts after preceding query. |
+| Image already selected | 2 | Insertion completed before query; selection-to-flip21.157/18.372ms, with13.497/15.268ms running one mediaserverd thread. |
+
+Thus the48common misses are not evidence that the queue refused an image
+already fully inserted at the earlier query. Two post-selection delays instead
+contain substantial audio-process execution, plus smaller host waits. Neither
+observation identifies the exact audio function or licenses bypassing guest
+faults/transactions. Negative callback-end→selection intervals are retained
+(five normal/three held cycles), rather than assuming callback completion is
+required before consumption. Process owners are post-window and require thread
+lifetime continuity. Host runnable delay remains a separate target; measure
+the prepared display-priority switch with diagnostics off.
+
+The post-window3s relay retains30,801bytes/19chunks and **a startup failure
+from this same worker**: BTServer26 reports the10s BlueTool boot-script timeout,
+exits and is replaced by BTServer42, which initializes successfully before the
+frame window. The HCI trace contains105commands/107reply chunks,90firmware
+writes and two minidriver announcements. All commands have replies and every
+reply is fully injected: no status, backpressure, overflow or pending error.
+Queue-to-first-injection median2.033437/max2.310781ms. First sequence's final
+baud command is8.915372s after first reset; next reset is at9.636436s; total
+command span14.801124s. Log receive times do not align the watchdog execution
+to a frame. This rules out a missing observed controller injection for this
+failed startup, not delayed UART/DMA/userspace receipt. Boot-time tracing/TCG
+translation can perturb the deadline; ordinary failure frequency remains
+unmeasured. No new performance improvement established; stable60 unmet.
+
+Evidence: raw trace/frame/scheduler/surface/guest points, build identity, scenes,
+same-worker detached snapshot and syslog under poco-queue-path-1. API report,
+queue-summary.json and queue-details.json retain every serial/query/tick join,
+host-state/thread split and input hashes. Reproduction/analysis scripts:
+queue-path-run.py/analyze.py, queue-summary.py, queue-details.py in
+build/perf-codex. HCI exchange reproduced with tools/perf/btpath.py.
+
 #### Bluetooth controller exchange (diagnostic; two healthy references)
 
 Engine `deb39789e4` adds default-off `LT_BT_PATH=on`, requiring an active
@@ -3390,9 +3467,10 @@ records/no loss/incomplete/writeerror; identical55commands/56reply chunks,
 all replies injected, no status/backpressure/overflow/pending error.
 Queue-to-first-injection median2.034401/max2.577188ms; command span9.508527s.
 Runner and analyzer exit0; good28, user recorder off, clean Stop/no-qemu/exact
-baseline restoration confirmed. Both references are healthy, so **no failing
-exchange has been captured**. Keep the Bluetooth-execution lead open; do not
-change protocol delays or suppress services on this evidence.
+baseline restoration confirmed. Neither reference captures a failing exchange.
+The later compositor queue capture above retains a timeout/relaunch with all
+observed replies injected. Keep the Bluetooth-execution lead open; trace
+progress after injection before changing protocol delays or suppressing services.
 
 `tools/perf/btpath.py` validates complete/lossless trace records, reconstructs
 queue occupancy, compares retained queued/injected prefixes, pairs Command

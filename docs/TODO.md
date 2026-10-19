@@ -60,8 +60,13 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Minidriver announcement present;8.916s command span.63,168lossless records,
   user recorder off, cleanStop/no-qemu/exactbaseline. No FPS measurement/gain.
   tools/perf/btpath.py retains complete exchange/input hash and unknown bytes.
-  Capture a failing exchange before changing replies or startup timing;
-  guest receipt/UART/scheduling after injection remains unobserved.
+  NEW queue capture retains an actual same-worker startup failure:
+  BTServer26 times out at10s/relaunches as42, then initializes before timing.
+  All105commands/107reply chunks injected; median2.033/max2.311ms,
+  no status/backpressure/overflow/pending error. Thus no missing observed
+  controller injection in this failure. Next trace UART/DMA/userspace receipt
+  and scheduling; boot diagnostic/translation overhead may affect deadline.
+  Ordinary failure frequency/gain unmeasured; preserve protocol/service behavior.
   Second boot-only capture poco-bt-path-2 is also healthy:102,882lossless
   records,55commands/56fully-injected chunks,median2.034/max2.577ms,
   command span9.509s, same-worker BTServer26 enters message loop/no retry.
@@ -124,6 +129,22 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   state totals. No cause or ordinary performance gain proven.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
+  NEW poco-queue-path-1 traces compositor consumption with32pinnedPCs and
+  same frozen bt-path.apk, no guest/engine update.2,012,202lossless records,
+  536,892validtriplets, complete scheduler/52ns spread; bothscenes title/profileoff,
+  sameTID/nice0/CFS,good28,detached snapshot,cleanStop/no-qemu/exactbaseline.
+  Diagnostic59.116667fps,ceiling62,median60,low56,1%low30.032191,
+  0hitches/0ms,zero skips; no A/B gain/overhead claim.3590generation changes/
+  successful queries; querymedian10.365us/max177.552us.3546changedserials/
+  44repeats,3546fresh flips. Every query has one preceding predicted producer
+  serial (base+1 from pinned caller's always-set bit1; preserve derivation).
+  Of54heldticks,48callbackdone/notyetselected all insert AFTER previousquery,
+  3callbackpending,1writepending,2alreadyselected. Lasttwo selection→flip
+  21.157/18.372ms include13.497/15.268ms on one mediaserverd thread.
+  No evidence of queue rejecting an image fully inserted before priorquery
+  for the48common cases; keep audio work/host waits separate. Negative
+  callbackend→selection cases retained. Full joins/limits in PERFORMANCE.md,
+  queue-summary.json/queue-details.json. Next ordinary display-priority pairs.
   NEW CA callback capture supersedes the hypothesis that secondary-only swaps
   themselves cause misses. Same frozenAPK,27pinnedPCs, no guest update needed.
   1680547lossless records/438791triplets, complete scheduler/clockspread53ns,
