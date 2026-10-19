@@ -5,6 +5,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Measure the extended BQL spin budget (`5547634eeb`). Default-off
+  `LT_BQL_SPIN_EXTENDED=on` selects 150 µs with BQL spin on; off retains 50 µs.
+  Residual short sleeps motivate it; the uncontended path and original blocking
+  fallback remain. Builds pass, frozen APK/identity retained, three ordinary
+  60 s pairs launched on/off, off/on, on/off. Diagnostics, accounting, idle spin
+  and user recorder off; no performance gain or completed metrics yet.
+  Preserve all arms and report frame metrics, hitch counts and durations.
+
 - [x] Attribute residual BQL spin fallbacks. Engine32d6f75762 adds default-off
   LT_BQL_FALLBACK_PROF=on with BQLspinON and native conditions trace. Time only
   the original blocking acquisition after50us budget, retaining source site;
@@ -31,6 +39,23 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   by the wait measurements, with its benefit unmeasured. Idle spin stays rejected.
   Full evidence/hashes/sleeps poco-bql-fallback-1/, PERFORMANCE.md. Pixel's
   largest gameplay hitch still needs its own matching scheduler trace.
+
+- [ ] Confirm Bluetooth-related work in the longest guest flip cycles.
+  New spin-on guest-thread capture complete, worker14580/vCPU14750:
+  1,687,113 complete records, 447,102 valid PC triplets, full scheduler coverage,
+  no loss/initial exception, clock spread104ns. Both scenes title/profile off,
+  nice0/CFS/sameTID, good28, same-worker snapshot detached, clean baseline restored.
+  Diagnostic mean55.850,ceiling60,median58,low46,1%low28.350;
+  16hitches/1285.455ms, zero skips; no A/B gain/overhead claim.
+  Followed actual flip cycles and preceding two publication intervals. Four
+  BTServer/BlueTool-pmap threads take26.996% of hitch execution vs0.688% normal;
+  longest130.976ms gap has48.360ms on one BTServer-pmap thread and a92.119ms
+  presenting-thread enqueue-to-scheduled interval. Pmap observations are not
+  task owners or proof of a restart; snapshot has BTServer82/BlueTool83.
+  Capture fresh same-worker logs and actual owners, then inspect controller
+  bring-up if retries are confirmed. Prior-worker syslog backlog is insufficient.
+  Audio converter remains a separate contributor; do not bypass guest faults.
+  Full evidence and limits: PERFORMANCE.md / poco-guest-spin-1/guest-flips.json.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
   The latest Poco capture's three >50 ms gaps contain 129.017 ms running

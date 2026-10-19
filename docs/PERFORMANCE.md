@@ -2905,6 +2905,93 @@ All four real analyzers completed successfully. No tests added/run; Pixel
 disconnected/untouched. Its214.5ms gameplay gap still lacks a matching scheduler
 trace and is not explained by these Poco title results. No new performance gain.
 
+#### Guest frame cycles with BQL spin (capture complete)
+
+A new selected-thread capture follows the execution component with the proven
+50 µs BQL spin on and rejected idle spin off. Frozen bql-fallback.apk above
+(app source `c584e1fd`, engine `32d6f75762`) uses the existing eight selected
+instruction boundaries, delayed 80 s, context changes and scheduler/IRQ/idle
+trace. Native wait/AHB/fault/arithmetic diagnostics, accounting and user recorder
+are off. Worker14580/vCPU14750; both scenes reviewed as Jetpack title/Start
+profile off, same TID/nice0/CFS at both boundaries, serial28 good. Same-worker
+process snapshot taken after the timed window, detached before clean Stop.
+No-qemu/exact baseline restoration verified; own phone trace/milestones removed.
+
+All 1,687,113 milestone records complete with no loss/incomplete/late markers
+or write errors. All 447,102 PC triplets validate (250,227 in complete frame
+intervals, 196,875 outside); selected-thread transition continuity passes.
+Scheduler coverage is complete, no error/data loss, clock spread104ns and no
+initial-state exception. Diagnostic mean55.850,ceiling60,median58,low46,
+1%low28.350,16hitches/1285.455ms,zero skips. This is not an A/B speedup or a
+measurement of tracing overhead. The ordinary extended-budget comparison uses
+its separate frozen APK with all these diagnostics off.
+
+Joining actual guest framebuffer-flip cycles with selected threads changes the
+next lead. The same thread0xe056aeec performs every in-window GL present, and
+thread0xe0313220 performs all3351 framebuffer flips. Those identify execution
+roles, not task owners. Four threads observed only with BTServer/BlueTool page
+tables installed contribute300.620ms/0.688% of normal-frame execution but
+314.942ms/26.996% of hitch execution. The converter thread contributes only
+70.312ms/6.027% of hitch execution in this capture. This does not contradict
+earlier audio-heavy examples or establish Bluetooth as a universal cause.
+
+| Hitch end s | Gap ms | vCPU running ms | Leading selected thread / observed pmap | Its running ms | Presenting thread enqueue request → scheduled ms |
+| --- | --- | --- | --- | --- | --- |
+| 13.634 | 130.976 | 123.426 | 0xe02c3554 / BTServer | 48.360 | 92.119 |
+| 35.351 | 115.335 | 107.427 | 0xe02c3554 / BTServer | 39.445 | 51.265 |
+| 57.751 | 114.511 | 106.473 | 0xe0332eec / BTServer | 26.265 | 77.316 |
+| 24.853 | 102.448 | 86.327 | 0xe0332664 / BlueTool | 24.995 | 52.509 |
+
+The associated flip-to-flip cycles are129.105/114.734/116.063/101.974ms.
+The report retains the preceding two publication intervals, selected threads
+through each cycle, neighboring presents and each game enqueue-to-scheduled
+interval. Enqueue observations precede dispatch and are not exact run-queue
+residence; temporal neighboring presents are not proof of frame identity.
+All16 hitches together contain1166.621ms running, so neither a single GL wait
+nor host wake delay accounts for their full duration.
+
+The matching post-window snapshot has BTServer PID82 and BlueTool PID83 still
+present. Page-table reuse, process/thread exit/reuse and borrowed pmaps limit
+owner inference: these are explicitly pmap observations, not confirmed owners
+or a proved restart mechanism. Earlier retained syslog from a different worker
+contains a Bluetooth boot-script hang/relaunch followed by successful bring-up;
+that old backlog does not establish the state of this new capture. Next obtain
+fresh guest logs and actual thread/task ownership for a repeat of this behavior,
+then inspect the controller protocol if bring-up retries are confirmed.
+
+The original converter behavior also persists:1879 matched calls of1024 scalar
+values/scale1.0, aligned versus2-mod4 median selected-thread execution23.489
+versus434.583us (1048/831 calls). These are within-capture observations, not a
+new optimization; preserve the architectural alignment faults and sound.
+
+Evidence: `build/perf-codex/poco-guest-spin-1/`, with raw inputs and hashes,
+snapshot/detach log, reviewed scenes, hitches/milestones/guest-points reports,
+decode-scheduler/insights and guest-flips.json/txt (all cycles and request
+intervals), plus summary.json. Runner guest-spin-run.py, existing guest-PC
+report scripts and new guest-flip-report.py retain reproduction. All real
+analyzers passed. No tests added/run; Pixel untouched. No new performance gain.
+
+#### Extended BQL spin budget (ordinary comparison in progress)
+
+The residual fallback capture above finds 153 of 163 selected BQL wake delays
+with preceding sleeps under 100 µs, after the existing 50 µs spin has expired.
+Engine `5547634eeb` adds default-off `LT_BQL_SPIN_EXTENDED=on`, selecting a
+150 µs budget when `LT_BQL_SPIN=on`. Otherwise the original 50 µs budget stays.
+Both modes retain vCPU0 eligibility, the untimed uncontended trylock and the
+original blocking fallback. Other threads, guest time, IRQs and audio behavior
+stay on their existing paths. The measured interval can exceed the budget if
+the thread is descheduled. Startup logs requested/effective extended mode.
+
+Linux/Android builds pass. Frozen bql-extended.apk, app source `c401dc6c` /
+engine `5547634eeb`, SHA256
+`e37a37773f8fcb6cd9f78a5d7a8f32edfc513331ee774b9419824997aa77c0cb`;
+identity and matching libraries retained. Three ordinary 60 s pairs started in
+on/off, off/on, on/off order, after 50 s title settling. BQL spin is on in both
+modes; only the extended budget changes. Idle spin, diagnostics, accounting and
+the user recorder are off. This uses a separate APK from the completed guest
+thread diagnostic. No new performance gain or completed ceiling/median/low/
+1% low/hitch count/duration result yet. No tests added/run.
+
 #### Bounded vCPU0 idle spin (ordinary comparison complete; rejected)
 
 Engine `357fc83aba` adds default-off `LT_IDLE_SPIN=on`, separate from BQL spin.
