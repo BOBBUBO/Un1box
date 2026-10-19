@@ -2293,6 +2293,41 @@ engine logs and `tally-path-scenes.png`. Reproduce each complete capture with
 `framepath.py EVENTS FRAMES --json milestones.json` then
 `tallypath.py EVENTS FRAMES --mode off|on --json tallies.json`.
 
+#### Focused profile of the preserved alignment-fault path
+
+The long `stm-unaligned` LT Bench variant (1200 rounds, original ARM1176
+fault/guest handler) completed with all byte/guard/writeback checks passing.
+On the Snapdragon 865-class Poco F3, best/median were 1498.5/1542.0 ns per
+store; the complete pass took 61,376 ms. This is one instrumented diagnostic,
+not an optimization A/B. Same frozen `tally-quiet.apk` and serial28 package
+as above; user recorder and other focused diagnostics off. Original short
+LT Bench was restored, scene reviewed, clean Stop/no-qemu/baseline verified.
+
+Attached simpleperf at 500 Hz for 20 s, DWARF 8192 with post-unwind: 10,966
+samples, zero lost, 9,873 on the vCPU. Matching engine symbols and before/after
+JIT maps resolve guest samples into `_sleh_alignment`, `_fleh_dataabt` and
+exception return. Recorded call-chain inclusive shares include
+`arm_rebuild_hflags` 12.70%, `cpu_restore_state` 6.77%, `tcg_tb_lookup` 5.89%
+and `g_tree_lookup` 3.98%; `tb_tc_cmp` is 2.28% self. Incomplete native chains
+mean these are nominations, not exact recoverable savings or game hitch time.
+The direct timing experiment below checks the lookup cost before a game A/B.
+
+Engine `c146d54fad` adds default-off `LT_HOST_PC_CACHE=on`: one exact
+host-PC/result entry per TCG region, under the original region mutex. Insert,
+remove and reset clear it before mutating the tree. All fault/state restoration
+and guest handler behavior remain. Independent default-off
+`LT_HOST_PC_CACHE_PROF=on` samples one lookup body per256 calls in five-second
+blocks and counts candidate hits in either mode. Focused reversed A/B pending;
+no speedup claimed. Game ceiling/median/low/1% low and hitches/durations are
+not applicable to this static-screen diagnostic and have not been measured
+for this experiment.
+
+Evidence: `build/perf-codex/poco-stm-profile-1/` with `perf.data`, `record.txt`,
+`self.txt`, `callgraph.txt`, symbol cache, JIT maps, `guest-pc.json/txt`, engine
+log and reviewed result scene. Runner `stm-profile-run.py`; private LT Bench
+IPA SHA-256 `aa24eb583e041fa344404ee71232c1d94f25914d4b11d7807cc92bb21113efb9`.
+Pixel untouched; no tests added/run.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

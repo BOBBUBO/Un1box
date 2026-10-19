@@ -5,6 +5,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Measure exact host-PC lookup caching (`c146d54fad`, default-off
+  `LT_HOST_PC_CACHE=on`) in the preserved alignment-fault path. One 1200-round
+  STM diagnostic completed at best/median1498.5/1542.0ns with all byte/guard/
+  writeback checks passing. Native call chains nominate `tcg_tb_lookup`5.89%
+  inclusive, tree lookup3.98%, comparator2.28% self; these are not recoverable
+  savings or game attribution. Use independent sampled `LT_HOST_PC_CACHE_PROF`
+  in both modes, off/on/on/off, then diagnostic-off timing if justified.
+  Clear the cache before tree mutations under the original mutex; preserve
+  faults/audio. No game ceiling/median/low/1%low/hitch count/duration gain
+  measured or claimed. Focused profile and provenance in PERFORMANCE.md.
+
 - [ ] Measure duplicate exception-return hflags removal, default-off
   `LT_ERET_HFLAGS_FAST=on`. `cpsr_write()` already rebuilds flags before
   the helper's second rebuild; intervening PC alignment does not affect
