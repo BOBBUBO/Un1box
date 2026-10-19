@@ -102,7 +102,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   New distinct candidate: default-off `LT_VFP_MLA_FAST` combines the two host
   helper calls for VMLA/VMLS/VNMLA/VNMLS single precision, preserving separate
   softfloat rounding/status and NaN operand order. `vfp-mla` LT Bench adds a
-  long-loop focused measurement. Builds/phone A/B pending; no gain claimed.
+  long-loop focused measurement. Linux/Android clean final builds and Mac
+  focused LT Bench build pass; same-APK phone A/B pending, no gain claimed.
+  A converter-entry debugger inspection yielded zero argument samples before
+  its deadline (detached/stopped/restored cleanly); it supplies no buffer-size
+  or cadence evidence. Next cadence probe must confirm that its entry hook runs.
+  Instead, the existing sampled alignment hook now records fault-time R0–R3,
+  LR/SP/CIDR without debugger or guest memory reads. The analyzer validates and
+  retains paired snapshots. New build/capture pending; ordinary VFP A/B remains
+  on its frozen APK with diagnostics off.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.

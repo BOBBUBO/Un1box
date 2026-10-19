@@ -63,7 +63,8 @@ def main():
     # audiopath has already validated the exact hashed trace's complete footer.
     for line in args.events.read_text().splitlines()[1:-1]:
         ns, kind, a, b, c = line.split()
-        if kind not in ("alignment-begin", "alignment-return", "alignment-abandon"):
+        if kind not in ("alignment-begin", "alignment-return", "alignment-abandon",
+                        "alignment-args", "alignment-caller"):
             continue
         ns, a, b, c = map(int, (ns, a, b, c))
         if kind == "alignment-begin":
@@ -72,6 +73,16 @@ def main():
             seen.add(a)
             pending[a] = dict(id=a, begin_ns=ns, thread=b >> 32,
                               pc=b & 0xffffffff, ttbr0=c)
+        elif kind in ("alignment-args", "alignment-caller"):
+            row = pending.get(a)
+            if row is None:
+                ap.error("register snapshot without pending alignment sample")
+            if kind in row or ns < row["begin_ns"]:
+                ap.error("duplicate or early register snapshot")
+            row[kind] = (dict(r0=b >> 32, r1=b & 0xffffffff,
+                              r2=c >> 32, r3=c & 0xffffffff)
+                         if kind == "alignment-args" else
+                         dict(lr=b >> 32, sp=b & 0xffffffff, cidr=c))
         elif kind == "alignment-abandon":
             row = pending.pop(a, dict(id=a))
             row.update(end_ns=ns, reason=b, detail=c)
@@ -84,6 +95,8 @@ def main():
                     or c != row["ttbr0"] or ns <= row["begin_ns"]):
                 ap.error("invalid alignment return identity/timing")
             row.update(end_ns=ns, wall_ns=ns - row["begin_ns"])
+            if ("alignment-args" in row) != ("alignment-caller" in row):
+                ap.error("incomplete alignment register snapshot pair")
             if row["begin_ns"] < begin or ns >= end:
                 outside.append(row)
                 continue
@@ -94,6 +107,9 @@ def main():
             address = changes[ci]
             if address["b"] != c:
                 ap.error("sampled TTBR0 differs from context trace")
+            if ("alignment-caller" in row
+                    and row["alignment-caller"]["cidr"] != address["a"]):
+                ap.error("sampled CIDR differs from context trace")
             key = f"cidr=0x{address['a']:x},ttbr0=0x{c:x}"
             source = audio["address_spaces"].get(key)
             if source is None:
@@ -119,6 +135,8 @@ def main():
                  for key, group in groups.items()}
     print("Matched window samples:", len(complete), "outside:", len(outside),
           "abandoned:", len(abandoned), "pending at trace end:", len(pending))
+    print("Window register snapshots:", sum("alignment-args" in row for row in complete),
+          "(fault-time registers, not function-entry arguments)")
     for key, group in summaries.items():
         print(key)
         for category, values in group.items():

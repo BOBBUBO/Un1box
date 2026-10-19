@@ -1840,6 +1840,21 @@ Do not repeat the rejected unaligned-store bypass. Evidence under
 data in `alignment-latency.json/txt` and the same raw/reports as fault-only.
 No tests added/run, no optimization or speedup claimed. Pixel untouched.
 
+An additional argument-only LLDB inspection on that frozen build attempted
+breakpoints at the two converter entries. Neither produced a stop within the
+45 s probe deadline; zero argument samples were obtained. The debugger detached
+successfully and the runner confirmed clean Stop/no-qemu/baseline restoration.
+This supplied no buffer-size/cadence evidence and no FPS measurement. Raw
+attempt: `build/perf-codex/poco-audio-arguments-1/`; do not infer that the
+converter stopped running from an unconfirmed breakpoint setup.
+
+The next cadence probe extends the working sampled fault hook: return-mode
+beginnings additionally record R0–R3, LR, SP and raw CIDR. No guest reads or
+debugger are required. These are fault-time registers, not entry arguments.
+`alignmentlatency.py` validates/retains paired snapshots and preserves old
+captures with zero snapshots. Build/runtime confirmation pending; ordinary
+VFP A/B uses the already frozen APK above, without these probes enabled.
+
 #### Non-fused VFP multiply/add helper experiment
 
 `LT_VFP_MLA_FAST=on` (default off) combines each AArch32 single-precision
@@ -1856,6 +1871,13 @@ LT Bench `vfp-mla` times a long loop of eight independent scalar VFP2
 accumulators across all four forms, with non-exact products to establish the
 ordinary sticky inexact flag. No per-operation host clocks. Build and focused/
 ordinary same-APK interleaved measurements pending; no gain claimed.
+Initial and clean final Linux/Android builds passed; LT Bench's focused IPA
+also built on the Mac (10 rounds, ONLY=vfp-mla). Frozen `vfp-mla.apk` / symbols
+and build identity: app `5994bdfb`, engine `f235c93372`, both clean at freeze;
+APK SHA-256 `bc7ced2656d9130350ec58dc65547fdb5ed17e03076326fa432093a41ae1e103`.
+No tests added/run. Ordinary measurement setup keeps audio enabled and Start
+profile/full accounting/fault/context/FP diagnostics off, array caching on,
+other experiments off. The focused benchmark times whole loops.
 
 ### Measured and rejected
 

@@ -321,6 +321,15 @@ confirmed on real data: 1665/1665 pairs match, 916 inside the timed window;
 normal/hitch median3.125/3.178 us. No abandoned/pending pairs or sampled
 millisecond-scale fault. These are diagnostics, not optimizations.
 
+New return-mode captures also append `alignment-args` (a=sample ID,
+b=R0<<32|R1, c=R2<<32|R3) and `alignment-caller` (a=ID, b=LR<<32|SP,
+c=raw CIDR) immediately after the sampled beginning. These read the already
+restored fault state without a debugger or guest memory access. Registers are
+at the faulting instruction, **not** at function entry. The analyzer validates
+and retains paired snapshots; older captures have zero snapshots. This helps
+identify callers and buffer cursors after the entry-breakpoint attempt yielded
+no samples. New snapshot build/runtime confirmation pending.
+
 ## Sparse frame milestones
 
 `LT_FRAME_PATH=/absolute/host/path.tsv` (engine `78eaa87497`, default off)
