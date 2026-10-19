@@ -3729,7 +3729,7 @@ stage build did not replace this comparison's APK. Next use focused stage /
 scheduler captures to separate remaining present waits, including ~33ms gaps;
 retain the standard >50ms threshold for ordinary benchmark reporting.
 
-#### Android vCPU display priority (runtime measurements pending)
+#### Android vCPU display priority (ordinary comparison complete; keep off)
 
 The scheduler captures above include host runnable delay, including 8.620 ms
 in the delayed-PC capture's decoder-free 50.057 ms gap. This is distinct from
@@ -3744,11 +3744,41 @@ Linux/Android builds pass. Frozen `vcpu-display.apk` is app `7312beec` /
 engine `6971278387`, SHA-256
 `7e841c9c96f5f1ec8c256b99dd9e78e7a6630a8df959ef8b279b1c6e8d4b9071`;
 identity and symbols in `build/perf-codex/vcpu-display-build-identity.json`.
-No phone runtime effectiveness or performance comparison yet; game ceiling,
-median, low, 1%low, hitch count and duration are unmeasured. Do not treat a
-requested but ineffective nice change as an optimization A/B. Measure this
-separately with hflags/cache switches fixed. The completed flags measurements
-used their original frozen APK, without this change. No tests added/run.
+The ordinary phone comparison uses the newer frozen `bt-path.apk`, app
+`4afc6e61` / engine `deb39789e4`, SHA-256
+`9006ed229a71ae27665ec606f55f57f04fb3860c00779820e9aee12766cd37d1`.
+Snapdragon 865-class Poco, three 60 s pairs launched on/off, off/on, on/off.
+BQL 150 µs fixed on; idle spin, hflags, host-PC cache and RAM-pointer
+experiments off. All diagnostic tracing, full accounting and user recorder
+off; ordinary frame logging only. All twelve before/end scenes reviewed as
+Jetpack title with Start profile off. Good guest-tools serial 28 verdicts.
+
+Android granted nice -4 in every on arm; off arms retained nice 0. The active
+vCPU retained its TID and CFS policy at both window boundaries, with existing
+affinity. Full thread listings are retained: some subsequently created workers
+inherit nice -4, so this measures the startup switch including that inheritance,
+not an isolated change to vCPU priority alone.
+
+| Pair | Mean fps off → on | Ceiling | Median | Low | 1% low | Hitches >50 ms / full duration ms | Longest gap ms | Skips |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 59.067 → 59.117 | 60 → 60 | 60 → 60 | 56 → 56 | 30.051 → 30.281 | 2/101.789 → 4/204.932 | 51.395 → 51.957 | 0 → 0 |
+| 2 | 58.767 → 59.067 | 60 → 60 | 58 → 60 | 56 → 58 | 29.948 → 30.184 | 0/0 → 1/51.479 | 49.597 → 51.479 | 0 → 0 |
+| 3 | 59.317 → 59.200 | 60 → 60 | 60 → 60 | 58 → 58 | 31.302 → 30.040 | 0/0 → 0/0 | 39.219 → 36.276 | 1 → 0 |
+
+Equal 180 s per mode aggregate **59.050000 → 59.127778 fps (+0.13%)**,
+2 → 5 hitches, 101.789 → 256.411 ms full hitch duration. Longest gap
+51.395 → 51.957 ms; one skipped publication in pair 3 off, none elsewhere.
+Pair 3 loses throughput and 1% low; the tiny aggregate throughput difference
+and mixed pacing do not establish a repeatable benefit. Keep the switch off.
+Stable 60/good 1% lows remain unmet; no Pixel gain inferred. No scheduler
+diagnostic was active, so these arms do not attribute individual waits.
+
+Runner exit 0; clean Stop, no stray qemu engines and exact baseline environment
+restoration confirmed. Raw arms, APK identity, effective priority snapshots,
+BQL outcomes and reviewed scenes are in `poco-priority-game-{pair}-{mode}/`.
+`priority-game-results.json` retains exact windows, every >30 ms gap and
+>50 ms hitch, all pacing metrics and maximum gaps; analysis is
+`priority-game-analyze.py` in `build/perf-codex/`. No tests added/run.
 
 ### Measured and rejected
 

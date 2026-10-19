@@ -144,7 +144,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   No evidence of queue rejecting an image fully inserted before priorquery
   for the48common cases; keep audio work/host waits separate. Negative
   callbackend→selection cases retained. Full joins/limits in PERFORMANCE.md,
-  queue-summary.json/queue-details.json. Next ordinary display-priority pairs.
+  queue-summary.json/queue-details.json. Ordinary display-priority pairs below
+  found no repeatable pacing benefit. Next trace the specific intervening
+  audio work and host waits; Pixel needs a matching gameplay scheduler trace.
   NEW CA callback capture supersedes the hypothesis that secondary-only swaps
   themselves cause misses. Same frozenAPK,27pinnedPCs, no guest update needed.
   1680547lossless records/438791triplets, complete scheduler/clockspread53ns,
@@ -335,15 +337,27 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   Existing earlier sched1/2 captures reproduce20/30.343ms and21/32.605ms long
   waits entirely with destination idle task selected; offline only, no speedup.
 
-- [ ] Measure Android vCPU display priority (`6971278387`, default-off
+- [x] Measure Android vCPU display priority (`6971278387`, default-off
   `LT_VCPU_DISPLAY_PRIORITY=on`). Existing Poco traces show host runnable
   delay in some hitches; this requests nice -4 on each vCPU thread at startup,
   retaining CFS and the existing affinity. It preserves an already higher
   priority and logs before/after values and errors. Linux/Android builds pass;
-  frozen `vcpu-display.apk` and identity retained. Runtime effectiveness and
-  before/after ceiling/median/low/1%low/hitches/durations remain unmeasured.
-  Check actual nice values during capture; an unsuccessful request is not a
-  priority comparison. Keep hflags/cache experiments fixed when measuring.
+  ordinary comparison uses newer frozen `bt-path.apk`, three 60 s pairs
+  on/off, off/on, on/off; BQL 150 µs fixed on, idle/hflags/cache/RAM-pointer
+  experiments and all diagnostics/accounting/user recorder off. All twelve
+  scenes title/Start profile off; same active vCPU TID/CFS, nice 0 → -4
+  effective, good 28. Some new workers inherit nice -4; result covers that
+  inheritance too. Before off → after on, by pair:
+  mean 59.067/58.767/59.317 → 59.117/59.067/59.200;
+  ceiling 60/60/60 → 60/60/60; median 60/58/60 → 60/60/60;
+  low 56/56/58 → 56/58/58; 1% low 30.051/29.948/31.302 →
+  30.281/30.184/30.040; hitches 2/0/0 → 4/1/0, full duration
+  101.789/0/0 → 204.932/51.479/0 ms. Equal 180 s per mode aggregate
+  59.050000 → 59.127778 fps (+0.13%), 2 → 5 hitches,
+  101.789 → 256.411 ms; skips 0/0/1 → 0/0/0. Pair 3 loses throughput
+  and 1% low; no established repeatable pacing benefit, keep off.
+  Runner exit 0, clean Stop/no-qemu/exact baseline restored. Full table and
+  limits in PERFORMANCE.md; all arms/gaps retained in priority-game-results.json.
 
 - [x] Measure ordinary Jetpack with the guarded ARMv6 hflags calculation
   (`e414b9d74a`, default-off `LT_HFLAGS_V6_FAST=on`). Focused timing complete
