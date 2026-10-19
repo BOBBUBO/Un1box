@@ -2378,7 +2378,7 @@ claim. The selected-thread association includes guest kernel/native work;
 enqueue intervals are not exact run-queue timers. See PROFILING.md for the
 approach. Pixel user-capture causes remain unproven by these Poco examples.
 
-#### ARMv6 hflags specialization (runtime confirmation pending)
+#### ARMv6 hflags specialization (focused timing pending)
 
 The preserved-STM profile above nominates generic flag rebuilding, including
 ARMv8 exception-level and control-register helpers. Engine `e414b9d74a` adds
@@ -2394,10 +2394,25 @@ which the guarded CPU class lacks.
 Independent default-off `LT_HFLAGS_V6_VERIFY=on` compares both flag words
 against the generic builder at every eligible rebuild and reports each
 million comparisons. This diagnostic is for a separate runtime capture;
-ordinary measurements keep it off. Linux/Android builds pass. Runtime
-confirmation, focused timing and game A/B remain pending. No speedup claimed;
+ordinary measurements keep it off. Linux/Android builds pass. Focused timing
+and game A/B remain pending. No speedup claimed;
 game ceiling/median/low/1%low/hitches/durations are unmeasured. The concurrent
 host-PC cache comparisons use their earlier frozen APK, not this new code.
+
+A separate90s Linux headless capture on a copy of an idle prepared n72ap/7E18
+record completed with fast/verify on and host-PC cache off. At least1,048,576
+eligible rebuilds matched both original flag words, with no assertion failure.
+The guest agent reports state2 during the capture; final controller status
+confirms state0/clean, worker exit0 and frontend return0. The end screenshot
+is asleep/black, so it supplies no active-UI visual evidence. These observations
+cover the executed boot/runtime states, not all possible control-register values
+or a performance result. No test suite added/run. Both input and worker records
+were idle before the copy; the private scratch copy was removed after clean
+Stop. Evidence retained as `build/perf-codex/hflags-v6-desktop{.txt,.png,-serial.log,
+-record.json,-result.json}` and frozen build identity `hflags-v6-build-identity.json`.
+Linux library SHA-256
+`58f2831e691e324cc217f93e07c9a7bec5a75c7e942acdc54975f68d7dbc7e9f`;
+APK SHA-256 `977785fcf61c8a6e32eefcbdaca0d9a383a43c2029643fefe3fe7ea0861b96d3`.
 
 ### Measured and rejected
 

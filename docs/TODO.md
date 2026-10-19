@@ -5,10 +5,13 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
-- [ ] Confirm the guarded ARMv6 hflags calculation (`e414b9d74a`, default-off
-  `LT_HFLAGS_V6_FAST=on`) against the generic builder using independent
-  `LT_HFLAGS_V6_VERIFY=on`, then time focused syscall/fault/STM paths with
-  verification off before game A/B. Original faults/guest handler remain.
+- [ ] Time the guarded ARMv6 hflags calculation (`e414b9d74a`, default-off
+  `LT_HFLAGS_V6_FAST=on`) in focused syscall/fault/STM paths with verification
+  off before game A/B. Independent `LT_HFLAGS_V6_VERIFY=on` completed a90s
+  desktop copied-record capture: at least1,048,576 matching rebuilds, clean
+  Stop/worker/frontend exit0; end screenshot asleep, no active-UI claim. This
+  covers executed states, not all possible register values. Scratch record
+  removed. Original faults/guest handler remain.
   Pre-v7 VMSA only, no EL2/EL3/M/PMSA/AArch64; Linux/Android builds pass.
   No measured speedup or game ceiling/median/low/1%low/hitch/duration result.
 
