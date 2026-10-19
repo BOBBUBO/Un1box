@@ -16,6 +16,7 @@ The harness is in [`tools/perf/`](../tools/perf):
 | `fcbench.py APK SECS [GAME]` | Installs an APK, boots, unlocks, starts a game from Home page 2; presets follow each phone's layout (Poco: `jetpack`, `flightcontrol`; Pixel: `jellycar`, `doodlejump`; a game that holds a steady 60 on both phones leaves the benchmark set, so Flight Control, Doodle Jump and JellyCar are no longer run; check with `FC_SHOT=file.png`) and runs `gamefps.py`. Debug builds read `files/debug-env` (`KEY=VALUE`), e.g. `LT_CROSS_PAGE_CHAIN=off` or `LT_ADPF=off`, for same-APK A/B runs. |
 | `framestats.py` | Frame pacing from a per-frame log: the **ceiling** (95th percentile of 500 ms windows: what the game sustains when nothing gets in the way), median, **low** (5th percentile: how deep the dips go), 1% low, **hitches** (frames over 50 ms), share of time at ≥55 / <30 fps, and a chart. `fcbench.py` with `FC_FRAMES=chart.png` turns on the runtime's `LT_FRAME_LOG` and reports it for the same window. Given the engine's `IT_FRAME_TRACE` (with `IT_VCPU_ACCT` and `IT_GLES_PROF`) it also splits each class of frame (on time / late / hitch) into guest code, GL, BQL wait, idle and off-CPU time. |
 | `guestsyslog.py` | Desktop: the guest's syslog during a headless run (through the app's USB bridge), counted by sender and text. Every line an app writes to stderr becomes a syslogd message the guest has to relay and parse. |
+| `androidsyslog.py` | Android: bounded guest `syslog_relay` capture through the private USB bridge (`--seconds 1..600`). Preserves raw bytes/NULs, receive bounds in Android monotonic time, target/worker identity and completion counts. Message arrival can lag execution or include backlog; receive/frame overlap alone does not establish causation. |
 | `gameprof.sh` / `inappprof.sh` | `simpleperf` of the `:engine` process during play / swipes: per-thread split, vCPU DSOs and symbols. |
 | `abtimer.sh`, `appab.py`, `scrollab.sh` | Interleaved A/B runs. |
 
@@ -2075,6 +2076,30 @@ after timing. `ONLY` accepts a comma-separated exact list, enabling a
 focused `syscall,fault,stm-aligned,stm-unaligned` build without GL work.
 These measurements target preserved exception handling, not the rejected
 unaligned-store bypass. Same-APK interleaved measurements are pending.
+
+#### Android guest syslog capture for decoder-free pauses
+
+The Android app-services helper adds an explicit `syslog --seconds 1..600`
+command through its existing private, owner-only USB socket. It starts the
+guest's `com.apple.syslog_relay`, emits bounded chunks as lossless hex with
+Android monotonic receive begin/end times, then closes the service and reports
+counts/completion. The helper and Android APK build pass. It runs only when
+invoked; ordinary benchmarks do not launch a relay. No tests added/run.
+
+With the guest already running and `ANDROID_SERIAL` set:
+
+```sh
+python3 tools/perf/androidsyslog.py capture --seconds 60 --out build/syslog.jsonl
+python3 tools/perf/androidsyslog.py analyse build/syslog.jsonl
+```
+
+The tool retains the original JSONL, a byte-exact `.raw`, readable `.txt`,
+validated `.summary.json`, and `.identity.json` with the engine worker PID.
+It rejects incomplete footer/count/time bounds and a changed engine worker.
+Relay timestamps are arrival bounds, not guest message execution timestamps;
+historical backlog and transport delay remain possible. Use message contents
+to nominate sources, then verify execution/ownership for hitch attribution.
+Real Poco capture and message-source identification are pending.
 
 ### Measured and rejected
 

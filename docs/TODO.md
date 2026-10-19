@@ -13,6 +13,14 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   across a pre-touched 2 KiB buffer with byte/guard/writeback checks after
   timing. Focused same-APK A/B, then ordinary Jetpack; no measured gain yet.
 
+- [ ] Identify messages behind the separate decoder-free pauses. Android
+  helper `syslog --seconds 1..600` and `tools/perf/androidsyslog.py` now add
+  bounded raw relay capture with monotonic receive bounds, byte/count/footer
+  validation and worker identity. Native helper/Android builds pass; real
+  capture pending. Relay
+  receive times can include backlog/delivery delay; confirm thread ownership
+  and execution before assigning a hitch to a message source.
+
 - [ ] Locate the first missed deadline in the frame path. Two Poco Jetpack title
   scheduler traces now align exact 60 s frame windows with vCPU states; user recorder,
   full accounting and focused engine timing off. In 8 / 7 long gaps, execution is
