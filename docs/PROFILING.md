@@ -264,8 +264,9 @@ loss, replaced hooks or a mismatched TID. It clocks every selected QEMU wait
 call, so it is for attribution only. It does not cover direct driver/libc waits,
 recursive-mutex entry points or QemuEvent's direct futex waits. Short calls and
 incomplete calls are not represented as spans. Keep it and Start profile off
-for ordinary A/B measurements. No runtime attribution result yet; Linux/Android
-builds pass, and one phone capture is in progress.
+for ordinary A/B measurements. Linux/Android builds pass; the first complete phone capture mapped57 selected
+long runnable intervals to BQL acquisition and11 to the guest idle condition,
+with26 unmatched. Full counts/limitations in PERFORMANCE.md; no speedup claim.
 
 After a clean Stop and a matching scheduler analysis:
 

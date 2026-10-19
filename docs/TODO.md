@@ -5,16 +5,35 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
-- [ ] Attribute the native waits preceding delayed host wakes. Engine
+- [ ] Measure bounded vCPU0 BQL spin (`23041226e7`, default-off LT_BQL_SPIN=on).
+  Short observed sleeps preceding long idle wakes justify trying a50us spin
+  on contended acquisition before the original blocking call. Uncontended
+  path has no clock reads; other threads keep blocking; off keeps the original
+  function pointer. Lock bookkeeping/guest faults/audio preserved, no priority
+  or affinity changes. Startup confirms mode; deferred counters confirm hook
+  and outcomes. Linux/Android builds pass; frozen bql-spin.apk/identity retained.
+  Ordinary three60s pairs launched on/off,off/on,on/off, native attribution /
+  other diagnostics/accounting/user recorder off, flags/cacheoff,arrayson.
+  Ceiling/median/low/1%low/hitches/durations and benefit not yet established;
+  keep default off. Source and full provenance in PERFORMANCE.md.
+
+- [x] Attribute the native waits preceding delayed host wakes. Engine
   `bd8af24c10` adds default-off `LT_NATIVE_WAIT_PROF=on`, requiring LT_FRAME_PATH.
   BQL/ordinary mutex and condition wrappers time only vCPU0; completed>=10us
   spans retain source site/object identities, deferred until cleanup. With it
   off, existing wait function pointers are unchanged. Existing hooks cause
   refusal; reject site/buffer loss, replaced hooks or mismatched TID. The80MiB
   bounded trace and `nativewaits.py` support matching scheduler intervals.
-  Linux/Android builds pass; one focused phone capture in progress, no runtime
-  attribution or speedup claimed. Ordinary game ceiling/median/low/1%low/
-  hitch count/duration unmeasured for this diagnostic; keep out of normal A/B.
+  Linux/Android builds pass; first capture complete, worker22119/vCPU22278.
+  201569milestones/112742completed waits, no loss/siteoverflow/replacedhooks;
+  scheduler coverage complete, no error/loss,clockspread260ns.94long in-hitch
+  runnable intervals:57/91.157ms within BQL acquisition,11/17.891ms within guest
+  idle condition,26/32.219ms unmatched.55BQL matches have preceding sleep,
+  median11.302us,38under50us. Wholewindow BQL5630.710ms includes4550.193ms
+  runnable; guest condition3735.124ms includes1648.099ms runnable. Diagnostic
+  mean52.250,ceiling58,median52,low46,1%low19.847,hitches37/2514.512ms,zero skips;
+  no before/after or overhead claim. Both scenes reviewed,cleanStop/no-qemu/
+  exactbaseline restored,serial28good. Evidence poco-native-wait-1/.
 
 - [ ] Explain delayed host wakeups while the prime core is idle. New offline
   `hitchsched.py --runnable-details` applied to the existing complete delayed-PC

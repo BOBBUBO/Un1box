@@ -2625,7 +2625,7 @@ ticks, retaining all candidate rows. Prepared priority runner corrected too;
 priority performance comparison remains unstarted. Pixel disconnected/untouched.
 No test suites added/run.
 
-#### Completed native wait attribution (first phone capture pending)
+#### Completed native wait attribution (phone capture complete)
 
 Engine `bd8af24c10` adds default-off `LT_NATIVE_WAIT_PROF=on`, requiring a
 working `LT_FRAME_PATH`. It interposes existing BQL/ordinary mutex and condition
@@ -2649,6 +2649,69 @@ direct QemuEvent futex waits are not covered. One phone attribution capture is
 in progress; no runtime result, speedup or ordinary game ceiling/median/low/
 1%low/hitch count/duration claim yet. No test suites added/run. User profiler
 remains off; this diagnostic is separate from ordinary A/B measurements.
+
+**Phone attribution complete:** worker22119/vCPU22278, frozen native-wait
+APK/package, nice0/CFS confirmed at both boundaries. Native waits + sparse
+frame milestones and scheduler/IRQ/idle trace on; all other diagnostics and
+user recorder off. Both scenes reviewed as Jetpack title/Start profile off.
+Clean Stop/no-qemu/exact baseline restoration confirmed; own phone trace and
+milestone file removed after pulling. Serial28 verdict good.
+
+Full sparse stream201,569 records, zero dropped/incomplete/late publications;
+112,742 retained completed waits from5,707,671 calls, fifteen sites, no site
+overflow and hooks unchanged. Complete scheduler coverage/no error or loss,
+MONOTONIC alignment spread260ns. Diagnostic metrics: mean52.250,ceiling58,
+median52,low46,1%low19.847;37hitches/2514.512ms,zero skips. This capture has
+much more hitch time than the previous capture; modes/session differ, so it
+supplies neither a speed comparison nor a measured diagnostic-overhead estimate.
+
+| Completed native waits clipped to60s window | Calls>=10us | Wall ms | Running ms | Sleeping ms | Runnable ms (R+ excluded) |
+| --- | --- | --- | --- | --- | --- |
+| BQL acquisition | 31852 | 5630.710 | 292.056 | 788.306 | 4550.193 |
+| Guest idle condition | 3070 | 3735.124 | 30.826 | 2056.199 | 1648.099 |
+| Other QEMU mutex | 26 | 0.781 | 0.728 | 0 | 0.052 |
+
+Of94 selected in-hitch runnable intervals>=1ms, **57/91.157ms** are enclosed
+by BQL acquisition, **11/17.891ms** by the guest idle condition wait at
+`qemu_process_cpu_events`, and **26/32.219ms** remain unmatched. BQL source sites
+include `cpu_handle_interrupt` and MMIO dispatch, not one long guest GL call.
+Among55 BQL matches with an immediately preceding sleeping state, the sleep
+median is11.302us;38 sleep for under50us. The remaining two BQL matches do not
+start exactly at a scheduler-state boundary, so no preceding-sleep statistic
+is assigned. Condition calls include mutex reacquisition; unmatched intervals
+can include direct library/driver waits outside the wrappers. Enclosure alone
+is not a complete dependency proof, but repeated short BQL sleeps followed by
+millisecond-scale idle wakes now justify a bounded BQL-acquisition experiment.
+
+Evidence: `build/perf-codex/poco-native-wait-1/`, retaining full trace, exact
+frames, identities, engine/sites log, reviewed scenes, validated milestones,
+`hitch-wake.json/txt`, `native-waits.json/txt` (all spans and raw input hashes)
+and `native-waits-summary.json`. Runner `native-wait-run.py`; both analyzers
+processed this real capture. No test suites added/run; Pixel untouched.
+
+#### Bounded vCPU0 BQL spin (ordinary comparison in progress)
+
+Engine `23041226e7` adds default-off `LT_BQL_SPIN=on`. Only vCPU0 tries a
+contended BQL for a50us clock budget before the original blocking call. The
+uncontended path has no clock reads. Other threads keep ordinary blocking
+acquisition; off leaves the original function pointer untouched. Trylock
+success uses the existing ownership bookkeeping. Scheduling policy, affinity,
+guest fault handling and audio semantics remain. Descheduling can extend the
+wall interval around a clock budget; this is not an unbounded spin. This does
+not spin on the guest's idle condition or direct driver waits.
+
+Startup logs requested/effective mode. After vCPUs stop, counters retain
+contended/acquired-during-spin/fallback outcomes and whether the hook remains
+installed. Counters cover the whole worker, not the60s frame window. Native
+wait attribution intentionally refuses this interposer; comparisons keep
+native tracing, other diagnostics/accounting and Start profile off.
+Linux/Android builds pass. Frozen `bql-spin.apk`, appd2dc1e12 / engine23041226e7,
+SHA256 `b6de1bb3770f4c811e9922fbb1aea81f2fa37c06119c030123eb565d07b387b5`;
+identity/symbols in `bql-spin-build-identity.json`. Same-APK ordinary Jetpack
+comparison launched in on/off,off/on,on/off order,60s each after50s title
+settling, other experiments fixed off and array caching on. No completed A/B
+result or ceiling/median/low/1%low/hitch count/duration improvement yet. Keep
+default off pending complete results. No test suites added/run.
 
 #### Android vCPU display priority (runtime measurements pending)
 

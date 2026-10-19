@@ -8,6 +8,7 @@ offline attribution, not an optimization comparison or a complete stack trace.
 import argparse
 import bisect
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -106,6 +107,10 @@ def main():
                                   runnable_ms=(b-a)/1e6, scheduler_state=wake['state']['state'],
                                   wait=match, site=sites[match['site']] if match else None))
     report = dict(engine_pid=args.engine_pid, vcpu=sched['vcpu'], window=window,
+                  input_sha256={name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                for name, path in [('events', args.events),
+                                                   ('engine_log', args.engine_log),
+                                                   ('scheduler', args.scheduler)]},
                   total_completed_calls=int(count), retained_calls=int(retained),
                   threshold_ns=10000, sites=sites, in_window_by_site=summary,
                   waits=waits, hitch_runnable_matches=wake_matches)
