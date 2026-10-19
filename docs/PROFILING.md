@@ -233,7 +233,10 @@ IRQ/softirq/IPI activity alongside wake/idle events. The diagnostic-only
 `tools/perf/hitch-wake.pbtxt` adds these events with a256MiB buffer; check event
 availability and reject any trace loss on the target phone. Existing Poco analysis
 and read-only cpuidle latency observations are recorded in PERFORMANCE.md;
-Pixel behavior remains unproven. This analysis adds no runtime instrumentation.
+A subsequent interrupt-aware capture confirms that recorded handlers explain
+only0.014ms of16.215ms idle occupancy in selected hitch waits. Exact wake/idle
+mechanism and Pixel behavior remain unproven. This offline analysis adds no
+runtime instrumentation; the expanded trace is a separate diagnostic.
 
 The scheduler report retains waker identities and blocked functions when the
 kernel supplies them. A null blocked function is missing evidence; a waker name

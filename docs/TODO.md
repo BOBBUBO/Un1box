@@ -12,11 +12,22 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   vCPU execution. The remaining1.146ms is frontend ReferenceQueueD preemption.
   CPU7 sysfs reports C1/rail-pc exit latency1061us, tracing clock boot. Consistent
   with idle/wakeup latency, not proven: interrupt work can run in idle context.
-  Capture IRQ/softirq/IPI plus wake/idle/frame events next; distinguish this
-  from CPU contention and guest decoder displacement before choosing a fix.
-  No new phone measurement or speedup claimed; prior diagnostic metrics
+  IRQ/softirq/IPI capture complete, worker19869/vCPU20029, nice0/CFS,
+  all engine diagnostics/recorder off. Eleven in-hitch runnable waits>=1ms /
+  17.491ms: destination idle16.215ms, recorded handlers inside idle0.013960ms;
+  16.201ms outside recorded handlers. Zero unmatched CPU7 IRQ/IPI entries/exits.
+  Example successful wake13.594us,IPI entry1662.292us,idle exit1663.958us,
+  vCPUexecution1668.594us after sched_waking. Strong host wake/idle-exit lead,
+  exact kernel/firmware mechanism unproven; IPI masks/reasons not decoded.
+  Identify the originating native waits next before a bounded mitigation.
+  Diagnostic mean54.183,ceiling58,median54,low50,1%low28.426,hitches4/203.097ms,
+  zero skips, no trace loss, clockspread156ns. Both scenes reviewed, clean
+  Stop/no-qemu/exact baseline restored. Artifacts poco-hitch-wake-1/.
+  No speedup claimed; earlier diagnostic metrics
   mean51.850,ceiling56,median52,low46,1%low28.172,hitches9/488.681ms,zero skips.
   Raw intervals/occupancy in poco-guest-pc-delayed-1/hitch-wake.json/txt.
+  Existing earlier sched1/2 captures reproduce20/30.343ms and21/32.605ms long
+  waits entirely with destination idle task selected; offline only, no speedup.
 
 - [ ] Measure Android vCPU display priority (`6971278387`, default-off
   `LT_VCPU_DISPLAY_PRIORITY=on`). Existing Poco traces show host runnable

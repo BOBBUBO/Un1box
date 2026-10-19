@@ -2569,6 +2569,62 @@ interval and raw destination slices/events. Existing capture metrics remain
 mean51.850,ceiling56,median52,low46,1%low28.172,hitches9/488.681ms,zero skips;
 these are diagnostic observations, not a before/after comparison. No tests added/run.
 
+The same offline analysis of two earlier, less instrumented scheduler captures
+also finds the pattern: `poco-hitch-sched-1` has20 selected long runnable
+intervals/30.343ms and `poco-hitch-sched-2` has21/32.605ms, entirely with the
+destination CPU idle task selected, zero competing-task/unknown occupancy.
+Both retain the original complete scheduler/clock/loss checks; capture2 also
+had CPU sampling enabled. These reuse existing captures, not new measurements
+or evidence for a speedup. Reports: each directory's `hitch-wake.json/txt`.
+
+**Interrupt-aware diagnostic completed:** `poco-hitch-wake-1`, worker19869 /
+vCPU20029, frozen priority-build APK above (`vcpu-display.apk`, app7312beec /
+engine6971278387), nice0/CFS verified before and after. Priority/flags/cache,
+all engine diagnostics/accounting and Start profile off. The256MiB65s Perfetto
+configuration captures scheduler, CPU-idle, IRQ, softirq and IPI events around
+a60s Jetpack title frame window. Both scenes reviewed; clean Stop/no-qemu/exact
+baseline restoration confirmed and own phone trace removed after pulling.
+
+Trace validation: no error/data-loss counters, complete vCPU/destination
+scheduler coverage, MONOTONIC alignment spread156ns. Diagnostic metrics:
+mean54.183,ceiling58,median54,low50,1%low28.426;4hitches/203.097ms,zero skips.
+Individual gaps:24.602s/51.252ms,32.101s/50.246ms,38.085s/50.560ms,
+53.101s/51.040ms. These are **not an optimization or overhead comparison**.
+
+Eleven selected in-hitch runnable intervals>=1ms total17.491ms. Ten are
+entirely idle-task occupancy on the explicit wake targetCPU7; the remaining
+interval includes1.276ms of another task and0.008ms idle. Total idle-task
+occupancy16.215ms. Paired raw IRQ/softirq/IPI spans account for only
+**0.013960ms inside that idle occupancy**, leaving16.201ms outside recorded
+handlers. IRQ/IPI spans across all eleven waits total0.030885ms. The full
+CPU7 interrupt streams have zero unmatched entry/exit records. Handler span
+unions avoid double-counting nested activity. This largely rules out recorded
+interrupt execution as the explanation for these selected long idle waits.
+
+Example, relative to one sched_waking targeted atCPU7: successful sched_wakeup
+at13.594us; CPU7 IPI entry/exit at1662.292/1663.438us; idle-exit event1663.958us;
+vCPU runs at1668.594us. Combined with the reported1061us C1 exit latency and
+three earlier traces, this strongly supports a host wake/idle-exit delay lead.
+It does **not** identify the precise kernel/firmware mechanism or fix. Raw IPI
+reason strings are empty and reported target masks are not decoded/validated;
+no source-IPI-to-delivery attribution is claimed. Time without recorded
+handlers is not proof of continuous hardware sleep. Guest audio-conversion
+bursts and Pixel pauses remain separate questions. Next identify which native
+waits lead into these wake delays before choosing a bounded mitigation.
+
+Evidence: `poco-hitch-wake-1/` retains full83MiB trace, exact frames/window,
+mode/build/thread identity, reviewed scenes, logs and `hitch-wake.json/txt`.
+`wake-interrupts.json/txt` retains paired raw spans and selected wake intervals;
+offline reproduction script `build/perf-codex/hitch-wake-interrupts.py`.
+Runner `hitch-wake-run.py`, console log and cleanup marker retained.
+First attempt aborted **before** any timed window because Android toybox
+`ps NAME` returned the process name for every thread. Preserved under
+`poco-hitch-wake-aborted-name-field`; clean Stop/baseline confirmed, no result
+used. Corrected runner selects by `/proc/PID/task/TID/stat` comm and most CPU
+ticks, retaining all candidate rows. Prepared priority runner corrected too;
+priority performance comparison remains unstarted. Pixel disconnected/untouched.
+No test suites added/run.
+
 #### Android vCPU display priority (runtime measurements pending)
 
 The scheduler captures above include host runnable delay, including 8.620 ms
