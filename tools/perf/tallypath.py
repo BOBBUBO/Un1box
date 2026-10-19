@@ -30,7 +30,8 @@ def main():
     ap.add_argument("events", type=Path)
     ap.add_argument("frames", type=Path)
     ap.add_argument("--secs", type=float, default=60)
-    ap.add_argument("--mode", choices=("off", "on"), required=True)
+    ap.add_argument("--mode", choices=("off", "on", "batch"), required=True,
+                    help="off=original fragments, on=suppress successes, batch=one write")
     ap.add_argument("--json", type=Path, required=True)
     args = ap.parse_args()
     lines = args.events.read_text().splitlines()
@@ -98,7 +99,8 @@ def main():
     last_count = 0
     for marker in markers:
         count = marker["a"] + marker["b"]
-        if count <= last_count or (count != 1 and count % 300) or marker["c"] != (args.mode == "on"):
+        expected_policy = {"off": 0, "on": 1, "batch": 2}[args.mode]
+        if count <= last_count or (count != 1 and count % 300) or marker["c"] != expected_policy:
             ap.error("invalid tally counter or mode")
         last_count = count
         index = bisect.bisect_right(ends, marker["ns"]) - 1
@@ -108,7 +110,8 @@ def main():
         if not row["begin_ns"] <= marker["ns"] <= row["end_ns"] or row["tally"] is not None:
             ap.error("tally overlaps a native call or another tally")
         row["tally"] = dict(ns=marker["ns"], ok=marker["a"], failed=marker["b"],
-                            quiet=marker["c"], native_ordinal=row["native_ordinal"],
+                            quiet=marker["c"] == 1, policy=marker["c"],
+                            native_ordinal=row["native_ordinal"],
                             before_marker_ms=(marker["ns"] - row["begin_ns"]) / 1e6,
                             after_marker_ms=(row["end_ns"] - marker["ns"]) / 1e6)
     selected = [row for row in intervals if begin <= row["begin_ns"] and row["end_ns"] < end]

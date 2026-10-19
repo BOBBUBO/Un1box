@@ -5,6 +5,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Measure single-write tally logging (engine `20857608bb`, default-off
+  `LT_GLES_TALLY_BATCH=on`, guest tools29/version1.1.27). Host policy2 requests
+  the exact tally text in one stderr write and one host log call instead of
+  seven fragments; all counters/first/failure logs and rendering remain.
+  Existing quiet policy1 takes precedence; original policy0/default/old hosts
+  retain fragments. Older guests treat2 as unsuppressed original logging.
+  This differs from rejected whole-line suppression. Wider producer intervals
+  now place exact tally markers before two hitches with25.7ms launchd/syslogd
+  execution. Builds, private in-place guest update and interleaved focused /
+  ordinary pacing comparison pending; no gain claimed.
+
 - [x] Measure the extended BQL spin budget (`5547634eeb`). Default-off
   `LT_BQL_SPIN_EXTENDED=on` selects 150 µs with BQL spin on; off retains 50 µs.
   Residual short sleeps motivate it; the uncontended path and original blocking

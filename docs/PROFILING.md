@@ -1275,3 +1275,21 @@ capture retains a same-worker timeout/relaunch despite complete prompt reply
 injections; successful injection is insufficient proof of userspace receipt.
 Use protocol captures to narrow the missing transition, then ordinary
 interleaved comparisons with diagnostics and user recording off to measure a fix.
+
+### Single-write tally logging experiment
+
+Engine `20857608bb` and guest tools29 support default-off
+`LT_GLES_TALLY_BATCH=on`. With `LT_GLES_TALLY_QUIET=off`, policy2 retains
+exact tally text but writes it once to stderr and once to the host, instead of
+seven fragments. Quiet policy1 takes precedence if explicitly enabled.
+Default policy0 and unrecognized replies keep the original fragments. Older
+guests treat2 as unsuppressed original logging, so verify installed serial29.
+No present/counter/return value changes. This remains unmeasured.
+
+Sparse `shim-tally` markers carry successes, failures, **policy0/1/2** in a/b/c.
+For focused timing run tallypath.py with `--mode batch` (policy2); `--mode off`
+requires0 and `--mode on` requires1. The JSON preserves raw policy and whether
+it permits suppression. Use interleaved captures, then ordinary comparisons
+with frame/context/scheduler diagnostics and user recording off. Preserve
+complete stderr text and avoid attributing the whole post-present interval to
+logging alone. Guest packages remain private.
