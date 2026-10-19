@@ -328,7 +328,7 @@ restored fault state without a debugger or guest memory access. Registers are
 at the faulting instruction, **not** at function entry. The analyzer validates
 and retains paired snapshots; older captures have zero snapshots. This helps
 identify callers and buffer cursors after the entry-breakpoint attempt yielded
-no samples. New snapshot build/runtime confirmation pending.
+no samples. New snapshot Linux/Android builds pass; device capture pending.
 
 ## Sparse frame milestones
 

@@ -1852,8 +1852,10 @@ The next cadence probe extends the working sampled fault hook: return-mode
 beginnings additionally record R0–R3, LR, SP and raw CIDR. No guest reads or
 debugger are required. These are fault-time registers, not entry arguments.
 `alignmentlatency.py` validates/retains paired snapshots and preserves old
-captures with zero snapshots. Build/runtime confirmation pending; ordinary
-VFP A/B uses the already frozen APK above, without these probes enabled.
+captures with zero snapshots. Linux/Android builds pass on app `fb7d8823` /
+engine `950a664438`; runtime confirmation pending. Frozen `alignment-args.apk`
+SHA-256 `96441e68ac637aa834319e447b4b7b6e30b959051541ccf70e3691d016002bd0`.
+Ordinary VFP A/B uses the separate frozen `vfp-mla.apk`, without these probes.
 
 #### Non-fused VFP multiply/add helper experiment
 
@@ -1878,6 +1880,19 @@ APK SHA-256 `bc7ced2656d9130350ec58dc65547fdb5ed17e03076326fa432093a41ae1e103`.
 No tests added/run. Ordinary measurement setup keeps audio enabled and Start
 profile/full accounting/fault/context/FP diagnostics off, array caching on,
 other experiments off. The focused benchmark times whole loops.
+
+First of three planned interleaved/reversed Poco pairs completed; both game
+scenes reviewed as the Jetpack title with Start profile off. Ten LT Bench rounds
+per arm, then a settled 30 s game window on the same worker. No full accounting,
+perfmaps or focused diagnostics. Subsequent pairs remain in progress.
+
+| Pair | LT Bench best / median ns, off → on | Mean fps | Ceiling | Median | Low | 1% low | Hitches >50 ms | Skipped |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 7.7 / 8.9 → 7.6 / 9.1 | 53.933 → 53.567 | 58 → 58 | 54 → 54 | 48 → 48 | 28.075 → 28.417 | 4 / 203.204 ms → 2 / 101.145 ms | 0 → 0 |
+
+No throughput gain in this first pair; the smaller hitch count needs the
+remaining reversed/interleaved pairs. Evidence: `poco-vfp-mla-1-{off,on}/`,
+`vfp-mla-run.py`, `vfp-mla-results.json` and its report recipe in `build/perf-codex/`.
 
 ### Measured and rejected
 
