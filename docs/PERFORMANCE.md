@@ -3424,6 +3424,126 @@ host-state/thread split and input hashes. Reproduction/analysis scripts:
 queue-path-run.py/analyze.py, queue-summary.py, queue-details.py in
 build/perf-codex. HCI exchange reproduced with tools/perf/btpath.py.
 
+#### AAC/converter boundaries and the two nonaudio hitch pipelines (diagnostic)
+
+`poco-audio-queue-1/` uses the same frozen bt-path.apk (app `4afc6e61`, engine
+`deb39789e4`; APK SHA256
+`9006ed229a71ae27665ec606f55f57f04fb3860c00779820e9aee12766cd37d1`).
+No engine or guest update. The new `n72-7e18-audio-queue-points.json` retains
+producer insertion, consumer selection/generation/serial, swap layers and guest
+scheduling; replaces four transaction and two shared-queue observations with
+AAC `ProduceOutputPackets` and `convertScaledFloatToS16` entry/epilogue pairs
+(30 points). Entry and sole normal epilogues were checked against matching
+private cache disassembly. The converter returns void; epilogue r0 is not success.
+
+Snapdragon 865-class Poco F3, BQL150us, nice0/CFS; physical surface/context/
+guest-PC and host scheduler diagnostics on. HCI, arithmetic, alignment-fault,
+full accounting and user recording off; no syslog relay. Worker26551/vCPU26766,
+same TID at both boundaries, guest tools good28. Both scenes visually reviewed
+Jetpack title/Start profile off. Same-worker post-window task/thread snapshot
+completed and debugger detached. Clean Stop/no-qemu/exact debug-env restored.
+Capture and raw/joined analyses completed successfully. There are1,912,412
+lossless complete records,503,383valid triplets (257,495 in complete frame
+intervals), full scheduler coverage/no trace errors or loss, two clock snapshots
+with0ns offset spread. Exact window `[478588923351023,478648923351023)`.
+
+| Mean fps | Ceiling | Median | Low | 1% low | Hitches >50ms/full duration | Skips |
+| --- | --- | --- | --- | --- | --- | --- |
+| 58.516667 | 60 | 58 | 56 | 29.885780 | 2/101.488333ms | 0 |
+
+Diagnostic attribution only: no before→after improvement or overhead claim.
+
+**Audio accounts for some compositor delays.** There are1,881complete AAC calls
+and1,881converter calls, all on mediaserverd14 thread0xe07d4bb8, with1024scalars,
+scale bits0x3f800000 (1.0), and exactly one enclosing AAC call per converter.
+No pending audio entry overlaps the window. AAC selected-thread running totals
+841.785162ms (median285.677us); conversion totals387.535970ms. AAC includes
+conversion: do not add these totals. Of the converters,1,075aligned output
+pointers have median24.635us and total27.910872ms;806pointers2mod4 have
+median420.2345us and total359.625098ms. These selected-thread intervals include
+kernel/native work while that thread is selected; guest faults remain intact.
+Post-window owner names require thread lifetime continuity.
+
+| Pending framebuffer write at s | Notification→selection ms | Selection→register write ms | AAC running in delayed stage ms | Converter within AAC ms |
+| --- | --- | --- | --- | --- |
+| 47.566053 | 22.768438 | 1.165260 | 14.496720 before selection | 8.834006 |
+| 49.053349 | — | 20.038854 | 13.281457 after selection | 7.729116 |
+| 51.283404 | 22.149115 | 1.350833 | 16.217397 before selection | 10.195728 |
+| 56.551383 | — | 18.396979 | 14.577603 after selection | 8.868281 |
+
+**Most held cycles remain a separate path.** All3590render updates change
+generation and successfully query the queue;3510compare a changed image serial,
+80repeat. There are3511pending framebuffer register changes (boundary difference),
+3547successful mapped presents,87held cycles/89repeated ticks. Of those ticks,
+81have the callback complete but no selection yet,2have the callback pending,
+2have the host write pending: insertion starts after the preceding query in
+all85cases. Four were selected before the tick and inserted before its query.
+Only6of81pre-selection cases have AAC overlap in the measured stages; this
+does not exclude audio displacement before those stages. Insertion serials
+still derive base+1 from the pinned caller, not a direct shared-memory identity.
+
+**Neither >50ms gap contains AAC or converter execution.** Their downstream
+paths are directly observed. Times below are milliseconds since the preceding
+frontend frame; query times use entry, framebuffer writes use the pending
+register marker. That marker (`lcd-flip`, LCD offset0x24) is **not** the later
+vsync latch/publication. The refresh at roughly31ms has already passed before
+the new pending base is written, so the next refresh obtains it around48ms.
+
+| Gap ending s / duration ms | First query repeats | First new host present ends | New-image query | Pending base write | Earlier refresh | Next refresh begins/ends | Engine publish | Frontend end lag |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 17.717573 /50.010573 | 15.750 | 25.967 | 32.311 | 33.420 | 31.494 | 48.159/49.122 | 49.343 | 0.668 |
+| 48.169143 /51.477760 | 16.023 | 20.760 | 35.203 | 36.256 | 31.380 | 48.032/50.679 | 51.030 | 0.448 |
+
+First gap: host running46.528178ms, sleeping1.022291ms, runnable2.460104ms;
+game selected running24.905365ms. Second:40.432241/3.934270/7.111249ms,
+game24.188645ms. Background launchd/syslogd execution is also present. Engine
+gaps49.964479/51.417760ms closely track frontend gaps. Thus late production
+and the subsequent compositor/refresh phase explain the observed downstream
+timing; frontend delivery does not hide a large stall. The precise reason the
+game became late remains open, including work before the displayed gap. This
+is not evidence to change latch/IRQ timing or skip synchronization.
+
+**Looking before the displayed gaps narrows the late producer work.**
+The previous-present-end→next-present-begin intervals for the two late presents
+are47.029166/47.763698ms, beginning22.025/27.315ms **before** their frontend
+gaps. Their preceding intervals are14.319844/16.007604ms. In the slow intervals,
+all launchd-owned threads together run14.030158/14.007188ms and syslogd-owned
+threads11.650571/11.710208ms: combined25.680729/25.717396ms. The main presenting
+game thread runs10.328647/10.427031ms, versus8.970885/8.338905ms in the preceding
+intervals. Host sleeping+runnable time totals only1.056979/2.098750ms in these
+slow producer intervals. These wider intervals contain no AAC/converter either.
+
+Existing `tallypath.py` then places exact `shim-tally` counts4800/6600 in these
+same two producer intervals, at−21.643437/−26.939688ms relative to their visible
+gaps, followed by46.647135/47.388229ms until the next present begins. Both
+markers therefore precede the visible gap; hitch-only sample windows would
+miss them. This is direct timestamp/actual-owner evidence for the periodic
+logging lead with BQL150, stronger than the old pmap-only association. It does
+not establish that all25.7ms is caused by the tally, or override the earlier
+inconclusive ordinary suppression comparison. Of12candidate intervals, only
+two exceed40ms; two of3534controls also exceed40ms. Most candidates are normal.
+Next attribute launchd/syslogd functions and the stderr/IPC path in these wider
+windows; batching log fragments while retaining output is a distinct possible
+experiment. Do not simply repeat the unchanged suppression FPS experiment.
+Local `producer-tallies.json` and audio-queue-producer-tallies.py retain the
+exact interval joins and input hashes.
+
+Across frame classes: normal3404frames, AAC650.912137ms/1.362% of vCPU running,
+converter270.403737ms/0.566%; late104frames (18with AAC overlap),
+AAC190.873025ms/6.758%, converter117.132233ms/4.147%; hitch2frames, both0.
+Audio is a specific delay source, not a universal explanation for hitching.
+
+Evidence: capture/scenes/identity/scheduler/guest snapshot under
+`build/perf-codex/poco-audio-queue-1/`; tracked `queuepath.py` and `audiostages.py`
+retain input hashes, serial derivation, host/thread splits, audio intervals,
+preceding producer intervals and per-hitch display timelines. Local capture/raw
+analysis scripts: audio-queue-run.py/analyze.py; pipeline plot generator:
+audio-queue-timeline.py. `hitch-pipeline.png/svg` shows both gaps. Next join
+native/JIT execution samples to the **producer interval before a missed query**,
+rather than only aggregating samples inside frontend hitch windows; retain
+scheduler/native waits separately. Pixel's older214ms gameplay hitch still
+needs its own synchronized capture. Stable60/good1%low remains unmet.
+
 #### Bluetooth controller exchange (diagnostic; two healthy references)
 
 Engine `deb39789e4` adds default-off `LT_BT_PATH=on`, requiring an active

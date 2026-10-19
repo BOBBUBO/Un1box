@@ -1188,6 +1188,55 @@ success result. The real queue capture validates3590ordered serial candidates
 and separates pre-query insertion timing from two post-selection audio delays;
 full evidence and local report scripts are recorded in PERFORMANCE.md.
 
+### Join audio boundaries to queue and refresh stages
+
+Use `n72-7e18-audio-queue-points.json` for a combined audio/queue diagnostic:
+30pinned points, retaining insertion/selection/generation/serial and scheduling,
+replacing four transaction and two shared-queue observations with AAC output
+and float-to-S16 conversion entry/epilogues. Keep arithmetic/fault/HCI/full
+accounting and user recording off. Use the same raw analyzers and matching
+snapshot as above; pass this manifest to swapcalls.py. Run framepath.py with
+`--residency-intervals` and save its output as milestones.json. Then:
+
+```sh
+python3 tools/perf/queuepath.py CAPTURE --json CAPTURE/queue-summary.json
+python3 tools/perf/audiostages.py CAPTURE --json CAPTURE/audio-stages.json
+```
+
+queuepath.py also accepts the original queue manifest. It pins required queue
+addresses/roles and kernel/cache hashes, validates report identities, preserves
+base+1 serial derivation and negative notification→selection spans, and splits
+held cycles into host states and guest-thread residency. Serial candidates are
+not independent shared-memory identity. Keep all reports in the same directory;
+input hashes reject stale joins.
+
+audiostages.py requires the combined manifest. It checks worker/window, input
+hashes, entry/epilogue addresses and scheduling continuity, and reports AAC and
+converter overlap by frame and notification→selection→pending-base-write stage.
+AAC includes conversion; **do not add their times**. Conversion returns void:
+epilogue r0 is not success. Entry r1 is output, r2 scale float bits, r3 scalar
+count; output2mod4 is distinct from output0mod4. Selected-thread running includes
+kernel/native work while the thread is selected. Owners are post-window and
+require thread lifetime continuity; unfinished audio spans crossing the window
+are rejected. Function boundaries precede their instructions/returns.
+
+Per-hitch timelines retain queue queries, host presents, framebuffer register
+writes, LCD refreshes, publication, frontend lag and the two preceding frontend
+intervals. Producer lead-ins also include intervals from the previous present
+end to the next present begin on one thread/context, including the preceding
+such interval. These are useful windows for CPU-sample attribution, not measured
+game update/render boundaries. Do not infer a dependency from overlap alone.
+
+`lcd-flip` records the **pending framebuffer base register write** (offset0x24
+in ipod_touch_lcd.c). The later `vsync-begin` records current/pending bases;
+refresh/latch and publication follow separately. A late base write after one
+refresh can leave the image unchanged until the next. Preserve these distinct
+stages when attributing a gap; the register marker alone is not screen delivery.
+The completed Poco capture confirms audio functions in some delayed stages and
+no AAC/converter execution in its two >50ms gaps. Those gaps need earlier
+producer execution attribution, not an audio-only explanation. These diagnostic
+runs supply no ordinary FPS gain or overhead measurement.
+
 ### Bluetooth startup and controller exchange
 
 Engine `deb39789e4` supports default-off `LT_BT_PATH=on` together with

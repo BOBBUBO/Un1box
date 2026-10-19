@@ -129,6 +129,35 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   state totals. No cause or ordinary performance gain proven.
 
 - [ ] Explain the remaining execution time before delayed framebuffer flips.
+  NEW poco-audio-queue-1 adds AAC/converter boundaries with30pinnedPCs,
+  same frozenAPK, user recorder/arithmetic/fault/HCI/accounting off. Lossless
+  1,912,412records/503,383triplets, complete scheduler/clockspread0ns, bothscenes
+  title/profileoff,sameTID/nice0/CFS,good28,detached snapshot,cleanStop/env restored.
+  Diagnostic58.516667fps,ceiling60,median58,low56,1%low29.885780,
+  2hitches/101.488333ms,zero skips; no improvement/overhead comparison.
+  1,881AAC/converter pairs confirm exact audio functions in four delayed stages:
+  AAC13.281/14.578ms afterselection,14.497/16.217ms beforeselection;
+  converter included7.729/8.868/8.834/10.196ms. Do not add inclusive totals.
+  Output aligned median24.635us versus2mod4 420.2345us; preserve guest faults.
+  BUT neither50.011/51.478ms hitch contains audio: host present completes at
+  +25.967/+20.760ms, new query+32.311/+35.203ms, pendingregisterwrite
+  +33.420/+36.256ms misses refresh+31.494/+31.380ms; next refresh~48ms.
+  Frontend lag0.668/0.448ms. lcd-flip is pendingbasewrite, not vsynclatch.
+  Most common misses still have late producer insertions:85of89heldticks
+  startinsert afterpriorquery;4alreadyselected. Only6of81callbackdone cases
+  have audio overlap in measuredstages. Next sample earlier producer work and
+  host waits against missedquery deadlines, including preceding intervals;
+  no compositor/IRQ timing change justified. Tracked queuepath.py/audiostages.py
+  and audio-queue manifest retain joins/hashes/timelines; full PERFORMANCE table.
+  Wider producer intervals now expose47.029/47.764ms before late presents:
+  launchd+syslogd selected running25.681/25.717ms, game main10.329/10.427ms,
+  host sleeps+runnable only1.057/2.099ms. Exact tally4800/6600 markers occur
+  21.643/26.940ms BEFORE visible gaps, in these same producer intervals.
+  Prior intervals14.320/16.008ms. This sharpens the logging lead; not all
+  daemon time is proven tally work, and old ordinary suppression results remain
+  inconclusive. Next name service functions/stderr IPC in wider windows or
+  measure fragment batching that retains output; do not repeat unchanged
+  suppression FPS pairs. producer-tallies.json retains exact joins/hashes.
   NEW poco-queue-path-1 traces compositor consumption with32pinnedPCs and
   same frozen bt-path.apk, no guest/engine update.2,012,202lossless records,
   536,892validtriplets, complete scheduler/52ns spread; bothscenes title/profileoff,
@@ -145,8 +174,8 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   for the48common cases; keep audio work/host waits separate. Negative
   callbackend→selection cases retained. Full joins/limits in PERFORMANCE.md,
   queue-summary.json/queue-details.json. Ordinary display-priority pairs below
-  found no repeatable pacing benefit. Next trace the specific intervening
-  audio work and host waits; Pixel needs a matching gameplay scheduler trace.
+  found no repeatable pacing benefit. Audio functions are now confirmed above;
+  Pixel still needs a matching gameplay scheduler trace.
   NEW CA callback capture supersedes the hypothesis that secondary-only swaps
   themselves cause misses. Same frozenAPK,27pinnedPCs, no guest update needed.
   1680547lossless records/438791triplets, complete scheduler/clockspread53ns,
