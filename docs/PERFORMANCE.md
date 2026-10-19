@@ -1794,6 +1794,52 @@ reports, `summary.json` and reviewed `audio-bursts.png`. Capture/report recipes
 are `alignment-path-run.py` and `alignment-path-report.py` beside it. Pixel
 untouched. No new optimization or measured gain; stable 60 fps remains unmet.
 
+**Architectural return timing:** a subsequent `LT_ALIGNMENT_PATH_PROF=returns`
+capture uses that same frozen APK, with original arithmetic helpers/no VFP
+counters. Window `[449908257382797,449968257382797)`, engine 26228 / vCPU
+26384. Same-worker debugger snapshot identifies mediaserverd PID 14, CIDR 0xf /
+TTBR0 0xa6c5018. Both scenes reviewed as Jetpack title/Start profile off;
+debugger detached, clean Stop/no-qemu/baseline restored and phone trace removed
+after pull. 736,590 complete records, zero dropped/incomplete/write errors,
+zero late publication markers. Perfetto has complete coverage, no error/loss
+counters and 157 ns clock-offset spread; default scheduler validation passes.
+
+| Mean fps | Ceiling | Median | Low | 1% low | Hitches >50 ms | Skipped |
+| --- | --- | --- | --- | --- | --- | --- |
+| 51.117 | 56 | 52 | 46 | 20.057 | 28 / 1642.669 ms | 0 |
+
+Diagnostic only: the two modes are not an interleaved optimization/overhead
+comparison. All 235,490 faults are again in the audio converter. Faults overlap
+23/28 hitches; 40 bursts (same grouping), median spacing 1509.049 ms. Media
+normal/hitch execution share is 14.37/55.85%. All 3,122 explicit presents
+succeed. Hitches total 1463.878 ms running, 122.479 ms runnable, 56.311 ms
+sleeping; these distinguish guest/native work from host scheduling delays.
+
+The return analyzer successfully processes the real capture. All **1,665**
+sampled beginnings have matching returns: **916** wholly inside the window,
+749 outside, zero abandoned, zero pending and zero cross-frame samples. All
+window samples belong to the same mapped mediaserverd key. Duration begins
+after fault-state restore and ends after the original architectural return;
+it excludes the triggering access/unwind and includes instrumentation/waits.
+
+| Frame class | Samples | Mean wall us | Median us | p99 us | Max us | Mean running us |
+| --- | --- | --- | --- | --- | --- | --- |
+| Normal | 88 | 3.201 | 3.125 | 3.750 | 9.115 | 3.201 |
+| Late | 329 | 3.340 | 3.177 | 6.355 | 8.958 | 3.340 |
+| Hitch | 499 | 3.406 | 3.178 | 5.625 | 40.990 | 3.370 |
+
+The 40.990 us outlier includes 22.656 us running, 13.125 us runnable and
+5.209 us sleeping. No sampled individual handler takes milliseconds. The
+evidence points to many small operations concentrated into conversion batches,
+plus separate host scheduling delay, rather than a rare very slow fault.
+Systematic 1/257 sampling and diagnostic overhead limit extrapolation; these
+numbers are not an estimate of attainable FPS gain. Next: guest audio buffer/
+decode cadence and scheduling dependencies; preserve sound and ARM1176 faults.
+Do not repeat the rejected unaligned-store bypass. Evidence under
+`build/perf-codex/poco-alignment-path-returns-1/` includes matched and unmatched
+data in `alignment-latency.json/txt` and the same raw/reports as fault-only.
+No tests added/run, no optimization or speedup claimed. Pixel untouched.
+
 ### Measured and rejected
 
 **Eight-bucket indexed indirect-site cache** (2026-10-18, engine `7b4a86c9f1`,

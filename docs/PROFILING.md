@@ -316,8 +316,10 @@ memory probe/state unwind and includes diagnostic/wait time. Target-pmap time
 can still include other guest threads; a pmap is not a thread execution trace.
 Fault-only mode has reproduced the conversion bursts with zero VFP counters:
 22/25 hitches overlap faults in one 60 s Poco capture; see PERFORMANCE.md for
-the exact window, scheduler split and limitations. Return timing confirmation
-is pending. These are diagnostics, not optimizations.
+the exact window, scheduler split and limitations. Return timing is also
+confirmed on real data: 1665/1665 pairs match, 916 inside the timed window;
+normal/hitch median3.125/3.178 us. No abandoned/pending pairs or sampled
+millisecond-scale fault. These are diagnostics, not optimizations.
 
 ## Sparse frame milestones
 

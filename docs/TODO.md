@@ -90,7 +90,15 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   25 hitches/1448.322 ms, zero skips. Same-worker process mapping, complete
   scheduler coverage and clean Stop verified. Three fault-free hitches remain;
   host runnable delays also contribute. Full provenance in PERFORMANCE.md.
-  Return timing capture/analysis pending; no new optimization or gain claimed.
+  Return timing capture/analysis now complete: 1665/1665 matching samples,
+  916 wholly inside window, 749 outside; no abandoned/pending/cross-frame rows.
+  Normal/hitch median3.125/3.178 us, p99 3.750/5.625 us; largest40.990 us
+  includes host waits. Many small operations in batches, no sampled ms-scale
+  fault. Same frozen APK, not optimization/overhead A/B. Diagnostic mean51.117,
+  ceiling56, median52, low46, 1%low20.057; 28 hitches/1642.669 ms, zero skips.
+  235,490 faults; 23/28 hitches overlap, media execution14.37/55.85%.
+  Next: guest audio buffer/decode cadence and scheduling dependencies, keeping
+  sound/architectural faults. No new optimization or measured gain claimed.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
