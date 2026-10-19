@@ -2774,6 +2774,64 @@ per-gap clipping). `ahbpath.py` processed this real capture successfully.
 Runner ahb-path-run.py, identity ahb-path-build-identity.json. No test suites
 added/run; Pixel disconnected/untouched.
 
+**Conditions-only attribution complete:** separate frozen condition-wait.apk,
+app sourcee958b0f8 / engine77a6f34c02, SHA256
+`43968d09fa14a87149780f460a8879b73b264ebcaafdc11be9363f49b5cf0ec4`,
+worker1076/vCPU1544. Spin on, conditions+AHB+scheduler diagnostics on, other
+diagnostics/accounting/user recorder off. Both title scenes reviewed; same
+TID/nice0/CFS, good28 verdict, clean Stop/no-qemu/exact baseline restoration
+confirmed. Own phone trace/milestones removed after pulling. All155752 records
+complete/no drops/incomplete/late publications/write errors; all3531 in-window
+presents succeed. Native wait13780 completed/retained calls, one site, no site
+overflow, both native and BQL hooks unchanged. Trace has complete coverage,
+no error/loss, clock spread52ns and no initial-state exception.
+
+Diagnostic mean58.033,ceiling60,median58,low54,1%low29.022;
+one51.741ms hitch,zero skips. No A/B or overhead claim. The only native site is
+the guest idle condition at cpus.c:478. Its5071 in-window calls span8664.471ms:
+67.633ms running,4855.758ms sleeping,3741.079ms runnable. Condition duration
+includes mutex reacquisition. Whole-window vCPU is48097.611ms running,
+5628.432ms S,6271.454ms R,1.015ms R+,1.488ms D.
+
+Separate >30ms analysis finds115 gaps with238 selected>=1ms runnable intervals:
+85/133.472ms inside the idle condition,41/48.746ms in glFinish,4/5.288ms in map,
+3/3.393ms in unmap,105/184.173ms outside these traced calls. All85 condition
+matches have immediately preceding S states: median198.334us,min0.834us,
+max1043.437us;18under100us,68under250us,76under500us. The standard >50ms gap
+has two condition intervals/3.366ms and two outside traced calls/3.434ms.
+This establishes another source of delayed wakes while leaving substantial
+unattributed waits; it does not prove all gaps share a cause.
+
+Evidence: `build/perf-codex/poco-condition-wait-1/`, full raw inputs/identity,
+reviewed scenes, milestones, hitch-50/30 and native-50/30 and stages-50/30
+reports/charts, `summary.json/txt` with preceding-sleep samples and input hashes.
+`condition-wait-summary.py` reproduces combined attribution; nativewaits.py and
+ahbpath.py processed the real capture. No test suites added/run; Pixel untouched.
+
+#### Bounded vCPU0 idle spin (ordinary comparison in progress)
+
+Engine `357fc83aba` adds default-off `LT_IDLE_SPIN=on`, separate from BQL spin.
+Before vCPU0 sleeps for guest work, it releases the BQL and observes a separate
+atomic host-kick sequence for a250us clock budget. It then reacquires the BQL
+and checks the original idle predicate. If still idle, it takes the original
+condition wait while holding the BQL for that decision, preserving the existing
+atomic release/wait behavior. Stop/paused/nonhalted states and other CPUs take
+the original path. Descheduling can extend elapsed wall time around the budget.
+No guest/CPU predicates are read outside the lock; no timer/interrupt/guest-time
+or audio behavior is skipped. Guest idle/resume callbacks retain their bracket.
+Off adds no clock reads or extra unlocks; kick sequence increments are guarded.
+
+Startup confirms mode/budget; after vCPUs stop, counters retain attempts,
+resumed-before-condition and fallback outcomes. They cover the whole worker,
+not the frame window. Linux/Android builds pass; frozen idle-spin.apk,
+app sourcea7bdb812 / engine357fc83aba, SHA256
+`789db590c2de9e94a527c0176e25e293dd2a602c6b050b9fd15dc6ba6161a2ac`,
+identity/matching symbols retained. Ordinary same-APK three60s pairs started
+on/off,off/on,on/off after50s title settling, BQL spin on in both modes; all
+diagnostics/accounting/user recorder off, hflags/cache off, arrays on, priority
+off. Ceiling/median/low/1%low/hitches/durations and benefit remain unmeasured.
+Keep experimental default off. No tests added/run.
+
 #### Bounded vCPU0 BQL spin (ordinary comparison complete)
 
 Engine `23041226e7` adds default-off `LT_BQL_SPIN=on`. Only vCPU0 tries a

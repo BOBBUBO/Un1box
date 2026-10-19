@@ -695,7 +695,10 @@ waits, preserves both mutex hook pointers and checks them again at shutdown.
 Existing condition interposers cause refusal. Use nativewaits.py for the same
 worker and scheduler report; durations still include mutex reacquisition.
 This mode uses the80MiB bounded trace. Full native mode retains its refusal of
-preexisting mutex hooks. The first combined condition capture is in progress.
+preexisting mutex hooks. First combined capture/analyzers complete: the only
+condition site is guest idle,85long in-gap runnable intervals/133.472ms;
+105/184.173ms remain outside condition/present stages. Source/limits and all
+diagnostic frame metrics are in PERFORMANCE.md.
 
 `LT_GLES_PRESENT_PROF=on` (engine `5b38fec1df`) independently times surface presentations. It defaults
 off and needs neither the manual recorder, `IT_GLES_PROF`, nor full accounting.

@@ -5,6 +5,18 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Performance (current focus)
 
+- [ ] Measure bounded vCPU0 idle spin (`357fc83aba`, default-off LT_IDLE_SPIN=on).
+  Conditions-only capture identifies85long in-gap runnable intervals/133.472ms
+  in the guest idle wait; preceding S median198.334us,68/85under250us. New spin
+  releases BQL, polls only a separate host-kick sequence for250us, reacquires
+  and checks original idle predicate; otherwise original condition wait.
+  Guest time/timers/IRQs/audio/idle callbacks preserved; other CPUs and paused/
+  stop/nonhalted cases original. Startup and deferred outcomes logged.
+  Linux/Android builds pass. Three ordinary60s pairs launched on/off,off/on,
+  on/off, BQLspinON in both arms; all diagnostics/accounting/user recorder off.
+  Mean/ceiling/median/low/1%low/hitches/durations not yet established; keep off.
+  Frozen identity/runner/evidence idle-spin*. Source/provenance PERFORMANCE.md.
+
 - [ ] Split remaining mapped-present waits into native stages. Engine
   `669353072a` adds default-off `LT_GLES_AHB_PATH=on` with LT_FRAME_PATH;
   glFinish/describe/map/unmap boundaries retain buffer/status. Producers only
@@ -21,9 +33,17 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   validated pre-window superseded initial scheduler row retained in reports.
   Both scenes reviewed,Stop/no-qemu/exactbaseline restored,good28.
   Engine77a6f34c02 adds native conditions-only tracing, mutex hooks unchanged,
-  compatible with spin; builds pass, first conditions+AHB+spin capture running.
-  Attribute remaining outside-present waits next; ordinary comparisons keep
-  diagnostics off. Evidence poco-ahb-path-1/ and stage reports.
+  compatible with spin; first combined capture complete, worker1076/vCPU1544.
+  13780completed waits,1site/no overflow/hooks unchanged;155752complete records,
+  no trace loss/initial exception,clockspread52ns. Native site guest idle condition
+  cpus.c:478,5071calls/8664.471ms in60s (67.633running,4855.758S,3741.079R).
+  >30ms:115gaps,85/133.472ms idlecondition,41/48.746ms glFinish,4/5.288ms map,
+  3/3.393ms unmap,105/184.173ms outside traced calls. Condition preceding sleep
+  median198.334us,68/85under250us. Standard metrics diagnostic58.033,ceiling60,
+  median58,low54,1%low29.022,one51.741ms hitch,zero skips; no gain/overhead claim.
+  Both scenes reviewed,Stop/no-qemu/exactbaseline restored,good28. Idle spin
+  candidate above targets the condition contribution; other waits remain.
+  Evidence poco-ahb-path-1/ and poco-condition-wait-1/ with all reports/samples.
 
 - [x] Measure bounded vCPU0 BQL spin (`23041226e7`, default-off LT_BQL_SPIN=on).
   Short observed sleeps preceding long idle wakes justify trying a50us spin
