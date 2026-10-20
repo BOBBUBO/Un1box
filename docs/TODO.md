@@ -180,9 +180,9 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash
   automatically after a quick quit. Linux/Windows Apps now has a version picker; it has no Last crash.
 
-- [x] Battle Bears: Zombies! is guest-CPU-bound (desktop ~24 fps, Pixel 22): known game bug. Its OpenFeint 2.9.1
-  `_mainDefault:` thread spins on an empty run loop; without it the game holds its 30 fps cap (PERFORMANCE.md).
-  No emulator fix: faster polling just spins more per time slice. Other OpenFeint 2.x games may do the same.
+- [x] Battle Bears: Zombies! was guest-CPU-bound (desktop ~24 fps, Pixel 22): its OpenFeint 2.9.1 `_mainDefault:`
+  thread spins on an empty run loop. Guest tools serial 31 make that wait sleep (gles-public); 29.6–29.7 fps, the
+  game's cap (PERFORMANCE.md). Check on the phones.
 
 - [ ] Installing a very large app over the USB bridge (Legacy Store or Install IPA) is very slow:
   Asphalt 5 spends 5+ minutes extracting inside the guest on the phones, and the same install
@@ -197,6 +197,20 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   CGL-only. Needs: an ES1/ES2 state capture (no `glGetTexImage`, so read textures back through an
   FBO), a runtime save + "suspended" marker per record, and `-incoming` restore on start. The UI
   hook exists: `MainActivity.canSaveState` turns the Stop dialog's primary action into Save & Stop.
+
+- [ ] Web proxy (port of the Mac's, per device in Settings: Off / Direct / Archive with a date). The guest
+  half ships in the guest tools: `itproxy on|off` points iOS's HTTP/HTTPS proxy at 10.0.2.100:3128 and
+  `ittrust` trusts a CA. The Mac's host half to port: `LightTouchDevice/WebProxy.swift` (HTTP/1.0 replies, TLS 1.0
+  terminated with a per-host leaf; direct, archive from the Wayback Machine, off) with `WebProxyAdapters.swift`
+  (Weather, Wi-Fi location, retired hosts), `DeviceRuntime/WebProxyCA.swift` (the device CA and leaves, hand-written
+  DER), `LightTouchCore` `WebProxyConfiguration`/`WebProxySetup`/`DeviceWebProxy` (routing file, then route and
+  trust through the guest agent). Android needs: (1) an engine guestfwd that reaches the app (the Mac's
+  `guestfwd=...-cmd:/usr/bin/nc -U SOCK` needs `/bin/sh` and `nc`; a per-connection Unix-socket target in
+  `net/slirp.c`, passed as `-netdev user,id=wifi0,...` in place of the boards' default); (2) the proxy in the
+  engine service (check that Conscrypt still serves TLS 1.0 with a cipher iOS 3 offers, else the engine's OpenSSL); (3) the CA and leaves
+  (port the DER writer; Android has no public certificate builder); (4) a guest agent client to run `itproxy` and
+  `ittrust` (Android has none yet); (5) the Settings row. (Battle Bears' spinning thread waits on an empty run
+  loop, not on the network, so this is unrelated to it.)
 
 ## Guest graphics
 

@@ -33,6 +33,13 @@ _HOST_CA_FILES = (
     "/etc/ssl/cert.pem",
 )
 _HOST_CA_DIRS = ("/etc/ssl/certs", "/etc/pki/tls/certs")
+# Archived copies whose executable is cut short (no device can load it), each with an intact copy of the same version.
+_BROKEN = {59853: 179589}  # Fruit Ninja 1.7.4: the search row's copy
+
+
+def preferred(ipa_id):
+    """The copy to select first for a search row that names ipa_id."""
+    return _BROKEN.get(ipa_id, ipa_id)
 
 
 def _tls_context():
@@ -277,7 +284,7 @@ class CatalogClient:
     def compatible_versions(self, app, target):
         """Every archived copy of the app that could run on the target, in catalog order.
 
-        The copy the search row names is always kept, so the picker can show it.
+        The copy the search row names is always kept, so the picker can show it, unless it is broken.
         Each row is {"ipa_id", "version", "size", "minimum_os"}; choose() rechecks one.
         """
         rows = []
@@ -289,6 +296,8 @@ class CatalogClient:
                 try:
                     ipa_id = int(copy["ipa_id"])
                 except (TypeError, KeyError, ValueError):
+                    continue
+                if ipa_id in _BROKEN:
                     continue
                 macho = copy.get("macho_min_os")
                 fits = (copy.get("install_status") == "installable" and _runs(copy.get("architectures"), target)

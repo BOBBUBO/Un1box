@@ -74,6 +74,11 @@ public nonisolated struct CatalogCopy: Decodable, Sendable {
 
     /// Whether a device whose CPU is `arch` has a slice here it can execute:
     /// an armv7 CPU (the iPad) runs armv6 slices too, as Legacy Store judges.
+    /// Archived copies whose executable is cut short (no device can load it), each with an intact copy of the same version.
+    static let broken = ["59853": "179589"]  // Fruit Ninja 1.7.4: the search row's copy
+    /// The copy to select first for a search row that names `ipaID`.
+    public static func preferred(_ ipaID: String) -> String { broken[ipaID] ?? ipaID }
+
     public static func runs(_ architectures: [String]?, on arch: String) -> Bool {
         architectures?.contains { $0 == arch || (arch == "armv7" && $0 == "armv6") } == true
     }

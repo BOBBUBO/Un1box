@@ -67,6 +67,24 @@ internal object GuestTools {
         return target
     }
 
+    private fun serial(pack: Pack, board: String, build: String) = pack.families.firstOrNull { covers(it, board, build) }?.optInt("serial", 0)
+
+    /**
+     * The bundled pack, staged, when it is newer than the guest tools device [recordId] carries; null otherwise. A
+     * device keeps the tools it was given, so after an update of LightTouch that bundles newer ones they are handed
+     * over before the device starts, and iOS installs them during that boot. Never older: a newer pack the user
+     * chose stays, and so does one this build cannot read.
+     */
+    fun newerFor(context: Context, recordId: String): File? {
+        val record = File(context.filesDir, "library/records/$recordId")
+        val metadata = JSONObject(File(record, "record.json").readText())
+        val board = metadata.optString("board"); val build = metadata.optString("build")
+        val bundled = packs(context).firstOrNull { pack -> pack.families.any { covers(it, board, build) } } ?: return null
+        val installed = File(record, "assets/guest.itpack")
+        val have = if (!installed.isFile) 0 else try { serial(read("guest.itpack", installed.readBytes()), board, build) ?: 0 } catch (_: Exception) { return null }
+        return if ((serial(bundled, board, build) ?: 0) > have) forDevice(context, board, build) else null
+    }
+
     /**
      * The tools folder the firmware preparer reads: release-guest-unpacked/guest-tools/ holding the
      * iPod touch 2G family's guest binaries and armv6.itpack, plus an inventory.json of their

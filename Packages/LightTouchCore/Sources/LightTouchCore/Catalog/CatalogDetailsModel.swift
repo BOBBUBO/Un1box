@@ -66,10 +66,11 @@ import Observation
             let records = try await CatalogClient.versions(for: app)
             let found: [Row] = records.flatMap { version in
                 version.copies.filter { copy in
-                    copy.ipaID == String(app.ipaID)
-                        || (copy.installStatus == "installable" && CatalogCopy.runs(copy.architectures, on: arch)
-                            && CatalogCopy.osIssue(version.minimumOSVersion, deviceOS: deviceOS) == nil
-                            && CatalogCopy.osIssue(copy.machOMinOS, deviceOS: deviceOS) == nil)
+                    CatalogCopy.broken[copy.ipaID] == nil
+                        && (copy.ipaID == String(app.ipaID)
+                            || (copy.installStatus == "installable" && CatalogCopy.runs(copy.architectures, on: arch)
+                                && CatalogCopy.osIssue(version.minimumOSVersion, deviceOS: deviceOS) == nil
+                                && CatalogCopy.osIssue(copy.machOMinOS, deviceOS: deviceOS) == nil))
                 }.map { (version, $0) }
             }
             rows = found
@@ -77,7 +78,7 @@ import Observation
                 problem = "No version of this app runs on this device."
                 return
             }
-            selection = found.first { $0.copy.ipaID == String(app.ipaID) }?.copy.ipaID ?? found[0].copy.ipaID
+            selection = found.first { $0.copy.ipaID == CatalogCopy.preferred(String(app.ipaID)) }?.copy.ipaID ?? found[0].copy.ipaID
         } catch {
             guard !Task.isCancelled else { return }
             rows = []

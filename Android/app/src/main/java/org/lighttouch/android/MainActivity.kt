@@ -823,6 +823,11 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         startForegroundService(Intent(this, EngineService::class.java))
         Thread({
             try {
+                // Newer guest tools in this build of LightTouch reach existing devices here; a failure leaves the old ones.
+                try { GuestTools.newerFor(this, request.recordId)?.let { tools ->
+                    val result = worker.setGuestPackage(request.recordId, tools.absolutePath)
+                    android.util.Log.i("LightTouch", if (result.isEmpty()) "Guest tools updated for ${request.recordId}" else "Guest tools not updated: $result")
+                } } catch (failure: Exception) { android.util.Log.w("LightTouch", "Guest tools not updated", failure) }
                 val b = if (request.coldRecovery) worker.recoverStart(request.recordId) else worker.start(request.recordId)
                 handler.post { if (engine?.asBinder() == worker.asBinder()) error = b.getString("error") ?: "" }
             }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -146,7 +147,7 @@ internal class StoreModel(private val context: Context, private val muxSocket: (
                 outcome.onSuccess { rows ->
                     copies = rows
                     if (rows.isEmpty()) problem = "No version of this app runs on this device."
-                    else choose(rows.firstOrNull { it.ipaId == app.optInt("ipa_id") }?.ipaId ?: rows[0].ipaId)
+                    else choose(rows.firstOrNull { it.ipaId == LegacyStore.preferred(app.optInt("ipa_id")) }?.ipaId ?: rows[0].ipaId)
                 }.onFailure { copies = emptyList(); problem = "Couldn't load versions: ${it.message}" }
             }
         }
@@ -389,7 +390,10 @@ private fun ColumnScope.StoreDetails(model: StoreModel, app: JSONObject, running
         Column(Modifier.weight(1f, fill = false).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainer)) {
             if (rows == null) LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
             else if (rows.isEmpty()) Text("None found.", Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LazyColumn(Modifier.testTag("store_versions"), contentPadding = PaddingValues(vertical = 6.dp)) {
+            // The copy selected first (the search row's, or its stand-in) can sit far down the list: show it.
+            val versionList = rememberLazyListState()
+            LaunchedEffect(rows) { rows?.indexOfFirst { it.ipaId == model.selected }?.takeIf { it > 0 }?.let { versionList.scrollToItem(it) } }
+            LazyColumn(Modifier.testTag("store_versions"), state = versionList, contentPadding = PaddingValues(vertical = 6.dp)) {
                 items(rows ?: emptyList(), key = { it.ipaId }) { copy ->
                     val twin = (rows ?: emptyList()).count { it.version == copy.version } > 1
                     Row(Modifier.fillMaxWidth().clickable { model.choose(copy.ipaId) }.padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {

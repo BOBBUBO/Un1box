@@ -38,6 +38,10 @@ object LegacyStore {
     private const val USER_AGENT = "LightTouchAndroid/0.1 (+https://github.com/blake-lucas/LightTouch)"
     private const val JSON_LIMIT = 8 shl 20
     private const val DOWNLOAD_LIMIT = 2L shl 30
+    /** Archived copies whose executable is cut short (no device can load it), each with an intact copy of the same version. */
+    private val BROKEN = mapOf(59853 to 179589)   // Fruit Ninja 1.7.4: the search row's copy
+    /** The copy to select first for a search row that names [ipaId]. */
+    fun preferred(ipaId: Int) = BROKEN[ipaId] ?: ipaId
 
     fun version(value: String?): List<Int>? {
         if (value == null || !Regex("[0-9]+(\\.[0-9]+){0,2}").matches(value)) return null
@@ -140,7 +144,7 @@ object LegacyStore {
 
     /**
      * Every archived copy of the app that could run on the target, newest first. The
-     * copy the search row named is always kept so the picker can show it selected.
+     * copy the search row named is always kept so the picker can show it selected, unless it is broken.
      */
     fun versions(app: JSONObject, target: StoreTarget): List<StoreCopy> {
         val key = app.optString("bundle_id").ifEmpty { app.optString("app_url").trimEnd('/').substringAfterLast('/') }
@@ -155,7 +159,7 @@ object LegacyStore {
             val copies = entry.optJSONArray("copies") ?: continue
             for (c in 0 until copies.length()) {
                 val copy = copies.optJSONObject(c) ?: continue
-                val id = copy.optString("ipa_id").toIntOrNull() ?: continue
+                val id = copy.optString("ipa_id").toIntOrNull()?.takeIf { it !in BROKEN } ?: continue
                 val machoMinimum = copy.optString("macho_min_os").ifEmpty { null }
                 val fits = copy.optString("install_status") == "installable" && runs(copy.optJSONArray("architectures"), target) &&
                     runCatching { !requires(minimum, target) && !requires(machoMinimum, target) }.getOrDefault(false)

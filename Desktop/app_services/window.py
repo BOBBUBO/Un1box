@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 
 from .bridge import ServiceJob
-from .catalog import CatalogClient, Target, incompatibility
+from .catalog import CatalogClient, Target, incompatibility, preferred
 from .ipa import InstallError
 
 
@@ -203,7 +203,7 @@ class AppsWindow:
             if not self.copies:
                 self.details.set("{}\nNo version of this app runs on this device.".format(name))
                 return
-            index = next((i for i, c in enumerate(self.copies) if c["ipa_id"] == self.app["ipa_id"]), 0)
+            index = next((i for i, c in enumerate(self.copies) if c["ipa_id"] == preferred(self.app["ipa_id"])), 0)
             self.versions.selection_set(index)
             self.versions.see(index)
             self.version_selected()
