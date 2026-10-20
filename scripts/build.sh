@@ -32,6 +32,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${JAVA_HOME:=/usr/lib/jvm/java-17-openjdk-amd64}"
 : "${LT_XPWN:=$HOME/.hermes/cache/scratch/lighttouchwin-xpwn}"
 : "${LT_MAC:=}"                                                                   # user@host of the Mac
+: "${LT_DEBUGGABLE:=true}"                       # false: a non-debuggable APK (release; GrapheneOS AOT)
 : "${LT_MAC_DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"
 : "${LT_MAC_IPAD_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk}"         # expanded on the Mac
 : "${JOBS:=$(nproc 2>/dev/null || echo 4)}"
@@ -132,6 +133,9 @@ build_android() {
     local tools="${LT_GUEST_TOOLS:-$OUT/guest-package}" guest=()
     if [ -f "$tools/armv6.itpack" ] && [ -f "$tools/armv7.itpack" ]; then guest=(-PguestToolsDir="$tools")
     else echo "warning: no armv6/armv7.itpack in $tools (set LT_GUEST_TOOLS); the APK will carry no guest tools" >&2; fi
+    # A non-debuggable build runs lint-vital, which needs an artifact the offline Gradle cache lacks.
+    local lint=()
+    [ "$LT_DEBUGGABLE" = false ] && lint=(-x lintVitalAnalyzeDebug -x lintVitalReportDebug -x lintVitalDebug)
     (cd "$REPO/Android" && CMAKE_BUILD_PARALLEL_LEVEL="$JOBS" ./gradlew --offline --no-daemon --max-workers=8 \
         '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs="$JOBS" -PtargetAbis=arm64-v8a \
         -PportableDir="$REPO/Portable" -PfirmwareDir="$REPO/Portable/firmware" \
@@ -139,7 +143,7 @@ build_android() {
         -PnativeDepsRoot="$w/backend/deps" -PengineRoot="$OUT/android/engine" \
         -PengineNoticeArm64="$OUT/android/engine/arm64-v8a/notices" \
         -PsourceRevision="$(git -C "$REPO" rev-parse HEAD)" \
-        -PsourceReference="https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)" \
+        -PsourceReference="${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}" \
         -PbuildRoot="$OBJ/android-gradle" -PmobileServicesArm64="$w/mobile-android/arm64-v8a" \
         -PfrontendNotices="$w/product/frontend-inputs-15" \
         -PfrontendNoticesSha256=88918185b1a3ba3ea1b4c910c8b7dde56391597574f53824a160fef45d2b76a7 \
@@ -147,7 +151,7 @@ build_android() {
         -PangleArm64Notices="$angle/notices" \
         -PangleArm64ManifestSha256=3abde58ea5d9863453b12e3d7f67eff7c96ee989fbcfa4c00a16859cfd694945 \
         -PangleArm64NoticesSha256=63d2221b0fab9bff7788dc0c4e9a94c74079b3ab5ed3c09bd3ef72c909d1f924 \
-        "${guest[@]}" :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
+        -Pdebuggable="$LT_DEBUGGABLE" "${guest[@]}" "${lint[@]}" :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
         { grep -A12 "What went wrong" "$OBJ/android-gradle.out" >&2 || tail -30 "$OBJ/android-gradle.out" >&2; exit 1; }
     cp "$OBJ/android-gradle/app/outputs/apk/debug/app-debug.apk" "$OUT/android/LightTouch-debug.apk"
     echo "$OUT/android/LightTouch-debug.apk"
