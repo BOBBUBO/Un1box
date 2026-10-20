@@ -465,6 +465,44 @@ static u64 b_icall(u32 n)
     return now_ns() - t;
 }
 
+/* Objective-C dispatch: objc_msgSend to a trivial method (+[NSObject class]), a method-cache hit
+ * ending in an indirect branch to the method. */
+static u64 b_objc_send(u32 n)
+{
+    Object cls = get_class("NSObject");
+    Selector s_class = get_selector("class");
+    Object (*msg)(Object, Selector) = (Object (*)(Object, Selector))send;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) cls = msg(cls, s_class);
+    sink = (u32)cls;
+    return now_ns() - t;
+}
+
+/* One turn of a game loop that polls its run loop: an autorelease pool around
+ * [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate distantPast]].
+ * This thread's run loop has no sources, so each turn is message sends, CoreFoundation's mode
+ * lookup and the empty-mode check. Battle Bears: Zombies! spends about half its guest time in
+ * this code. */
+static u64 b_runloop(u32 n)
+{
+    void *foundation = dlopen("/System/Library/Frameworks/Foundation.framework/Foundation", 2);
+    Object *default_mode = foundation ? dlsym(foundation, "NSDefaultRunLoopMode") : 0;
+    if (!default_mode || !*default_mode) return 0;
+    Object pool_class = get_class("NSAutoreleasePool"), loop_class = get_class("NSRunLoop");
+    Object past = call0(get_class("NSDate"), "distantPast");
+    Selector s_alloc = get_selector("alloc"), s_init = get_selector("init"), s_release = get_selector("release");
+    Selector s_current = get_selector("currentRunLoop"), s_run = get_selector("runMode:beforeDate:");
+    Object (*msg)(Object, Selector) = (Object (*)(Object, Selector))send;
+    int (*run_mode)(Object, Selector, Object, Object) = (int (*)(Object, Selector, Object, Object))send;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) {
+        Object pool = msg(msg(pool_class, s_alloc), s_init);
+        run_mode(msg(loop_class, s_current), s_run, *default_mode, past);
+        msg(pool, s_release);
+    }
+    return now_ns() - t;
+}
+
 /* Recursion: returns to many different call sites. */
 static u32 fib(u32 k) { return k < 2 ? k : fib(k - 1) + fib(k - 2); }
 static u64 b_fib(u32 n)   /* n calls, approximately: fib(k) makes 2*fib(k+1)-1 */
@@ -684,6 +722,8 @@ static const Test tests[] = {
     {"vfp-mla", "VFP2 non-fused multiply/add", b_vfp_mla, 2000000},
     {"icall", "indirect call + return", b_icall, 2000000},
     {"fib", "recursive call + return", b_fib, 500000},
+    {"objc-send", "objc_msgSend, +[NSObject class]", b_objc_send, 500000},
+    {"runloop", "pool + runMode:beforeDate: distantPast (no sources) + release", b_runloop, 20000},
     {"memcpy", "KiB copied", b_memcpy, 20480},
     {"syscall", "getppid()", b_syscall, 50000},
     {"time", "mach_absolute_time()", b_time, 50000},

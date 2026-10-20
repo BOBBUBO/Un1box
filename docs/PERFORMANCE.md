@@ -290,6 +290,8 @@ the diagnostics in [PROFILING.md](PROFILING.md) found so far:
 - Pixel: a 214 ms gameplay gap had 206 ms of execution wall time but only 83 ms of vCPU CPU time, so
   the Pixel's long frames need a scheduler trace of their own. Poco conclusions don't carry over.
 
+**Battle Bears: Zombies! (2026-10-20).** Story, Easy, Stage 1 gameplay: the Pixel's capture averaged 22.2 fps and the desktop ceiling is ~24 (21–25 a second; release v0.0.8 payload, Ryzen 7 3700X VM). It is guest-CPU-bound on both: GL is ~1.6 ms a frame (18 draws from buffer objects, so not the client-array fetch fixed in `f4eeeab129`), slow Pixel frames are vCPU time (74 of 75 ms), and on the desktop, pinning the vCPU to a core shared with a busy loop cut it to 24% CPU and the game to 4.9 fps. A gameplay profile (`QEMU_PERFMAP_DIR=/tmp`, `perf record -t` on the TCG thread, addresses named with `guestsymbols.py`) put ~45% of guest time in run-loop polling (`objc_msgSend`, autorelease pool push/pop, `-[NSRunLoop runMode:beforeDate:]`, `__CFRunLoopFindMode`'s string hashing, `__CFRunLoopModeIsEmpty`) and ~10% in the game's own code; host TB lookup was ~20% of the thread. LT Bench's `objc-send` and `runloop` tests time that path. `LT_IBTC_L2=on` with `LT_TB_LOOKUP_INLINE=on` cut `runloop` 9.4 → 8.0 µs and `icall` 29.7 → 13.4 ns but not the game: 24.3/23.2/24.9/22.7 → 22.7/23.1/24.3/22.9/22.8 fps, interleaved.
+
 The manual Start/Stop profile in the Android app (engine `50a08eb2d2`, `ProfileCapture.kt`) records
 these gaps from real play, but it costs 6–7% of the frame rate while recording. Don't use a recorded
 rate as a baseline.
@@ -305,6 +307,7 @@ operation). Baselines, engine `16c09e7fe3` (Poco: ic8 APK with `LT_TLB_BANKS=off
 | `loop` | 4.1 | 3.5 | translated code baseline: about as fast on the phone as on the desktop |
 | `fib` (call + return) | 9.6 | 7.8 | |
 | `icall` (indirect call + return) | 30.7–62.7 | 28.2 | 3–6× a direct call: a site with more targets than the 2-entry branch cache misses to `helper_lookup_tb_ptr` |
+| `objc-send` / `runloop` | — | 29.5 / 9 400 | added 2026-10-20 (engine `f4eeeab129`): a message send costs an indirect call; one run-loop poll ~320 of them |
 | `memcpy` (per KiB) | 612 | 441 | 1.6 / 2.3 GB/s |
 | `syscall` (`getppid`) | 972 | 937 | |
 | `time` (`mach_absolute_time`) | 975 | 715 | a trap on this OS |

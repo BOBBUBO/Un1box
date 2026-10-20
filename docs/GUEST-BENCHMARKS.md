@@ -22,6 +22,8 @@ repeatable figure, a median well above it means interference).
 | `vfp-mla` | one scalar VMLA/VMLS/VNMLA/VNMLS | eight independent VFP2 accumulators, separately rounded multiply/add and generated helper calls; long loop timing, no per-operation clocks |
 | `icall` | an indirect call through a 4-entry table, and its return | indirect branches: TB exits, the per-site branch cache, `helper_lookup_tb_ptr` |
 | `fib` | a recursive call and return | returns to many sites |
+| `objc-send` | `objc_msgSend` to `+[NSObject class]` | Objective-C dispatch: the guest method-cache lookup, then an indirect branch to the method |
+| `runloop` | an autorelease pool around `-[NSRunLoop runMode:beforeDate:]` (`distantPast`) on a thread whose run loop has no sources, then the pool's release | a game loop that polls its run loop: message sends, CoreFoundation's mode lookup by name and its empty-mode check (Battle Bears: Zombies! spends about half its guest time here) |
 | `memcpy` | 1 KiB copied (libSystem `memcpy`, 256 KiB blocks) | guest loads/stores through the softmmu TLB fast path |
 | `syscall` | `getppid()` | SWI, exception entry and return, kernel entry/exit |
 | `time` | `mach_absolute_time()` | the guest time base (a Mach trap, plus the timer read) |
@@ -120,6 +122,7 @@ What it has shown so far:
 - Translated straight-line code is as fast on a Poco F3 as on a desktop (`loop` ~4 ns); what separates
   them is everything around it (system calls, switches, faults: 1.5–3× slower on the phone).
 - An indirect call with more targets than the per-site branch cache holds costs 3–6× a direct one.
+- An Objective-C message send costs as much as such an indirect call (desktop: `objc-send` 29.5 ns, `icall` 29.7 ns, `fib` 7.3 ns), and one run-loop poll is ~320 of them (`runloop` 9.4 µs).
 - A thread round trip over pipes costs 4× a Mach RPC to another process. The vCPU is busy, not
   waiting, through it, and no emulator path stands out, so it looks like the guest kernel's own cost
   (four BSD syscalls and two scheduler switches against two Mach traps with a direct handoff).

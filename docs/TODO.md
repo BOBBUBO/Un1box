@@ -180,6 +180,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash
   automatically after a quick quit. Linux/Windows Apps now has a version picker; it has no Last crash.
 
+- [ ] Battle Bears: Zombies! is guest-CPU-bound (desktop ceiling ~24 fps, Pixel 22) with ~45% of guest time in
+  run-loop polling and `objc_msgSend` (PERFORMANCE.md). Find out whether a background thread spins on an empty
+  run loop (guest thread list via `guestprocs.py`), and what would make Objective-C dispatch cheaper than an
+  indirect-branch TB lookup; LT Bench `objc-send` and `runloop` measure it.
+
 - [ ] Installing a very large app over the USB bridge (Legacy Store or Install IPA) is very slow:
   Asphalt 5 spends 5+ minutes extracting inside the guest on the phones, and the same install
   crashed the guest on Linux. Profile the guest during the install (which guest process and
