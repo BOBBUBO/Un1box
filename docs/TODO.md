@@ -22,6 +22,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [ ] Confirm the two open engine leads (both default off, PERFORMANCE.md): the indirect miss-helper
   cache (`LT_IBTC_L2=on`, +2.2% in 3 of 3 pairs) and the inlined TB lookup hit (`LT_TB_LOOKUP_INLINE=on`,
   ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin (now the Android default).
+- [ ] Assassin's Creed: Altair's Chronicles holds ~19–20 fps on the Pixel 10, which may be the game's
+  own cap (as Asphalt 5's 25 is). The overlay shows the guest CPU at 50–60% while the engine reports
+  95–100%: find where the engine time goes that the guest does not account for (frame inspector
+  capture `lighttouch-hitch-20261019-225636.zip`, then a simpleperf profile), and confirm the cap on the
+  desktop. An audio loop was seen once; reopening the app cleared it.
 - [ ] Jetpack hitches on the Poco (PERFORMANCE.md, "Hitches in Jetpack's title"; capture tools in
   PROFILING.md). Leads, by evidence:
   1. Held refreshes recur 88–92 ticks (~1.5 s) apart in four sparse captures (`LT_FRAME_PATH`). Follow
