@@ -56,6 +56,20 @@ val prepareCatalog = tasks.register<Copy>("prepareFirmwareCatalog") {
 android.sourceSets["main"].assets.srcDir(catalogAssets)
 tasks.named("preBuild").configure { dependsOn(prepareCatalog) }
 
+// Guest tools (-PguestToolsDir holding armv6.itpack and armv7.itpack, built by qemu-ios guest/). New
+// devices get the pack whose families cover their board and build; preparation takes its tools from them.
+providers.gradleProperty("guestToolsDir").orNull?.let { input ->
+    val packs = file(input)
+    require(listOf("armv6.itpack", "armv7.itpack").all { packs.resolve(it).isFile }) { "guestToolsDir must hold armv6.itpack and armv7.itpack" }
+    val guestToolAssets = layout.buildDirectory.dir("generated/guestToolAssets")
+    val stage = tasks.register<Copy>("prepareGuestTools") {
+        from(packs) { include("armv6.itpack", "armv7.itpack") }
+        into(guestToolAssets.map { it.dir("guest-tools") })
+    }
+    android.sourceSets["main"].assets.srcDir(guestToolAssets)
+    tasks.named("preBuild").configure { dependsOn(stage) }
+}
+
 // Optional private usbmuxd-qemu daemon and IPA helper (Android/packaging/build-mobile-android.py OUTPUT/arm64-v8a).
 providers.gradleProperty("mobileServicesArm64").orNull?.let { input ->
     val executables = listOf("libusbmuxd_qemu.so", "liblt_appservice.so")

@@ -94,7 +94,7 @@ static void progress(const lt_fw_request &r, const char *s, uint64_t d = 0, uint
     if (r.progress && r.progress(r.user, s, d, t))
         throw Error(LT_FW_CANCELLED, "preparation cancelled");
 }
-static std::string hash_file(const fs::path &p, const lt_fw_request &r, bool sha1 = false) {
+static std::string hash_file(const fs::path &p, const lt_fw_request &r, bool sha1 = false, const char *stage = "verify") {
     std::ifstream f(p, std::ios::binary);
     if (!f)
         throw Error(LT_FW_IO, "missing source " + p.string());
@@ -110,7 +110,7 @@ static std::string hash_file(const fs::path &p, const lt_fw_request &r, bool sha
             if (n) {
                 EVP_DigestUpdate(c, b.data(), n);
                 done += n;
-                progress(r, "verify", done, 0);
+                progress(r, stage, done, 0);
             }
         }
         require(f.eof(), "hash read failed");
@@ -469,7 +469,7 @@ static void prepare(const lt_fw_request &r) {
                 entry.at("source").at("bytes") == 263275211,
             "baseline catalog source pin mismatch");
     progress(r, "verify IPSW");
-    if (hash_file(r.ipsw_path, r, true) != entry.at("source").at("sha1").get<std::string>())
+    if (hash_file(r.ipsw_path, r, true, "verify IPSW") != entry.at("source").at("sha1").get<std::string>())
         throw Error(LT_FW_CHECKSUM, "Stock IPSW SHA1 does not match n72ap-7E18");
     require(fs::file_size(r.ipsw_path) == entry.at("source").at("bytes").get<uint64_t>(), "IPSW byte count");
     auto manifest = Json::parse(read(r.guest_inventory_path, 32 * 1024 * 1024));
@@ -743,11 +743,47 @@ static void prepare(const lt_fw_request &r) {
         write(stage / "guest.itpack", tools.at("armv6.itpack"));
         package["itpack"]["path"] = "guest.itpack";
         progress(r, "write NAND");
-        fs::create_directory(stage / "nand");
-        for (int cs = 0; cs < 4; cs++)
-            fs::create_directory(stage / "nand" / ("cs" + std::to_string(cs)));
+        // The NAND is one ITNAND01 file, the packed form the library makes of an .itbase and the
+        // engine maps directly: a 24-byte header, a slot table of 4 x 524288 little-endian record
+        // numbers (0 = never written) and the 4160-byte records. Writing ~110k page files, then
+        // re-reading, syncing and copying each one, took most of a preparation on a phone.
+        constexpr uint32_t per_cs = 524288, record = 4160;
+        constexpr uint64_t records_at = 24 + 4ull * per_cs * 4;
+        std::vector<uint32_t> slots(4ull * per_cs, 0);
+        uint32_t records = 0;
+        // "csN/P.page" -> SHA-256: the page listing an unpacked NAND would have, kept as provenance.
+        std::map<std::string, std::string> written;
+        int nand = open((stage / "nand").c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0644);
+        if (nand < 0)
+            throw Error(LT_FW_IO, "create packed NAND");
+        struct CloseNand {
+            int &fd;
+            ~CloseNand() {
+                if (fd >= 0)
+                    close(fd);
+            }
+        } close_nand{nand};
+        auto put_at = [&](const void *data, size_t n, uint64_t at) {
+            auto *p = static_cast<const char *>(data);
+            while (n) {
+                ssize_t w = pwrite(nand, p, n, off_t(at));
+                if (w < 0 && errno == EINTR)
+                    continue;
+                if (w <= 0)
+                    throw Error(LT_FW_IO, "write packed NAND");
+                p += w;
+                n -= size_t(w);
+                at += uint64_t(w);
+            }
+        };
         auto pagewrite = [&](std::pair<int, int> p, const Bytes &b) {
-            write(stage / "nand" / ("cs" + std::to_string(p.first)) / (std::to_string(p.second) + ".page"), b);
+            require(b.size() == record && p.first >= 0 && p.first < 4 && p.second >= 0 && uint32_t(p.second) < per_cs,
+                    "NAND page geometry");
+            auto &slot = slots[size_t(p.first) * per_cs + size_t(p.second)];
+            if (!slot)
+                slot = ++records;
+            put_at(b.data(), b.size(), records_at + uint64_t(slot - 1) * record);
+            written["cs" + std::to_string(p.first) + "/" + std::to_string(p.second) + ".page"] = digest(b);
         };
         for (auto &m : metadata(blocks, epoch))
             pagewrite(m.first, m.second);
@@ -764,6 +800,24 @@ static void prepare(const lt_fw_request &r) {
                 pagewrite(page(i), b);
         }
         volume.close();
+        {
+            Bytes head(24), index(slots.size() * 4);
+            std::memcpy(head.data(), "ITNAND01", 8);
+            const uint32_t geometry[4] = {4096, 64, 4, per_cs};
+            auto le = [](Bytes &out, size_t at, uint32_t v) {
+                for (int i = 0; i < 4; i++)
+                    out[at + i] = uint8_t(v >> (8 * i));
+            };
+            for (int i = 0; i < 4; i++)
+                le(head, 8 + i * 4, geometry[i]);
+            for (size_t i = 0; i < slots.size(); i++)
+                le(index, i * 4, slots[i]);
+            put_at(head.data(), head.size(), 0);
+            put_at(index.data(), index.size(), 24);
+            require(ftruncate(nand, off_t(records_at + uint64_t(records) * record)) == 0, "size packed NAND");
+            require(close(nand) == 0, "close packed NAND");
+            nand = -1;
+        }
         fs::remove_all(work);
         Json lock = {
             {"format", 1},
@@ -789,16 +843,14 @@ static void prepare(const lt_fw_request &r) {
             if (file.is_regular_file() && file.path().filename() != "PREPARING")
                 checks[fs::relative(file.path(), stage).generic_string()] = hash_file(file.path(), r);
         std::string listing;
-        size_t pages = 0;
-        for (auto it = checks.begin(); it != checks.end(); ++it)
-            if (it.key().rfind("nand/", 0) == 0) {
-                listing += it.key().substr(5) + " " + it.value().get<std::string>() + "\n";
-                pages++;
-            }
+        for (auto &page : written)
+            listing += page.first + " " + page.second + "\n";
+        require(written.size() == records, "NAND page count");
         lock["outputs"]["nand"] = {{"path", "nand"},
-                                   {"listing_sha256", digest(bytes(listing))},
-                                   {"built_listing_sha256", digest(bytes(listing))},
-                                   {"pages", pages}};
+                                   {"format", "ITNAND01"},
+                                   {"sha256", checks.at("nand")},
+                                   {"pages", records},
+                                   {"source_listing_sha256", digest(bytes(listing))}};
         for (auto item : std::vector<std::pair<std::string, std::string>>{{"nor", "nor.bin"},
                                                                           {"iboot", "iBoot.bin"},
                                                                           {"gid_blobs", "gid-blobs.bin"},
@@ -832,16 +884,20 @@ static void prepare(const lt_fw_request &r) {
         write(stage / "preparation.sha256.json",
               bytes(Json{{"size", sizeof(uint32_t) * 2}, {"version", 1}, {"files", checks}}.dump(2)));
         fs::remove(stage / "PREPARING");
-        for (auto &file : fs::recursive_directory_iterator(stage / "nand"))
-            fs::permissions(file.path(), fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write,
-                            fs::perm_options::remove);
         for (auto name : {"nand", "nor.bin", "iBoot.bin", "gid-blobs.bin", "guest.itpack"})
             fs::permissions(stage / name, fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write,
                             fs::perm_options::remove);
         progress(r, "flush transaction");
-        for (auto &file : fs::recursive_directory_iterator(stage))
-            if (file.is_regular_file())
-                fsync_path(file.path());
+        // One syncfs flushes every staged file; an fsync per page file cost one round trip each.
+        {
+            int fd = open(stage.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+            if (fd < 0)
+                throw Error(LT_FW_IO, "open for syncfs " + stage.string());
+            int result = syncfs(fd);
+            close(fd);
+            if (result)
+                throw Error(LT_FW_IO, "syncfs " + stage.string());
+        }
         std::vector<fs::path> dirs;
         for (auto &file : fs::recursive_directory_iterator(stage))
             if (file.is_directory())

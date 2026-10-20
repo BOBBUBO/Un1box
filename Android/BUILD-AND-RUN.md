@@ -169,7 +169,7 @@ Verify transferred bytes against the owner's trusted inventory before invoking t
 
 ## Preparation, tests and current limits
 
-**Prepare from stock IPSW** uses the shared native userspace recipe in a separate same-UID firmware service. Supply legitimate matching stock firmware and the trusted handoff root containing `inventory.json` plus `release-guest-unpacked/guest-tools`; the picker copies only required inputs. The local inventory is integrity evidence, not the missing original exporter manifest. No historical SDK is acquired or synthesized. Native discovers supported catalog routes, validates outputs/package hashes and imports a new record. Completion/import is distinct from boot acceptance.
+**Prepare from an IPSW** uses the shared native userspace recipe in a separate same-UID firmware service. The app downloads or copies the stock IPSW and checks it against the catalog, and builds the recipe's guest tools folder (`inventory.json` plus `release-guest-unpacked/guest-tools`) from the `armv6.itpack` the APK carries (`-PguestToolsDir`). Native discovers supported catalog routes, validates outputs/package hashes and writes the NAND as one ITNAND01 file; the app imports it as a new record. Completion/import is distinct from boot acceptance.
 
 Linux uses the same preparer and Portable domain; see [firmware preparation](../Portable/firmware/README.md) and [Linux frontend](../Linux/README.md). There is no Android-specific firmware recipe or boot-argument list. A locally prepared base must still boot, accept input, halt cleanly and preserve state on each required target.
 

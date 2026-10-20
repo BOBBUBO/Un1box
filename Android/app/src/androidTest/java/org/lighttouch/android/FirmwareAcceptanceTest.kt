@@ -84,7 +84,7 @@ class FirmwareAcceptanceTest {
                                 assertEquals("Import must not interrupt a guest", "stopped", engine.status().getString("state"))
                                 val before = engine.records().map { it.getString("id") }.toSet()
                                 val importStart = SystemClock.elapsedRealtime()
-                                assertEquals("Canonical prepared base integrity admission", "", engine.importPrepared(destination.absolutePath, "$id Android prepared"))
+                                assertEquals("Canonical prepared base integrity admission", "", engine.importPrepared(destination.absolutePath, "$id Android prepared", File(context.filesDir, "bootrom.bin").absolutePath))
                                 val after = engine.records()
                                 assertTrue("Existing baseline lost", after.map { it.getString("id") }.containsAll(before))
                                 val record = after.single { it.getString("id") !in before }

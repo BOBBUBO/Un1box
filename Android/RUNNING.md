@@ -105,23 +105,19 @@ library files to simulate a new state. See [retained state](STATE-CONTROL.md).
 
 ## Prepare the supported stock baseline locally
 
-**Prepare from stock IPSW** supports `n72ap-7E18`. Other catalog rows are explicit
-unsupported preparation routes; catalog presence does not imply native coverage.
+**Prepare from an IPSW** (in **Add a device**, or Settings) picks a device, then an iOS version.
+Only `n72ap-7E18` prepares on the phone; the other catalog rows show as not supported yet. The app
+downloads the IPSW (the link ipsw.me lists, else the catalog's mirrors and the Internet Archive) or
+copies one the user chooses, checking it against the catalog's SHA-1 either way. The boot file
+comes from another device on the phone, a download from securerom.fun (pinned by SHA-256), or a
+file the user chooses. The guest files the recipe installs come from the APK's own `armv6.itpack`:
+the app writes them and an `inventory.json` of their SHA-256s to `files/preparer-tools/`.
 
-Supply the legitimate matching stock IPSW and select the trusted handoff root via
-**Verified tools**. The root must contain `inventory.json` and
-`release-guest-unpacked/guest-tools`. A lone `.itpack` selected through **Guest
-tools** is not this preparation tree. Its local hash inventory establishes file
-integrity; it does not reconstruct a missing original exporter manifest or prove
-that the release assets were rebuilt.
-
-Supply the matching ROM before the completed preparation is imported as a device.
-Choose the supported firmware, **Stock IPSW**, **Verified tools**, then **Prepare**.
-Preparation uses the packaged native library in a separate same-UID process;
-it needs no root, mounts, macOS utilities, historical SDK or execution of extracted
-binaries. The matched guest package is included in the prepared output. Completion
-imports a new record; if import fails, the completed output is retained for
-**Retry import**. Cancellation/failure is not a usable prepared output.
+Preparation runs the packaged native library in a separate same-UID process, with no root,
+mounts, macOS utilities or execution of extracted binaries. It writes the NAND as one ITNAND01
+file and takes about 25 s on a Poco F3. The completed output is imported and selected, then it
+and the IPSW are deleted; if import fails the output is kept for **Try adding it again**.
+Cancellation or failure leaves no usable output.
 
 The Linux CLI uses the same native recipe. Its input layout, build commands,
 checksum checks and cancellation limits are documented in

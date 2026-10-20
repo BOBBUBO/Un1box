@@ -104,16 +104,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var retainedPreparedOutput = ""
     private var preparedImportInFlight = false
     private var preparationOpen by mutableStateOf(false)
-    private var firmwareIds by mutableStateOf<List<Pair<String, Boolean>>>(emptyList())
-    private var firmwareId by mutableStateOf("")
-    private var firmwareMenu by mutableStateOf(false)
-    private var preparation by mutableStateOf<Bundle?>(null)
+    private val prep = PrepareState()
     private var preparedImported = ""
-    private var preparedImportError by mutableStateOf("")
-    private var ipswSelected by mutableStateOf(false)
-    private var toolsSelected by mutableStateOf(false)
-    private var toolsPath = ""
-    private var ipswPath = ""
+    // A finished run the user went back from; the worker keeps reporting it until it is replaced.
+    private var dismissedRun = ""
     private val firmwareConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             val worker = IFirmware.Stub.asInterface(binder)
@@ -122,28 +116,28 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             binder.linkToDeath({ handler.post {
                 if (firmware?.asBinder() == binder) {
                     firmware = null
-                    if (!firmwareRestarting && !firmwareExpectedExit) preparation = Bundle().apply { putString("state", "failed"); putString("error", "Firmware worker exited; completed output is retained and interrupted staging is not admitted.") }
+                    if (!firmwareRestarting && !firmwareExpectedExit) prep.preparation = workerExitedRun()
                 }
             } }, 0)
             val workerState = worker.status()
-            preparation = if (workerState.getString("state") == "idle" && retainedPreparedOutput.isNotEmpty()) retainedPreparation() else workerState
+            prep.preparation = if (workerState.getString("state") == "idle" && retainedPreparedOutput.isNotEmpty()) retainedPreparation() else workerState.takeIf { it.getString("state") != "idle" }
             if (pendingFirmwareStart) {
                 pendingFirmwareStart = false
                 firmwareRestarting = false
-                if (preparation?.getBoolean("consumed") == true) restartFirmwareForPreparation() else beginPreparation()
+                if (workerState.getBoolean("consumed")) restartFirmwareForPreparation() else beginPreparation()
             }
             Thread({
                 try {
-                    val entries = JSONObject(assets.open("firmware-catalog.json").bufferedReader().use { it.readText() }).getJSONArray("entries")
-                    val choices = (0 until entries.length()).map { entries.getJSONObject(it).getString("id") }.map { it to worker.supports(it) }
-                    handler.post { if (firmware?.asBinder() != binder) return@post; firmwareIds = choices; if (firmwareId.isEmpty()) firmwareId = choices.firstOrNull { it.second }?.first ?: "" }
+                    val supported = prep.catalog.ifEmpty { FirmwareCatalog.load(this@MainActivity) }.map { it.id }.filter { worker.supports(it) }.toSet()
+                    handler.post { if (firmware?.asBinder() == binder) prep.supported = supported }
                 } catch (e: Exception) { handler.post { if (firmware?.asBinder() == binder) error = e.message ?: "Cannot load firmware catalog" } }
             }, "firmware-catalog").start()
         }
-        override fun onServiceDisconnected(name: ComponentName) { firmware = null; if (!firmwareRestarting && !firmwareExpectedExit) preparation = Bundle().apply { putString("state", "failed"); putString("error", "Firmware worker exited; completed output is retained and interrupted staging is not admitted.") } }
+        override fun onServiceDisconnected(name: ComponentName) { firmware = null; if (!firmwareRestarting && !firmwareExpectedExit) prep.preparation = workerExitedRun() }
     }
+    private fun workerExitedRun() = Bundle().apply { putString("state", "failed"); putString("error", "The preparation worker stopped unexpectedly. Try again.") }
     private val stockIpsw = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importStockIpsw(uri) }
-    private val trustedTools = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) importTrustedTools(uri) }
+    private val prepRom = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importPrepRom(uri) }
     private var active = false
     private var displayOwnerTicket = 0L
     private var displayResumed = false
@@ -269,7 +263,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     }
     private val pickFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) scanFolder(uri) }
     private val pickSystem = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) setup.system = picked(uri) }
-    private val pickTools = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) setup.tools = picked(uri) }
     private val pickRom = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) setup.rom = picked(uri) }
     private val pickGuestToolsFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) copyAsset(uri, "guest.itpack") }
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -285,22 +278,19 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
         val imports = getSharedPreferences("preparation-imports", MODE_PRIVATE)
-        ipswPath = imports.getString("ipsw", "") ?: ""; toolsPath = imports.getString("tools", "") ?: ""
-        ipswSelected = File(ipswPath).isFile; toolsSelected = File(toolsPath).isDirectory
-        firmwareId = imports.getString("firmwareId", "") ?: ""
+        imports.getString("ipsw", "")?.takeIf { File(it).isFile }?.let { prep.ipswPath = it; prep.ipswFor = imports.getString("ipswFor", "") ?: "" }
+        prep.firmwareId = imports.getString("firmwareId", "") ?: ""
         preparedImported = imports.getString("preparedImported", "") ?: ""
         retainedPreparedOutput = imports.getString("pendingPrepared", "") ?: ""
         if (retainedPreparedOutput.isNotEmpty()) {
-            preparation = retainedPreparation(); preparedImported = retainedPreparedOutput
-            preparedImportError = "Completed preparation is retained; retry importing it as a device."
+            prep.preparation = retainedPreparation(); preparedImported = retainedPreparedOutput
+            prep.importError = "The prepared device is kept; try adding it again."
         }
         Thread({
             try {
-                val entries = JSONObject(assets.open("firmware-catalog.json").bufferedReader().use { it.readText() }).getJSONArray("entries")
-                firmwareTargets = (0 until entries.length()).map { entries.getJSONObject(it) }
-                    .filter { it.has("product_type") && it.has("version") }
-                    .associate { "${it.getString("board")}-${it.getString("build")}" to StoreTarget.of(it.getString("product_type"), it.getString("version")) }
-                handler.post { catalogVersion++; if (overlay == Screen.STORE) store.useRecord(recordTarget()); if (engine != null) refreshDevices() }
+                val catalog = FirmwareCatalog.load(this)
+                firmwareTargets = catalog.associate { "${it.board}-${it.build}" to StoreTarget.of(it.productType, it.version) }
+                handler.post { prep.catalog = catalog; catalogVersion++; if (overlay == Screen.STORE) store.useRecord(recordTarget()); if (engine != null) refreshDevices() }
             } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
         }, "store-targets").start()
         bindWorker()
@@ -352,7 +342,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                         }
                         Screen.SETUP -> SetupWizard(setup, canCancel = records.isNotEmpty(),
                             onPickFolder = { pickFolder.launch(null) }, onPickSystem = { pickSystem.launch(arrayOf("application/octet-stream", "*/*")) },
-                            onPickTools = { pickTools.launch(arrayOf("application/octet-stream", "*/*")) }, onPickRom = { pickRom.launch(arrayOf("application/octet-stream", "*/*")) },
+                            onPickRom = { pickRom.launch(arrayOf("application/octet-stream", "*/*")) },
                             onCreate = ::createDevice, onPrepare = { openPreparation() },
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
@@ -362,10 +352,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             savedNotice = hitchNotice, onShare = hitchReport?.let { uri -> { shareReport(uri) } })
                         else -> {}
                     }
+                    if (preparationOpen) PrepareOverlay()
                     SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing).padding(bottom = 96.dp))
                 }
                 if (devicesOpen) DevicesSheet(this@MainActivity) { devicesOpen = false }
-                if (preparationOpen) PreparationDialog()
                 if (licensesOpen) LicenseDialog { licensesOpen = false }
             }
         }
@@ -395,7 +385,11 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun openDevices() { refreshDevices(); devicesOpen = true }
     override fun addDevice() { setup.reset(firstRun = false); overlay = Screen.SETUP }
     override fun openLicenses() { licensesOpen = true }
-    override fun openPreparation() { preparationOpen = true; bindFirmware() }
+    override fun openPreparation() {
+        if (!preparationActive() && prep.preparation?.getString("state") != "complete")
+            prep.step = if (prep.firmware != null && prep.ipswReady) PrepareStep.FILES else PrepareStep.DEVICE
+        preparationOpen = true; bindFirmware()
+    }
     override fun pickGuestTools() { pickGuestToolsFile.launch(arrayOf("application/octet-stream", "*/*")) }
     override fun applySettings() {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
@@ -473,12 +467,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             val system = files.firstOrNull { it.name?.endsWith(".itbase", true) == true }?.let { PickedFile(it.uri, it.name ?: "") }
                 ?: (listOf(root) + root.listFiles().filter { it.isDirectory }).firstOrNull { it.findFile("device.lock.json") != null }
                     ?.let { PickedFile(it.uri, (it.name ?: "folder") + "/", folder = true) }
-            val tools = files.filter { it.name?.endsWith(".itpack", true) == true }.minByOrNull { if (it.name?.contains("armv6") == true) 0 else 1 }
-                ?.let { PickedFile(it.uri, it.name ?: "") }
             val rom = files.firstOrNull { it.name?.lowercase()?.startsWith("bootrom") == true }?.let { PickedFile(it.uri, it.name ?: "") }
             handler.post {
-                system?.let { setup.system = it }; tools?.let { setup.tools = it }; rom?.let { setup.rom = it }
-                val found = listOfNotNull("iOS system".takeIf { system != null }, "guest tools".takeIf { tools != null }, "boot file".takeIf { rom != null })
+                system?.let { setup.system = it }; rom?.let { setup.rom = it }
+                val found = listOfNotNull("iOS system".takeIf { system != null }, "boot file".takeIf { rom != null })
                 setup.scanned = if (found.isEmpty()) "Nothing found in ${root.name}" else "Found " + found.joinToString(", ") + " in ${root.name}"
             }
         }, "setup-scan").start()
@@ -501,7 +493,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun createDevice() {
         val system = setup.system ?: return
         val worker = engine ?: run { setup.error = "LightTouch is still starting; try again in a moment."; return }
-        val tools = setup.tools; val rom = setup.rom; val requested = setup.name.trim()
+        val rom = setup.rom; val requested = setup.name.trim()
         val before = records.mapNotNull { it.getString("id") }.toSet()
         setup.step = SetupStep.CREATING; setup.error = ""; setup.phase = ""; busy = true
         Thread({
@@ -509,14 +501,13 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             var imported = false
             try {
                 val romPath = rom?.let { File(staging, "bootrom.bin").also { f -> copyWithProgress(it.uri, f, "Copying the boot file") }.absolutePath } ?: ""
-                val toolsPath = tools?.let { File(staging, "guest.itpack").also { f -> copyWithProgress(it.uri, f, "Copying guest tools") }.absolutePath } ?: ""
                 var sha256 = ""
                 val source = if (system.folder) File(staging, "base").also { handler.post { setup.phase = "Copying the iOS system…" }
                     copyTree(DocumentFile.fromTreeUri(this, system.uri) ?: error("Cannot read the folder"), it) }
                     else File(staging, "system.itbase").also { sha256 = copyWithProgress(system.uri, it, "Copying the iOS system") }
                 handler.post { setup.phase = "Setting up the iOS system…" }
                 val started = System.nanoTime()
-                val result = worker.importDevice(source.absolutePath, "", romPath, toolsPath, sha256)
+                val result = worker.importDevice(source.absolutePath, "", romPath, "", sha256)
                 android.util.Log.i("LightTouch", "Device import took ${(System.nanoTime() - started) / 1_000_000} ms")
                 require(result.isEmpty()) { result }
                 // The record exists from here on: a failed rename or select keeps it (under its
@@ -525,6 +516,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 val all = worker.records().toList()
                 val created = all.firstOrNull { it.getString("id") !in before } ?: error("The new device did not appear in the library")
                 val id = created.getString("id") ?: ""
+                // The guest tools built into LightTouch, matched to the new device's board and build.
+                val tools = GuestTools.forDevice(this, created.getString("board") ?: "", created.getString("build") ?: "")
+                val toolsResult = tools?.let { handler.post { setup.phase = "Adding guest tools…" }; worker.setGuestPackage(id, it.absolutePath) } ?: ""
                 val name = requested.ifEmpty { defaultDeviceName(created.getString("board") ?: "", created.getString("build") ?: "", firmwareTargets,
                     all.filter { it.getString("id") != id }.mapNotNull { it.getString("name") }) }
                 val renamed = worker.rename(id, name)
@@ -536,6 +530,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     if (selected) { setup.created = shown; setup.step = SetupStep.DONE }
                     else { overlay = null; notice = "Added $shown; stop the running device to switch to it" }
                     if (renamed.isNotEmpty()) error = "Added the device, but could not name it \"$name\": $renamed"
+                    else if (toolsResult.isNotEmpty()) error = "Added the device, but could not add LightTouch's guest tools: $toolsResult"
                 }
             } catch (e: Exception) {
                 handler.post {
@@ -560,67 +555,67 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (volume >= 0 && settings.volumeKeys && status == "running" && overlay == null && !devicesOpen) { sendButton(volume, false); return true }
         return super.onKeyUp(keyCode, event)
     }
-    @Composable
-    private fun PreparationDialog() {
-        val inputsLocked = busy || preparationActive()
-        AlertDialog(onDismissRequest = { if (!inputsLocked) closePreparation() },
-            title = { Text("Prepare firmware") },
-            text = {
-                Column {
-                    Text("Choose a legitimate stock IPSW and the verified guest tools folder. Preparation runs locally without root.")
-                    Box {
-                        OutlinedButton(onClick = { firmwareMenu = true }, enabled = !inputsLocked) { Text(firmwareId.ifEmpty { "Choose firmware" }) }
-                        DropdownMenu(expanded = firmwareMenu, onDismissRequest = { firmwareMenu = false }) {
-                            for ((id, supported) in firmwareIds) DropdownMenuItem(enabled = !inputsLocked, text = { Text(if (supported) id else "$id · unsupported route") }, onClick = { firmwareId = id; getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("firmwareId", id).apply(); firmwareMenu = false })
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) }, enabled = !inputsLocked) { Text("Stock IPSW") }
-                        Button(onClick = { trustedTools.launch(null) }, enabled = !inputsLocked) { Text("Verified tools") }
-                    }
-                    Text(if (ipswSelected) "Stock IPSW selected" else "Select the stock IPSW")
-                    Text(if (toolsSelected) "Verified tools selected" else "Select the verified handoff tools folder")
-                    preparation?.let { state ->
-                        Text("${state.getString("state")} · ${state.getString("stage")}", Modifier.testTag("preparation_status"))
-                        if (state.getLong("total") > 0) LinearProgressIndicator(progress = { (state.getLong("done").toFloat() / state.getLong("total")).coerceIn(0f, 1f) })
-                        state.getString("error")?.takeIf { it.isNotEmpty() }?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                        if (preparedImportError.isNotEmpty()) Text("Prepared output retained: $preparedImportError", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            },
-            confirmButton = {
-                if (preparation?.getString("state") == "complete" && preparedImportError.isNotEmpty()) TextButton(onClick = { preparation?.let { importPreparedOutput(it) } }, enabled = !busy) { Text("Retry import") }
-                else if (preparationActive()) TextButton(onClick = { firmware?.cancel(); preparation = preparation?.apply { putString("state", "cancelling") } }, enabled = !firmwareRestarting && preparation?.getString("state") != "cancelling", modifier = Modifier.testTag("cancel_preparation")) { Text("Cancel") }
-                else TextButton(onClick = { beginPreparation() }, enabled = !inputsLocked && ipswSelected && toolsSelected && firmwareIds.any { it.first == firmwareId && it.second }, modifier = Modifier.testTag("start_preparation")) { Text("Prepare") }
-            },
-            dismissButton = { TextButton(onClick = { closePreparation() }, enabled = !inputsLocked) { Text("Close") } })
-    }
+    // Prepare from an IPSW: the choices live in [prep]; one FirmwareService process runs one preparation.
     private fun retainedPreparation() = Bundle().apply {
         putString("state", "complete"); putString("stage", "Prepared output retained")
-        putString("destination", retainedPreparedOutput); putString("firmwareId", firmwareId)
+        putString("destination", retainedPreparedOutput); putString("firmwareId", prep.firmwareId)
         putBoolean("consumed", false)
     }
-    private fun preparationActive() = firmwareRestarting || preparation?.getString("state") in listOf("starting", "preparing", "cancelling")
+    private fun preparationActive() = firmwareRestarting || prep.preparation?.getString("state") in listOf("starting", "preparing", "cancelling")
     private fun closePreparation() {
         if (busy || preparationActive()) return
         preparationOpen = false
+        releaseFirmware()
+    }
+    /** Ends the preparation worker's process; while a binding remains Android would restart it. */
+    private fun releaseFirmware() {
         firmwareExpectedExit = true
         try { firmware?.finish() } catch (e: RemoteException) { error = e.message ?: "Firmware worker unavailable" }
+        if (firmwareBound) { unbindService(firmwareConnection); firmwareBound = false }
+        firmware = null
     }
     private fun bindFirmware() {
         if (firmwareBound) { unbindService(firmwareConnection); firmwareBound = false }
         firmwareBound = bindService(Intent(this, FirmwareService::class.java), firmwareConnection, BIND_AUTO_CREATE)
     }
+    /** A boot ROM already on this phone for [board]: another device's, or the one earlier builds kept in files/. */
+    private fun findBootrom(board: String) {
+        if (prep.romPath.isNotEmpty() && File(prep.romPath).isFile) return
+        val record = records.firstOrNull { it.getString("board") == board && it.getBoolean("bootromAvailable") &&
+            File(filesDir, "library/records/${it.getString("id")}/assets/bootrom.bin").isFile }
+        when {
+            record != null -> { prep.romPath = File(filesDir, "library/records/${record.getString("id")}/assets/bootrom.bin").absolutePath; prep.romLabel = "From ${record.getString("name")}" }
+            File(filesDir, "bootrom.bin").isFile && board == "n72ap" -> { prep.romPath = File(filesDir, "bootrom.bin").absolutePath; prep.romLabel = "Saved boot file" }
+        }
+    }
+    @Composable
+    private fun PrepareOverlay() {
+        val board = prep.firmware?.board
+        LaunchedEffect(board, records) { board?.let { findBootrom(it) } }
+        PrepareScreen(prep, busy, preparationActive(),
+            onDownload = ::downloadIpsw, onChooseIpsw = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) },
+            onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onDownloadRom = ::downloadBootrom, onPrepare = ::beginPreparation,
+            onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
+            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation)
+    }
     private fun beginPreparation() {
         if (preparationActive() || busy) return
-        if (preparation?.getBoolean("consumed") == true) { restartFirmwareForPreparation(); return }
+        val chosen = prep.firmware ?: return
+        if (!prep.ipswReady || !prep.romReady) return
         val worker = firmware ?: run { pendingFirmwareStart = true; firmwareRestarting = true; bindFirmware(); return }
-        val selectedId = firmwareId; val selectedIpsw = ipswPath; val selectedTools = toolsPath
-        preparedImportError = ""
-        preparation = Bundle().apply { putString("state", "starting") }
+        if (prep.preparation?.getBoolean("consumed") == true || prep.preparation?.getString("state") in listOf("failed", "cancelled")) { restartFirmwareForPreparation(); return }
+        val selectedIpsw = prep.ipswPath
+        prep.importError = ""
+        prep.preparation = Bundle().apply { putString("state", "starting"); putString("firmwareId", chosen.id) }
         startForegroundService(Intent(this, FirmwareService::class.java))
-        Thread({ try { val state = worker.start(selectedId, selectedIpsw, selectedTools); handler.post { preparation = state } }
-            catch (e: Exception) { handler.post { error = e.message ?: "Cannot start preparation"; preparation = Bundle().apply { putString("state", "failed"); putString("error", error); putBoolean("consumed", true) } } } }, "prepare-start").start()
+        Thread({
+            try {
+                // The preparer's guest files come from the APK's own armv6 guest tools.
+                val tools = GuestTools.preparerRoot(this)
+                val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath)
+                handler.post { prep.preparation = state }
+            } catch (e: Exception) { handler.post { prep.preparation = Bundle().apply { putString("state", "failed"); putString("error", e.message ?: "Cannot start preparation"); putBoolean("consumed", true) } } }
+        }, "prepare-start").start()
     }
     private fun restartFirmwareForPreparation() {
         if (firmwareRestarting) return
@@ -639,67 +634,123 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     try { old.finish() } catch (_: DeadObjectException) { died.countDown() }
                     check(!oldBinder.isBinderAlive || died.await(5, TimeUnit.SECONDS)) { "Previous firmware worker has not exited. Retry after it stops." }
                 }
-                handler.post { firmware = null; preparation = null; bindFirmware() }
+                handler.post { firmware = null; prep.preparation = null; bindFirmware() }
             } catch (e: Exception) { handler.post { pendingFirmwareStart = false; firmwareRestarting = false; error = e.message ?: "Firmware worker restart failed" } }
             finally { try { oldBinder.unlinkToDeath(recipient, 0) } catch (_: java.util.NoSuchElementException) { } }
         }, "firmware-worker-restart").start()
     }
     private fun pollPreparation(state: Bundle) {
         if (firmwareRestarting) return
-        if (state.getString("state") == "idle" && retainedPreparedOutput.isNotEmpty()) return
-        preparation = state
-        if (state.getString("state") == "complete" && state.getString("destination") != preparedImported) {
+        val phase = state.getString("state")
+        if (phase == "idle" && retainedPreparedOutput.isNotEmpty()) return
+        if (phase == "idle" && prep.preparation?.getString("state") != "starting") { prep.preparation = null; return }
+        // The user went back from a finished run; the worker keeps reporting it until it is replaced.
+        if (phase in listOf("failed", "cancelled") && prep.preparation == null) return
+        prep.preparation = state
+        if (phase == "complete" && state.getString("destination") != preparedImported) {
             retainedPreparedOutput = state.getString("destination") ?: ""
             getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("pendingPrepared", retainedPreparedOutput).apply()
         }
-        state.getString("firmwareId")?.takeIf { it.isNotEmpty() }?.let { firmwareId = it }
-        if (!preparedImportInFlight && state.getString("state") == "complete" && state.getString("destination") != preparedImported) importPreparedOutput(state)
+        state.getString("firmwareId")?.takeIf { it.isNotEmpty() }?.let { prep.firmwareId = it }
+        if (!preparedImportInFlight && phase == "complete" && state.getString("destination") != preparedImported) importPreparedOutput(state)
     }
     private fun importPreparedOutput(state: Bundle) {
         if (preparedImportInFlight) return
+        val worker = engine
         val destination = requireNotNull(state.getString("destination")); preparedImported = destination; busy = true; preparedImportInFlight = true
+        val chosen = prep.firmware; val rom = prep.romPath; val ipsw = prep.ipswPath
+        val board = chosen?.board ?: prep.firmwareId.substringBefore('-'); val build = chosen?.build ?: prep.firmwareId.substringAfter('-')
+        val before = records.mapNotNull { it.getString("id") }.toSet()
         Thread({
-            val result = try { engine?.importPrepared(destination, defaultDeviceName(firmwareId.substringBefore('-'), firmwareId.substringAfter('-'), firmwareTargets, devices.map { it.name })) ?: "Device worker unavailable" }
-                catch (e: RemoteException) { e.message ?: "Device worker exited during import" }
+            var name = ""; var selected = false
+            val result = try {
+                checkNotNull(worker) { "Device worker unavailable" }
+                name = defaultDeviceName(board, build, firmwareTargets, devices.map { it.name })
+                worker.importPrepared(destination, name, rom).also { result ->
+                    if (result.isEmpty()) {
+                        val created = worker.records().firstOrNull { it.getString("id") !in before }
+                        selected = created != null && status !in listOf("running", "paused", "starting", "stopping") && worker.select(created.getString("id")).isEmpty()
+                    }
+                }
+            } catch (e: Exception) { e.message ?: "Device worker exited during import" }
+            if (result.isEmpty()) {
+                // The device holds its own copy now; the prepared output and the IPSW only take space.
+                File(destination).walkTopDown().forEach { it.setWritable(true, true) }
+                File(destination).deleteRecursively(); File("$destination.native.log").delete()
+                if (ipsw.startsWith(filesDir.absolutePath)) File(ipsw).delete()
+            }
             handler.post {
-                busy = false; preparedImportInFlight = false; error = result; preparedImportError = result
+                busy = false; preparedImportInFlight = false; prep.importError = result
                 if (result.isEmpty()) {
                     retainedPreparedOutput = ""
-                    getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("preparedImported", destination).remove("pendingPrepared").apply()
-                    notice = "Prepared firmware imported as a new device"; refreshDevices(); firmwareExpectedExit = true; firmware?.finish()
+                    if (ipsw.startsWith(filesDir.absolutePath)) prep.ipswPath = ""
+                    getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("preparedImported", destination).remove("pendingPrepared").remove("ipsw").apply()
+                    refreshDevices(); releaseFirmware(); preparationOpen = false; prep.preparation = null; prep.step = PrepareStep.DEVICE
+                    if (selected) { setup.reset(firstRun = false); setup.created = name; setup.step = SetupStep.DONE; overlay = Screen.SETUP }
+                    else notice = "Added $name; stop the running device to switch to it"
                 }
             }
         }, "prepared-device-import").start()
     }
+    private fun rememberIpsw(path: String, firmwareId: String) {
+        prep.ipswPath = path; prep.ipswFor = firmwareId; prep.ipswError = ""
+        getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("ipsw", path).putString("ipswFor", firmwareId).putString("firmwareId", firmwareId).apply()
+    }
+    private fun downloadIpsw() {
+        val chosen = prep.firmware ?: return
+        prep.ipswError = ""
+        IpswDownload.start(this, chosen) { file, _ -> handler.post { if (file != null) rememberIpsw(file.absolutePath, chosen.id) } }
+    }
+    /** Copies a chosen IPSW in, checking its SHA-1 against the chosen version's on the way. */
     private fun importStockIpsw(uri: Uri) {
+        val chosen = prep.firmware ?: return
         if (preparationActive() || busy) return
-        busy = true
+        busy = true; prep.ipswError = ""; prep.ipswChecking = "Copying ${displayName(uri)}"
         Thread({
+            val target = File(IpswDownload.directory(this).apply { mkdirs() }, chosen.fileName)
+            val partial = File(target.path + ".copy")
             try {
-                val target = File(filesDir, "stock-${System.nanoTime()}.ipsw")
-                contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } } ?: error("Cannot read stock IPSW")
-                handler.post { ipswPath = target.absolutePath; ipswSelected = true; busy = false; getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("ipsw", ipswPath).apply() }
-            } catch (e: Exception) { handler.post { error = e.message ?: "IPSW import failed"; busy = false } }
+                val digest = java.security.MessageDigest.getInstance("SHA-1")
+                val total = DocumentFile.fromSingleUri(this, uri)?.length() ?: 0L
+                require(chosen.bytes <= 0 || total <= 0 || total == chosen.bytes) { "That file is not the iOS ${chosen.label} IPSW for the ${shortProductName(chosen.productType)}" }
+                contentResolver.openInputStream(uri)?.use { input -> partial.outputStream().use { output ->
+                    val buffer = ByteArray(1 shl 20); var done = 0L
+                    while (true) {
+                        val n = input.read(buffer); if (n < 0) break
+                        output.write(buffer, 0, n); digest.update(buffer, 0, n); done += n
+                        if (total > 0) handler.post { prep.ipswChecking = "Copying and checking… ${done * 100 / total}%" }
+                    }
+                } } ?: error("Cannot read the IPSW")
+                val sha1 = digest.digest().joinToString("") { "%02x".format(it) }
+                require(chosen.sha1.isEmpty() || sha1 == chosen.sha1) { "That file is not the iOS ${chosen.label} IPSW for the ${shortProductName(chosen.productType)}" }
+                check(partial.renameTo(target)) { "Could not save the IPSW" }
+                handler.post { rememberIpsw(target.absolutePath, chosen.id); prep.ipswChecking = ""; busy = false }
+            } catch (e: Exception) {
+                partial.delete()
+                handler.post { prep.ipswError = e.message ?: "Could not use that IPSW"; prep.ipswChecking = ""; busy = false }
+            }
         }, "stock-ipsw-import").start()
     }
-    private fun importTrustedTools(uri: Uri) {
-        if (preparationActive() || busy) return
-        busy = true
+    private fun downloadBootrom() {
+        prep.romChecking = true; prep.romError = ""
         Thread({
-            val target = File(filesDir, "verified-tools-${System.nanoTime()}")
             try {
-                val source = DocumentFile.fromTreeUri(this, uri) ?: error("Cannot read trusted tools folder")
-                val inventory = source.findFile("inventory.json") ?: error("Verified inventory.json missing")
-                val guest = source.findFile("release-guest-unpacked")?.findFile("guest-tools") ?: error("Verified guest-tools folder missing")
-                check(target.mkdirs())
-                contentResolver.openInputStream(inventory.uri)?.use { input -> File(target, "inventory.json").outputStream().use { input.copyTo(it) } } ?: error("Cannot read verified inventory")
-                val exported = File(target, "release-guest-unpacked").apply { check(mkdir()) }
-                copyTree(guest, File(exported, "guest-tools"))
-                // Copy required tooling only. Keep fixtures, SDKs and captures in
-                // their original location; supplemental n81 NAND can be 18 GiB.
-                handler.post { toolsPath = target.absolutePath; toolsSelected = true; busy = false; getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("tools", toolsPath).apply() }
-            } catch (e: Exception) { target.deleteRecursively(); handler.post { error = e.message ?: "Tools import failed"; busy = false } }
-        }, "trusted-tools-import").start()
+                val target = File(filesDir, "prepare-bootrom.bin")
+                BootromDownload.fetch(target)
+                handler.post { prep.romPath = target.absolutePath; prep.romLabel = "Downloaded · iBoot-240.4"; prep.romChecking = false }
+            } catch (e: Exception) { handler.post { prep.romError = "Could not download the boot file: ${e.message}"; prep.romChecking = false } }
+        }, "bootrom-download").start()
+    }
+    private fun importPrepRom(uri: Uri) {
+        Thread({
+            try {
+                val target = File(filesDir, "prepare-bootrom.bin")
+                contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } } ?: error("Cannot read the boot file")
+                require(target.length() in 1..(1L shl 20)) { "That file is not a boot ROM" }
+                val name = displayName(uri)
+                handler.post { prep.romPath = target.absolutePath; prep.romLabel = name }
+            } catch (e: Exception) { handler.post { error = e.message ?: "Could not use that boot file" } }
+        }, "prepare-bootrom").start()
     }
     private fun refreshDevices(afterDelete: Boolean = false) {
         Thread({

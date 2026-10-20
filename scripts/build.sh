@@ -127,6 +127,11 @@ build_android() {
     need "$angle/lib" "ANGLE arm64 libraries"
     need "$w/mobile-android/arm64-v8a" "Android mobile services"
     need "$LT_XPWN" "XPwn source"
+    # Guest tools the APK carries (new devices and IPSW preparation use them); without them the APK
+    # still builds, but new devices get no guest tools and preparation cannot run.
+    local tools="${LT_GUEST_TOOLS:-$OUT/guest-package}" guest=()
+    if [ -f "$tools/armv6.itpack" ] && [ -f "$tools/armv7.itpack" ]; then guest=(-PguestToolsDir="$tools")
+    else echo "warning: no armv6/armv7.itpack in $tools (set LT_GUEST_TOOLS); the APK will carry no guest tools" >&2; fi
     (cd "$REPO/Android" && CMAKE_BUILD_PARALLEL_LEVEL="$JOBS" ./gradlew --offline --no-daemon --max-workers=8 \
         '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs="$JOBS" -PtargetAbis=arm64-v8a \
         -PportableDir="$REPO/Portable" -PfirmwareDir="$REPO/Portable/firmware" \
@@ -142,7 +147,7 @@ build_android() {
         -PangleArm64Notices="$angle/notices" \
         -PangleArm64ManifestSha256=3abde58ea5d9863453b12e3d7f67eff7c96ee989fbcfa4c00a16859cfd694945 \
         -PangleArm64NoticesSha256=63d2221b0fab9bff7788dc0c4e9a94c74079b3ab5ed3c09bd3ef72c909d1f924 \
-        :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
+        "${guest[@]}" :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
         { grep -A12 "What went wrong" "$OBJ/android-gradle.out" >&2 || tail -30 "$OBJ/android-gradle.out" >&2; exit 1; }
     cp "$OBJ/android-gradle/app/outputs/apk/debug/app-debug.apk" "$OUT/android/LightTouch-debug.apk"
     echo "$OUT/android/LightTouch-debug.apk"

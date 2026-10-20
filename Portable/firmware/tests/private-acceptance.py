@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import pathlib
+import struct
 
 parser = argparse.ArgumentParser()
 parser.add_argument("prepared", type=pathlib.Path)
@@ -21,13 +22,23 @@ for name in ["nor", "iboot", "gid_blobs", "guest_package"]:
     entry = lock["outputs"][name]
     assert entry["sha256"] == sha(base / entry["path"])
 nand = lock["outputs"]["nand"]
-files = sorted(path for path in (base / nand["path"]).rglob("*") if path.is_file())
-assert len(files) == nand["pages"]
-listing = hashlib.sha256()
-for path in files:
-    assert not path.is_symlink() and path.stat().st_size == 4160
-    listing.update(f"{path.relative_to(base / nand['path'])} {sha(path)}\n".encode())
-assert listing.hexdigest() == nand["listing_sha256"] == nand["built_listing_sha256"]
+# The NAND is one ITNAND01 file: a 24-byte header, 4 x 524288 little-endian record numbers, records.
+packed = (base / nand["path"]).read_bytes()
+assert nand["format"] == "ITNAND01" and packed[:8] == b"ITNAND01" and "listing_sha256" not in nand
+assert struct.unpack_from("<4I", packed, 8) == (4096, 64, 4, 524288)
+assert nand["sha256"] == hashlib.sha256(packed).hexdigest()
+records_at = 24 + 4 * 524288 * 4
+assert (len(packed) - records_at) % 4160 == 0 and (len(packed) - records_at) // 4160 == nand["pages"]
+slots = struct.unpack_from("<%dI" % (4 * 524288), packed, 24)
+pages = {}
+for index, record in enumerate(slots):
+    if record:
+        at = records_at + (record - 1) * 4160
+        pages[f"cs{index // 524288}/{index % 524288}.page"] = hashlib.sha256(packed[at:at + 4160]).hexdigest()
+assert len(pages) == nand["pages"] == len(set(r for r in slots if r))
+listing = hashlib.sha256("".join(f"{name} {pages[name]}\n" for name in sorted(pages)).encode())
+assert listing.hexdigest() == nand["source_listing_sha256"]
+files = pages
 checks = json.loads((base / "preparation.sha256.json").read_text())
 assert checks["version"] == 1
 for name, expected in checks["files"].items():

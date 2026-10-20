@@ -38,7 +38,6 @@ internal data class PickedFile(val uri: Uri, val name: String, val folder: Boole
 internal class SetupState {
     var step by mutableStateOf(SetupStep.WELCOME)
     var system by mutableStateOf<PickedFile?>(null)
-    var tools by mutableStateOf<PickedFile?>(null)
     var rom by mutableStateOf<PickedFile?>(null)
     var name by mutableStateOf("")
     var phase by mutableStateOf("")
@@ -47,18 +46,19 @@ internal class SetupState {
     var scanned by mutableStateOf<String?>(null)
     fun reset(firstRun: Boolean) {
         step = if (firstRun) SetupStep.WELCOME else SetupStep.FILES
-        system = null; tools = null; rom = null; name = ""; phase = ""; error = ""; created = null; scanned = null
+        system = null; rom = null; name = ""; phase = ""; error = ""; created = null; scanned = null
     }
 }
 
 /**
- * First launch, and Add device later: welcome, choose the iOS system, guest tools and boot file
- * (or one folder holding them), then create the device and offer to start it.
+ * First launch, and Add device later: welcome, choose the iOS system and boot file (or one folder
+ * holding them), or prepare one from an IPSW, then create the device and offer to start it. Guest
+ * tools come with LightTouch.
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: () -> Unit, onPickSystem: () -> Unit,
-                         onPickTools: () -> Unit, onPickRom: () -> Unit, onCreate: () -> Unit, onPrepare: () -> Unit,
+                         onPickRom: () -> Unit, onCreate: () -> Unit, onPrepare: () -> Unit,
                          onFinish: (start: Boolean) -> Unit, onCancel: () -> Unit) {
     BackHandler {
         when {
@@ -77,7 +77,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: ()
             AnimatedContent(state.step, Modifier.weight(1f), label = "setup-step") { step ->
                 when (step) {
                     SetupStep.WELCOME -> Welcome { state.step = SetupStep.FILES }
-                    SetupStep.FILES -> Files(state, onPickFolder, onPickSystem, onPickTools, onPickRom, onCreate, onPrepare)
+                    SetupStep.FILES -> Files(state, onPickFolder, onPickSystem, onPickRom, onCreate, onPrepare)
                     SetupStep.CREATING -> Creating(state.phase)
                     SetupStep.DONE -> Done(state.created ?: "Your device", onFinish)
                 }
@@ -98,11 +98,10 @@ private fun Welcome(onNext: () -> Unit) {
         Text("Classic iPod touch and iPhone software, running on your phone.", style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(36.dp))
-        Text("You'll need three files from LightTouch's setup guide:", style = MaterialTheme.typography.bodyMedium)
+        Text("You'll need:", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
-        Need(LtIcons.Layers, "iOS system", ".itbase, the prepared device image")
-        Need(LtIcons.Puzzle, "Guest tools", ".itpack, which lets LightTouch install apps")
-        Need(LtIcons.Chip, "Boot file", "bootrom.bin, the device's boot ROM")
+        Need(LtIcons.Layers, "iOS", "Apple's IPSW, which LightTouch can download, or a prepared .itbase")
+        Need(LtIcons.Chip, "Boot file", "The iPod touch 2G's boot ROM, which LightTouch can also download")
         Spacer(Modifier.height(40.dp))
         Button(onClick = onNext, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_start"), contentPadding = PaddingValues(horizontal = 32.dp)) {
             Text("Get started", style = MaterialTheme.typography.titleMedium)
@@ -133,32 +132,32 @@ private fun GuideLink(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () -> Unit, onPickTools: () -> Unit,
+private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () -> Unit,
                   onPickRom: () -> Unit, onCreate: () -> Unit, onPrepare: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
         Spacer(Modifier.height(24.dp))
         Text("Add a device", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
-        Text("Pick the folder you copied the files into, or choose each one.", style = MaterialTheme.typography.bodyMedium,
+        Text("Build one from Apple's firmware, or add a device image you already have.", style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
-        Surface(onClick = onPickFolder, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.fillMaxWidth().testTag("setup_folder")) {
+        Surface(onClick = onPrepare, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.fillMaxWidth().testTag("setup_prepare")) {
             Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(LtIcons.Folder, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                Icon(LtIcons.Download, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Choose a folder", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text(state.scanned ?: "LightTouch finds the three files in it", style = MaterialTheme.typography.bodySmall,
+                    Text("Prepare from an IPSW", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("Choose a device and iOS version; LightTouch downloads and prepares it", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
                 }
             }
         }
         Spacer(Modifier.height(20.dp))
-        Text("Or choose each file", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Or add a prepared device image", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
+        FileRow(LtIcons.Folder, "Choose a folder", state.scanned ?: "LightTouch finds the files in it", null, onPickFolder, "setup_folder", action = true)
         FileRow(LtIcons.Layers, "iOS system", "Required · .itbase", state.system, onPickSystem, "setup_system")
-        FileRow(LtIcons.Puzzle, "Guest tools", "Recommended · .itpack", state.tools, onPickTools, "setup_tools")
         FileRow(LtIcons.Chip, "Boot file", "Required for iPod touch 2G · bootrom.bin", state.rom, onPickRom, "setup_rom")
         if (state.system != null && state.rom == null) Text("Without the boot file the iPod touch 2G will not start; you can still add it now.",
             style = MaterialTheme.typography.bodySmall, color = LtColors.Warning, modifier = Modifier.padding(top = 4.dp))
@@ -169,16 +168,14 @@ private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () 
         Spacer(Modifier.height(20.dp))
         Button(onClick = onCreate, enabled = state.system != null, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_create"),
             contentPadding = PaddingValues(horizontal = 32.dp)) { Text("Create device", style = MaterialTheme.typography.titleMedium) }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            GuideLink()
-            TextButton(onClick = onPrepare) { Text("Prepare from an IPSW") }
-        }
+        GuideLink(Modifier.align(Alignment.CenterHorizontally))
         Spacer(Modifier.height(16.dp))
     }
 }
 
+/** A file to choose, with a check once chosen; [action] rows (the folder scan) have no check. */
 @Composable
-private fun FileRow(icon: ImageVector, title: String, hint: String, picked: PickedFile?, onPick: () -> Unit, tag: String) {
+private fun FileRow(icon: ImageVector, title: String, hint: String, picked: PickedFile?, onPick: () -> Unit, tag: String, action: Boolean = false) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(16.dp))
         .background(MaterialTheme.colorScheme.surfaceContainer).clickable(onClick = onPick).padding(16.dp).testTag(tag),
         verticalAlignment = Alignment.CenterVertically) {
@@ -190,7 +187,7 @@ private fun FileRow(icon: ImageVector, title: String, hint: String, picked: Pick
                 color = if (picked != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (picked != null) Icon(Icons.Filled.CheckCircle, "Chosen", tint = MaterialTheme.colorScheme.primary)
-        else Box(Modifier.size(22.dp).border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape))
+        else if (!action) Box(Modifier.size(22.dp).border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape))
     }
 }
 

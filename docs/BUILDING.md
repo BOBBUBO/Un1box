@@ -51,6 +51,7 @@ tracked). The defaults are the development machine's paths.
 | `LT_ENGINE_KIT` | `~/Documents/LightTouch-Development/perf/engine-api29/arm64-v8a` | the NDK's `libc++_shared.so`, the engine notice bundle and a fallback `portable-manifest.json`, which go next to an Android engine |
 | `ANDROID_HOME`, `ANDROID_NDK_VERSION`, `JAVA_HOME` | `~/Android/Sdk`, `28.2.13676358`, JDK 17 | Android SDK, NDK and JDK (`Android/README.md` lists the pinned tool versions) |
 | `LT_XPWN` | `~/.hermes/cache/scratch/lighttouchwin-xpwn` | the XPwn source the firmware tools build from |
+| `LT_GUEST_TOOLS` | `build/guest-package` | the `armv6.itpack` and `armv7.itpack` the APK carries (`-PguestToolsDir`); new devices get the matching one, and IPSW preparation takes its guest files from `armv6.itpack` |
 | `LT_MAC` | unset | `user@host` of a Mac for `guest-package` and `ltbench` |
 | `LT_MAC_DEVELOPER_DIR`, `LT_MAC_IPAD_SDK` | Xcode.app; `~/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk` on the Mac | see the Mac below |
 | `JOBS` | `nproc` | parallel jobs |
@@ -63,6 +64,11 @@ are armv6 iOS binaries. They link with Xcode's `ld` on a Mac. qemu-ios
 needs, where each piece came from, and what does not work: Xcode 27.1 (not Command Line Tools alone),
 the iPhoneOS 3.1.3 and 3.2 SDKs, and `ldid`. LT Bench needs no SDK. The script copies the sources over
 with `rsync` (to `~/ltpkg-build` on the Mac), builds there, and copies the results back.
+
+The iPhoneOS 3.1.3 SDK (headers and link stubs for the guest link) also ships in Apple's original
+installer, which the Internet Archive keeps in its iOS Firmware Exhibit Collection:
+[`iphone_sdk_3.1.3_with_xcode_3.2.1__snow_leopard__10m2003a.dmg`](https://archive.org/download/iOS_Firmware_Exhibit_Collection/iphone_sdk_3.1.3_with_xcode_3.2.1__snow_leopard__10m2003a.dmg).
+Not yet tried as a replacement for the third-party mirror the current SDK came from (docs/TODO.md).
 
 A guest package reaches a device only through its record: `records/ID/assets/guest.itpack`, pinned by
 `guest_package_sha256` in `record.json`. A newer serial installs over the existing system at the next

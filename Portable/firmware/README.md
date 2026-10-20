@@ -44,14 +44,17 @@ The baseline recipe decrypts IMG3 iBoot, generates SysCfg/NVRAM and UID-wrapped
 NOR signatures, emits GID blobs, decrypts/extracts FileVault/UDIF rootfs, grows
 HFSX in userspace, installs raw kernelcache/system edits/activation and rehashes
 ad-hoc Mach-O code directories while retaining entitlements, installs the verified
-seed package, and writes the four-chip FTL/NAND layout and versioned device lock.
+seed package, and writes the four-chip FTL/NAND layout and versioned device lock. The NAND is
+one ITNAND01 file (`nand`: header, slot table, 4160-byte records), the packed form the library
+imports and the engine maps; the lock pins its SHA-256, page count and the SHA-256 of the page
+listing an unpacked NAND would have (`source_listing_sha256`).
 Sound defaults, mobile owners, guest-tool markers and the shared proxy recipe are
 part of the system edits. Full stock filesystems require allocation bitmap
 relocation into the appended free space: stock XPwn `grow_hfs` incorrectly tries
 to allocate the larger map from the full old volume.
 
 Preparation stages in a private 0700 sibling, hashes output files, flushes them
-and directories, and promotes with Linux/Android `renameat2(RENAME_NOREPLACE)`.
+(one `syncfs`) and directories, and promotes with Linux/Android `renameat2(RENAME_NOREPLACE)`.
 Existing destinations cannot be replaced. A cancelled/failed preparation removes
 only its stage. A power interruption leaves an identifiable `.prepare-*` stage
 that is never a prepared output. Callbacks run on the caller thread and can cancel

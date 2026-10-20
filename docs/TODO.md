@@ -63,6 +63,8 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   GPL-2.0-or-later. Tested on the Poco: serial 30 installed at boot (good 30), and Enigmo 4.1
   installed through AppSync and opened. The armv7 package was built but not run. The helpers still
   build against Apple's iPhoneOS 3.1.3/3.2 SDK headers and link stubs from a third-party mirror.
+  Apple's own 3.1.3 SDK installer is on the Internet Archive (docs/BUILDING.md, "The Mac"); try
+  building from it instead.
 - [x] Guest package verdicts on Android and Linux. The portable runtime never told the guest's loader
   (qemu-ios `contrib/it-boot`) that a package was good, so `it_boot` reverted any package newer than
   the record's after two boots (`MAX_TRIES`) and refused that serial from then on. That is why serial

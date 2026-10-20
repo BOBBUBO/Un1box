@@ -96,23 +96,36 @@ existing device yet.
 ## 5. Prepare a system from an IPSW instead
 
 Preparation turns Apple's stock firmware into an emulator-ready system. Importing a stock
-IPSW in the iOS system picker does **not** do this. Every route needs the upstream guest
-tools folder: make it with `python3 tools/get-assets.py --verified-tools`.
+IPSW in the iOS system picker does **not** do this. Android needs nothing else: the app carries
+its own guest tools. The other routes need the upstream guest tools folder: make it with
+`python3 tools/get-assets.py --verified-tools`.
 
 | Host | n72ap-7E18 (iPod touch 2G, iOS 3.1.3) | n81ap-8C148 (iPod touch 4G, iOS 4.2.1) |
 | --- | --- | --- |
-| Android | In-app: **Prepare from stock IPSW** | Upstream Mac app only |
+| Android | In-app: **Prepare from an IPSW** | Upstream Mac app only |
 | Linux | `lighttouch-prepare` (build it from [Portable/firmware](../Portable/firmware/README.md)) | Upstream Mac app only |
 | macOS | Upstream app's **Add Device**, or its bundled `firmwarekit` | Same |
 | Windows | Use one of the others, then copy the `.itbase` | Same |
 
 The stock n72 input is `iPod2,1_3.1.3_7E18_Restore.ipsw` (SHA-1 and size are checked
 against the [firmware catalog](../Portable/firmware/firmware-catalog.json)). Apple
-no longer hosts this update; the catalog lists archive mirrors.
+never hosted this update publicly and ipsw.me does not list it; the Internet Archive's
+[iOS Firmware Exhibit Collection](https://archive.org/download/iOS_Firmware_Exhibit_Collection)
+has it, and nearly every other IPSW the catalog names.
 
-**Android:** copy the IPSW and the `verified-tools` folder to the phone. Tap **Prepare
-from stock IPSW**, choose `n72ap-7E18`, then **Stock IPSW** and **Verified tools** (pick the
-`verified-tools` folder), and **Prepare**. The prepared system is imported when it finishes.
+The n72 boot file is the S5L8720's SecureROM (iBoot-240.4), mask ROM in the chip: no IPSW contains
+it. [securerom.fun](https://securerom.fun) publishes dumps (also in its GitHub repository,
+`hekapooios/hekapooios.github.io`, under `resources/APROM/`); its "s5l8720xsi, iBoot-240.4" file is
+byte-identical to upstream's `bootrom_240_4` (SHA-256 `55f4d8ea…ca054`).
+
+**Android:** in **Add a device** (or Settings), tap **Prepare from an IPSW**, choose the device,
+then the iOS version. **Download** fetches the IPSW (from the link ipsw.me lists, else the
+catalog's mirrors and the Internet Archive) and checks it against the catalog; **Choose a file**
+uses one already on the phone. The boot file comes from another device on the phone when one has
+it, or **Download** fetches it from securerom.fun (GitHub as the fallback), checked against its
+SHA-256. **Prepare device** takes under a minute on a recent phone and needs about 1.5 GB free;
+the device is added and selected when it finishes. Only n72ap-7E18 prepares on the phone so far;
+the others are listed as not supported yet.
 
 **Linux:**
 
@@ -160,7 +173,8 @@ package"). A record keeps the guest tools it was imported with until they are re
 tools" on a stopped device; on Linux, `lighttouch-linux --library LIB --record ID --set-guest-package
 ITPACK`. A newer serial installs over the existing system at the next boot, keeping apps and data.
 
-Storage note: the desktop importer stores n72 NAND as one indexed file. Alpha builds do not
+Storage note: the importers, and on-phone preparation, store n72 NAND as one indexed file
+(ITNAND01). Alpha builds do not
 migrate old library layouts; keep the original `.itbase` so you can re-import.
 
 Use firmware you are entitled to use, and keep firmware, ROMs and personal guest data out
