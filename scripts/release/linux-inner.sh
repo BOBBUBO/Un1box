@@ -1,7 +1,8 @@
 #!/bin/sh
 # The Linux release build, run by scripts/build-release.sh inside the Debian 11 (glibc 2.31) build
-# image. /src/app and $QEMU_SOURCE are read-only release worktrees, /inputs the prebuilt dependency
-# prefixes (read-only), /build the output.
+# image. /src/app and $QEMU_SOURCE are read-only release worktrees and /build the output. The prebuilt
+# prefixes are mounted read-only at /build/{deps-full,crypto,mobile-private-runtime-ui15}, where they
+# were built: their pkg-config files name those paths.
 set -eu
 export LC_ALL=C.UTF-8 MAKEFLAGS=-j4 CMAKE_BUILD_PARALLEL_LEVEL=4
 git config --global --add safe.directory '*'
@@ -18,7 +19,7 @@ for p in berkeley-softfloat-3 berkeley-testfloat-3 keycodemapdb; do cp -a "$Q/su
 [ -z "$(git -C /build/qemu-source status --porcelain=v1 --untracked-files=all)" ]
 echo "=== ENGINE (LDFLAGS=-ldl: glibc 2.31 keeps dladdr in libdl)"
 LDFLAGS=-ldl python3 /build/qemu-source/contrib/portable/build-engine.py /build/engine --cpp-standard=gnu++17 \
-    --prefix /inputs/deps-full/prefix --crypto-prefix /inputs/crypto/prefix
+    --prefix /build/deps-full/prefix --crypto-prefix /build/crypto/prefix
 echo "=== FRONTEND"
 cmake -S /src/app/Linux -B /build/frontend -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIGHTTOUCH_QEMU_SOURCE=/build/qemu-source \
     -DLIGHTTOUCH_BUILD_TESTS=ON -DCMAKE_CXX_FLAGS=-DSDL_PIXELFORMAT_BGRX32=SDL_PIXELFORMAT_RGB888
@@ -28,6 +29,6 @@ ctest --test-dir /build/frontend --output-on-failure
 echo "=== COLLECT"
 rm -rf /build/runtime
 python3 /src/app/Linux/packaging/collect-bullseye-runtime.py --output /build/runtime --frontend /build/frontend/lighttouch-linux \
-    --engine /build/engine/libqemu-arm.so --dependency /inputs/deps-full --dependency /inputs/crypto \
-    --dependency /inputs/mobile-private-runtime-ui15
+    --engine /build/engine/libqemu-arm.so --dependency /build/deps-full --dependency /build/crypto \
+    --dependency /build/mobile-private-runtime-ui15
 printf '\nLINUX_RELEASE_BUILD_COMPLETE\n'

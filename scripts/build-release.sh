@@ -111,7 +111,12 @@ step_windows() {
 }
 
 step_linux() {
-    local b=$R/linux-build mounts=() d
+    local b=$R/linux-build mounts=() d p
+    # The prebuilt prefixes go where they were built: their pkg-config files name /build/<dir>.
+    for p in deps-full crypto mobile-private-runtime-ui15; do
+        need "$LT_LINUX_INPUTS/$p" "Linux input $p"
+        mounts+=(--mount "type=bind,src=$LT_LINUX_INPUTS/$p,dst=/build/$p,readonly")
+    done
     # The worktrees' .git files point into these repositories (and their object alternates).
     for d in "$(git -C "$R/app" rev-parse --path-format=absolute --git-common-dir)" \
              "$(git -C "$R/engine" rev-parse --path-format=absolute --git-common-dir)"; do
@@ -128,7 +133,6 @@ step_linux() {
         --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --security-opt no-new-privileges \
         --mount "type=bind,src=$R/app,dst=/src/app,readonly" \
         --mount "type=bind,src=$R/engine,dst=$R/engine,readonly" \
-        --mount "type=bind,src=$LT_LINUX_INPUTS,dst=/inputs,readonly" \
         --mount "type=bind,src=$b,dst=/build" "${mounts[@]}" \
         -e "QEMU_SOURCE=$R/engine" -e "EXPECTED_QEMU_REV=$(rev "$R/engine")" -e "EXPECTED_APP_REV=$(rev "$R/app")" \
         "$LT_LINUX_IMAGE" /bin/sh /src/app/scripts/release/linux-inner.sh > "$R/linux.log" 2>&1 ||
@@ -146,8 +150,8 @@ step_macos() {
     local m="$LT_MAC_ROOT/LightTouch-Release-$VER" app_rev engine_rev zip=LightTouch-$V-macOS-arm64.zip
     app_rev=$(rev "$R/app"); engine_rev=$(rev "$R/engine")
     ssh "$LT_MAC" "set -e; rm -rf $m; mkdir -p $m; cd $m
-        for x in 'app $GH_APP $app_rev' 'qemu $GH_ENGINE $engine_rev'; do set -- \$x
-            git init -q \$1; git -C \$1 fetch -q --depth 1 \$2 \$3; git -C \$1 checkout -q --detach FETCH_HEAD; done"
+        git init -q app; git -C app fetch -q --depth 1 $GH_APP $app_rev; git -C app checkout -q --detach FETCH_HEAD
+        git init -q qemu; git -C qemu fetch -q --depth 1 $GH_ENGINE $engine_rev; git -C qemu checkout -q --detach FETCH_HEAD"
     for p in $SUBPROJECTS; do rsync -a "$R/engine/subprojects/$p" "$LT_MAC:$m/qemu/subprojects/"; done
     ssh "$LT_MAC" "export PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin; cd $m
         $LT_MAC_PYTHON app/macOS/build-engine.py --qemu-source \$PWD/qemu --output \$PWD/engine --python $LT_MAC_PYTHON \
