@@ -15,8 +15,8 @@ android {
         applicationId = "org.lighttouch.android"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.0.6"
+        versionCode = 7
+        versionName = "0.0.7"
         buildConfigField("long", "SHUTDOWN_GRACE_MS", "${shutdownGraceMs}L")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",") }

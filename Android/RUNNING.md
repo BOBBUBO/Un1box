@@ -68,20 +68,18 @@ Keep the original assets read-only. A reference prepared base and a base generat
 from stock firmware have different identities/provenance; neither is an export of
 the other's writable photographs or preferences.
 
-While the app is stopped:
-
-1. Choose **ROM** and select the matching boot ROM. The generic "optional ROM"
-   picker description does not make n72's required ROM optional.
-2. Choose **Guest tools** and select the matching ARMv6 `.itpack`.
-3. Choose **Import base** and select the prepared `.itbase`. Wait for validated
-   import completion, select the new device record, then choose **Start**.
+In **Add a device** (the setup screen on first launch), under **Or add a prepared device
+image**, choose the `.itbase` as the **iOS system** and the boot ROM as the **Boot file**, or
+**Choose a folder** holding both, then **Create device**. The iPod touch 2G does not start
+without its boot ROM. The app gives the new device its built-in guest tools for the board and
+build; **Settings › Update guest tools** replaces them for a stopped device.
 
 The importer creates an immutable base and independent writable state for the new
 record. It binds the selected assets at import; choosing another ROM/package later
 does not rewrite an existing record's assets. Starting an existing record reuses
 its state. Re-importing creates another record and is not a persistence test.
 
-**Import prepared folder instead** accepts the native prepared-directory form:
+**Choose a folder** also accepts the native prepared-directory form:
 the lock/identity metadata and all declared boot, NAND, NOR and package files must
 agree. The domain validates hashes, geometry, paths and route; retain that metadata
 instead of constructing a boot command in the UI. Import copies/stages assets, so

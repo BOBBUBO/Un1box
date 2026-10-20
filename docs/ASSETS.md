@@ -5,9 +5,9 @@ LightTouch needs three files for its main device, the **iPod touch 2G on iOS 3.1
 
 | File | What it is | LightTouch calls it |
 | --- | --- | --- |
-| `n72ap-7E18.itbase` | The prepared iOS system | **iOS system** (desktop) / **Import base** (Android) |
-| `armv6.itpack` | Guest tools that run inside iOS | **Guest tools** |
-| `bootrom.bin` | The n72 SecureROM boot file | **Boot file** (desktop) / **ROM** (Android) |
+| `n72ap-7E18.itbase` | The prepared iOS system | **iOS system** |
+| `armv6.itpack` | Guest tools that run inside iOS | **Guest tools** (the Android app has its own) |
+| `bootrom.bin` | The n72 SecureROM boot file | **Boot file** |
 
 The upstream [LightTouchMac](https://github.com/samhenrigold/LightTouchMac/releases) app
 release contains all three, and the routes below take them from it. Pick the first one
@@ -76,8 +76,11 @@ The board, iOS build and guest architecture must match; for the iPod touch 4G ro
 wait for the import to finish, then **Start iOS**. Use **Stop** and wait for shutdown
 before closing.
 
-**Android:** tap **Import base** and choose `n72ap-7E18.itbase`, then **ROM** for
-`bootrom.bin` and **Guest tools** for `armv6.itpack`. Then **Start**.
+**Android:** in **Add a device** (the setup screen on first launch), under **Or add a prepared
+device image**, choose `n72ap-7E18.itbase` as the **iOS system** and `bootrom.bin` as the **Boot
+file** (or **Choose a folder** holding both), then **Create device**. The app adds its own guest
+tools. Or skip these files: **Prepare from an IPSW** ([route 5](#5-prepare-a-system-from-an-ipsw-instead))
+downloads everything.
 
 The app checks the files itself; you never type hashes. Each saved device has its own
 writable storage, and the imported system stays read-only, so one import can back several
@@ -87,9 +90,11 @@ devices (**New from selected** on desktop).
 
 Since v0.0.6, each [LightTouch release](https://github.com/blake-lucas/LightTouch/releases) attaches
 its own `armv6.itpack` for the iPod touch 2G, newer than the upstream app's; games draw faster with
-it. (The iPod touch 4G's `armv7.itpack` is not attached until it has been tested.) Use it in place of the upstream file when you set up a device, or give
-it to an existing device, which keeps its apps and data: on Android stop the device and tap
-**Guest tools**; on Linux run `lighttouch-linux --library LIB --record ID --set-guest-package
+it. (The iPod touch 4G's `armv7.itpack` is not attached until it has been tested.) Since v0.0.7 the
+Android app carries these guest tools and gives them to each new device itself. Elsewhere, use the
+attached file in place of the upstream one when you set up a device, or give it to an existing
+device, which keeps its apps and data: on Android stop the device and tap **Settings › Update guest
+tools**; on Linux run `lighttouch-linux --library LIB --record ID --set-guest-package
 armv6.itpack`. The new tools install the next time iOS starts. Windows and macOS cannot update an
 existing device yet.
 
@@ -138,7 +143,7 @@ lighttouch-prepare Portable/firmware/firmware-catalog.json n72ap-7E18 \
   n72ap-7E18-prepared
 ```
 
-The output folder must not exist yet. Load it with **Import prepared folder instead** (Android) or
+The output folder must not exist yet. Load it with **Add a device › Choose a folder** (Android) or
 pack it with the upstream `firmwarekit pack-base` to get an `.itbase`.
 
 **macOS, and the n81 route:** in the upstream app use **Add Device** for the board and
