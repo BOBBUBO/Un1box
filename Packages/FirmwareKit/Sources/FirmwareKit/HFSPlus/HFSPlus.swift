@@ -103,6 +103,14 @@ public final class HFSPlusVolume {
 
     deinit { close(fd) }
 
+    /// Loads the lazily read tables (overflow extents, decmpfs headers, the catalog) now, after which reading
+    /// contents is safe from several threads at once (HFSPlusEditor's extraction).
+    func warmCaches() throws {
+        if overflow == nil { overflow = try readOverflow() }
+        if decmpfs == nil { decmpfs = try readDecmpfs() }
+        _ = try catalog()
+    }
+
     // MARK: - Raw fork I/O
 
     /// The fork's extents in file order: the eight inline ones, then any in the extents overflow file.

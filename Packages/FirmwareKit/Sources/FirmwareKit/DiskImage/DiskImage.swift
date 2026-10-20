@@ -106,6 +106,9 @@ public enum DiskImage {
         backend: Backend = backend,
         execute: @Sendable ([String]) async throws -> String
     ) async throws -> Attached {
+        #if !os(macOS)
+        throw FirmwareError(.unsupported, "attaching \(image.lastPathComponent) needs a Mac's disk images")
+        #endif
         let path = image.resolvingSymlinksInPath().path
         let isImage: @Sendable ((image: String, device: String)) -> Bool = { item in
             URL(fileURLWithPath: item.image).resolvingSymlinksInPath().path == path
@@ -184,6 +187,18 @@ public enum DiskImage {
     /// The raw disk (partition map and all) of a UDIF image, at `out`.
     public static func convertToRaw(_ src: URL, to out: URL, backend: Backend = backend) async throws {
         let fm = FileManager.default
+        #if !os(macOS)
+        // No hdiutil: UDIFImage reads the chunks itself.
+        let image = try UDIFImage(src)
+        try? fm.removeItem(at: out)
+        let fd = open(out.path, O_RDWR | O_CREAT | O_TRUNC, 0o644)
+        guard fd >= 0 else { throw FirmwareError(.internal, "cannot create \(out.path)") }
+        defer { close(fd) }
+        guard ftruncate(fd, off_t(image.sectorCount * 512)) == 0 else {
+            throw FirmwareError(.internal, "cannot size \(out.path)")
+        }
+        return try image.write(to: fd, sectors: 0..<image.sectorCount)
+        #endif
         try? fm.removeItem(at: out)
         do { try await run(convertCommand(src, raw: out, backend: backend)) } catch let e as FirmwareError {
             throw FirmwareError(.unsupported, "convert \(src.lastPathComponent): \(e.message.suffix(600))")
@@ -225,6 +240,9 @@ public enum DiskImage {
 
     /// Cleanup must distinguish an empty attachment list from a failed query.
     public static func checkedAttachedImages() async throws -> [(image: String, device: String)] {
+        #if !os(macOS)
+        return []  // nothing is ever attached off the Mac
+        #endif
         let (status, out) = try await exec(["/usr/bin/hdiutil", "info", "-plist"])
         return try parseAttachments(status: status, output: out)
     }

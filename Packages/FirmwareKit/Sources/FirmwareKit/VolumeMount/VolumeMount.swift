@@ -30,6 +30,9 @@ public enum VolumeMount {
         _ body: (URL) async throws -> T
     ) async throws -> T {
         try Task.checkCancellation()
+        #if !os(macOS)
+        return try await withExtracted(image, at: mountPoint, body)
+        #else
         try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
         let journal = (try? HFSPlusVolume(image).journalSnapshot()) ?? nil
         let dev = try await attach(image)
@@ -61,7 +64,43 @@ public enum VolumeMount {
         }
         if let journal { try HFSPlusVolume(image, writable: true).restore(journal) }
         return value
+        #endif
     }
+
+    #if !os(macOS)
+    /// withMounted where no HFS+ driver is at hand (Linux, Android, Windows): the volume's files are laid out at
+    /// `mountPoint` by HFSPlusEditor, `body` edits them there, and what changed is written back into the image.
+    nonisolated(nonsending) static func withExtracted<T>(
+        _ image: URL,
+        at mountPoint: URL,
+        _ body: (URL) async throws -> T
+    ) async throws -> T {
+        let journal = (try? HFSPlusVolume(image).journalSnapshot()) ?? nil
+        if FileManager.default.fileExists(atPath: mountPoint.path) { try removeTree(mountPoint) }
+        defer { try? removeTree(mountPoint) }
+        let editor = try HFSPlusEditor(image)
+        try editor.extract(to: mountPoint)
+        try Task.checkCancellation()
+        let value = try await body(mountPoint)
+        try Task.checkCancellation()
+        for name in junk { try? FileManager.default.removeItem(at: mountPoint.appendingPathComponent(name)) }
+        try editor.commit(from: mountPoint)
+        if let journal { try HFSPlusVolume(image, writable: true).restore(journal) }
+        return value
+    }
+
+    /// Removes a tree whose folders may be read-only (as the volume's own are).
+    static func removeTree(_ root: URL) throws {
+        let fm = FileManager.default
+        var st = stat()
+        guard lstat(root.path, &st) == 0 else { return }
+        if st.st_mode & S_IFMT == S_IFDIR {
+            chmod(root.path, 0o700)
+            for name in try fm.contentsOfDirectory(atPath: root.path) { try removeTree(root.appendingPathComponent(name)) }
+        }
+        try fm.removeItem(at: root)
+    }
+    #endif
 
     private static func finish(dev: String, mountPoint: URL, check shouldCheck: Bool) async throws -> (
         ok: Bool, output: String
@@ -99,11 +138,21 @@ public enum VolumeMount {
     /// Attaches a raw image without mounting it; returns its /dev/diskN.
     public static func attach(_ image: URL) async throws -> String { try await DiskImage.attach(image).device }
 
+    #if !os(macOS)
+    /// What needs a Mac's disk images (a device to check or open in a file manager) is not available here.
+    static func macOnly(_ what: String) -> FirmwareError {
+        FirmwareError(.unsupported, "\(what) needs a Mac (it uses macOS's disk images)")
+    }
+    #endif
+
     /// Attaches `image` and mounts it at `mountPoint` (created if needed) out of Finder's sidebar and Desktop
     /// (nobrowse), owners ignored, for a Finder window opened on the folder. Detaching the device unmounts it.
     public static func attachHidden(_ image: URL, at mountPoint: URL, readOnly: Bool = false) async throws
         -> DiskImage.Attached
     {
+        #if !os(macOS)
+        throw macOnly("Opening a device's files")
+        #endif
         try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
         let dev = try await DiskImage.attach(image, readOnly: readOnly).device
         do {
@@ -136,6 +185,9 @@ public enum VolumeMount {
 
     /// `fsck_hfs -fn` (check only; -f because the data volume is journaled) of an attached, unmounted device.
     public static func check(_ dev: String) async throws -> (ok: Bool, output: String) {
+        #if !os(macOS)
+        throw macOnly("Checking a volume with fsck_hfs")
+        #endif
         let (status, out) = try await exec("/sbin/fsck_hfs", ["-fn", dev])
         return (status == 0 && out.contains("appears to be OK"), out)
     }
@@ -188,6 +240,9 @@ public enum VolumeMount {
     /// A bare (no partition map) case-sensitive journaled HFS+ volume in a sparse raw file of `size` bytes
     /// (rounded down to 4 KiB): newfs_hfs writes only metadata, so a 14.7 GB data volume costs ~40 MB.
     public static func makeHFS(_ image: URL, size: Int64, name: String = "Data", journaled: Bool = true) async throws {
+        #if !os(macOS)
+        return try HFSPlusEditor.format(image, size: size, name: name, journaled: journaled)
+        #endif
         guard FileManager.default.createFile(atPath: image.path, contents: nil),
             truncate(image.path, off_t(size / 4096 * 4096)) == 0
         else {
@@ -209,6 +264,9 @@ public enum VolumeMount {
         async throws
     {
         guard try size(image) != bytes else { return }
+        #if !os(macOS)
+        return try HFSPlusEditor.grow(image, toBytes: bytes)
+        #endif
         try await DiskImage.resize(image, toBytes: bytes, backend: backend)
         let old = try size(image)
         guard old <= bytes else { throw FirmwareError(.internal, "resize overshot \(bytes) bytes (\(old))") }
