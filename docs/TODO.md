@@ -175,6 +175,11 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
   is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash
   automatically after a quick quit. Linux/Windows Apps now has a version picker; it has no Last crash.
 
+- [ ] Installing a very large app over the USB bridge (Legacy Store or Install IPA) is very slow:
+  Asphalt 5 spends 5+ minutes extracting inside the guest on the phones, and the same install
+  crashed the guest on Linux. Profile the guest during the install (which guest process and
+  syscalls, engine-side NAND/FMSS writes with `LT_FMSS_PATH`, BQL) for red flags.
+
 ## Android front end (dev/ui)
 
 - [ ] Save & Stop: keep the guest's state across app close and phone reboot. The engine has

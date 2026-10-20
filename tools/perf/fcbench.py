@@ -15,7 +15,7 @@ import os, subprocess, sys, time
 D = os.path.dirname(os.path.abspath(__file__))
 exec(open(os.path.join(D, "inappfps.py")).read().split("ap = argparse")[0])
 GAMES = {
-    # (tap x, y) or seconds to wait
+    # (tap x, y), (swipe x0, y0, x1, y1) or seconds to wait
     "flightcontrol": [(.397, .127), 18, (.153, .629), 4],  # icon, PLAY! (Poco layout)
     "doodlejump": [(.143, .127), 22],                      # main menu (Pixel layout)
     "jellycar": [(.397, .127), 20, (.294, .497), 8],       # icon, dismiss the push prompt (Pixel layout)
@@ -27,6 +27,7 @@ GAMES = {
     # lands a screen early ends on QUICK RACE's random track: check with FC_STEPS.
     "asphalt5": [(.857, .313), 10, (.294, .497), 12, (.5, .5), 1.5, (.92, .06), 20, (.5, .5), 8,
                  (.925, .916), 5, (.112, .523), 5, (.112, .523), 50, (.5, .5), 15],
+    "ltbench-pixel": [(.9, .5, .15, .5), 3, (.857, .505), 30],  # LT Bench, Home page 3 (Pixel layout): one pass
     "ltbench": [(.380, .312), 40],                        # LT Bench, one pass (old Poco record's layout; not on the current record)
     "doodlejump-poco": [(.143, .127), 22],                 # Doodle Jump main menu (Poco layout)
     "jellycar-poco": [(.619, .127), 20, (.294, .497), 8],  # JellyCar, dismiss the push prompt (Poco layout)
@@ -65,7 +66,8 @@ for n, step in enumerate(steps):
         if os.environ.get("FC_STEPS"):  # the screen each tap lands on, to check a long preset
             with open(os.path.join(os.environ["FC_STEPS"], f"step{n:02d}.png"), "wb") as f:
                 f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True, check=True).stdout)
-        sh("input", "tap", *gpt(rect, *step))
+        if len(step) == 4: sh("input", "swipe", *gpt(rect, *step[:2]), *gpt(rect, *step[2:]), "300")
+        else: sh("input", "tap", *gpt(rect, *step))
     else: time.sleep(step)
 def save_shot():
     if os.environ.get("FC_SHOT"):
