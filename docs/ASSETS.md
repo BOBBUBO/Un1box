@@ -107,7 +107,7 @@ its own guest tools. The other routes need the upstream guest tools folder: make
 
 | Host | n72ap-7E18 (iPod touch 2G, iOS 3.1.3) | n81ap-8C148 (iPod touch 4G, iOS 4.2.1) |
 | --- | --- | --- |
-| Android | In-app: **Prepare from an IPSW** | Upstream Mac app only |
+| Android | In-app: **Prepare from an IPSW** | Prepare on a Mac, then add the folder in the app |
 | Linux | `lighttouch-prepare` (build it from [Portable/firmware](../Portable/firmware/README.md)) | Upstream Mac app only |
 | macOS | Upstream app's **Add Device**, or its bundled `firmwarekit` | Same |
 | Windows | Use one of the others, then copy the `.itbase` | Same |
@@ -129,8 +129,13 @@ catalog's mirrors and the Internet Archive) and checks it against the catalog; *
 uses one already on the phone. The boot file comes from another device on the phone when one has
 it, or **Download** fetches it from securerom.fun (GitHub as the fallback), checked against its
 SHA-256. **Prepare device** takes under a minute on a recent phone and needs about 1.5 GB free;
-the device is added and selected when it finishes. Only n72ap-7E18 prepares on the phone so far;
-the others are listed as not supported yet.
+the device is added and selected when it finishes.
+
+Every device and iOS version in the catalog can be chosen, marked **Tested** (checked on LightTouch
+for Android), **Experimental** (passes upstream's Mac checks) or **Untested**. Only n72ap-7E18
+prepares on the phone so far. For the others the app shows the `firmwarekit` commands for a Mac
+(below); copy the packed `.itbase` folder to the phone and tap **Choose the folder**, or use **Add a
+device › Choose a folder**. The iPod touch 4G on iOS 6.1.6 (`n81ap-10B500`) starts this way.
 
 **Linux:**
 

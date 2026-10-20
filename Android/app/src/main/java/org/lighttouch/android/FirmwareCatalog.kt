@@ -16,11 +16,28 @@ import java.security.MessageDigest
 internal data class CatalogFirmware(
     val id: String, val board: String, val productType: String, val version: String, val build: String,
     val released: String, val prerelease: String, val sha1: String, val bytes: Long, val urls: List<String>,
+    /** The catalog's own label: available, experimental or untested (upstream's checks, not LightTouch's). */
+    val status: String = "",
 ) {
     /** "3.1.3", or "4.2 beta 2" for a developer build. */
     val label get() = if (prerelease.isEmpty()) version else "$version $prerelease"
     val fileName get() = "${productType}_${version}_${build}_Restore.ipsw"
+    val support get() = when {
+        id in testedFirmwares -> Support.TESTED
+        status == "available" || status == "experimental" -> Support.EXPERIMENTAL
+        else -> Support.UNTESTED
+    }
 }
+
+/** How far a firmware has been tried: LightTouch's own compatibility runs first, then the catalog's label. */
+internal enum class Support(val label: String, val detail: String) {
+    TESTED("Tested", "Checked on LightTouch for Android."),
+    EXPERIMENTAL("Experimental", "Starts in Light Touch for Mac's checks; not yet checked on LightTouch for Android."),
+    UNTESTED("Untested", "Nobody has tried these yet. They may not start."),
+}
+
+/** Firmwares that pass LightTouch's compatibility runs on Android (docs/COMPATIBILITY.md). */
+internal val testedFirmwares = setOf("n72ap-7E18")
 
 internal object FirmwareCatalog {
     fun load(context: Context): List<CatalogFirmware> =
@@ -28,14 +45,16 @@ internal object FirmwareCatalog {
 
     fun parse(text: String): List<CatalogFirmware> {
         val entries = JSONObject(text).getJSONArray("entries")
-        return (0 until entries.length()).map { entries.getJSONObject(it) }.filter { it.has("product_type") && it.has("version") }.map { e ->
+        return (0 until entries.length()).map { entries.getJSONObject(it) }
+            // "coming_soon" entries have no preparation recipe anywhere yet.
+            .filter { it.has("product_type") && it.has("version") && it.optString("status") != "coming_soon" }.map { e ->
             val source = e.optJSONObject("source")
             val urls = source?.takeIf { it.optString("kind") == "ipsw" }?.let { s ->
                 listOf(s.optString("url")) + (s.optJSONArray("mirrors")?.let { m -> (0 until m.length()).map { m.getJSONObject(it).optString("url") } } ?: emptyList())
             }?.filter { it.startsWith("https://") } ?: emptyList()
             val prerelease = e.optString("prerelease").let { kind -> if (kind.isEmpty()) "" else "$kind ${e.optInt("prerelease_number", 0).takeIf { it > 0 } ?: ""}".trim() }
             CatalogFirmware(e.getString("id"), e.getString("board"), e.getString("product_type"), e.getString("version"), e.getString("build"),
-                e.optString("released"), prerelease, source?.optString("sha1") ?: "", source?.optLong("bytes") ?: 0L, urls)
+                e.optString("released"), prerelease, source?.optString("sha1") ?: "", source?.optLong("bytes") ?: 0L, urls, e.optString("status"))
         }
     }
 }
