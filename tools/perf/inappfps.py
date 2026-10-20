@@ -97,7 +97,11 @@ def avg(rect, fx0, fy0, fx1, fy1):
             i = (y*w+x)*4; r += px[i]; g += px[i+1]; b += px[i+2]; n += 1
     return r/n, g/n, b/n
 def is_lock(rect):
-    r, g, b = avg(rect, .12, .27, .88, .69); return b > 60 and b > r+25
+    r, g, b = avg(rect, .12, .27, .88, .69)
+    if b > 60 and b > r+25: return True  # the default blue wallpaper
+    # Any wallpaper: the slide-to-unlock knob is light grey on a dark track.
+    k = avg(rect, .10, .87, .27, .93); t = avg(rect, .40, .88, .85, .92)
+    return min(k) > 140 and max(k) - min(k) < 30 and max(t) < 100
 def gpt(rect, fx, fy):
     gx, gy, gw, gh = rect; return str(int(gx+gw*fx)), str(int(gy+gh*fy))
 def layer():

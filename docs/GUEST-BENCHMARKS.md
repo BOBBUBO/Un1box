@@ -40,6 +40,7 @@ repeatable figure, a median well above it means interference).
 | `gl-state` | `glEnable` / `glDisable(GL_BLEND)` in turn | a GL call with no reply, which the guest shim may queue |
 | `gl-draw` | `glDrawArrays` of the same 32×32 textured quad | the draw call alone: fetching the client arrays from guest memory, the host draw |
 | `gl-sprite` | bind a texture, set the vertex and texture-coordinate pointers, draw | one sprite as a 2D game of the era draws it (Jetpack Joyride's title: ~230 a frame) |
+| `gl-mesh` | `glDrawElements` of 144 indices reaching 50 vertices of a 16 384-vertex interleaved mesh (float positions, `GL_FIXED` texture coordinates), a different piece each time | a 3D game's level geometry (Asphalt 5's races: ~125 such draws a frame): the index scan and the vertex fetch |
 | `gl-upload` | `glTexSubImage2D` of 64×64 RGBA (16 KiB) | texture streaming from guest memory |
 | `gl-present` | full-screen clear + `-presentRenderbuffer:` | the frame's way out; paced by the display, so ~16.7 ms means it kept up with 60 Hz, not what a present costs |
 

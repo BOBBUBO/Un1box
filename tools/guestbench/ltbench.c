@@ -178,6 +178,9 @@ static Object call1(Object object, const char *name, Object value) {
  * everything else here (contrib/it-gles/glapp.c in qemu-ios does the same setup). */
 #define GL_TRIANGLE_STRIP 5
 #define GL_FLOAT 0x1406
+#define GL_FIXED 0x140C
+#define GL_TRIANGLES 4
+#define GL_UNSIGNED_SHORT 0x1403
 #define GL_UNSIGNED_BYTE 0x1401
 #define GL_RGBA 0x1908
 #define GL_BLEND 0x0BE2
@@ -200,6 +203,12 @@ static Object call1(Object object, const char *name, Object value) {
 #define GL_H 480
 #define SPRITES 64      /* distinct quads, cycled: 8 x 8 grid of 32 x 32 sprites */
 #define UPLOAD_SIDE 64  /* gl-upload: a 64 x 64 RGBA sub-image, 16 KiB */
+/* gl-mesh: a 3D game's level geometry, one interleaved array drawn in small indexed pieces.
+ * Each piece is a 2 x 25 strip of vertices, 48 triangles (144 indices). */
+#define MESH_VERTS 16384
+#define MESH_PIECE 50
+#define MESH_PIECES (MESH_VERTS / MESH_PIECE)
+#define MESH_INDICES 144
 
 static struct {
     void (*Finish)(void), (*Flush)(void);
@@ -210,7 +219,7 @@ static struct {
     void (*Orthof)(float, float, float, float, float, float);
     void (*ClearColor)(float, float, float, float), (*Clear)(unsigned);
     void (*VertexPointer)(int, unsigned, int, const void *), (*TexCoordPointer)(int, unsigned, int, const void *);
-    void (*DrawArrays)(unsigned, int, int);
+    void (*DrawArrays)(unsigned, int, int), (*DrawElements)(unsigned, int, unsigned, const void *);
     void (*GenTextures)(int, unsigned *), (*BindTexture)(unsigned, unsigned);
     void (*TexParameteri)(unsigned, unsigned, int);
     void (*TexImage2D)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *);
@@ -225,6 +234,8 @@ static void *objc_runtime;
 static unsigned gl_texture[2], gl_framebuffer, gl_renderbuffer;
 static float sprite_xy[SPRITES][8], sprite_uv[8] = {0, 0, 1, 0, 0, 1, 1, 1};
 static unsigned char upload_pixels[UPLOAD_SIDE * UPLOAD_SIDE * 4];
+static struct { float x, y, z; int u, v; } mesh[MESH_VERTS];   /* GL_FIXED texture coordinates */
+static unsigned short mesh_index[MESH_PIECES][MESH_INDICES];
 static const char *gl_problem = "not set up";
 
 /* +[EAGLContext setCurrentContext:] (BOOL): per thread. */
@@ -247,7 +258,7 @@ static void gl_setup(Object under)
 #define GLSYM(name) if (!(*(void **)&gl.name = dlsym(h, "gl" #name))) { gl_problem = "missing gl" #name; return; }
     GLSYM(Finish) GLSYM(Flush) GLSYM(GetError) GLSYM(Enable) GLSYM(Disable) GLSYM(EnableClientState)
     GLSYM(BlendFunc) GLSYM(Viewport) GLSYM(MatrixMode) GLSYM(LoadIdentity) GLSYM(Orthof) GLSYM(ClearColor)
-    GLSYM(Clear) GLSYM(VertexPointer) GLSYM(TexCoordPointer) GLSYM(DrawArrays) GLSYM(GenTextures)
+    GLSYM(Clear) GLSYM(VertexPointer) GLSYM(TexCoordPointer) GLSYM(DrawArrays) GLSYM(DrawElements) GLSYM(GenTextures)
     GLSYM(BindTexture) GLSYM(TexParameteri) GLSYM(TexImage2D) GLSYM(TexSubImage2D) GLSYM(GenRenderbuffersOES)
     GLSYM(BindRenderbufferOES) GLSYM(GenFramebuffersOES) GLSYM(BindFramebufferOES)
     GLSYM(FramebufferRenderbufferOES) GLSYM(CheckFramebufferStatusOES)
@@ -287,6 +298,19 @@ static void gl_setup(Object under)
         for (u32 k = 0; k < 8; k++) sprite_xy[i][k] = q[k];
     }
     for (u32 i = 0; i < sizeof(upload_pixels); i++) upload_pixels[i] = (unsigned char)(i * 7);
+    for (u32 i = 0; i < MESH_VERTS; i++) {   /* pieces of one-pixel quads, so fill costs nothing */
+        u32 k = i % MESH_PIECE;
+        mesh[i].x = (float)(10 + k % 25); mesh[i].y = (float)(10 + k / 25); mesh[i].z = 0;
+        mesh[i].u = (int)(k % 25) << 12; mesh[i].v = (int)(k / 25) << 16;
+    }
+    for (u32 p = 0; p < MESH_PIECES; p++) {
+        u32 base = p * MESH_PIECE, n = 0;
+        for (u32 q = 0; q < 24; q++) {
+            u32 a = base + q, b = a + 1, c = a + 25, d = c + 1;
+            unsigned short t[6] = {a, b, c, b, d, c};
+            for (u32 k = 0; k < 6; k++) mesh_index[p][n++] = t[k];
+        }
+    }
     gl.GenTextures(2, gl_texture);
     for (u32 t = 0; t < 2; t++) {
         gl.BindTexture(GL_TEXTURE_2D, gl_texture[t]);
@@ -366,6 +390,20 @@ static u64 b_gl_sprite(u32 n)
         gl.TexCoordPointer(2, GL_FLOAT, 0, sprite_uv);
         gl.DrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
+    gl.Finish();
+    return now_ns() - t;
+}
+/* One piece of a big level mesh: glDrawElements of 144 indices that reach 50 of the array's 16384
+ * vertices, a different piece each time (Asphalt 5's races: ~125 a frame, ~70 vertices each). */
+static u64 b_gl_mesh(u32 n)
+{
+    if (!gl_begin()) return 0;
+    gl.BindTexture(GL_TEXTURE_2D, gl_texture[0]);
+    gl.VertexPointer(3, GL_FLOAT, sizeof(mesh[0]), &mesh[0].x);
+    gl.TexCoordPointer(2, GL_FIXED, sizeof(mesh[0]), &mesh[0].u);
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++)
+        gl.DrawElements(GL_TRIANGLES, MESH_INDICES, GL_UNSIGNED_SHORT, mesh_index[(i * 97) % MESH_PIECES]);
     gl.Finish();
     return now_ns() - t;
 }
@@ -666,6 +704,7 @@ static const Test tests[] = {
     {"gl-state", "glEnable/glDisable", b_gl_state, 20000},
     {"gl-draw", "glDrawArrays, same 32x32 textured quad", b_gl_draw, 5000},
     {"gl-sprite", "bind texture + 2 array pointers + draw", b_gl_sprite, 5000},
+    {"gl-mesh", "glDrawElements, 50-vertex piece of a 16384-vertex mesh", b_gl_mesh, 2000},
     {"gl-upload", "glTexSubImage2D 64x64 RGBA (16 KiB)", b_gl_upload, 400},
     {"gl-present", "full-screen clear + presentRenderbuffer", b_gl_present, 60},
 };
