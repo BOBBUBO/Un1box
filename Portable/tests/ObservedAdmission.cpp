@@ -243,6 +243,20 @@ int main() {
     assert(std::strcmp(observed.base_sha256, plain.base_sha256) == 0 && observed.dirty == plain.dirty);
     lt_device_close(device);
     device = nullptr;
+    // A verified base is not read again while its files keep their identity.
+    observation = {Observation::never, &device, {}};
+    assert(lt_device_open_observed(&config, Observation::notify, &observation, &device, &error) == LT_OK);
+    observation.complete(0);
+    lt_device_close(device);
+    device = nullptr;
+    // Changing a file's metadata moves its change time: only that file is hashed again.
+    assert(chmod((base / "nor.bin").c_str(), 0400) == 0);
+    observation = {Observation::never, &device, {}};
+    assert(lt_device_open_observed(&config, Observation::notify, &observation, &device, &error) == LT_OK);
+    observation.complete(nor.size());
+    lt_device_close(device);
+    device = nullptr;
+    fs::remove(state / ".verified-digests");
     put(state / ".dirty", "retained failure");
     config.allow_dirty = 1;
     observation = {Observation::hash_chunk, &device, {}};
@@ -287,7 +301,8 @@ int main() {
     assert(lt_library_device_open_observed(library, record.id, 0, Observation::notify, &observation, &device, &error) ==
            LT_INVALID);
     assert(device == nullptr && std::strstr(error.message, "ROM checksum mismatch"));
-    observation.complete(total + 70003 + 70007);
+    // Only the rewritten ROM is read again.
+    observation.complete(70003);
     lt_library_close(library);
 
     // Every byte may be reported without admission succeeding: a changed tail
@@ -300,6 +315,6 @@ int main() {
     observation = {Observation::never, &device, {}};
     assert(lt_device_open_observed(&config, Observation::notify, &observation, &device, &error) == LT_INVALID);
     assert(device == nullptr && fs::exists(state / ".dirty"));
-    observation.complete(total);
+    observation.complete(page_z.size());
     std::cout << "Observed admission/cancel/lease/dirty/integrity contracts PASS (synthetic; no engine)\n";
 }

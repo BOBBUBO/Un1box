@@ -520,6 +520,19 @@ void present() {
 }
 }
 #define JNI(name) extern "C" JNIEXPORT
+// The running import's phase and bytes, read by importProgress while importBase holds the library.
+static std::mutex import_progress_guard;
+static std::string import_phase;
+static uint64_t import_done=0,import_total=0;
+static int import_observed(void *,const char *phase,uint64_t done,uint64_t total) {
+    std::lock_guard<std::mutex> lock(import_progress_guard);import_phase=phase?phase:"";import_done=done;import_total=total;return 0;
+}
+JNI(importProgress) jobjectArray JNICALL Java_org_lighttouch_android_Native_importProgress(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(import_progress_guard);
+    auto arr=env->NewObjectArray(3,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(arr,0,string(env,import_phase));env->SetObjectArrayElement(arr,1,string(env,std::to_string(import_done)));
+    env->SetObjectArrayElement(arr,2,string(env,std::to_string(import_total)));return arr;
+}
 JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JNIEnv *env,jobject,jstring source,jstring root,jstring name,jstring rom,jstring guest,jstring sha256) {
     std::lock_guard<std::mutex> lock(library_guard);
     Utf src(env,source),path(env,root),label(env,name),bootrom(env,rom),package(env,guest),hashed(env,sha256);
@@ -539,7 +552,9 @@ JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JN
         config.expected_sha256=checksum;
     }
     lt_record_info record=LT_INIT(lt_record_info);
-    status=lt_library_import(library,&config,&record,&error);
+    import_observed(nullptr,"",0,0);
+    status=lt_library_import_observed(library,&config,import_observed,nullptr,&record,&error);
+    import_observed(nullptr,"",0,0);
     return string(env,result(status,error));
 }
 JNI(setGuestPackage) jstring JNICALL Java_org_lighttouch_android_Native_setGuestPackage(JNIEnv *env,jobject,jstring root,jstring id,jstring guest) {

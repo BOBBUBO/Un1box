@@ -97,6 +97,9 @@ lt_status lt_import_directory(const lt_import_config *, lt_error *);
 typedef int (*lt_import_phase_fn)(void *, const char *phase, uint64_t done, uint64_t total);
 lt_status lt_import_archive_observed(const lt_import_config *, lt_import_phase_fn, void *, lt_error *);
 lt_status lt_import_directory_observed(const lt_import_config *, lt_import_phase_fn, void *, lt_error *);
+/* lt_library_import, reporting each phase ("extracting", "verifying", ...) with its bytes done and total. */
+lt_status lt_library_import_observed(lt_library *, const lt_library_import_config *, lt_import_phase_fn, void *,
+                                     lt_record_info *, lt_error *);
 /* Validate/freeze and atomically publish an already-written private sibling
  * stage without copying it. Stage must be an owned 0700 directory; descendants
  * must be owned regular single-link files/directories with no external writers.

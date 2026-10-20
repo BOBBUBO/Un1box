@@ -5,7 +5,11 @@
 #include <fstream>
 #include <linux/fs.h>
 #include <memory>
+#include <map>
+#include <mutex>
 #include <set>
+#include <thread>
+#include <sstream>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -64,13 +68,29 @@ struct AdmissionProgress {
     lt_progress_fn callback;
     void *opaque;
     uint64_t done = 0, total = 0;
+    // Set while several threads hash: the callback then runs under it, one call at a time, and
+    // once one thread fails or is cancelled the others stop at their next step.
+    std::mutex *shared = nullptr;
+    bool failed = false;
     void checkpoint() const {
-        require(!callback || callback(opaque, done, total) == 0, "device admission cancelled", LT_CANCELLED);
+        if (!shared)
+            return notify();
+        std::lock_guard<std::mutex> lock(*shared);
+        notify();
     }
     void advance(uint64_t bytes) {
+        std::unique_lock<std::mutex> lock;
+        if (shared)
+            lock = std::unique_lock<std::mutex>(*shared);
         require(done <= total && bytes <= total - done, "admission byte count exceeds checked plan");
         done += bytes;
-        checkpoint();
+        notify();
+    }
+
+  private:
+    void notify() const {
+        require(!failed, "device admission stopped", LT_CANCELLED);
+        require(!callback || callback(opaque, done, total) == 0, "device admission cancelled", LT_CANCELLED);
     }
 };
 struct ImportObservation {
@@ -221,8 +241,38 @@ static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, 
     require(referenced == records, "unreferenced packed NAND record");
     events.checkpoint();
 }
+// A file keeps the digest it was verified with while it keeps its identity: device, inode, size and
+// modification and change times (every write, rename onto it or chmod moves the change time).
+using DigestCache = std::map<std::string, std::string>;
+static std::string file_identity(const fs::path &path, const struct stat &st) {
+    return path.string() + "|" + std::to_string(st.st_dev) + "|" + std::to_string(st.st_ino) + "|" +
+           std::to_string(st.st_size) + "|" + std::to_string(st.st_mtim.tv_sec) + "." +
+           std::to_string(st.st_mtim.tv_nsec) + "|" + std::to_string(st.st_ctim.tv_sec) + "." +
+           std::to_string(st.st_ctim.tv_nsec);
+}
+static DigestCache read_digest_cache(const fs::path &path) {
+    DigestCache cache;
+    std::error_code ec;
+    if (!fs::is_regular_file(fs::symlink_status(path, ec)))
+        return cache;
+    std::istringstream lines(read_file(path, 1 << 20));
+    for (std::string line; std::getline(lines, line);) {
+        const auto space = line.rfind(' ');
+        if (space != std::string::npos && line.size() - space - 1 == 64)
+            cache[line.substr(0, space)] = line.substr(space + 1);
+    }
+    return cache;
+}
+static std::string dump_digest_cache(const DigestCache &cache) {
+    std::string text;
+    for (const auto &entry : cache)
+        text += entry.first + " " + entry.second + "\n";
+    return text;
+}
+// With [cache], files whose identity matches an entry reuse its digest instead of being read again;
+// [cache] is then replaced by the identities and digests of this admission.
 static void validate_base(const fs::path &base, AdmissionProgress *progress = nullptr,
-                          const std::vector<AdmissionAssetCheck> &extra_checks = {}) {
+                          const std::vector<AdmissionAssetCheck> &extra_checks = {}, DigestCache *cache = nullptr) {
     Json j = parse(read_file(base / "device.lock.json"));
     require(j.at("format").integer() == 1, "unsupported device lock schema", LT_UNSUPPORTED);
     require(!j.at("board").string().empty() && !j.at("build").string().empty(), "missing board/build");
@@ -263,6 +313,7 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
     AdmissionProgress quiet{nullptr, nullptr};
     auto &events = progress ? *progress : quiet;
     std::map<fs::path, uint64_t> assets;
+    std::map<fs::path, std::string> identities;
     std::vector<AdmissionAssetCheck> checks = extra_checks;
     struct ListingCheck {
         std::vector<std::pair<std::string, fs::path>> files;
@@ -277,6 +328,7 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
         io(lstat(path.c_str(), &st) == 0, "stat admission asset");
         require(S_ISREG(st.st_mode) && st.st_size >= 0, "admission asset must be a regular file");
         assets.emplace(path, uint64_t(st.st_size));
+        identities.emplace(path, file_identity(path, st));
     };
     for (const auto &check : extra_checks)
         add_asset(check.path);
@@ -322,19 +374,80 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
             add_asset(base / "identity.json");
             checks.push_back({base / "identity.json", h->string(), "identity checksum mismatch"});
         }
+    // Progress counts only the bytes this admission reads.
+    auto known_digest = [&](const fs::path &path) {
+        return cache ? cache->find(identities.at(path)) : DigestCache::iterator{};
+    };
     uint64_t total = 0;
     for (const auto &asset : assets) {
+        if (cache && known_digest(asset.first) != cache->end())
+            continue;
         require(asset.second <= UINT64_MAX - total, "admission byte count overflow");
         total += asset.second;
     }
     events.total = total;
     events.checkpoint();
     std::map<fs::path, std::string> digests;
+    DigestCache verified;
+    std::vector<std::pair<fs::path, uint64_t>> work;
     for (const auto &asset : assets) {
         events.checkpoint();
-        auto fd = open_read(asset.first);
-        digests.emplace(asset.first, digest_fd(fd.n, &events, asset.second));
+        const auto known = known_digest(asset.first);
+        if (cache && known != cache->end()) {
+            digests.emplace(asset.first, known->second);
+            verified.emplace(*known);
+        } else
+            work.push_back(asset);
     }
+    // Largest first, spread over a few threads: an iPod touch 4G NAND is eight 2 GB files.
+    std::stable_sort(work.begin(), work.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
+    std::mutex guard;
+    size_t next = 0;
+    std::exception_ptr failure;
+    auto hash_files = [&] {
+        for (;;) {
+            std::pair<fs::path, uint64_t> asset;
+            {
+                std::lock_guard<std::mutex> lock(guard);
+                if (failure || next == work.size())
+                    return;
+                asset = work[next++];
+            }
+            try {
+                auto fd = open_read(asset.first);
+                // Identify the file as opened: a change during hashing moves its change time, so
+                // the next admission reads it again.
+                struct stat st {};
+                io(fstat(fd.n, &st) == 0, "fstat admission asset");
+                const auto digest = digest_fd(fd.n, &events, asset.second);
+                std::lock_guard<std::mutex> lock(guard);
+                digests.emplace(asset.first, digest);
+                verified.emplace(file_identity(asset.first, st), digest);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(guard);
+                if (!failure)
+                    failure = std::current_exception();
+                events.failed = true;
+                return;
+            }
+        }
+    };
+    const size_t threads =
+        std::min<size_t>({work.size(), 4, std::max(1u, std::thread::hardware_concurrency())});
+    if (threads > 1) {
+        // The progress lock is the work lock: one mutex orders every callback and result.
+        events.shared = &guard;
+        std::vector<std::thread> pool;
+        for (size_t i = 1; i < threads; i++)
+            pool.emplace_back(hash_files);
+        hash_files();
+        for (auto &thread : pool)
+            thread.join();
+        events.shared = nullptr;
+    } else
+        hash_files();
+    if (failure)
+        std::rethrow_exception(failure);
     for (const auto &check : checks) {
         events.checkpoint();
         require(digests.at(check.path) == check.sha256, check.message);
@@ -354,6 +467,8 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
             require(check.files.size() == check.pages, "NAND page count mismatch");
     }
     events.checkpoint();
+    if (cache)
+        *cache = std::move(verified);
 }
 struct Stage {
     fs::path path, destination;
@@ -583,7 +698,13 @@ std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_pro
     lt::require(flock(d->lease, LOCK_EX | LOCK_NB) == 0, "device has another writer", LT_BUSY);
     AdmissionProgress events{observer, opaque};
     events.checkpoint();
-    lt::validate_base(d->base, &events, extra_checks);
+    // Hashing a whole base (an iPod touch 4G NAND is 17 GB of mostly sparse pages) took over a minute
+    // on a phone at every Start. Each device remembers what it verified and reads only changed files.
+    auto digest_cache_path = d->state / ".verified-digests";
+    const bool pinned = lt::fs::exists(d->state / ".base-identity");
+    lt::DigestCache cache = pinned ? lt::read_digest_cache(digest_cache_path) : lt::DigestCache{};
+    const auto cached = cache;
+    lt::validate_base(d->base, &events, extra_checks, &cache);
     auto immutable = [](lt::fs::perms mode) {
         return (mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
                lt::fs::perms::none;
@@ -612,6 +733,8 @@ std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_pro
             lt::require(entry.path().filename() == ".lease", "unidentified nonempty device state");
         lt::atomic_write(pin, d->base_digest);
     }
+    if (cache != cached)
+        lt::atomic_write(digest_cache_path, lt::dump_digest_cache(cache));
     events.checkpoint();
     d->dirty = lt::fs::exists(d->state / ".dirty");
     lt::require(!d->dirty || c->allow_dirty, "interrupted session: reopen with explicit cold recovery; data retained",
@@ -857,6 +980,139 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         stage.finish(&observation);
     });
 }
+namespace lt {
+// Light Touch for Mac's packed base (FirmwareKit PreparedBase, format 2), a directory: index.json names every file
+// (whole, under files/) and every NAND image as 1 MiB chunks, each zlib-compressed on its own under the image's
+// name less ".pages" (nand/bus0-ce0.pages -> nand/bus0-ce0/000123.z); an all-zero chunk has no file and stays a
+// hole here. Each file and chunk is checked against the index's SHA-256 of its raw bytes.
+static bool packed_base(const fs::path &source) {
+    return fs::is_regular_file(fs::symlink_status(source / "index.json")) && fs::is_directory(source / "files");
+}
+static void import_packed_base(const fs::path &source, Stage &staged, const lt_import_config *c,
+                               ImportObservation &observation) {
+    const fs::path &stage = staged.path;
+    constexpr uint64_t chunk = 1u << 20;
+    Json index = parse(read_file(source / "index.json"));
+    require(index.at("format").integer() == 2 && uint64_t(index.at("chunkBytes").integer()) == chunk,
+            "unsupported packed base format");
+    const auto &files = index.at("files"), &images = index.at("images");
+    require(files.kind == Json::Array && images.kind == Json::Array, "invalid packed base index");
+    // Progress counts the bytes written: whole files and stored chunks, not an image's zero holes.
+    uint64_t total = 0, written = 0;
+    for (const auto &entry : files.array) {
+        safe_name(entry.at("name").string());
+        uint64_t n = entry.at("size").integer();
+        require(n <= limit(c) && total <= limit(c) - n, "packed base exceeds limit");
+        total += n;
+    }
+    struct Chunk {
+        size_t image;
+        std::string number;
+        std::string sha256;
+        uint64_t at, length;
+    };
+    std::vector<Chunk> chunks;
+    std::vector<std::unique_ptr<Fd>> outputs;
+    for (const auto &image : images.array) {
+        const std::string name = image.at("name").string();
+        safe_name(name);
+        const uint64_t size = image.at("size").integer();
+        require(size <= limit(c), "packed base exceeds limit");
+        require(name.size() > 6 && name.compare(name.size() - 6, 6, ".pages") == 0, "unexpected packed image name");
+        const auto &list = image.at("chunks");
+        require(list.kind == Json::Object, "invalid packed image chunks");
+        for (const auto &item : list.object) {
+            require(item.first.size() == 6 && item.first.find_first_not_of("0123456789") == std::string::npos,
+                    "invalid chunk number");
+            const uint64_t at = std::stoull(item.first) * chunk;
+            require(at < size, "chunk beyond its image");
+            const uint64_t length = std::min(chunk, size - at);
+            require(total <= limit(c) - length, "packed base exceeds limit");
+            total += length;
+            chunks.push_back({outputs.size(), item.first, item.second.string(), at, length});
+        }
+        auto dest = stage / name;
+        fs::create_directories(dest.parent_path());
+        outputs.push_back(std::make_unique<Fd>(open(dest.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)));
+        io(outputs.back()->n >= 0, "create packed image");
+        io(ftruncate(outputs.back()->n, off_t(size)) == 0, "size packed image");
+    }
+    observation.total = total;
+    auto report = [&](uint64_t bytes) {
+        written += bytes;
+        progress(c, written, total);
+        observation.done = written;
+        observation.checkpoint();
+    };
+    for (const auto &entry : files.array) {
+        const std::string name = entry.at("name").string();
+        auto dest = stage / name;
+        fs::create_directories(dest.parent_path());
+        lt::copy_file(source / "files" / name, dest);
+        require(fs::file_size(dest) == uint64_t(entry.at("size").integer()) &&
+                    digest_file(dest) == entry.at("sha256").string(),
+                "packed base file checksum mismatch: " + name);
+        report(fs::file_size(dest));
+    }
+    // Each chunk is read, inflated, checked and written at its own offset, a few at a time.
+    std::mutex guard;
+    size_t next = 0;
+    std::exception_ptr failure;
+    auto unpack = [&] {
+        std::vector<uint8_t> raw(chunk);
+        for (;;) {
+            size_t index;
+            {
+                std::lock_guard<std::mutex> lock(guard);
+                if (failure || next == chunks.size())
+                    return;
+                index = next++;
+            }
+            try {
+                const auto &item = chunks[index];
+                const std::string name = images.array[item.image].at("name").string();
+                const auto folder = source / name.substr(0, name.size() - 6);
+                const std::string packed = read_file(folder / (item.number + ".z"), 2 * chunk);
+                uLongf length = uLongf(item.length);
+                require(uncompress(raw.data(), &length, reinterpret_cast<const Bytef *>(packed.data()), uLong(packed.size())) ==
+                                Z_OK && length == item.length,
+                        "corrupt packed chunk " + name + " " + item.number);
+                Sha256 hash;
+                hash.update(raw.data(), length);
+                require(hash.finish() == item.sha256, "packed chunk checksum mismatch: " + name + " " + item.number);
+                const int out = outputs[item.image]->n;
+                for (size_t done = 0; done < length;) {
+                    ssize_t n = pwrite(out, raw.data() + done, length - done, off_t(item.at + done));
+                    if (n < 0 && errno == EINTR)
+                        continue;
+                    io(n > 0, "write packed chunk");
+                    done += size_t(n);
+                }
+                std::lock_guard<std::mutex> lock(guard);
+                if (!failure)
+                    report(length);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(guard);
+                if (!failure)
+                    failure = std::current_exception();
+                return;
+            }
+        }
+    };
+    const size_t threads = std::min<size_t>({chunks.size(), 4, std::max(1u, std::thread::hardware_concurrency())});
+    std::vector<std::thread> pool;
+    for (size_t i = 1; i < threads; i++)
+        pool.emplace_back(unpack);
+    unpack();
+    for (auto &thread : pool)
+        thread.join();
+    if (failure)
+        std::rethrow_exception(failure);
+    if (!staged.bulk_sync)
+        for (const auto &out : outputs)
+            io(fsync(out->n) == 0, "sync packed image");
+}
+} // namespace lt
 lt_status lt_import_directory(const lt_import_config *c, lt_error *e) {
     return lt_import_directory_observed(c, nullptr, nullptr, e);
 }
@@ -870,6 +1126,11 @@ lt_status lt_import_directory_observed(const lt_import_config *c, lt_import_phas
         lt::ImportObservation observation{observer, opaque};
         observation.begin("extracting");
         lt::require(!lt::contained(source, stage.path), "import destination inside source");
+        if (lt::packed_base(source)) {
+            lt::import_packed_base(source, stage, c, observation);
+            stage.finish(&observation);
+            return;
+        }
         uint64_t total = 0, written = 0;
         std::vector<lt::fs::path> files;
         for (const auto &entry : lt::fs::recursive_directory_iterator(source)) {

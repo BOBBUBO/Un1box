@@ -3,6 +3,7 @@ package org.lighttouch.android
 import android.content.*
 import android.hardware.*
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import org.json.JSONObject
 import android.os.*
@@ -138,6 +139,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun workerExitedRun() = Bundle().apply { putString("state", "failed"); putString("error", "The preparation worker stopped unexpectedly. Try again.") }
     private val stockIpsw = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importStockIpsw(uri) }
     private val prepRom = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importPrepRom(uri) }
+    private val preparedCopy = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) addPreparedCopy(uri) }
     private var active = false
     private var displayOwnerTicket = 0L
     private var displayResumed = false
@@ -458,22 +460,56 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     // Setup wizard: find the files, copy them in, create and name the device.
     private fun displayName(uri: Uri) = DocumentFile.fromSingleUri(this, uri)?.name ?: uri.lastPathSegment ?: "file"
     private fun picked(uri: Uri) = PickedFile(uri, displayName(uri))
-    private fun scanFolder(tree: Uri) {
+    /** Finds the iOS system and boot file in [tree]; [onFound] then runs on the main thread if an iOS system was found. */
+    private fun scanFolder(tree: Uri, onFound: (() -> Unit)? = null) {
         val root = DocumentFile.fromTreeUri(this, tree) ?: return
         Thread({
             // The folder itself, then one level down (e.g. LightTouch-assets/ inside the chosen folder).
             val candidates = root.listFiles().toList() + root.listFiles().filter { it.isDirectory }.flatMap { it.listFiles().toList() }
             val files = candidates.filter { it.isFile }
-            val system = files.firstOrNull { it.name?.endsWith(".itbase", true) == true }?.let { PickedFile(it.uri, it.name ?: "") }
-                ?: (listOf(root) + root.listFiles().filter { it.isDirectory }).firstOrNull { it.findFile("device.lock.json") != null }
-                    ?.let { PickedFile(it.uri, (it.name ?: "folder") + "/", folder = true) }
+            // Light Touch for Mac's packed base is a folder (index.json, files/, nand/); older ones are one .itbase file.
+            val folders = listOf(root) + root.listFiles().filter { it.isDirectory }
+            // The board, from the device lock, decides whether a boot file is needed.
+            fun board(lock: DocumentFile?) = try {
+                lock?.let { contentResolver.openInputStream(it.uri)?.use { s -> org.json.JSONObject(s.bufferedReader().readText()).optString("board") } } ?: ""
+            } catch (_: Exception) { "" }
+            val system = folders.firstOrNull { it.findFile("index.json") != null && it.findFile("files")?.isDirectory == true }
+                ?.let { PickedFile(it.uri, (it.name ?: "folder") + "/", folder = true, board = board(it.findFile("files")?.findFile("device.lock.json"))) }
+                ?: files.firstOrNull { it.name?.endsWith(".itbase", true) == true }?.let { PickedFile(it.uri, it.name ?: "") }
+                ?: folders.firstOrNull { it.findFile("device.lock.json") != null }
+                    ?.let { PickedFile(it.uri, (it.name ?: "folder") + "/", folder = true, board = board(it.findFile("device.lock.json"))) }
             val rom = files.firstOrNull { it.name?.lowercase()?.startsWith("bootrom") == true }?.let { PickedFile(it.uri, it.name ?: "") }
             handler.post {
                 system?.let { setup.system = it }; rom?.let { setup.rom = it }
                 val found = listOfNotNull("iOS system".takeIf { system != null }, "boot file".takeIf { rom != null })
                 setup.scanned = if (found.isEmpty()) "Nothing found in ${root.name}" else "Found " + found.joinToString(", ") + " in ${root.name}"
+                if (onFound != null) { if (system != null) onFound() else setup.error = "No prepared iOS system in ${root.name}" }
             }
         }, "setup-scan").start()
+    }
+    /** What the engine's import is doing, as shown under the progress bar. */
+    private fun importPhaseText(phase: String) = when (phase) {
+        "hashing" -> "Checking the file…"
+        "extracting" -> "Unpacking the iOS system…"
+        "packing" -> "Packing the iOS storage…"
+        "verifying" -> "Checking the iOS system…"
+        else -> "Setting up the iOS system…"
+    }
+    /** Shows the engine's import progress through [show] (on the main thread) until the returned stop function runs. */
+    private fun watchImport(worker: IEngine, show: (String, Float) -> Unit): () -> Unit {
+        val running = java.util.concurrent.atomic.AtomicBoolean(true)
+        Thread({
+            while (running.get()) {
+                val p = try { worker.importProgress() } catch (_: Exception) { null }
+                if (p != null && running.get()) {
+                    val done = p.getLong("done"); val total = p.getLong("total")
+                    val text = importPhaseText(p.getString("phase") ?: ""); val fraction = if (total > 0) (done.toFloat() / total) else -1f
+                    handler.post { if (running.get()) show(text, fraction) }
+                }
+                Thread.sleep(250)
+            }
+        }, "import-progress").start()
+        return { running.set(false) }
     }
     /** Copies [uri] to [target] and returns the copy's SHA-256 (hex). */
     private fun copyWithProgress(uri: Uri, target: File, label: String): String {
@@ -485,7 +521,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 val n = input.read(buffer); if (n < 0) break
                 output.write(buffer, 0, n); digest.update(buffer, 0, n); done += n
                 val percent = if (total > 0) done * 100 / total else -1
-                if (percent != shown) { shown = percent; handler.post { setup.phase = if (percent >= 0) "$label… $percent%" else "$label… ${done shr 20} MB" } }
+                if (percent != shown) { shown = percent; handler.post { setup.phase = if (percent >= 0) "$label…" else "$label… ${done shr 20} MB"; setup.progress = if (percent >= 0) percent / 100f else -1f } }
             }
         } } ?: error("Cannot read $label")
         return digest.digest().joinToString("") { "%02x".format(it) }
@@ -502,12 +538,13 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 val romPath = rom?.let { File(staging, "bootrom.bin").also { f -> copyWithProgress(it.uri, f, "Copying the boot file") }.absolutePath } ?: ""
                 var sha256 = ""
-                val source = if (system.folder) File(staging, "base").also { handler.post { setup.phase = "Copying the iOS system…" }
-                    copyTree(DocumentFile.fromTreeUri(this, system.uri) ?: error("Cannot read the folder"), it) }
+                val source = if (system.folder) File(staging, "base").also { copyTree(system.uri, it) { done, total ->
+                        handler.post { setup.phase = "Copying the iOS system…"; setup.progress = if (total > 0) done.toFloat() / total else -1f } } }
                     else File(staging, "system.itbase").also { sha256 = copyWithProgress(system.uri, it, "Copying the iOS system") }
-                handler.post { setup.phase = "Setting up the iOS system…" }
+                handler.post { setup.phase = "Setting up the iOS system…"; setup.progress = -1f }
                 val started = System.nanoTime()
-                val result = worker.importDevice(source.absolutePath, "", romPath, "", sha256)
+                val stopWatching = watchImport(worker) { text, fraction -> setup.phase = text; setup.progress = fraction }
+                val result = try { worker.importDevice(source.absolutePath, "", romPath, "", sha256) } finally { stopWatching() }
                 android.util.Log.i("LightTouch", "Device import took ${(System.nanoTime() - started) / 1_000_000} ms")
                 require(result.isEmpty()) { result }
                 // The record exists from here on: a failed rename or select keeps it (under its
@@ -518,7 +555,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 val id = created.getString("id") ?: ""
                 // The guest tools built into LightTouch, matched to the new device's board and build.
                 val tools = GuestTools.forDevice(this, created.getString("board") ?: "", created.getString("build") ?: "")
-                val toolsResult = tools?.let { handler.post { setup.phase = "Adding guest tools…" }; worker.setGuestPackage(id, it.absolutePath) } ?: ""
+                val toolsResult = tools?.let { handler.post { setup.phase = "Adding guest tools…"; setup.progress = -1f }; worker.setGuestPackage(id, it.absolutePath) } ?: ""
                 val name = requested.ifEmpty { defaultDeviceName(created.getString("board") ?: "", created.getString("build") ?: "", firmwareTargets,
                     all.filter { it.getString("id") != id }.mapNotNull { it.getString("name") }) }
                 val renamed = worker.rename(id, name)
@@ -595,8 +632,16 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         PrepareScreen(prep, busy, preparationActive(),
             onDownload = ::downloadIpsw, onChooseIpsw = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) },
             onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onDownloadRom = ::downloadBootrom, onPrepare = ::beginPreparation,
+            onChoosePrepared = { preparedCopy.launch(null) },
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
             onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation)
+    }
+    /** A firmware prepared on a computer, chosen in the prepare flow: added through Add a device's import. */
+    private fun addPreparedCopy(uri: Uri) {
+        if (busy || preparationActive()) return
+        preparationOpen = false; releaseFirmware()
+        setup.reset(firstRun = false); setup.step = SetupStep.FILES; overlay = Screen.SETUP
+        scanFolder(uri) { createDevice() }
     }
     private fun beginPreparation() {
         if (preparationActive() || busy) return
@@ -658,6 +703,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (preparedImportInFlight) return
         val worker = engine
         val destination = requireNotNull(state.getString("destination")); preparedImported = destination; busy = true; preparedImportInFlight = true
+        prep.importPhase = ""; prep.importProgress = -1f
         val chosen = prep.firmware; val rom = prep.romPath; val ipsw = prep.ipswPath
         val board = chosen?.board ?: prep.firmwareId.substringBefore('-'); val build = chosen?.build ?: prep.firmwareId.substringAfter('-')
         val before = records.mapNotNull { it.getString("id") }.toSet()
@@ -666,7 +712,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             val result = try {
                 checkNotNull(worker) { "Device worker unavailable" }
                 name = defaultDeviceName(board, build, firmwareTargets, devices.map { it.name })
-                worker.importPrepared(destination, name, rom).also { result ->
+                val stopWatching = watchImport(worker) { text, fraction -> prep.importPhase = text; prep.importProgress = fraction }
+                try { worker.importPrepared(destination, name, rom) } finally { stopWatching() }.also { result ->
                     if (result.isEmpty()) {
                         val created = worker.records().firstOrNull { it.getString("id") !in before }
                         selected = created != null && status !in listOf("running", "paused", "starting", "stopping") && worker.select(created.getString("id")).isEmpty()
@@ -916,15 +963,49 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } catch (e: Exception) { handler.post { error = e.message ?: "Import failed"; busy = false } }
         }, "asset-import").start()
     }
-    private fun copyTree(source: DocumentFile, destination: File) {
-        check(destination.mkdirs())
-        for (child in source.listFiles()) {
-            val name = child.name ?: error("Missing entry name")
-            require(name != "." && name != ".." && '/' !in name) { "Invalid entry name" }
-            val target = File(destination, name)
-            if (child.isDirectory) copyTree(child, target)
-            else contentResolver.openInputStream(child.uri)?.use { input -> target.outputStream().use { input.copyTo(it) } } ?: error("Cannot read $name")
+    /**
+     * Copies the folder [tree] (a tree URI, or a folder inside one) to [destination], several files at a
+     * time; [progress] gets the bytes copied and the total. A packed base is over a thousand files, and
+     * one at a time through the document provider took half a minute.
+     */
+    private fun copyTree(tree: Uri, destination: File, progress: (Long, Long) -> Unit) {
+        data class Entry(val uri: Uri, val target: File, val size: Long)
+        val files = mutableListOf<Entry>()
+        fun list(documentId: String, into: File) {
+            check(into.mkdirs()) { "Cannot create ${into.name}" }
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId)
+            val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE)
+            val folders = mutableListOf<Pair<String, File>>()
+            contentResolver.query(children, columns, null, null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val name = c.getString(1) ?: error("Missing entry name")
+                    require(name != "." && name != ".." && '/' !in name) { "Invalid entry name" }
+                    if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) folders += c.getString(0) to File(into, name)
+                    else files += Entry(DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0)), File(into, name), c.getLong(3))
+                }
+            } ?: error("Cannot read the folder")
+            for ((id, folder) in folders) list(id, folder)
         }
+        list(if (DocumentsContract.isDocumentUri(this, tree)) DocumentsContract.getDocumentId(tree) else DocumentsContract.getTreeDocumentId(tree), destination)
+        val total = files.sumOf { it.size }; val copied = java.util.concurrent.atomic.AtomicLong(); var shown = -1L
+        progress(0, total)
+        val pool = Executors.newFixedThreadPool(4)
+        try {
+            // Largest first so one big file does not finish last on its own.
+            val jobs = files.sortedByDescending { it.size }.map { entry -> pool.submit {
+                contentResolver.openInputStream(entry.uri)?.use { input -> entry.target.outputStream().use { output ->
+                    val buffer = ByteArray(1 shl 20)
+                    while (true) {
+                        val n = input.read(buffer); if (n < 0) break
+                        output.write(buffer, 0, n)
+                        val done = copied.addAndGet(n.toLong())
+                        if (total > 0 && done * 100 / total != shown) { shown = done * 100 / total; progress(done, total) }
+                    }
+                } } ?: error("Cannot read ${entry.target.name}")
+            } }
+            for (job in jobs) try { job.get() } catch (e: java.util.concurrent.ExecutionException) { throw (e.cause as? Exception) ?: e }
+        } finally { pool.shutdownNow() }
     }
     private var listening = false
     // Sensor callbacks arrive here, not on the UI thread; motion() is a oneway Binder call.

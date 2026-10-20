@@ -54,6 +54,9 @@ class EngineService : Service() {
         override fun remove(recordId: String): String = Native.remove(File(filesDir, "library").absolutePath, recordId)
         override fun importDevice(source: String, displayName: String, rom: String, guest: String, sha256: String): String =
             Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, guest, sha256)
+        override fun importProgress(): Bundle = Native.importProgress().let { p ->
+            Bundle().apply { putString("phase", p[0]); putLong("done", p[1].toLongOrNull() ?: 0); putLong("total", p[2].toLongOrNull() ?: 0) }
+        }
         override fun frameStats(sinceSequence: Long): Bundle = Bundle().apply {
             putLongArray("frames", Native.frameTimeline(sinceSequence))
             putLong("nowNs", System.nanoTime())

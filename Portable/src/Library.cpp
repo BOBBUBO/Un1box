@@ -174,7 +174,8 @@ static void describe(lt_library *l, const std::string &id, lt_record_info *out) 
     out->selected = selected(l) == id;
     out->dirty = fs::exists(directory / "state/.dirty");
 }
-static void import(lt_library *l, const lt_library_import_config *c, const char *legacy_state, lt_record_info *out) {
+static void import(lt_library *l, const lt_library_import_config *c, const char *legacy_state, lt_record_info *out,
+                   lt_import_phase_fn observer = nullptr, void *opaque = nullptr) {
     abi(c);
     abi(out);
     require(c->source_path, "record source missing");
@@ -199,8 +200,9 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         lt_import_config cfg{sizeof(cfg),  1,           c->source_path, base.c_str(), c->expected_sha256,
                              c->max_bytes, c->progress, c->opaque};
         lt_error e{sizeof(e), 1, 0, {}};
-        lt_status status = fs::is_directory(fs::symlink_status(c->source_path)) ? lt_import_directory(&cfg, &e)
-                                                                                : lt_import_archive(&cfg, &e);
+        lt_status status = fs::is_directory(fs::symlink_status(c->source_path))
+                               ? lt_import_directory_observed(&cfg, observer, opaque, &e)
+                               : lt_import_archive_observed(&cfg, observer, opaque, &e);
         require(status == LT_OK, e.message, status);
         auto lock = parse(read_file(stage / "base/device.lock.json"));
         std::string board = lock.at("board").string(), build = lock.at("build").string(),
@@ -425,6 +427,13 @@ lt_status lt_library_import(lt_library *l, const lt_library_import_config *c, lt
     return lt::guard(e, [&] {
         lt::LibraryLock lock(l);
         lt::import(l, c, nullptr, out);
+    });
+}
+lt_status lt_library_import_observed(lt_library *l, const lt_library_import_config *c, lt_import_phase_fn observer,
+                                     void *opaque, lt_record_info *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::LibraryLock lock(l);
+        lt::import(l, c, nullptr, out, observer, opaque);
     });
 }
 lt_status lt_library_adopt_legacy(lt_library *l, const lt_library_import_config *c, const char *state,

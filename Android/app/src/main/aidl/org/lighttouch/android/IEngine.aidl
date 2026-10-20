@@ -10,6 +10,7 @@ interface IEngine {
     String select(String recordId);
     String importBase(String source, String displayName);
     String importPrepared(String source, String displayName, String rom);
+    Bundle importProgress();
     String setGuestPackage(String recordId, String path);
     Bundle status();
     Bundle profile(boolean recording);

@@ -32,7 +32,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 internal enum class SetupStep { WELCOME, FILES, CREATING, DONE }
-internal data class PickedFile(val uri: Uri, val name: String, val folder: Boolean = false)
+/** A chosen file or folder; [board] is the prepared system's board when its device lock could be read. */
+internal data class PickedFile(val uri: Uri, val name: String, val folder: Boolean = false, val board: String = "")
 
 /** Wizard state; the activity owns it so pickers and the import worker can update it. */
 internal class SetupState {
@@ -41,12 +42,14 @@ internal class SetupState {
     var rom by mutableStateOf<PickedFile?>(null)
     var name by mutableStateOf("")
     var phase by mutableStateOf("")
+    /** How far the current phase is, 0 to 1; negative while its size is unknown. */
+    var progress by mutableFloatStateOf(-1f)
     var error by mutableStateOf("")
     var created by mutableStateOf<String?>(null)
     var scanned by mutableStateOf<String?>(null)
     fun reset(firstRun: Boolean) {
         step = if (firstRun) SetupStep.WELCOME else SetupStep.FILES
-        system = null; rom = null; name = ""; phase = ""; error = ""; created = null; scanned = null
+        system = null; rom = null; name = ""; phase = ""; progress = -1f; error = ""; created = null; scanned = null
     }
 }
 
@@ -78,7 +81,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: ()
                 when (step) {
                     SetupStep.WELCOME -> Welcome { state.step = SetupStep.FILES }
                     SetupStep.FILES -> Files(state, onPickFolder, onPickSystem, onPickRom, onCreate, onPrepare)
-                    SetupStep.CREATING -> Creating(state.phase)
+                    SetupStep.CREATING -> Creating(state.phase, state.progress)
                     SetupStep.DONE -> Done(state.created ?: "Your device", onFinish)
                 }
             }
@@ -158,8 +161,10 @@ private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () 
         Spacer(Modifier.height(8.dp))
         FileRow(LtIcons.Folder, "Choose a folder", state.scanned ?: "LightTouch finds the files in it", null, onPickFolder, "setup_folder", action = true)
         FileRow(LtIcons.Layers, "iOS system", "Required · .itbase", state.system, onPickSystem, "setup_system")
-        FileRow(LtIcons.Chip, "Boot file", "Required for iPod touch 2G · bootrom.bin", state.rom, onPickRom, "setup_rom")
-        if (state.system != null && state.rom == null) Text("Without the boot file the iPod touch 2G will not start; you can still add it now.",
+        // Only the iPod touch 2G boots from a boot ROM; a system known to be for another device needs none.
+        val board = state.system?.board ?: ""
+        if (board.isEmpty() || needsBootrom(board)) FileRow(LtIcons.Chip, "Boot file", "Required for iPod touch 2G · bootrom.bin", state.rom, onPickRom, "setup_rom")
+        if (state.system != null && state.rom == null && (board.isEmpty() || needsBootrom(board))) Text("Without the boot file the iPod touch 2G will not start; you can still add it now.",
             style = MaterialTheme.typography.bodySmall, color = LtColors.Warning, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(state.name, { if (fitsDeviceName(it)) state.name = it }, Modifier.fillMaxWidth().testTag("setup_name"), singleLine = true,
@@ -192,16 +197,18 @@ private fun FileRow(icon: ImageVector, title: String, hint: String, picked: Pick
 }
 
 @Composable
-private fun Creating(phase: String) {
+private fun Creating(phase: String, progress: Float) {
     Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        CircularProgressIndicator(Modifier.size(48.dp), strokeWidth = 4.dp)
-        Spacer(Modifier.height(28.dp))
         Text("Creating your device", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
-        Text(phase.ifEmpty { "Copying files…" }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Text(phase.ifEmpty { "Copying files…" } + if (progress >= 0) " ${(progress * 100).toInt()}%" else "",
+            Modifier.testTag("setup_phase"), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center)
-        Spacer(Modifier.height(8.dp))
-        Text("This takes a minute or two. Keep LightTouch open.", style = MaterialTheme.typography.bodySmall,
+        Spacer(Modifier.height(24.dp))
+        if (progress >= 0) LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
+        else LinearProgressIndicator(Modifier.fillMaxWidth())
+        Spacer(Modifier.height(12.dp))
+        Text("Keep LightTouch open until it finishes.", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
     }
 }

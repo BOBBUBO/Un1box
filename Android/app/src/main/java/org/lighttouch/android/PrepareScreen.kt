@@ -50,9 +50,15 @@ internal class PrepareState {
     var romError by mutableStateOf("")
     var preparation by mutableStateOf<Bundle?>(null)
     var importError by mutableStateOf("")
+    /** Adding the prepared output as a device: the phase shown, and how far it is (negative while unknown). */
+    var importPhase by mutableStateOf("")
+    var importProgress by mutableFloatStateOf(-1f)
+    var showBetas by mutableStateOf(false)
     val firmware get() = catalog.firstOrNull { it.id == firmwareId }
     val ipswReady get() = ipswPath.isNotEmpty() && ipswFor == firmwareId
     val romReady get() = firmware?.let { !needsBootrom(it.board) } == true || romPath.isNotEmpty()
+    /** This phone builds [firmware] from its IPSW; the others are added as a copy prepared elsewhere. */
+    val preparesHere get() = firmware?.id?.let { it in supported } == true
 }
 
 /** Order devices appear in: iPods, iPhones, then the iPad, each oldest first. */
@@ -84,7 +90,8 @@ private fun stageText(stage: String) = when {
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolean, onDownload: () -> Unit, onChooseIpsw: () -> Unit,
-                           onChooseRom: () -> Unit, onDownloadRom: () -> Unit, onPrepare: () -> Unit, onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit) {
+                           onChooseRom: () -> Unit, onDownloadRom: () -> Unit, onPrepare: () -> Unit, onChoosePrepared: () -> Unit,
+                           onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit) {
     val run = state.preparation?.getString("state")
     val showProgress = preparing || run in listOf("complete", "failed", "cancelled")
     val back = {
@@ -111,6 +118,7 @@ internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolea
                     showProgress -> Progress(state, preparing, busy, onPrepare, onCancel, onRetryImport, onClose)
                     state.step == PrepareStep.DEVICE -> DeviceStep(state)
                     state.step == PrepareStep.VERSION -> VersionStep(state)
+                    !state.preparesHere -> PreparedCopyStep(state, busy, onChoosePrepared)
                     else -> FilesStep(state, busy, onDownload, onChooseIpsw, onChooseRom, onDownloadRom, onPrepare)
                 }
                 Spacer(Modifier.height(24.dp))
@@ -133,7 +141,7 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun ChoiceRow(icon: ImageVector?, title: String, detail: String, enabled: Boolean, tag: String, onClick: () -> Unit) {
+private fun ChoiceRow(icon: ImageVector?, title: String, detail: String, enabled: Boolean, tag: String, badge: Support? = null, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceContainer)
         .clickable(enabled = enabled, onClick = onClick).alpha(if (enabled) 1f else 0.45f).padding(16.dp).testTag(tag),
         verticalAlignment = Alignment.CenterVertically) {
@@ -142,47 +150,104 @@ private fun ChoiceRow(icon: ImageVector?, title: String, detail: String, enabled
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (badge != null) SupportBadge(badge)
     }
+}
+
+@Composable
+private fun SupportBadge(support: Support) {
+    val color = when (support) {
+        Support.TESTED -> MaterialTheme.colorScheme.primary
+        Support.EXPERIMENTAL -> LtColors.Warning
+        Support.UNTESTED -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(support.label, Modifier.padding(start = 12.dp).clip(RoundedCornerShape(8.dp)).background(color.copy(alpha = 0.14f))
+        .padding(horizontal = 8.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall, color = color)
 }
 
 @Composable
 private fun DeviceStep(state: PrepareState) {
     Heading("Choose a device", "Pick the device to emulate. You'll choose its iOS version next.")
     val devices = state.catalog.groupBy { it.productType }.entries.sortedBy { deviceOrder.indexOf(it.key).let { i -> if (i < 0) 99 else i } }
-    val (ready, later) = devices.partition { (_, firmwares) -> firmwares.any { it.id in state.supported } }
-    for ((product, firmwares) in ready) {
-        val versions = firmwares.filter { it.id in state.supported }.sortedWith(versionOrder).joinToString(", ") { "iOS ${it.label}" }
-        ChoiceRow(if (product.startsWith("iPad")) LtIcons.Tablet else LtIcons.Phone, shortProductName(product), versions, true, "prepare_device_$product") {
-            state.productType = product
-            if (state.firmware?.productType != product) state.firmwareId = ""
-            state.step = PrepareStep.VERSION
-        }
+    val (tested, others) = devices.partition { (_, firmwares) -> firmwares.any { it.support == Support.TESTED } }
+    for ((product, firmwares) in tested) {
+        val versions = firmwares.filter { it.support == Support.TESTED }.sortedWith(versionOrder).joinToString(", ") { "iOS ${it.label}" }
+        val more = firmwares.count { it.support != Support.TESTED && it.prerelease.isEmpty() }
+        DeviceRow(state, product, "Tested: $versions" + if (more > 0) " · $more more to try" else "", Support.TESTED)
     }
-    if (later.isNotEmpty()) {
-        SectionLabel("Not supported yet")
-        for ((product, firmwares) in later) {
-            val sorted = firmwares.filter { it.prerelease.isEmpty() }.sortedWith(versionOrder)
-            val range = if (sorted.isEmpty()) "" else "iOS ${sorted.first().version} to ${sorted.last().version}"
-            ChoiceRow(if (product.startsWith("iPad")) LtIcons.Tablet else LtIcons.Phone, shortProductName(product), range, false, "prepare_device_$product") {}
+    if (others.isNotEmpty()) {
+        SectionLabel("Not tested on LightTouch yet")
+        Text("These may not start, or may not work fully. Try them and see.", Modifier.padding(bottom = 6.dp),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        for ((product, firmwares) in others) {
+            val sorted = firmwares.filter { it.prerelease.isEmpty() }.sortedWith(versionOrder).ifEmpty { firmwares.sortedWith(versionOrder) }
+            val range = if (sorted.size == 1) "iOS ${sorted.first().label}" else "iOS ${sorted.first().version} to ${sorted.last().version}"
+            DeviceRow(state, product, range, firmwares.minOf { it.support })
         }
     }
     if (state.catalog.isEmpty()) Text("Loading the firmware list…", style = MaterialTheme.typography.bodyMedium)
 }
 
 @Composable
+private fun DeviceRow(state: PrepareState, product: String, detail: String, support: Support) {
+    ChoiceRow(if (product.startsWith("iPad")) LtIcons.Tablet else LtIcons.Phone, shortProductName(product), detail, true, "prepare_device_$product", support) {
+        state.productType = product
+        if (state.firmware?.productType != product) state.firmwareId = ""
+        state.step = PrepareStep.VERSION
+    }
+}
+
+@Composable
 private fun VersionStep(state: PrepareState) {
     val name = shortProductName(state.productType)
-    Heading("Choose iOS for $name", "LightTouch prepares the versions below on this phone.")
+    Heading("Choose iOS for $name", "Tested versions are checked on LightTouch; the others are yours to try.")
     val firmwares = state.catalog.filter { it.productType == state.productType }.sortedWith(versionOrder.reversed())
-    val (ready, later) = firmwares.partition { it.id in state.supported }
-    for (firmware in ready) ChoiceRow(null, "iOS ${firmware.label}", released(firmware), true, "prepare_version_${firmware.id}") {
-        state.firmwareId = firmware.id; state.step = PrepareStep.FILES
+    val betas = firmwares.count { it.prerelease.isNotEmpty() }
+    val shown = firmwares.filter { it.prerelease.isEmpty() || state.showBetas }
+    for (support in Support.entries) {
+        val group = shown.filter { it.support == support }
+        if (group.isEmpty()) continue
+        SectionLabel(support.label)
+        Text(support.detail, Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        for (firmware in group) {
+            val detail = released(firmware) + if (firmware.id in state.supported) "" else "\nPrepared on a computer, then added here"
+            ChoiceRow(null, "iOS ${firmware.label}", detail, true, "prepare_version_${firmware.id}") {
+                state.firmwareId = firmware.id; state.step = PrepareStep.FILES
+            }
+        }
     }
-    val stable = later.filter { it.prerelease.isEmpty() }
-    if (stable.isNotEmpty()) {
-        SectionLabel("Not supported yet")
-        for (firmware in stable) ChoiceRow(null, "iOS ${firmware.label}", released(firmware), false, "prepare_version_${firmware.id}") {}
+    if (betas > 0) TextButton(onClick = { state.showBetas = !state.showBetas }, modifier = Modifier.padding(top = 8.dp).testTag("prepare_show_betas")) {
+        Text(if (state.showBetas) "Hide beta versions" else "Show $betas beta versions")
     }
+}
+
+/**
+ * A firmware this phone cannot build from its IPSW yet: it is prepared on a computer (Light Touch for Mac, or
+ * its firmwarekit) and the resulting .itbase is added here, through the same import as Add a device.
+ */
+@Composable
+private fun ColumnScope.PreparedCopyStep(state: PrepareState, busy: Boolean, onChoosePrepared: () -> Unit) {
+    val firmware = state.firmware ?: return
+    val name = shortProductName(firmware.productType)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Heading("$name, iOS ${firmware.label}", "LightTouch can't build this version on a phone yet. Prepare it on a computer, then add it here.")
+    if (firmware.support != Support.TESTED) Text("${firmware.support.label}: ${firmware.support.detail}", Modifier.padding(bottom = 12.dp),
+        style = MaterialTheme.typography.bodySmall, color = if (firmware.support == Support.UNTESTED) MaterialTheme.colorScheme.onSurfaceVariant else LtColors.Warning)
+    Card(icon = LtIcons.Layers, title = "Prepared system", done = false, detail = "${firmware.id}.itbase, made from ${firmware.fileName}") {
+        Text("On a Mac, Light Touch for Mac's firmwarekit tool prepares it and packs it into an .itbase folder. Copy that folder to this phone, then choose it here:",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("firmwarekit create --id ${firmware.id} …\nfirmwarekit pack-base …", Modifier.padding(vertical = 8.dp),
+            style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onChoosePrepared, enabled = !busy, modifier = Modifier.testTag("prepare_choose_prepared")) { Text("Choose the folder") }
+            TextButton(onClick = { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://github.com/blake-lucas/LightTouch/blob/main/docs/ASSETS.md#5-prepare-a-system-from-an-ipsw-instead"))) }) { Text("How") }
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    Text(if (needsBootrom(firmware.board)) "This device also needs its boot file; add it from Settings after it is created."
+        else "This device needs no boot file. LightTouch's guest tools are added for you.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 private fun released(firmware: CatalogFirmware): String {
@@ -313,9 +378,14 @@ private fun Progress(state: PrepareState, preparing: Boolean, busy: Boolean, onP
                 Button(onClick = onRetryImport, enabled = !busy) { Text("Try adding it again") }
             }
             phase == "complete" -> {
-                CircularProgressIndicator(Modifier.size(40.dp))
-                Spacer(Modifier.height(20.dp))
                 Text("Adding $title", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(8.dp))
+                val fraction = state.importProgress
+                Text(state.importPhase.ifEmpty { "Setting up the iOS system…" } + if (fraction >= 0) " ${(fraction * 100).toInt()}%" else "",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(24.dp))
+                if (fraction >= 0) LinearProgressIndicator(progress = { fraction.coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
+                else LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             else -> {
                 Text(if (phase == "cancelled") "Preparation cancelled" else "Preparation failed", style = MaterialTheme.typography.titleLarge)

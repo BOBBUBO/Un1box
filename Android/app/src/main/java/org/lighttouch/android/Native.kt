@@ -6,6 +6,8 @@ import android.view.Surface
 internal object Native {
     init { System.loadLibrary("lighttouch_jni") }
     external fun importBase(source: String, libraryRoot: String, displayName: String, rom: String, guest: String, sha256: String = ""): String
+    /** The running import's phase, bytes done and bytes total; an empty phase when none runs. */
+    external fun importProgress(): Array<String>
     external fun setGuestPackage(libraryRoot: String, id: String, path: String): String
     external fun records(libraryRoot: String): Array<Array<String>>
     external fun select(libraryRoot: String, id: String): String
