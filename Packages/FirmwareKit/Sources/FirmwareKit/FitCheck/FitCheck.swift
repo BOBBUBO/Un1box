@@ -43,6 +43,14 @@ public enum FitCheck {
             warn(f.warning(outcome))
             return false
         }
+        /// One optional piece that goes wherever it fits (it_msmquiet: whichever job raises the notice): every place is
+        /// recorded, and only when it fits none is each misfit warned about. Returns the places' fits.
+        @discardableResult
+        public func checkAny(_ places: [Fit], outcome: String = "left out") -> [Bool] {
+            fits += places
+            if !places.contains(where: \.fits) { places.forEach { warn($0.warning(outcome)) } }
+            return places.map(\.fits)
+        }
         /// A piece the preparer did not install, recorded as such (nothing proven, so not a fit; no warning).
         public func notInstalled(_ piece: String, _ why: String) {
             fits.append(Fit(piece, fits: false, "not installed (\(why))"))

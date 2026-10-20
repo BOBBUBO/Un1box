@@ -9,7 +9,7 @@ public enum GLIDispatch {
         data.withUnsafeBytes { b -> [String]? in
             let needle = Array("{__GLIFunctionDispatchRec=".utf8)
             guard let base = b.baseAddress,
-                let hit = needle.withUnsafeBytes({ memmem(base, b.count, $0.baseAddress, needle.count) })
+                let hit = needle.withUnsafeBytes({ memmem(base, b.count, $0.baseAddress!, needle.count) })
             else { return nil }
             var i = base.distance(to: UnsafeRawPointer(hit)) + needle.count
             var end = i

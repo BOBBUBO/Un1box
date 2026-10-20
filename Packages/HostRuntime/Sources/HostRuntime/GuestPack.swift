@@ -78,7 +78,11 @@ public enum GuestPack {
         }
         let index = try JSONDecoder().decode(Index.self, from: blob.subdata(in: 12..<12 + n))
         // zlib's 2-byte header off: Compression's zlib is raw deflate (the adler trailer is ignored).
+        #if canImport(Compression)
         let stream = try (blob.subdata(in: 12 + n + 2..<blob.count) as NSData).decompressed(using: .zlib) as Data
+        #else
+        let stream = try blob.subdata(in: 12 + n + 2..<blob.count).rawInflated()
+        #endif
         var entries: [(String, Data)] = []
         var offset = 0
         for e in index.entries {

@@ -5,9 +5,16 @@
 //
 // `download(url, file)` puts one URL's bytes at `file` or throws. Nothing but a checked IPSW is ever left at `out`.
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import FirmwareSchema
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 public enum SourceFetch {
     /// The URL that served the IPSW now at `out`; the last alternative's error when none did.

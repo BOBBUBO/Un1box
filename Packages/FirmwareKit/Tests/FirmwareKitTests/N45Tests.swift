@@ -35,6 +35,22 @@ import Testing
         )
     }
 
+    /// 2.0 and later (IMG3 firmware) are refused by the board check, naming the piece, before the IPSW is read; 1.x passes.
+    @Test func refusesIMG3Firmware() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func check(_ id: String) throws {
+            let o = Preparer.Options(entry: try Oracle.entry(id), ipsw: dir, out: dir, helper: nil, guestTools: dir)
+            try N45Board(o).check(Recipe.Context(o, recipe: o.entry.recipe!, emit: { _ in }))
+        }
+        for id in ["m68ap-5A345", "m68ap-7E18", "n45ap-5A347", "n45ap-7E18"] {
+            let error = #expect(throws: FirmwareError.self, "\(id)") { try check(id) }
+            #expect(error?.piece == N45Board.onePiece, "\(id)")
+        }
+        for id in ["m68ap-1A543a", "m68ap-4A102", "n45ap-4A102"] { try check(id) }
+    }
+
     /// iBoot-204 fills arm-io/sdio's local-mac-address only from nvram wifiaddr (its SysCfg fallback returns 0):
     /// the NOR's nvram carries the identity's Wi-Fi MAC, and none when the identity has none (devos50's set).
     @Test func nvramCarriesTheWiFiMAC() throws {
@@ -67,11 +83,10 @@ import Testing
     /// as a flat image from LBA 3, and mkstore.py's VFL context (usnDec, next page, checksums; no reserved pool).
     static func oracle(_ store: URL) throws -> (image: Data, vfl: [UInt8]) {
         var best: [UInt32: (key: (UInt32, Int), page: Data)] = [:]
+        let nand = try PageNANDImage.Store(store)
         for b in 0..<8 {
-            let bank = store.appendingPathComponent("bank\(b)")
-            for f in try FileManager.default.contentsOfDirectory(atPath: bank.path) {
-                let p = Int(f.split(separator: ".")[0])!
-                let raw = [UInt8](try Data(contentsOf: bank.appendingPathComponent(f)))
+            for p in nand.dataBlocks(b).flatMap({ $0 * 128..<($0 + 1) * 128 }) {
+                let raw = try nand.read(b, p)
                 guard raw[2048 + 9] == 0x40 else { continue }
                 let u32 = { (o: Int) in (0..<4).reduce(UInt32(0)) { $0 | UInt32(raw[o + $1]) << (8 * $1) } }
                 let (lpn, key) = (u32(2048), (u32(2052), (p % 128) * 8 + b))
@@ -116,10 +131,15 @@ import Testing
         try vol.write(to: volume)
         let (written, meta) = try N45NAND.write(volume: volume, out: out, filID: 0x4330_3032)
         #expect(written == 3 * ps - 3 && meta == 1 + 8 + 8 * 8 + 1 + 4 + 1 + 3)
-        let file = { (p: N45NAND.Page) in out.appendingPathComponent("bank\(p.bank)/\(p.page).page") }
-        let absent = (0..<3 * ps).filter { !fm.fileExists(atPath: file(N45NAND.location(lpn: $0)).path) }
+        // a page the store holds (not erased: a hole, or every bit set)
+        let store = try PageNANDImage.Store(out)
+        let file = { (p: N45NAND.Page) -> [UInt8]? in
+            let r = try? store.read(p)
+            return r == PageNANDImage.s5l8900(banks: 8).blankRecord ? nil : r
+        }
+        let absent = (0..<3 * ps).filter { file(N45NAND.location(lpn: $0)) == nil }
         #expect(
-            absent.isEmpty && !fm.fileExists(atPath: file(N45NAND.location(lpn: 3 * ps)).path),
+            absent.isEmpty && file(N45NAND.location(lpn: 3 * ps)) == nil,
             "absent lpns \(absent.prefix(8))"
         )
         // The map pages as _FTLRestore finds them (it scans the context blocks and copies each type-0x46 page to
@@ -128,13 +148,8 @@ import Testing
         var maps: [Int: [UInt8]] = [:]
         for bank in 0..<N45NAND.banks {
             for blockPage in 0..<N45NAND.pagesPerBlock {
-                let raw = try? Data(
-                    contentsOf: file(
-                        N45NAND.Page(bank: bank, page: N45NAND.ftlStart * N45NAND.pagesPerBlock + blockPage)
-                    )
-                )
-                guard let raw, raw.count == pp + N45NAND.spare, raw[raw.startIndex + pp + 9] == 0x46 else { continue }
-                let b = [UInt8](raw)
+                let raw = file(N45NAND.Page(bank: bank, page: N45NAND.ftlStart * N45NAND.pagesPerBlock + blockPage))
+                guard let b = raw, b[pp + 9] == 0x46 else { continue }
                 maps[Int(b[pp + 4]) | Int(b[pp + 5]) << 8] = Array(b[0..<pp])
             }
         }
@@ -149,11 +164,11 @@ import Testing
 
         let le = { (b: [UInt8], o: Int, n: Int) in (0..<n).reduce(UInt64(0)) { $0 | UInt64(b[o + $1]) << (8 * $1) } }
         for bank in 0..<N45NAND.banks {
-            let first = [UInt8](try Data(contentsOf: file(N45NAND.Page(bank: bank, page: 35 * 128))))
+            let first = try #require(file(N45NAND.Page(bank: bank, page: 35 * 128)))
             for c in 1..<8 {
-                #expect([UInt8](try Data(contentsOf: file(N45NAND.Page(bank: bank, page: 35 * 128 + c)))) == first)
+                #expect(file(N45NAND.Page(bank: bank, page: 35 * 128 + c)) == first)
             }
-            #expect(!fm.fileExists(atPath: file(N45NAND.Page(bank: bank, page: 35 * 128 + 8)).path))
+            #expect(file(N45NAND.Page(bank: bank, page: 35 * 128 + 8)) == nil)
             let d = Array(first[0..<pp])
             #expect(
                 Array(first[pp...]) == [UInt8](repeating: 0xFF, count: 8) + [0, 0x80]
@@ -319,10 +334,8 @@ import Testing
                 // the seed's loader proof and the LayerKit switches' readers are on the record
                 #expect(log.fits.contains { $0.piece.hasPrefix("it_boot") && $0.fits })
                 #expect(
-                    log.fits.contains {
-                        $0.piece
-                            == "SpringBoard environment (\(gles ? "LK_ENABLE_OGL, LK_AUTO_ENABLE_OGL, " : "")LK_ENABLE_MBX2D)"
-                    }
+                    log.fits.contains { $0.piece == "SpringBoard environment (LK_ENABLE_OGL, LK_AUTO_ENABLE_OGL)" }
+                        == gles
                 )
                 #expect(record.family == "n45-ios1" && record.hooks == (gles ? ["/" + N72Board.openGLES] : []))
                 #expect(record.itpackSHA256 == (try Oracle.sha256(file: itpack)))
@@ -339,7 +352,7 @@ import Testing
                 }
                 #expect(
                     env(a)["LK_ENABLE_OGL"] == (gles ? "1" : nil) && env(a)["LK_AUTO_ENABLE_OGL"] == (gles ? "0" : nil)
-                        && env(a)["LK_ENABLE_MBX2D"] == "0"
+                        && env(a)["LK_ENABLE_MBX2D"] == nil
                 )
                 let hooked = try Data(contentsOf: a.appendingPathComponent(N72Board.openGLES))
                 let baked = a.appendingPathComponent(N72Board.openGLES + ".baked")
@@ -410,9 +423,13 @@ import Testing
     }
     /// 1.1.3 moved SpringBoard to the mobile user (its launchd job's UserName): the baked preferences go to its home,
     /// mobile-owned; 1.0's job names no user and SpringBoard reads root's (1.1.4 sat at 0x5 brightness with root's).
+    /// configd's SystemConfiguration preferences move with it, from root's home to /private/var/preferences (1.1.4
+    /// joined nothing at boot with them in root's home).
     @Test func springBoardUserFollowsItsJob() throws {
         try Oracle.withTemp { m in
+            let rootSC = N45Board.rootLibrary + "/Preferences/SystemConfiguration"
             #expect(N45Board.springBoardUser(m) == (N45Board.rootLibrary, 0))
+            #expect(N45Board.scPrefs(m) == rootSC)
             let job = m.appendingPathComponent(SystemEdits.daemons + "/com.apple.SpringBoard.plist")
             try SystemEdits.mkdirs(job.deletingLastPathComponent())
             try PropertyListSerialization.data(
@@ -421,12 +438,24 @@ import Testing
                 options: 0
             ).write(to: job)
             #expect(N45Board.springBoardUser(m) == (N45Board.rootLibrary, 0))
+            #expect(N45Board.scPrefs(m) == rootSC)
             try PropertyListSerialization.data(
                 fromPropertyList: ["Label": "com.apple.SpringBoard", "UserName": "mobile"],
                 format: .xml,
                 options: 0
             ).write(to: job)
             #expect(N45Board.springBoardUser(m) == ("private/var/mobile/Library", 501))
+            let owned = try N45Board.seedSystemConfiguration(m)
+            let sc = "private/var/preferences/SystemConfiguration"
+            #expect(owned.contains(sc + "/preferences.plist") && owned.contains(sc + "/com.apple.wifi.plist"))
+            let known = try #require(
+                PropertyListSerialization.propertyList(
+                    from: Data(contentsOf: m.appendingPathComponent(sc + "/com.apple.wifi.plist")),
+                    format: nil
+                ) as? [String: Any]
+            )
+            #expect((known["List of known networks"] as? [[String: Any]])?.first?["SSID_STR"] as? String == "qemu-ios")
+            #expect(!Oracle.exists(m.appendingPathComponent(rootSC)))
         }
     }
     /// 3A101a's LaunchDaemons: the bake keeps mDNSResponder, 1.x's only host-name resolver (without it Safari sent no
@@ -500,12 +529,15 @@ import Testing
         try Data(count: (2 * ps - 3) * pp).write(to: volume)
         let (written, _) = try N45NAND.write(volume: volume, out: out, filID: 0x4330_3030, banks: 4, bbtMap: true)
         #expect(written == 2 * ps - 3)
-        #expect(try fm.contentsOfDirectory(atPath: out.path).sorted() == ["bank0", "bank1", "bank2", "bank3"])
+        let names = ["cs0.pages", "cs1.pages", "cs2.pages", "cs3.pages", "geometry.json"]
+        #expect(try fm.contentsOfDirectory(atPath: out.path).sorted() == names)
+        #expect(PageNANDImage.of(out) == .s5l8900(banks: 4))
         #expect(N45NAND.location(lpn: 5, banks: 4) == N45NAND.Page(bank: 1, page: (201 + 23) * 128 + 1))
-        let bbt = [UInt8](try Data(contentsOf: out.appendingPathComponent("bank3/\(4095 * 128).page")))
+        let store = try PageNANDImage.Store(out)
+        let bbt = try store.read(N45NAND.Page(bank: 3, page: 4095 * 128))
         #expect(Array(bbt[0..<13]) == Array("DEVICEINFOBBT".utf8) && bbt[0x34] == 0x00 && bbt[0x35] == 0x02)
         #expect(bbt[0x38] == 0xFF && bbt[0x38 + 511] == 0x7F)
-        let fil = [UInt8](try Data(contentsOf: out.appendingPathComponent("bank0/0.page")))
+        let fil = try store.read(N45NAND.Page(bank: 0, page: 0))
         #expect(Array(fil[0..<4]) == Array("000C".utf8))
         // The N45's table stays as devos50 wrote it: no bitmap.
         let n45 = N45NAND.metadataPages(fsPages: 16, filID: 0x4330_3032)[N45NAND.Page(bank: 0, page: 4095 * 128)]!

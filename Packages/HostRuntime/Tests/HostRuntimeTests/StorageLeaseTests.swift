@@ -1,8 +1,18 @@
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(ucrt)
+import ucrt
+#endif
 import Foundation
 import HostRuntime
 import Testing
+#if canImport(os)
 import os
+#endif
 
 struct StorageLeaseTests {
     private func fixture(_ body: (URL) throws -> Void) throws {

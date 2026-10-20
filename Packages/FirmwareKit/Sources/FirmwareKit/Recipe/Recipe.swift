@@ -11,7 +11,11 @@
 // board-specific keys are merged in from `board.lock`. Helper file names and cache paths derive from
 // `board.arch` (SystemEdits.Helpers.name, SystemEdits.dyldCache).
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import FirmwareSchema
 import Foundation
 import HostRuntime
@@ -215,6 +219,7 @@ public enum Recipe {
         func opt(_ v: Any?) -> Any { v ?? NSNull() }
         let shared: [String: Any] = [
             "format": 1, "created": ISO8601DateFormatter().string(from: Date()),
+            "preparation": PreparationChanges.serial,
             "entry": [
                 "id": e.id, "sha256": Preparer.sha256(try entryJSON.encode(e)),
                 "content": try JSONSerialization.jsonObject(with: entryJSON.encode(e)),
@@ -236,6 +241,9 @@ public enum Recipe {
                 "ipsw": ["path": o.ipsw.path, "sha1": c.sha1], "decrypted": dec.path, "identity": "identity.json",
                 "activation": opt(c.activation.map { $0.record }),
                 "rootfs": "rootfs.dmg", "guest_tools": o.guestTools.path, "lockdown": NSNull(),
+                // create's choices beyond the entry, for preparing the base again (LockedPreparation.plan)
+                "language": opt(o.language), "keyboards": opt(o.keyboards),
+                "sibling": opt(o.sibling.map { ["entry": $0.entry.id, "ipsw": $0.ipsw.path] }),
             ],
             "identity": [
                 "seed": c.seed, "udid": ident.udid ?? "",

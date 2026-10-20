@@ -108,6 +108,20 @@ import Testing
         #expect(next.paths?.base == result.paths?.base)
     }
 
+    /// A record a newer build wrote (a storage format this build doesn't know) is refused before any step runs.
+    @Test func aNewerRecordFormatIsRefused() async throws {
+        let f = try fixture()
+        defer { try? FileManager.default.removeItem(at: f.root) }
+        let url = f.device.appendingPathComponent(DeviceRecord.name)
+        var record = try DeviceRecord.object(f.record)
+        record["format"] = DeviceRecord.currentFormat + 1
+        try DeviceRecord.data(record).write(to: url)
+        await #expect(throws: DeviceRecord.NewerFormat.self) { try await FirmwareBootAdmission.admit(device: f.device) }
+        record["format"] = DeviceRecord.currentFormat
+        try DeviceRecord.data(record).write(to: url)
+        _ = try await FirmwareBootAdmission.admit(device: f.device)
+    }
+
     @Test func liveAndPendingStorageRefuseAdmission() async throws {
         let f = try fixture()
         defer { try? FileManager.default.removeItem(at: f.root) }

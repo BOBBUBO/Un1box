@@ -7,7 +7,11 @@
 // Unrar.swift, extraction only) beside `ipsw`, must weigh bytes and hash to sha1, and only then becomes `ipsw`.
 // Nothing partial is ever left at `ipsw`. The caller deletes the archive.
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import FirmwareSchema
 import Foundation
 import Unrar

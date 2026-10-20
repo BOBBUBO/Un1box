@@ -8,7 +8,9 @@
 // Streams in fixed-size chunks; the input is read once, front to back, so it can come straight off
 // `unzip -p` without a temporary copy of the encrypted image.
 
+#if canImport(CommonCrypto)
 import CommonCrypto
+#endif
 import Foundation
 
 public enum VFDecrypt {

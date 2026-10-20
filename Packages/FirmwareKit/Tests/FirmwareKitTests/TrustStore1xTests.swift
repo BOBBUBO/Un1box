@@ -1,6 +1,11 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import HostRuntime
+#if canImport(SQLite3)
 import SQLite3
 import Testing
 
@@ -178,3 +183,4 @@ import Testing
         )
     }
 }
+#endif

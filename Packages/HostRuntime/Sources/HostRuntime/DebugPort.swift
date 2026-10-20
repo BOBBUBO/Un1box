@@ -1,7 +1,15 @@
 // The per-device debug port: QEMU's gdbstub on a free loopback port, and the lldb command that attaches to it
 // (qemu-ios docs/guest-debug.md: kernel and userland debugging through imgtools/lldb/xnu.py).
 
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(ucrt)
+import ucrt
+#endif
 import Foundation
 
 public nonisolated enum DebugPort {
@@ -11,11 +19,17 @@ public nonisolated enum DebugPort {
     /// A loopback port free right now (the kernel's pick for port 0). Racy by nature; QEMU fails to start on the
     /// rare collision and the next start picks again.
     public static func freePort() -> Int? {
+        #if canImport(Glibc)
+        let fd = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        #else
         let fd = socket(AF_INET, SOCK_STREAM, 0)
+        #endif
         guard fd >= 0 else { return nil }
         defer { close(fd) }
         var addr = sockaddr_in()
+        #if canImport(Darwin)
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        #endif
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_addr.s_addr = inet_addr("127.0.0.1")
         var len = socklen_t(MemoryLayout<sockaddr_in>.size)

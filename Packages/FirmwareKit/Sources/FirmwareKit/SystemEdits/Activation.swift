@@ -1,7 +1,13 @@
 import CActivation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+#if canImport(MachO)
 import MachO
+#endif
 import MachOKit
 
 public struct ActivationFailure: Error, CustomStringConvertible, Sendable {
@@ -240,11 +246,34 @@ enum MachOSignature {
 
     /// LC_CODE_SIGNATURE's (dataoff, datasize) of a thin 32-bit Mach-O in memory (Activation.signed patches the buffer).
     static func codeSignature(in data: Data) -> (offset: Int, size: Int)? {
+        #if canImport(MachO)
         data.withUnsafeBytes { b -> (Int, Int)? in
             guard b.count >= 28, let base = b.baseAddress, b.loadUnaligned(as: UInt32.self) == 0xFEED_FACE,
                 let cs = codeSignature(MachOImage(ptr: base.assumingMemoryBound(to: mach_header.self)).loadCommands)
             else { return nil }
             return (Int(cs.dataoff), Int(cs.datasize))
         }
+        #else
+        // MachOImage reads a loaded image, which needs Darwin; walk the 32-bit load commands for LC_CODE_SIGNATURE.
+        data.withUnsafeBytes { b -> (Int, Int)? in
+            guard b.count >= 28, b.loadUnaligned(as: UInt32.self) == 0xFEED_FACE else { return nil }
+            let count = Int(b.loadUnaligned(fromByteOffset: 16, as: UInt32.self))
+            var at = 28
+            for _ in 0..<count {
+                guard at + 8 <= b.count else { return nil }
+                let cmd = b.loadUnaligned(fromByteOffset: at, as: UInt32.self)
+                let size = Int(b.loadUnaligned(fromByteOffset: at + 4, as: UInt32.self))
+                if cmd == 0x1D, at + 16 <= b.count {  // LC_CODE_SIGNATURE
+                    return (
+                        Int(b.loadUnaligned(fromByteOffset: at + 8, as: UInt32.self)),
+                        Int(b.loadUnaligned(fromByteOffset: at + 12, as: UInt32.self))
+                    )
+                }
+                guard size >= 8 else { return nil }
+                at += size
+            }
+            return nil
+        }
+        #endif
     }
 }

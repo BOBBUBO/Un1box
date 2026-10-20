@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import Testing
 
@@ -27,7 +31,9 @@ enum HFSOracle {
         try await mounted(img, owners: "off") { rel, p, st in
             var e = Walked(uid: owners[rel]?.0, gid: owners[rel]?.1)
             e.mode = Int(st.st_mode)
+            #if canImport(Darwin)
             e.flags = Int(st.st_flags)
+            #endif
             let type = st.st_mode & S_IFMT
             e.size = type == S_IFDIR ? 0 : Int(st.st_size)
             if type == S_IFLNK {

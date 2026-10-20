@@ -6,7 +6,11 @@ import HostRuntime
     private let operation: Task<Int32, Never>
     private var cancellation: Task<Void, Never>?
     private var signals: [DispatchSourceSignal] = []
+    #if canImport(Darwin)
     private var parentWatch: DispatchSourceProcess?
+    #else
+    private var parentWatch: DispatchSourceTimer?
+    #endif
     private let output: PipeOutput
     private let cleanup: (@Sendable () async throws -> Void)?
 
@@ -28,8 +32,17 @@ import HostRuntime
             return source
         }
         let parent = getppid()
+        #if canImport(Darwin)
         let source = DispatchSource.makeProcessSource(identifier: parent, eventMask: .exit, queue: .main)
         source.setEventHandler { [weak self] in Task { @MainActor in self?.cancel("parent exited") } }
+        #else
+        // No process sources off Darwin: an orphan is reparented, so look for that twice a second.
+        let source = DispatchSource.makeTimerSource(queue: .main)
+        source.schedule(deadline: .now() + .milliseconds(500), repeating: .milliseconds(500))
+        source.setEventHandler { [weak self] in
+            if getppid() != parent { Task { @MainActor in self?.cancel("parent exited") } }
+        }
+        #endif
         source.resume()
         parentWatch = source
         if parent == 1 || getppid() != parent { cancel("no parent") }

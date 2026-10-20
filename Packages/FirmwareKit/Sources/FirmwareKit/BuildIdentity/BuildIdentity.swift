@@ -37,6 +37,21 @@ extension FirmwareEntry {
         return matches[0]
     }
 
+    // What a release's own iOS needs of its device, ruled by the version where the row's recipe option says nothing
+    // (a row's option is an exception to the rule; CatalogTests keeps the catalog free of them unless documented).
+
+    /// data_journal: 3.0 and 3.1's mount_hfs refuse the journaled HFSX the Mac makes (EINVAL, "Invalid content in
+    /// Journal"), so /private/var would stay on the system volume (issue 97); 3.2 on mount it.
+    public static func journaledData(version: String) -> Bool { release(version) >= (3, 2) }
+    /// writable_nor (the k48 recipe's boards) and data_protection (n72): 4.0 on, the first with data protection: the
+    /// keybag one-shot and the writable NOR that keeps it.
+    public static func dataProtection(version: String) -> Bool { release(version).major >= 4 }
+    /// "3.1.3" -> (3, 1).
+    static func release(_ version: String) -> (major: Int, minor: Int) {
+        let parts = version.split(separator: ".").map { Int($0) ?? 0 }
+        return (parts.first ?? 0, parts.count > 1 ? parts[1] : 0)
+    }
+
     /// The key for an IPSW member, looked up by its file name (as qemu-ios' key pages are).
     public func key(forPath path: String) throws -> Key {
         let name = (path as NSString).lastPathComponent

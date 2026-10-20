@@ -6,11 +6,17 @@
 // DER. Checked on M68 1A543a: with the row, SecTrustEvaluate gives 4 (unspecified) for a WebProxyCA-shaped
 // chain and Safari opens HTTPS through a TLS 1.0 relay; without it, 3 (deny).
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import FirmwareSchema
 import Foundation
 import HostRuntime
+#if canImport(SQLite3)
 import SQLite3
+#endif
 
 public enum TrustStore1x {
     static let path = "System/Library/Frameworks/Security.framework/TrustStore.sqlite3"
@@ -80,6 +86,7 @@ public enum TrustStore1x {
     /// Adds (or replaces) `certificate` as an anchor in the trust store at `store`.
     static func addAnchor(_ certificate: Data, to store: URL) throws {
         let subject = try normalizedSubject(certificate)
+        #if canImport(SQLite3)
         var db: OpaquePointer?
         guard sqlite3_open_v2(store.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
             sqlite3_close(db)
@@ -107,6 +114,10 @@ public enum TrustStore1x {
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw FirmwareError(.unsupported, "\(store.path): \(String(cString: sqlite3_errmsg(db)))")
         }
+        #else
+        _ = subject
+        throw FirmwareError(.unsupported, "\(store.path): this host has no SQLite")
+        #endif
     }
 
     /// The device directory's record of the anchor its guest trusts (FirmwareWire.trustAnchorFile). A new

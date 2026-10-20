@@ -1,7 +1,13 @@
+#if canImport(AppleArchive)
 import AppleArchive
-import CryptoKit
-import Foundation
 import System
+#endif
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+import Foundation
 
 /// Resources/Guest/guest.aar (scripts/vendor): the guest binaries the app ships, packed so that codesign and the
 /// notary see no nested code in Resources. It holds guest-tools/ (firmwarekit's --guest-tools set), developer-tools/
@@ -36,6 +42,7 @@ nonisolated public enum GuestArchive {
     }
 
     static func extract(_ archive: URL, to directory: URL) throws {
+        #if canImport(AppleArchive)
         let failed = CocoaError(.fileReadCorruptFile, userInfo: [NSFilePathErrorKey: archive.path])
         guard
             let file = ArchiveByteStream.fileStream(
@@ -58,5 +65,9 @@ nonisolated public enum GuestArchive {
         else { throw failed }
         defer { try? extracted.close() }
         _ = try ArchiveStream.process(readingFrom: decoded, writingTo: extracted)
+        #else
+        // Apple Archive is Apple-only; the Linux, Android and Windows apps ship their guest tools unpacked.
+        throw CocoaError(.featureUnsupported, userInfo: [NSFilePathErrorKey: archive.path])
+        #endif
     }
 }

@@ -11,6 +11,10 @@
 // lines, FirmwareSchema's FirmwareCommand).
 import PackageDescription
 
+// Off Apple platforms (Linux, Android, Windows): swift-crypto stands in for CryptoKit and CommonCrypto, swift-system
+// for System, and HostRuntime's zlib module for the SDK's.
+let nonApple: [Platform] = [.linux, .android, .windows]
+
 let package = Package(
     name: "FirmwareKit",
     platforms: [.macOS(.v13)],
@@ -28,11 +32,16 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "1.0.0"),
         .package(url: "https://github.com/mtgto/Unrar.swift.git", exact: "0.5.4"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.8.2"),
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1"),
+        .package(url: "https://github.com/apple/swift-system.git", exact: "1.8.1"),
     ],
     targets: [
         .target(
             name: "FirmwareSchema",
-            dependencies: [.product(name: "ArgumentParser", package: "swift-argument-parser")]
+            dependencies: [
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: nonApple)),
+            ]
         ),
         .target(name: "CActivation", cSettings: [.define("LT_ACTIVATION_LIBRARY")]),
         .target(
@@ -44,6 +53,11 @@ let package = Package(
                 .product(name: "MachOKit", package: "MachOKit"),
                 .product(name: "Subprocess", package: "swift-subprocess"),
                 .product(name: "Unrar", package: "Unrar.swift"),
+                .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: nonApple)),
+                .product(name: "_CryptoExtras", package: "swift-crypto", condition: .when(platforms: nonApple)),
+                .product(name: "SystemPackage", package: "swift-system", condition: .when(platforms: nonApple)),
+                .product(name: "zlib", package: "HostRuntime", condition: .when(platforms: nonApple)),
+                .product(name: "CPortability", package: "HostRuntime", condition: .when(platforms: nonApple)),
             ]
         ),
         .executableTarget(
@@ -57,7 +71,12 @@ let package = Package(
         .executableTarget(name: "FirmwareKitMemoryProbe", dependencies: ["FirmwareKit"]),
         .testTarget(
             name: "FirmwareKitTests",
-            dependencies: ["FirmwareKit", "FirmwareSchema", .product(name: "HostRuntime", package: "HostRuntime")]
+            dependencies: [
+                "FirmwareKit", "FirmwareSchema", .product(name: "HostRuntime", package: "HostRuntime"),
+                .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: nonApple)),
+                .product(name: "zlib", package: "HostRuntime", condition: .when(platforms: nonApple)),
+            ],
+            exclude: ["iboot-trees"]  // KBootIBootTests reads them from the source tree
         ),
     ]
 )

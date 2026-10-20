@@ -13,7 +13,11 @@
 // Fields keep Python's insertion order, which is what makes json() match. A value is a string or a list
 // of strings (die-id).
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import HostRuntime
 
@@ -103,15 +107,17 @@ public struct UnitIdentity: Equatable, Sendable {
 
     /// The iPod touch 2G identity: the iPad's serial and MACs plus a 12-digit battery serial; model and
     /// region are the recipe's. `bluetooth: false` is the 1G, which has no Bluetooth: no bt-mac, and lockdownd's
-    /// UDID hashes an empty BT address (SHA1(serial + Wi-Fi MAC)).
+    /// UDID hashes an empty BT address (SHA1(serial + Wi-Fi MAC)), and its serial reads as made in 2008 (oneGSerial).
     public static func synthesizeIPod(seed: String, modelNumber: String, regionInfo: String, bluetooth: Bool = true)
         throws -> UnitIdentity
     {
         let base = try synthesize(seed: seed)
         let h = Array(SHA256.hash(data: Data(("battery:" + seed).utf8)))
+        let serial =
+            bluetooth ? base.synthesized("serial-number") : oneGSerial(base.synthesized("serial-number"), h[12])
         var id = UnitIdentity(
             fields: [
-                ("serial-number", .string(base.synthesized("serial-number"))),
+                ("serial-number", .string(serial)),
                 ("wifi-mac", .string(base.synthesized("wifi-mac"))),
             ]
                 + (bluetooth ? [("bt-mac", .string(base.synthesized("bt-mac")))] : []) + [
@@ -127,15 +133,19 @@ public struct UnitIdentity: Equatable, Sendable {
                 .string(
                     bluetooth
                         ? base.synthesized("udid")
-                        : udid(
-                            serial: base.synthesized("serial-number"),
-                            wifiMAC: base.synthesized("wifi-mac"),
-                            btMAC: ""
-                        )
+                        : udid(serial: serial, wifiMAC: base.synthesized("wifi-mac"), btMAC: "")
                 )
             )
         )
         return id
+    }
+
+    /// `serial` with its year and week of manufacture (PPYWW…) set to a week of 2008. iPhone OS 1.1.3 to 1.1.5's
+    /// lockdownd (load_nikita) turns on the January apps (Mail, Maps, Stocks, Weather, Notes) for an iPod touch made
+    /// from week 52 of 2007, which shipped with them, and otherwise only for the paid upgrade's receipt, signed by
+    /// Apple; without either, SpringBoard leaves the five off the Home screen.
+    static func oneGSerial(_ serial: String, _ byte: UInt8) -> String {
+        String(serial.prefix(2)) + String(format: "8%02d", 1 + Int(byte) % 36) + String(serial.dropFirst(5))
     }
 
     /// The original iPhone (m68ap): the iPod's fields plus a 15-digit IMEI (TAC 00000000, which no real device has;

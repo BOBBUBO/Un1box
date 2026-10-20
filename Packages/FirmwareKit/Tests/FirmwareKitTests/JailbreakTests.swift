@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import Testing
 
@@ -172,7 +176,8 @@ struct JailbreakTests {
                         #"{"name": "n90", "version": 1, "storage": "16g", "system_mib": 1664, "data_size": "partition", "options": {\#(o)}}"#
                             .utf8
                     )
-                )
+                ),
+                version: "6.0"
             )
         }
         #expect(try options(#""jailbreak": true"#).jailbreak)

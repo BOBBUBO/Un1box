@@ -17,11 +17,19 @@ enum FitFixture {
         "n72ap-7A341": Oracle.ipodCache.appendingPathComponent("0f7fc76d9b9aa826b5ab14be9821a315d3d9dc42/rootfs.dmg"),
         "n72ap-7E18": Oracle.ipodCache.appendingPathComponent("5f4f5c01eda2f811f73167e7d1f82dbeed82367b/rootfs.dmg"),
         "n72ap-8C148": Oracle.ipodCache.appendingPathComponent("b9efddc7bb4350c237a8d3846af61bbfc8a2f647/rootfs.dmg"),
+        "n81ap-10A5316k": Oracle.appCache.appendingPathComponent(
+            "3b8101d3c30453e4c4ab8eae224e6a3d7f9f6a92/e49b23d7a4af6ba2b26037209fee7904fe3ab27f3b2421f96826937a3a6bdd29/rootfs.dmg"
+        ),
+        "n90ap-10A5316k": Oracle.appCache.appendingPathComponent(
+            "adc3ec213dd10dad9e6cf5f89029a4e6aa115a35/90fc8eb2bf33e08769f3533ad538eba91830c29b47d94cb9ddb45432479694dc/rootfs.dmg"
+        ),
+        "n90ap-11D257": Oracle.path("Developer/qemu-ios-files/n90/11D257/dec/rootfs.dmg"),
     ]
-    static func arch(_ id: String) -> String { id.hasPrefix("k48") ? "armv7" : "armv6" }
+    static func arch(_ id: String) -> String { id.hasPrefix("n72") ? "armv6" : "armv7" }
     static let springBoard = "System/Library/CoreServices/SpringBoard.app/SpringBoard"
     static let mounter = "System/Library/CoreServices/MobileStorageMounter.app/MobileStorageMounter"
     static let usbArbitrator = "System/Library/CoreServices/USBDeviceArbitrator.app/USBDeviceArbitrator"
+    static let deviceOMatic = "System/Library/CoreServices/DeviceOMatic.app/DeviceOMatic"
     /// What a guest binary's load check reads: the precedent executables, libSystem, the shared cache, SystemVersion.
     static func stock(_ id: String) -> [String] {
         FitCheck.Firmware.precedentBinaries + [
@@ -51,7 +59,7 @@ enum FitFixture {
             let data = try v.contents(r)
             let to = out.appendingPathComponent(rel)
             try SystemEdits.mkdirs(to.deletingLastPathComponent())
-            try SystemEdits.put(data, to, mode: r.mode & 0o7777)
+            try SystemEdits.put(data, to, mode: mode_t(r.mode & 0o7777))
             if let m = MachO32.slice(data, arch: arch(id))?.image {
                 queue += (links ? m.dylibs().map(\.name) : m.reexported()).map { String($0.drop { $0 == "/" }) }
             }
@@ -114,7 +122,11 @@ enum FitFixture {
         let index = try JSONSerialization.data(withJSONObject: [
             "format": 1, "entries": entries.map { ["name": $0.name, "size": $0.data.count] },
         ])
+        #if canImport(Compression)
         let stream = try (entries.reduce(Data()) { $0 + $1.data } as NSData).compressed(using: .zlib) as Data
+        #else
+        let stream = rawDeflate(entries.reduce(Data()) { $0 + $1.data })
+        #endif
         var length = UInt32(index.count).littleEndian
         try (GuestPack.magic + Data(bytes: &length, count: 4) + index + Data([0x78, 0x9c]) + stream).write(to: dst)
     }
@@ -123,6 +135,22 @@ enum FitFixture {
 @Suite(.serialized, .detachesItsImages) struct FitCheckTests {
     /// An export trie's one-by-one re-export (iOS 6 CoreFoundation's _OBJC_CLASS_$_NSObject) counts as an export;
     /// a plain export, which the nlist already lists, does not come from here.
+    /// One optional piece for whichever place takes it (it_msmquiet in the job that raises the notice): every place is
+    /// recorded, and the misfits are warned about only when no place fits (5.x and 6.x prepares warned that the
+    /// mounter, which no longer raises the notice there, didn't fit, and the app listed it under Recent errors).
+    @Test func checkAnyWarnsOnlyWhenNoPlaceFits() {
+        var warnings: [String] = []
+        let log = FitCheck.Log { warnings.append($0) }
+        let mounter = FitCheck.Fit("q (mounter)", fits: false, "names neither")
+        let arbitrator = FitCheck.Fit("q (arbitrator)", fits: true, "raises it")
+        #expect(log.checkAny([mounter, arbitrator]) == [false, true])
+        #expect(warnings.isEmpty, "\(warnings)")
+        #expect(log.fits == [mounter, arbitrator])
+        #expect(log.checkAny([mounter, mounter]) == [false, false])
+        #expect(warnings == [mounter.warning("left out"), mounter.warning("left out")])
+        #expect(log.checkAny([]) == [] && warnings.count == 2)
+    }
+
     @Test func trieReexports() {
         // (one byte before the trie) root: no info, children "_A" -> 10 and "_B" -> 15;
         // _A: flags 8 (re-export), ordinal 2, same name; _B: flags 0, address 4
@@ -268,6 +296,39 @@ enum FitFixture {
         }
     }
 
+    /// The GL front end fits iOS 6.0 beta 1 (its catalog rows prepare with ca_ogl): its QuartzCore asks for a macro
+    /// context, as 5.x's does, and its OpenGLES's dispatch @encode has no field names, as 6.x's and 7.x's, so the
+    /// stock exports name the slots at run time.
+    @Test(
+        .enabled(if: FixtureRequirements.corpusEnabled, "Firmware corpus test; set FK_TEST_CORPUS=1 to run"),
+        arguments: ["n81ap-10A5316k", "n90ap-10A5316k"]
+    )
+    func glesFrontEndFitsSixBetaOne(_ id: String) async throws {
+        let bin = Oracle.guestPackages.appendingPathComponent(SystemEdits.Helpers.openGLES)
+        let table = Oracle.guestPackages.appendingPathComponent(SystemEdits.Helpers.glesNames)
+        guard Oracle.exists(bin), Oracle.exists(table) else {
+            try FixtureRequirements.missing(#"FitCheckTests.swift: Oracle.exists(bin), Oracle.exists(table)"#)
+        }
+        let files = [
+            FitCheck.openGLES, FitCheck.quartzCore, FitCheck.coreImage, FitCheck.ioSurface,
+            FitCheck.ioMobileFramebuffer, FitCheck.sgxEngine,
+            "System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+            "System/Library/Frameworks/Foundation.framework/Foundation", "usr/lib/libobjc.A.dylib",
+        ]
+        try await Oracle.withTemp { dir in
+            guard let v = try await FitFixture.volume(id, FitFixture.stock(id) + files, in: dir) else {
+                try FixtureRequirements.missing("FitCheckTests.swift: FitFixture.volume(\"\(id)\")")
+            }
+            let f = FitCheck.glesFrontEnd(
+                FitCheck.Firmware(root: v, arch: "armv7"),
+                binary: try Data(contentsOf: bin),
+                names: try String(contentsOf: table, encoding: .utf8)
+            )
+            #expect(f.fits, "\(f.proof)")
+            #expect(f.proof.contains("macro context: 914 unnamed dispatch slots"), "\(f.proof)")
+        }
+    }
+
     /// The seed refuses a loader that does not load here: armv6.itpack with its legacy-linked it_boot swapped for a
     /// modern-linked iPod tool (itmedia; the agent itself is legacy-linked now), seeded onto 2.1.1, throws at the
     /// loader and records its misfit; the real itpack seeds and records the loader's proof.
@@ -340,7 +401,7 @@ enum FitFixture {
                     work: work,
                     systemBytes: 1_500_000_000,
                     dataBytes: 1 << 30,
-                    options: .init(recipe: recipe),
+                    options: .init(recipe: recipe, version: try Oracle.entry(fw.entryID).version),
                     helpers: helpers,
                     fit: log
                 )
@@ -368,6 +429,11 @@ enum FitFixture {
             ("k48ap-9B206", FitFixture.mounter, false, "names neither"),
             (
                 "k48ap-9B206", FitFixture.usbArbitrator, true,
+                "UNSUPPORTED_FAILURE_BODY through CFUserNotificationCreate"
+            ),
+            ("n90ap-11D257", FitFixture.mounter, false, "names neither"),
+            (
+                "n90ap-11D257", FitFixture.deviceOMatic, true,
                 "UNSUPPORTED_FAILURE_BODY through CFUserNotificationCreate"
             ),
         ] {
@@ -399,18 +465,23 @@ enum FitFixture {
         }
         try await Oracle.withTemp { dir in
             let recipe = try #require(try Oracle.entry("k48ap-9B206").recipe)
-            let log = FitCheck.Log()
+            var warnings: [String] = []
+            let log = FitCheck.Log { warnings.append($0) }
             let parts = K48NAND.partitions(mbr: [UInt8](K48NAND.makeMBR(systemMiB: recipe.systemMiB)))
             let kernel = try Data(
                 contentsOf: dmg.deletingLastPathComponent().appendingPathComponent("kernelcache.mach"),
                 options: .alwaysMapped
             )
+            defer {
+                let quiet = warnings.filter { $0.contains("it_msmquiet") }
+                #expect(quiet.isEmpty, "the mounter's misfit is no warning where the arbitrator fits: \(quiet)")
+            }
             let r = try await SystemEdits.buildK48(
                 rootfs: dmg,
                 work: dir,
                 systemBytes: parts[0].count * 4096,
                 dataBytes: Int64(parts[1].count) * 4096,
-                options: .init(recipe: recipe),
+                options: .init(recipe: recipe, version: "5.1.1"),
                 helpers: helpers,
                 kernel: kernel,
                 fit: log
@@ -1037,7 +1108,7 @@ enum FitFixture {
                     work: work,
                     systemBytes: 1_500_000_000,
                     dataBytes: 1 << 30,
-                    options: .init(recipe: recipe),
+                    options: .init(recipe: recipe, version: try Oracle.entry(fw.entryID).version),
                     helpers: helpers,
                     fit: log
                 )
@@ -1055,3 +1126,27 @@ enum FitFixture {
         }
     }
 }
+
+#if !canImport(Compression)
+import zlib
+
+/// A raw deflate stream (no zlib header), as NSData's `.zlib` compression makes on Apple platforms.
+func rawDeflate(_ data: Data) -> Data {
+    var stream = z_stream()
+    deflateInit2_(&stream, 6, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
+    defer { deflateEnd(&stream) }
+    var input = [UInt8](data)
+    var out = [UInt8](repeating: 0, count: Int(deflateBound(&stream, uLong(input.count))))
+    let count = input.withUnsafeMutableBufferPointer { i in
+        out.withUnsafeMutableBufferPointer { o in
+            stream.next_in = i.baseAddress
+            stream.avail_in = uInt(i.count)
+            stream.next_out = o.baseAddress
+            stream.avail_out = uInt(o.count)
+            deflate(&stream, Z_FINISH)
+            return o.count - Int(stream.avail_out)
+        }
+    }
+    return Data(out.prefix(count))
+}
+#endif

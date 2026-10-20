@@ -5,7 +5,8 @@
 // grown to the recipe, fstab, the kernelcache at the path iBoot names, the shared bake (SystemEdits) plus the
 // iPod's own pieces (sound defaults, guest-tools markers), owners patched in the catalog.
 // Store: N72NAND's page directory. There is no seal boot: the legacy FTL store needs no clean halt.
-// options.data_protection (4.x) adds the restore-ramdisk keybag one-shot (N72Keybag) through --helper.
+// Data protection (4.x: FirmwareEntry.dataProtection, or options.data_protection) adds the restore-ramdisk keybag
+// one-shot (N72Keybag) through --helper.
 //
 // The recipe: storage "8g" (model MB528; 16g MB531, 32g MB533; region LL/A), system_mib = the volume
 // (7168 MiB = 1835008 blocks), options gles_shim / appsync / web_proxy / data_protection. --guest-tools
@@ -17,7 +18,11 @@
 // (data protection). With gles_shim the front end replaces OpenGLES once FitCheck.glesFrontEnd fits (else the prepare
 // fails) and SpringBoard gets CA_ENABLE_OGL=1.
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 final class N72Board: Board {
@@ -48,8 +53,10 @@ final class N72Board: Board {
         (501, "private/var/mobile/Media/.lt-guest-tools-v2"), (501, "private/var/mobile/Media/.lt-guest-tools-v3"),
     ]
 
-    /// The -machine options every device this recipe builds boots with (device.lock.json "machine").
-    public static let machine = ["aes-uid": "engine"]
+    /// The -machine options every device this recipe builds boots with (device.lock.json "machine"). hardware: the
+    /// AES mode register reads back, so iBoot's UID derivation encrypts, as N72NOR wraps for; devices made with
+    /// engine (a decrypt-wrapped NOR) keep booting with the engine their locks name.
+    public static let machine = ["aes-uid": "hardware"]
 
     let arch = "armv6", seedPrefix = "ipod2g"
     let bootStep = "Writing the identity, NOR and boot files", volumesStep = "Building the system volume",
@@ -72,7 +79,7 @@ final class N72Board: Board {
         self.recipe = recipe
         self.model = model
         blocks = recipe.systemMiB * 256
-        dataProtection = recipe.options["data_protection"] == true
+        dataProtection = recipe.options["data_protection"] ?? FirmwareEntry.dataProtection(version: o.entry.version)
     }
 
     func check(_ c: Recipe.Context) throws {
@@ -240,7 +247,7 @@ final class N72Board: Board {
     /// as 8A293 ships just the Restore one; restored_external runs first on either).
     nonisolated(nonsending) func keybag(_ c: Recipe.Context) async throws {
         let (source, name) = try await Recipe.keybagRamdisk(c)
-        _ = try await N72Keybag.run(
+        try await N72Keybag.run(
             out: c.o.out,
             dec: c.decrypted(),
             ramdisk: source,
@@ -412,7 +419,7 @@ final class N72Board: Board {
         )
         try SystemEdits.editSpringBoardJob(m) { env, _ in
             for k in ["CA_ENABLE_OGL", "LK_ENABLE_OGL"] { env[k] = gles ? "1" : "0" }
-            for k in ["CA_AUTO_ENABLE_OGL", "LK_AUTO_ENABLE_OGL", "CA_ENABLE_MBX2D", "LK_ENABLE_MBX2D"] { env[k] = "0" }
+            for k in ["CA_AUTO_ENABLE_OGL", "LK_AUTO_ENABLE_OGL"] { env[k] = "0" }
             let old = (env["DYLD_INSERT_LIBRARIES"] as? String ?? "").split(separator: ":").map(String.init)
             let libs =
                 old.filter { !["/usr/lib/it_kbd_agent.dylib", "/usr/lib/it_typein.dylib"].contains($0) }
@@ -432,8 +439,14 @@ final class N72Board: Board {
         for (name, changes) in Self.soundDefaults {
             try SystemEdits.seedPlist(at(Self.prefs + "/" + name)) { $0.addEntries(from: changes) }
         }
-        if let l = try SystemEdits.seedLanguage(at("private/var"), tag: c.o.language) {
-            report["language"] = "\(l.language), region \(l.locale)"
+        if let l = try SystemEdits.seedLanguage(
+            at("private/var"),
+            tag: c.o.language,
+            keyboards: c.o.keyboards,
+            catalog: SystemEdits.KeyboardCatalog(at("System/Library/TextInput")),
+            formats: SystemEdits.regionFormats(m)
+        ) {
+            report["language"] = "\(l.language), region \(l.locale), keyboards \(l.keyboards)"
         }
         let media = at("private/var/mobile/Media")
         if tools {
@@ -515,7 +528,6 @@ extension N72Board {
     /// The switches the bake sets in SpringBoard's job, each under its 3.x+ (CoreAnimation) and 1.x/2.x (LayerKit) name.
     static let sbSwitches = [
         ["CA_ENABLE_OGL", "LK_ENABLE_OGL"], ["CA_AUTO_ENABLE_OGL", "LK_AUTO_ENABLE_OGL"],
-        ["CA_ENABLE_MBX2D", "LK_ENABLE_MBX2D"],
     ]
 
     /// The baked guest tools (and it_typein in SpringBoard) that must all load for any to be installed.

@@ -12,8 +12,16 @@
 //
 // Paths are volume-relative, "/"-separated, no leading slash ("" is the root folder).
 
+#if canImport(Compression)
 import Compression
+#else
+import zlib
+#endif
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 public final class HFSPlusVolume {
@@ -223,9 +231,15 @@ public final class HFSPlusVolume {
         func inflate(_ c: ArraySlice<UInt8>, _ max: Int) throws -> [UInt8] {
             guard let first = c.first else { return [] }
             if first & 0x0F == 0x0F { return Array(c.dropFirst()) }  // stored
-            let z = Array(c.dropFirst(2))  // zlib header; COMPRESSION_ZLIB is raw deflate
             var out = [UInt8](repeating: 0, count: max)
+            #if canImport(Compression)
+            let z = Array(c.dropFirst(2))  // zlib header; COMPRESSION_ZLIB is raw deflate
             let n = compression_decode_buffer(&out, max, z, z.count, nil, COMPRESSION_ZLIB)
+            #else
+            let z = Array(c)
+            var length = uLongf(max)
+            let n = max == 0 || uncompress(&out, &length, z, uLong(z.count)) == Z_OK ? Int(length) : 0
+            #endif
             guard n > 0 || max == 0 else { throw FirmwareError(.unsupported, "\(r.name): bad decmpfs zlib data") }
             return Array(out.prefix(n))
         }

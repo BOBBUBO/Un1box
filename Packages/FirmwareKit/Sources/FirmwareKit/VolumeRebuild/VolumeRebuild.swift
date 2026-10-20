@@ -4,13 +4,14 @@
 //   let vols = try VolumeRebuild.rebuild(base: nand, overlay: ovl, into: dir)          // every volume
 //   try VolumeRebuild.rebuild(base: nand, overlay: ovl, into: dir, only: ["system"])
 //
-// iPod (n72, base = cs<N>/<page>.page): the emulator stores every guest write where its logical block lives
-// in the generated layout (ipod_touch_fmss.c fmss_generated_layout, ftlmap.predict), so the volume is
-// dumpvol.py with overlay/cs<N>/<page>.page over the base and blk<B>.erased markers (written and honored
-// only under FMSS_ERASE) reading as blank.
+// iPod (n72, base = an image store, N72NANDImage, or cs<N>/<page>.page): the emulator stores every guest write where
+// its logical block lives in the generated layout (ipod_touch_fmss.c fmss_generated_layout, ftlmap.predict), so the
+// volume is dumpvol.py over the store as the guest reads it: an image's live clone (overlay/nand) or the image alone;
+// overlay/cs<N>/<page>.page over a page directory, blk<B>.erased markers (written and honored only under FMSS_ERASE)
+// reading as blank.
 // One volume, "system" (the generated image keeps /private/var on it).
 //
-// legacy (n45/m68, base = bank<N>/<page>.page): iPhone OS 1.x's FTL as the guest left it (N45FTL: its context's
+// legacy (n45/m68, base = an image store, PageNANDImage.s5l8900, or bank<N>/<page>.page): iPhone OS 1.x's FTL as the guest left it (N45FTL: its context's
 // map and log blocks over base + overlay). One volume, "system". A device not shut down cleanly is refused.
 //
 // iPad (k48 and the other kboot boards, base = geometry.json + bus<b>-ce<c>.pages; the S5L8920 boards' meta unwhitened,
@@ -34,6 +35,7 @@ public enum VolumeRebuild {
 
     public static func board(of base: URL) throws -> Board {
         let fm = FileManager.default
+        if let image = PageNANDImage.of(base) { return image == .n72 ? .ipod : .legacy }
         if fm.fileExists(atPath: base.appendingPathComponent("geometry.json").path) { return .ipad }
         if fm.fileExists(atPath: base.appendingPathComponent("cs0").path) { return .ipod }
         if fm.fileExists(atPath: base.appendingPathComponent("bank0").path) { return .legacy }
@@ -68,29 +70,12 @@ public enum VolumeRebuild {
         guard only.map({ $0.contains("system") }) ?? true else {
             throw FirmwareError(.unsupported, "the iPod has one volume, system (/private/var is on it)")
         }
-        let fm = FileManager.default
-        func names(_ d: URL?, _ cs: Int) -> Set<String> {
-            guard let d else { return [] }
-            return Set((try? fm.contentsOfDirectory(atPath: d.appendingPathComponent("cs\(cs)").path)) ?? [])
-        }
-        let baseNames = (0..<4).map { names(base, $0) }
-        let ovlNames = (0..<4).map { names(overlay, $0) }
-        @Sendable func source(_ cs: Int, _ pg: Int) -> URL? {
-            let n = "\(pg).page"
-            if let overlay, ovlNames[cs].contains(n) { return overlay.appendingPathComponent("cs\(cs)/\(n)") }
-            if ovlNames[cs].contains("blk\(pg / 128).erased") { return nil }
-            return baseNames[cs].contains(n) ? base.appendingPathComponent("cs\(cs)/\(n)") : nil
-        }
+        let store = try N72NANDImage.reader(base: base, overlay: overlay)
         /// Block `n` into `buf`; false for a blank or absent page.
         @Sendable func read(_ n: Int, into buf: inout [UInt8]) throws -> Bool {
             let (cs, pg) = predict(n)
-            guard let u = source(cs, pg) else { return false }
-            let fd = open(u.path, O_RDONLY)
-            guard fd >= 0 else { throw FirmwareError(.internal, "\(u.path): \(String(cString: strerror(errno)))") }
-            defer { close(fd) }
-            let got = buf.withUnsafeMutableBytes { pread(fd, $0.baseAddress, page, 0) }
-            guard got >= 0 else { throw FirmwareError(.internal, "\(u.path): \(String(cString: strerror(errno)))") }
-            for i in max(got, 0)..<page { buf[i] = 0 }
+            let record = try store(N72NAND.Page(cs: cs, page: pg))
+            buf.replaceSubrange(0..<page, with: record[0..<page])
             return buf.contains { $0 != 0 }
         }
 
@@ -105,7 +90,7 @@ public enum VolumeRebuild {
         let out = dir.appendingPathComponent("system.img")
         let fd = try create(out, bytes: blocks * page)
         defer { close(fd) }
-        // One small file per page: the open/read/close per block is the cost, so blocks are read in parallel
+        // A page directory is one small file per page: the open/read/close per block is the cost, so blocks are read in parallel
         // (each worker its own buffer; pwrite at distinct offsets).
         let workers = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount))
         final class Tally: @unchecked Sendable {

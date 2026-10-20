@@ -47,6 +47,37 @@ struct BootTests {
     }
 
     /// The Carrier panel's saved settings start the modem on radio boards only.
+    /// Settings ▸ General's experimental 120 Hz: each board's own panel (and, but on the 1G, its touch) gets the rate,
+    /// in -global's long form (the type names have dots), the helper reads it back, and 60 adds nothing.
+    @Test func refreshReachesEachBoardsPanel() throws {
+        let panels: [Board: String] = [
+            .m68: "ipodtouch.lcd", .n72: "ipodtouch.lcd", .n88: "s5l8930.display", .k48: "s5l8930.display",
+        ]
+        for (board, panel) in panels {
+            let f = try Fixture(board: board, strategy: board == .m68 ? "iboot" : board == .n72 ? "bootrom" : "kboot")
+            defer { try? FileManager.default.removeItem(at: f.root) }
+            func boot(_ hz: Int) throws -> BootConfig {
+                try f.prepare(board).configuration(
+                    bootArgs: "",
+                    usbAddress: nil,
+                    wifi: true,
+                    guestPackage: nil,
+                    serial: "null",
+                    audio: [],
+                    netdev: "user,id=wifi0",
+                    refreshHz: hz
+                )
+            }
+            let fast = try boot(120)
+            #expect(fast.argv.contains("driver=\(panel),property=refresh-hz,value=120"))
+            #expect(fast.argv.contains("driver=ipodtouch.multitouch,property=report-hz,value=120") == (board != .m68))
+            #expect(fast.refreshHz == 120)
+            let stock = try boot(60)
+            #expect(!stock.argv.contains { $0.contains("-hz=") || $0.contains("property=re") })
+            #expect(stock.refreshHz == 60)
+        }
+    }
+
     @Test func carrierSettingsReachRadioBoards() throws {
         var carrier = CarrierSettings()
         carrier.carrier = "Panel"
@@ -499,5 +530,152 @@ extension BootTests {
         #expect(throws: CocoaError.self) { _ = try f.prepare(.k48) }
         #expect(!FileManager.default.fileExists(atPath: f.overlay.path))
         #expect(!FileManager.default.fileExists(atPath: f.nor.path))
+    }
+}
+
+extension BootTests {
+    /// An image store boots from its live clone, overlay/nand: made on the first boot from the immutable, read-only
+    /// base (the clone writable and unflagged, the base untouched), kept after it, passed as nand= with no
+    /// nand-overlay. Format 1 pages over an image base are refused, never dropped.
+    @Test func imageStoreBootsItsLiveClone() throws {
+        let f = try Fixture(board: .n81, strategy: "kboot")
+        let fm = FileManager.default
+        let nand = f.base.appendingPathComponent("nand")
+        let chip = nand.appendingPathComponent("bus0-ce0.pages")
+        try Data(#"{"storage_format": "nand-xor-ff-v2", "layout": "generated"}"#.utf8)
+            .write(to: nand.appendingPathComponent("geometry.json"))
+        try Data([1, 2, 3]).write(to: chip)
+        chmod(chip.path, 0o444)
+        chmod(nand.path, 0o555)
+        chflags(nand.path, UInt32(UF_IMMUTABLE))
+        defer {
+            chflags(nand.path, 0)
+            chmod(nand.path, 0o755)
+        }
+        func argv() throws -> String {
+            try f.prepare(.n81).configuration(
+                bootArgs: "",
+                usbAddress: nil,
+                wifi: false,
+                guestPackage: nil,
+                serial: "null",
+                audio: [],
+                netdev: nil
+            ).argv[2]
+        }
+        let live = PreparedDeviceBoot.liveNAND(overlay: f.overlay)
+        let machine = try argv()
+        #expect(machine.contains(",nand=\(live.path)") && !machine.contains("nand-overlay"))
+        for url in [live, live.appendingPathComponent("bus0-ce0.pages")] {
+            var st = stat()
+            #expect(lstat(url.path, &st) == 0 && st.st_flags == 0 && access(url.path, W_OK) == 0, "\(url.path)")
+        }
+        try Data([9]).write(to: live.appendingPathComponent("bus0-ce0.pages"))  // the guest's write
+        _ = try argv()
+        #expect(try Data(contentsOf: live.appendingPathComponent("bus0-ce0.pages")) == Data([9]))
+        #expect(try Data(contentsOf: chip) == Data([1, 2, 3]))
+        #expect(try fm.contentsOfDirectory(atPath: f.overlay.path).sorted() == [".base-identity", "nand"])
+        try Data().write(to: f.overlay.appendingPathComponent("bus0-ce0.dirty"))
+        #expect(throws: CocoaError.self) { _ = try f.prepare(.n81) }
+    }
+
+    /// The iPod touch 2G's image store (nand-xor-blank-v2) boots its live clone too: nand= names it and no nandrw
+    /// overlay is passed; a format 1 page directory left in the overlay over it is refused.
+    @Test func n72ImageStoreBootsItsLiveCloneWithoutAnOverlay() throws {
+        let f = try Fixture(board: .n72, strategy: "bootrom")
+        let nand = f.base.appendingPathComponent("nand")
+        try Data(#"{"storage_format": "nand-xor-blank-v2", "blank": "n72-generated"}"#.utf8)
+            .write(to: nand.appendingPathComponent("geometry.json"))
+        try Data([1, 2, 3]).write(to: nand.appendingPathComponent("cs0.pages"))
+        let machine = try f.prepare(.n72).configuration(
+            bootArgs: "",
+            usbAddress: nil,
+            wifi: false,
+            guestPackage: nil,
+            serial: "null",
+            audio: [],
+            netdev: nil
+        ).argv[2]
+        let live = PreparedDeviceBoot.liveNAND(overlay: f.overlay)
+        #expect(machine.contains(",nand=\(BootRecipe.escape(live.path))") && !machine.contains("nandrw"), "\(machine)")
+        #expect(try Data(contentsOf: live.appendingPathComponent("cs0.pages")) == Data([1, 2, 3]))
+        try FileManager.default.createDirectory(
+            at: f.overlay.appendingPathComponent("cs0"),
+            withIntermediateDirectories: true
+        )
+        #expect(throws: CocoaError.self) { _ = try f.prepare(.n72) }
+    }
+
+    /// The 1.x boards' image store (nand-xor-blank-v2, blank ff) boots its live clone: nand= names it and no
+    /// nand-overlay is passed; a format 1 bank directory left in the overlay over it is refused.
+    @Test func m68ImageStoreBootsItsLiveCloneWithoutAnOverlay() throws {
+        let f = try Fixture(board: .m68, strategy: "iboot")
+        let nand = f.base.appendingPathComponent("nand")
+        try Data(#"{"storage_format": "nand-xor-blank-v2", "blank": "ff", "board": "s5l8900"}"#.utf8)
+            .write(to: nand.appendingPathComponent("geometry.json"))
+        try Data([1, 2, 3]).write(to: nand.appendingPathComponent("cs0.pages"))
+        func machine() throws -> String {
+            try f.prepare(.m68).configuration(
+                bootArgs: "",
+                usbAddress: nil,
+                wifi: false,
+                guestPackage: nil,
+                serial: "null",
+                audio: [],
+                netdev: nil
+            ).argv[2]
+        }
+        let live = PreparedDeviceBoot.liveNAND(overlay: f.overlay)
+        let argv = try machine()
+        #expect(argv.contains(",nand=\(BootRecipe.escape(live.path))") && !argv.contains("nand-overlay"), "\(argv)")
+        #expect(try Data(contentsOf: live.appendingPathComponent("cs0.pages")) == Data([1, 2, 3]))
+        try FileManager.default.createDirectory(
+            at: f.overlay.appendingPathComponent("bank0"),
+            withIntermediateDirectories: true
+        )
+        #expect(throws: CocoaError.self) { _ = try machine() }
+    }
+}
+
+extension BootTests {
+    /// A 3GS or iPod touch 3G kboot.bin prepared with the IPSW's 0 ncoref-frequency boots an overlay copy with
+    /// PLL1's 162 MHz; the base stays as it was, a later boot uses the copy as it is, and a kboot.bin that has the
+    /// value, or an A4's, boots from the base.
+    @Test func zeroAudioClockBootsARepairedCopy() throws {
+        func image(_ hz: UInt32) -> Data {
+            Data("dt".utf8) + Data("ncoref-frequency".utf8) + Data(count: 16) + Data([4, 0, 0, 0])
+                + withUnsafeBytes(of: hz.littleEndian) { Data($0) } + Data("rest".utf8)
+        }
+        func boots(_ f: Fixture, _ board: Board, _ kboot: URL) throws -> Bool {
+            try f.prepare(board).configuration(
+                bootArgs: "",
+                usbAddress: nil,
+                wifi: false,
+                guestPackage: nil,
+                serial: "null",
+                audio: [],
+                netdev: nil
+            ).argv[2].contains(",kboot=" + BootRecipe.escape(kboot.path) + ",")
+        }
+        for board in [Board.n88, .n18] {
+            let f = try Fixture(board: board, strategy: "kboot")
+            let base = f.base.appendingPathComponent("kboot.bin")
+            try image(0).write(to: base)
+            let copy = f.overlay.appendingPathComponent("kboot.bin")
+            #expect(try boots(f, board, copy))
+            #expect(try Data(contentsOf: copy) == image(PreparedDeviceBoot.ncorefHz))
+            #expect(try Data(contentsOf: base) == image(0))
+            try Data("kept".utf8).write(to: copy)
+            #expect(try boots(f, board, copy))
+            #expect(try Data(contentsOf: copy) == Data("kept".utf8))
+        }
+        let fresh = try Fixture(board: .n88, strategy: "kboot")
+        try image(PreparedDeviceBoot.ncorefHz).write(to: fresh.base.appendingPathComponent("kboot.bin"))
+        #expect(try boots(fresh, .n88, fresh.base.appendingPathComponent("kboot.bin")))
+        #expect(!FileManager.default.fileExists(atPath: fresh.overlay.appendingPathComponent("kboot.bin").path))
+        let a4 = try Fixture(board: .n90, strategy: "kboot")
+        try image(0).write(to: a4.base.appendingPathComponent("kboot.bin"))
+        #expect(try boots(a4, .n90, a4.base.appendingPathComponent("kboot.bin")))
+        #expect(!FileManager.default.fileExists(atPath: a4.overlay.appendingPathComponent("kboot.bin").path))
     }
 }

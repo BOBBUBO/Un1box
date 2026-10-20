@@ -11,9 +11,11 @@ public nonisolated enum FirmwareBootAdmission {
         public let changed: Bool
         public let record: Data?
         public let paths: StorageRecordPaths?
+        /// A quiet notice for the device's window (FirmwareWire.BootAdmission.notice).
+        public var notice: String? = nil
 
         public func jsonData() throws -> Data {
-            let header = try JSONEncoder().encode(FirmwareWire.BootAdmission(changed: changed))
+            let header = try JSONEncoder().encode(FirmwareWire.BootAdmission(changed: changed, notice: notice))
             guard var output = try JSONSerialization.jsonObject(with: header) as? [String: Any] else {
                 throw StorageRecordPaths.Failure.invalidRecord
             }
@@ -35,33 +37,57 @@ public nonisolated enum FirmwareBootAdmission {
     ) async throws -> Result {
         // 1.x's step is a stopped edit, which takes its own lease, so it runs before admission's. A failure (an FTL
         // the guest didn't shut down cleanly is refused) doesn't keep the device from starting; the next start retries.
+        if let record = try? DeviceRecord.object(Data(contentsOf: device.appendingPathComponent(DeviceRecord.name))) {
+            try DeviceRecord.requireReadable(record)  // before any step touches storage this build may not know
+        }
         var edited = false
         do {
             edited = try await N45Migration.systemConfiguration(device: device, policy: policy, allowRaw: allowRaw)
         } catch is CancellationError { throw CancellationError() } catch {
             FirmwareDiagnostics.write(Data("boot admission: 1.x SystemConfiguration step skipped: \(error)\n".utf8))
         }
-        let result = try await admit(device: device, policy: policy, allowRaw: allowRaw, prepare: migrate)
-        return Result(changed: result.changed || edited, record: result.record, paths: result.paths)
+        let notice = NoticeBox()
+        let result = try await admit(device: device, policy: policy, allowRaw: allowRaw) { owner in
+            try migrate(owner) { notice.text = $0 }
+        }
+        return Result(
+            changed: result.changed || edited,
+            record: result.record,
+            paths: result.paths,
+            notice: notice.text
+        )
     }
 
-    @Sendable static func migrate(_ owner: StoppedRecordOwner) throws -> Bool {
+    /// Set once, by the one preparation an admission runs.
+    final class NoticeBox: @unchecked Sendable { var text: String? }
+
+    static func migrate(_ owner: StoppedRecordOwner, notice: (String) -> Void = { _ in }) throws -> Bool {
         guard let bytes = owner.bytes, let paths = owner.paths,
             let record = try? DeviceRecord.object(bytes)
         else { return false }
-        if let board = record["board"] as? String, HostRuntime.Board(rawValue: board)?.kbootPhone == true {
-            return try iPhoneIMEI(
+        if let board = record["board"] as? String, HostRuntime.Board(rawValue: board)?.isKBoot == true {
+            // The A4 and S5L8920 boards' format 2: an image store, written in place (K48NANDMigration).
+            let imaged = try K48NANDMigration.admit(owner, notice: notice)
+            guard HostRuntime.Board(rawValue: board)?.kbootPhone == true else { return imaged }
+            let identity = try iPhoneIMEI(
                 base: paths.base,
                 marker: owner.device.appendingPathComponent(FirmwareWire.migratedRecipeFile)
             )
+            return imaged || identity
+        }
+        if HostRuntime.Board(rawValue: record["board"] as? String ?? "")?.soc == .s5l8900 {
+            // after the 1.x SystemConfiguration step (admit), whose stopped edit wrote the format 1 overlay
+            return try K48NANDMigration.admit(owner, notice: notice)
         }
         guard record["board"] as? String == "n72ap" else { return false }
-        return try N72NAND.migrateLegacyGPT(
+        // the recipe 1 -> 2 GPT pages go into the format 1 overlay, which the image migration then carries
+        let gpt = try N72NAND.migrateLegacyGPT(
             base: paths.base,
             overlay: paths.overlay,
             storageKey: (record["storage"] as? [String: Any])?["key"] as? String,
             marker: owner.device.appendingPathComponent(FirmwareWire.migratedRecipeFile)
         )
+        return try K48NANDMigration.admit(owner, notice: notice) || gpt
     }
 
     /// n90/n88 recipe 1 -> 2: the identity gains the IMEI the modem reports, and the UDID it makes
@@ -97,9 +123,10 @@ public nonisolated enum FirmwareBootAdmission {
     ) async throws -> Result {
         try Task.checkCancellation()
         let owner = try OwnedStorageRecord.acquire(device: device, policy: policy, allowRaw: allowRaw)
-        guard let paths = owner.paths, owner.bytes != nil else {
+        guard let paths = owner.paths, let bytes = owner.bytes else {
             return Result(changed: false, record: nil, paths: nil)
         }
+        try DeviceRecord.requireReadable(DeviceRecord.object(bytes))
         // Keep the shared lease live through preparation, record reread and
         // refreshed ownership validation, including cancellation/error paths.
         defer { withExtendedLifetime(owner.lease) {} }

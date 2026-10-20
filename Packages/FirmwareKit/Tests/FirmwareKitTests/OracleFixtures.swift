@@ -6,7 +6,11 @@
 // the retired Python oracle's outputs (qemu-ios imgtools: ipad1_fw.py at ipod-ipsw e6de24c7fa, ipad1_kboot.py and
 // ipad1_rootfs.extract_rootfs at ipad1 5f365778a4), never the Apple-derived bytes themselves.
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import Testing
 
@@ -56,6 +60,8 @@ enum Oracle {
 
     static let ipadCache = path("Developer/qemu-ios-files/ipad1/repro/cache")
     static let ipodCache = path("Developer/qemu-ios-files/ipod-ipsw/cache")
+    /// The app's decrypt cache: <IPSW sha1>/<key digest>/.
+    static let appCache = path("Library/Caches/gold.samhenri.LightTouchMac/Decrypted/decrypted-v2")
     static let feasibility = "Downloads/ipad1-ios32-feasibility/"
 
     static let firmwares: [Firmware] = [

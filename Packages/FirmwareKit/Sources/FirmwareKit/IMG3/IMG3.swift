@@ -10,7 +10,9 @@
 // Which tail convention a firmware uses is decided once, on the kernelcache (the one component with a
 // checksum): see FirmwareDecryptor.
 
+#if canImport(CommonCrypto)
 import CommonCrypto
+#endif
 import Foundation
 
 public enum IMG3 {

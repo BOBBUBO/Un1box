@@ -11,7 +11,11 @@
 // key schedule (OpenSSL AES_set_decrypt_key + AES_cbc_encrypt(..., AES_ENCRYPT)), so CommonCrypto cannot do it
 // and S5L8900UID below carries a small AES core.
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import zlib
 

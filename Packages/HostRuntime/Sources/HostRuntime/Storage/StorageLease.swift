@@ -1,6 +1,16 @@
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(ucrt)
+import ucrt
+#endif
 import Foundation
+#if canImport(os)
 import os
+#endif
 
 /// Owns the stopped/live device exclusion descriptor, never the lease pathname.
 /// Keep the inode in place: unlinking it permits another owner to lock a new file.

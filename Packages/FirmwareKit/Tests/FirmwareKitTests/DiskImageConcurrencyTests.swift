@@ -1,6 +1,14 @@
 // Also run under an external process deadline so the deadlock regression
 // cannot hide behind a timeout scheduled on the same exhausted pool.
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(ucrt)
+import ucrt
+#endif
 import Foundation
 import Testing
 

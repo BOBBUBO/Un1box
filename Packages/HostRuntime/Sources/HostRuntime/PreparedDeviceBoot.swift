@@ -1,4 +1,12 @@
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(ucrt)
+import ucrt
+#endif
 import Foundation
 
 /// Preparation and launch assembly shared by the GUI and headless session callers.
@@ -11,6 +19,8 @@ public struct PreparedDeviceBoot {
     private let board: Board
     private let boot: URL
     private let nand: URL
+    /// The NAND overlay the emulator writes, nil when it writes `nand` itself (an image store's live clone).
+    private let nandOverlay: URL?
     private let baseNOR: URL
     private let writableNOR: URL?
     private let overlay: URL
@@ -53,14 +63,25 @@ public struct PreparedDeviceBoot {
             )
         }
         if let storageKey, try !pinOverlay(overlay, toBase: storageKey) { throw Failure.baseMismatch }
+        var boot = files.boot
+        if board.soc == .s5l8920, required.boot == "kboot.bin" {
+            boot = try audioClockBoot(kboot: files.boot, overlay: overlay)
+        }
+        var nand = files.nand
+        var nandOverlay: URL? = overlay
+        if isImageStore(files.nand) {
+            nand = try liveNAND(base: files.nand, overlay: overlay)
+            nandOverlay = nil
+        }
         let identityURL = base.appendingPathComponent("identity.json")
         let identity = (try? Data(contentsOf: identityURL))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         let unitDieID = dieID ?? (identity?["die-id"] as? [String])?.joined(separator: ":")
         return Self(
             board: board,
-            boot: files.boot,
-            nand: files.nand,
+            boot: boot,
+            nand: nand,
+            nandOverlay: nandOverlay,
             baseNOR: base.appendingPathComponent("nor.bin"),
             writableNOR: files.writableNOR,
             overlay: overlay,
@@ -74,6 +95,44 @@ public struct PreparedDeviceBoot {
                     .merging(clock.map { ["rtc-epoch": String(Int64($0.timeIntervalSince1970))] } ?? [:]) { $1 }
             ) { $1 }
         )
+    }
+
+    /// /arm-io/audio-complex ncoref-frequency (S5L8920/8922 only): iBoot fills it with PLL1's frequency, which LLB sets
+    /// to 24 MHz x 81 / 6 / 2 = 162 MHz (7E18 n88ap and 8C148 n18ap LLB). The kernel's audio complex divides by its
+    /// NCO's registers with it to find each I2S port's MCLK; left 0, every port reads 0 Hz (FirmwareKit KBoot).
+    public static let ncorefHz: UInt32 = 162_000_000
+
+    /// The kboot.bin a 3GS or iPod touch 3G boots. One prepared before KBoot filled ncoref-frequency (2026-10-09)
+    /// has the IPSW's 0, so iPhone OS 3's mediaserverd finds no audio device and every sound fails: the first boot
+    /// writes a copy with the value set into the overlay, read back before it's used, and later boots use that copy.
+    /// The base stays as it was; Erase empties the overlay and the next boot writes the copy again.
+    static func audioClockBoot(kboot: URL, overlay: URL) throws -> URL {
+        let repaired = overlay.appendingPathComponent("kboot.bin")
+        if FileManager.default.fileExists(atPath: repaired.path) { return repaired }
+        var image = try Data(contentsOf: kboot)
+        guard let at = ncorefOffset(image), image[at..<at + 4].allSatisfy({ $0 == 0 }) else { return kboot }
+        withUnsafeBytes(of: ncorefHz.littleEndian) { image.replaceSubrange(at..<at + 4, with: $0) }
+        let staged = overlay.appendingPathComponent(".kboot-\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: staged) }
+        try image.write(to: staged)
+        guard let written = try? Data(contentsOf: staged), written == image else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: staged.path])
+        }
+        try FileManager.default.moveItem(at: staged, to: repaired)
+        FileHandle.standardError.write(
+            Data("boot: kboot.bin's ncoref-frequency was 0; booting \(repaired.path)\n".utf8)
+        )
+        return repaired
+    }
+
+    /// Where the device tree property's 4-byte value is (a 32-byte name, a length of 4, the value), when it occurs
+    /// exactly once.
+    static func ncorefOffset(_ image: Data) -> Int? {
+        let key = Data("ncoref-frequency".utf8) + Data(count: 16) + Data([4, 0, 0, 0])
+        guard let first = image.range(of: key), image.range(of: key, in: first.upperBound..<image.endIndex) == nil,
+            first.upperBound + 4 <= image.endIndex
+        else { return nil }
+        return first.upperBound
     }
 
     /// Explicit adapter for pre-library N72 regression fixtures with separate images.
@@ -92,6 +151,7 @@ public struct PreparedDeviceBoot {
             board: .n72,
             boot: URL(fileURLWithPath: iBoot.isEmpty ? "nor.bin" : iBoot),
             nand: nand,
+            nandOverlay: overlay,
             baseNOR: nor,
             writableNOR: destination,
             overlay: overlay,
@@ -139,6 +199,110 @@ public struct PreparedDeviceBoot {
         return (try? String(contentsOf: stamp, encoding: .utf8)) == identity
     }
 
+    /// An image store (record format 2: geometry.json storage_format nand-xor-ff-v2, FirmwareKit's A4 and S5L8920 stores,
+    /// K48NAND.StoreFormat.image; nand-xor-blank-v2, the iPod touch 2G's and the 1.x boards', PageNANDImage) needs no
+    /// page overlay: the device's NAND is an APFS clone of the base's, `overlay/nand`, which the emulator writes in
+    /// place. Erase removes the overlay and the next boot clones again.
+    public static func isImageStore(_ nand: URL) -> Bool {
+        let geometry = (try? Data(contentsOf: nand.appendingPathComponent("geometry.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        return ["nand-xor-ff-v2", "nand-xor-blank-v2"].contains(geometry?["storage_format"] as? String)
+    }
+
+    public static func liveNAND(overlay: URL) -> URL { overlay.appendingPathComponent("nand", isDirectory: true) }
+
+    /// Written by the helper beside its lease when a session ends in a clean halt (QEMU paused, which flushes the
+    /// storage, then returned); boot admission reads it and removes it before the next session.
+    public static func cleanStopMarker(lease: URL) -> URL {
+        lease.deletingLastPathComponent().appendingPathComponent("clean-stop")
+    }
+
+    /// While boot admission migrates the device's storage (FirmwareKit K48NANDMigration): how far it is, 0...1, as
+    /// text beside the lease. The start's toast reads it; gone when the migration ends either way.
+    public static func migrationProgress(lease: URL) -> URL {
+        lease.deletingLastPathComponent().appendingPathComponent("migration-progress")
+    }
+
+    public static func readMigrationProgress(lease: URL) -> Double? {
+        (try? String(contentsOf: migrationProgress(lease: lease), encoding: .utf8)).flatMap(Double.init)
+    }
+
+    /// The start's toast while the storage migrates.
+    public static func migrationText(_ fraction: Double) -> String {
+        "Updating storage (one time)… \(Int((min(max(fraction, 0), 1) * 100).rounded(.down)))%"
+    }
+
+    /// The device's live NAND, cloned from `base` (its read-only image store) on the first boot after preparation or
+    /// Erase. The clone keeps the base's uchg and modes, so they are cleared before it is published by a rename.
+    public static func liveNAND(base: URL, overlay: URL) throws -> URL {
+        let fm = FileManager.default
+        let live = liveNAND(overlay: overlay)
+        // Page files an older build wrote over this base: never booted as an image, and never silently dropped.
+        for name in ["bus0-ce0.pages", "bus0-ce0.dirty", "cs0", "bank0"]
+        where fm.fileExists(atPath: overlay.appendingPathComponent(name).path) {
+            throw CocoaError(
+                .fileReadCorruptFile,
+                userInfo: [
+                    NSFilePathErrorKey: overlay.path,
+                    NSLocalizedDescriptionKey:
+                        "This device’s data was written in an older format over a newer system image.",
+                ]
+            )
+        }
+        if fm.fileExists(atPath: live.path) { return live }
+        let staged = overlay.appendingPathComponent(".nand-\(UUID().uuidString).tmp", isDirectory: true)
+        defer { if fm.fileExists(atPath: staged.path) { try? removeClone(staged) } }
+        try fm.createDirectory(at: staged, withIntermediateDirectories: false)
+        // File by file (clonefile(2) discourages directories). ponytail: clonefile only; the state root is always
+        // APFS, and a copy would allocate every chip's full size.
+        for name in try fm.contentsOfDirectory(atPath: base.path) {
+            let source = base.appendingPathComponent(name)
+            guard clonefile(source.path, staged.appendingPathComponent(name).path, 0) == 0 else {
+                throw CocoaError(
+                    .fileWriteUnknown,
+                    userInfo: [
+                        NSFilePathErrorKey: source.path,
+                        NSUnderlyingErrorKey: POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO),
+                    ]
+                )
+            }
+            // a clone keeps the base's uchg and read-only mode, and QEMU couldn't open it for writing
+            try writable(staged.appendingPathComponent(name), mode: 0o644)
+        }
+        guard rename(staged.path, live.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        return live
+    }
+
+    /// Once the helper has exited (a clean stop or not): QEMU's flush on macOS is fsync, which leaves writes in the
+    /// drive's cache, so one F_FULLFSYNC on each live chip file and the NOR puts them on the medium before a power
+    /// loss. (A killed helper's writes are in the page cache, which survives it.)
+    public static func syncStorage(overlay: URL, writableNOR: URL?) {
+        let live = liveNAND(overlay: overlay)
+        let chips = ((try? FileManager.default.contentsOfDirectory(atPath: live.path)) ?? [])
+            .filter { $0.hasSuffix(".pages") }.map { live.appendingPathComponent($0) }
+        for url in chips + [writableNOR].compactMap({ $0 }) {
+            let fd = open(url.path, O_RDONLY)
+            guard fd >= 0 else { continue }
+            #if canImport(Darwin)
+            _ = fcntl(fd, F_FULLFSYNC)
+            #else
+            _ = fsync(fd)
+            #endif
+            close(fd)
+        }
+    }
+
+    private static func writable(_ url: URL, mode: mode_t) throws {
+        guard clearFileFlags(url.path) == 0, chmod(url.path, mode) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
+    private static func removeClone(_ url: URL) throws {
+        try writable(url, mode: 0o755)
+        try FileManager.default.removeItem(at: url)
+    }
+
     /// The writable NOR's path; prepare requires one for every board but the iPads.
     private func writableNORPath() throws -> String {
         guard let writableNOR else { throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: "writable NOR"]) }
@@ -159,7 +323,8 @@ public struct PreparedDeviceBoot {
         restore: [String] = [],
         webProxy: WebProxyEndpoint? = nil,
         cellular: BootRecipe.Cellular = .on,
-        carrier: CarrierSettings? = nil
+        carrier: CarrierSettings? = nil,
+        refreshHz: Int = 60
     ) throws -> BootConfig {
         guard let hardware = hardware ?? board.hardware else {
             throw CocoaError(
@@ -176,7 +341,7 @@ public struct PreparedDeviceBoot {
                     iBoot: boot.path,
                     nand: nand.path,
                     writableNOR: try writableNORPath(),
-                    overlay: overlay.path,
+                    overlay: nandOverlay?.path ?? "",
                     usbAddress: usbAddress,
                     wifi: wifi,
                     guestPackage: guestPackage,
@@ -196,7 +361,7 @@ public struct PreparedDeviceBoot {
                     nand: nand.path,
                     nor: baseNOR.path,
                     writableNOR: try writableNORPath(),
-                    overlay: overlay.path,
+                    overlay: nandOverlay?.path ?? "",
                     usbAddress: usbAddress,
                     wifi: wifi,
                     gidBlobs: gidBlobs,
@@ -219,7 +384,7 @@ public struct PreparedDeviceBoot {
             var ipad = BootRecipe.IPad(
                 boot: bootPath,
                 nand: nand.path,
-                overlay: overlay.path,
+                overlay: nandOverlay?.path,
                 dieID: dieID,
                 usbAddress: usbAddress,
                 wifi: wifi,
@@ -242,6 +407,7 @@ public struct PreparedDeviceBoot {
         if hardware.hasCellular {
             config.argv += ["-global", "ios-baseband.sim-file=\(overlay.appendingPathComponent("sim").path)"]
         }
+        config.argv += board.refreshGlobals(refreshHz)
         config.webProxy = webProxy
         return config
     }

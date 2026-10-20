@@ -11,11 +11,12 @@ import Testing
     static let gpt = [1, 2].map { N72NAND.Page(cs: $0, page: 256) }
 
     /// A stopped standalone device: base/nand with recipe 1's metadata pages (the historical digests, recorded
-    /// before 0b43f26), a lock naming `recipe`, an empty overlay.
+    /// before 0b43f26), a lock naming `recipe`, an empty overlay. The base is outside the device, as a development
+    /// base is, so admission's image migration (K48NANDMigration, N72NANDMigrationTests) leaves its page files alone.
     func device(recipe: Int = 1, exactBase: Bool = false) throws -> (root: URL, device: URL, base: URL, overlay: URL) {
         let root = try Fixtures.tempDir("n72-gpt")
         let device = root.appendingPathComponent("device")
-        let base = device.appendingPathComponent("base")
+        let base = root.appendingPathComponent("base")
         let overlay = device.appendingPathComponent("overlay")
         var pages = N72NAND.metadataPages(blocks: Self.blocks, epoch: Self.epoch)
         if !exactBase {

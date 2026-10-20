@@ -1,6 +1,16 @@
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(ucrt)
+import ucrt
+#endif
 import Foundation
+#if canImport(os)
 import os
+#endif
 
 /// Native stream I/O preserves JSON-line ordering without holding cancellation
 /// state across a blocking pipe write or occupying a cooperative worker.
@@ -18,7 +28,11 @@ public final class PipeOutput: Sendable {
     public init(fileDescriptor: Int32) {
         // Darwin supports suppressing SIGPIPE on this descriptor without changing
         // signal dispositions inherited by unrelated subprocess descriptors.
+        #if canImport(Darwin)
         let signalError = fcntl(fileDescriptor, F_SETNOSIGPIPE, 1) == -1 ? errno : 0
+        #else
+        let signalError: Int32 = 0  // elsewhere the host ignores SIGPIPE process-wide
+        #endif
         channel = DispatchIO(type: .stream, fileDescriptor: fileDescriptor, queue: queue) { _ in }
         if signalError != 0 { state.withLock { $0.failure = signalError } }
     }

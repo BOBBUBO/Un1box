@@ -5,25 +5,47 @@ import Foundation
 extension K48NAND {
     /// A store read the way the IOP serves it: with an overlay (s5l8930_iop.c "nand-overlay"), a page whose
     /// bit is set in bus<b>-ce<c>.dirty comes from the overlay's .pages file (a hole there = erased), else the base.
+    /// An image store (StoreFormat.image) whose overlay holds its live clone (`overlay/nand`, PreparedDeviceBoot.liveNAND)
+    /// is read from that clone alone: it is the device's NAND.
     final class StoreReader {
         let geo: Geometry, stride: Int
         let files: [Data], overlay: [Data], dirty: [Data]
+        /// Records are stored XOR 0xFF (StoreFormat.image), so a hole reads as the erased page.
+        let xorFF: Bool
         /// From the signature's flags (plainSigFlags: an S5L8920 store).
         var plain = false
         init(_ dir: URL, geo: Geometry, overlay: URL? = nil) throws {
             guard try K48NAND.geometry(store: dir).json == geo.json else {
                 throw FirmwareError(.unsupported, "\(dir.path): reader geometry does not match geometry.json")
             }
+            let format = try K48NAND.storeFormat(dir)
+            var dir = dir
+            var overlay = overlay
+            if format == .image, let live = overlay?.appendingPathComponent("nand"),
+                FileManager.default.fileExists(atPath: live.path)
+            {
+                guard try K48NAND.storeFormat(live) == .image, try K48NAND.geometry(store: live).json == geo.json else {
+                    throw FirmwareError(.unsupported, "\(live.path): the live NAND is not its base's format")
+                }
+                dir = live
+                overlay = nil
+            }
             if let overlay {
                 let marker = overlay.appendingPathComponent("storage-format")
                 if FileManager.default.fileExists(atPath: marker.path) {
-                    let format = try String(contentsOf: marker, encoding: .utf8).trimmingCharacters(
+                    let saved = try String(contentsOf: marker, encoding: .utf8).trimmingCharacters(
                         in: .whitespacesAndNewlines
                     )
-                    try K48NAND.requireLegacyFormat(format, at: overlay)
+                    guard saved == format.rawValue else {
+                        throw FirmwareError(
+                            .unsupported,
+                            "\(overlay.path): NAND overlay format \(saved) is not its base's"
+                        )
+                    }
                 }
             }
             self.geo = geo
+            xorFF = format == .image
             stride = geo.pageSize + geo.spareBytes
             func each(_ d: URL, _ ext: String) throws -> [Data] {
                 try (0..<geo.buses).flatMap { b in
@@ -91,7 +113,8 @@ extension K48NAND {
             let f = file(cs, ppage)
             let o = f.startIndex + ppage * stride + geo.pageSize
             guard o + K48NAND.meta <= f.endIndex else { return nil }
-            let m = [UInt8](f[o..<o + K48NAND.meta])
+            var m = [UInt8](f[o..<o + K48NAND.meta])
+            if xorFF { for i in m.indices { m[i] ^= 0xFF } }
             if m.allSatisfy({ $0 == 0 }) || m.allSatisfy({ $0 == 0xFF }) { return nil }
             return plain ? m : K48NAND.whiten(m, ppage)
         }
@@ -101,7 +124,8 @@ extension K48NAND {
             let f = file(cs, ppage)
             let o = ppage * stride
             guard o + stride <= f.count else { return nil }
-            let rec = [UInt8](f[o..<o + stride])
+            var rec = [UInt8](f[o..<o + stride])
+            if xorFF { K48NANDImage.invert(&rec) }
             let sp = rec[geo.pageSize...]
             if sp.allSatisfy({ $0 == 0 })
                 || (sp.allSatisfy { $0 == 0xFF } && rec[..<geo.pageSize].allSatisfy { $0 == 0xFF })
@@ -117,20 +141,34 @@ extension K48NAND {
         }
     }
 
-    /// This reader follows the generated plaintext VFL layout. Physical restored NAND needs
-    /// native VFL/crypto mapping as well as XOR decoding; treating it as this layout loses data.
-    private static func requireLegacyFormat(_ value: Any?, at dir: URL) throws {
-        guard let value else { return }
-        guard value as? String == "legacy-zero-blank-v1" else {
-            throw FirmwareError(
-                .unsupported,
-                "\(dir.path): unsupported NAND storage_format \(String(describing: value)); physical NAND export requires native VFL/crypto mapping; use guest filesystem services"
-            )
-        }
+    /// How a store's records sit in its files (geometry.json "storage_format", which qemu-ios's IOP reads too).
+    public enum StoreFormat: String, Sendable {
+        /// As programmed; a hole, and an all-zero record, read as the erased page. No key, or this one.
+        case legacy = "legacy-zero-blank-v1"
+        /// XOR 0xFF, so a hole is the erased page and every programmed record reads back as written (format 2).
+        case image = "nand-xor-ff-v2"
     }
 
-    /// The known geometry a store's geometry.json describes.
-    static func geometry(store dir: URL) throws -> Geometry {
+    /// geometry.json's "layout" on a store FirmwareKit laid out (build, the image migration): the generated VFL this
+    /// reader follows. A store qemu-ios's restore wrote is also nand-xor-ff-v2 but physical: it needs the native
+    /// VFL/crypto mapping, and reading it as this layout loses data.
+    static let generatedLayout = "generated"
+
+    static func storeFormat(_ value: Any?, layout: Any?, at dir: URL) throws -> StoreFormat {
+        if value == nil || value as? String == StoreFormat.legacy.rawValue { return .legacy }
+        if value as? String == StoreFormat.image.rawValue, layout as? String == generatedLayout { return .image }
+        throw FirmwareError(
+            .unsupported,
+            "\(dir.path): unsupported NAND storage_format \(String(describing: value)); physical NAND export requires native VFL/crypto mapping; use guest filesystem services"
+        )
+    }
+
+    public static func storeFormat(_ dir: URL) throws -> StoreFormat {
+        let g = try geometryObject(dir)
+        return try storeFormat(g["storage_format"], layout: g["layout"], at: dir)
+    }
+
+    static func geometryObject(_ dir: URL) throws -> [String: Any] {
         guard
             let g = try JSONSerialization.jsonObject(
                 with: Data(contentsOf: dir.appendingPathComponent("geometry.json"))
@@ -138,7 +176,13 @@ extension K48NAND {
         else {
             throw FirmwareError(.unsupported, "\(dir.path): geometry.json must contain an object")
         }
-        try requireLegacyFormat(g["storage_format"], at: dir)
+        return g
+    }
+
+    /// The known geometry a store's geometry.json describes.
+    static func geometry(store dir: URL) throws -> Geometry {
+        let g = try geometryObject(dir)
+        _ = try storeFormat(g["storage_format"], layout: g["layout"], at: dir)
         guard
             let geo = Geometry.known.first(where: {
                 ($0.buses, $0.cePerBus, $0.blocksPerCE, $0.pagesPerBlock, $0.pageSize)

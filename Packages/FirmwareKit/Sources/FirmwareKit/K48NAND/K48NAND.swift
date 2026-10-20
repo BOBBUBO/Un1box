@@ -4,7 +4,9 @@
 // its docstring and comments carry the kernel addresses each structure was checked against).
 //
 // Store: geometry.json + one SPARSE file per chip select (bus<b>-ce<c>.pages), a page record every
-// page_bytes+spare_bytes; unwritten pages are holes, never written zeros.
+// page_bytes+spare_bytes, stored XOR 0xFF (StoreFormat.image, nand-xor-ff-v2): unwritten pages are holes, which read
+// as erased. Stores made before it (legacy-zero-blank-v1) hold records as programmed; the image migration
+// (K48NANDImage) converts them.
 import Foundation
 
 public enum K48NAND {
@@ -172,6 +174,13 @@ public enum K48NAND {
                 // only off the default, as ipad1_nand
                 + (vendorType == 0x100014 ? "" : ",\n \"vendor_type\": \(vendorType)") + "\n}"
         }
+
+        /// geometry.json for a store of `format`: an image store also names its format and FirmwareKit's layout.
+        func json(_ format: StoreFormat) -> String {
+            guard format == .image else { return json }
+            return String(json.dropLast(2)) + ",\n \"storage_format\": \"\(format.rawValue)\""
+                + ",\n \"layout\": \"\(generatedLayout)\"\n}"
+        }
     }
 
     // MARK: - Store
@@ -184,14 +193,16 @@ public enum K48NAND {
 
         /// Meta written as is (no whitening): the S5L8920 boards.
         let plain: Bool
+        let format: StoreFormat
 
-        init(create dir: URL, geo: Geometry, plain: Bool = false) throws {
+        init(create dir: URL, geo: Geometry, plain: Bool = false, format: StoreFormat = .image) throws {
             self.geo = geo
             self.plain = plain
+            self.format = format
             stride = geo.pageSize + geo.spareBytes
             rec = [UInt8](repeating: 0, count: stride)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try Data(geo.json.utf8).write(to: dir.appendingPathComponent("geometry.json"))
+            try Data(geo.json(format).utf8).write(to: dir.appendingPathComponent("geometry.json"))
             for b in 0..<geo.buses {
                 for c in 0..<geo.cePerBus {
                     let p = dir.appendingPathComponent("bus\(b)-ce\(c).pages").path
@@ -213,6 +224,7 @@ public enum K48NAND {
             rec.withUnsafeMutableBytes { r in
                 r.copyMemory(from: data)
                 for i in 0..<geo.spareBytes { r[geo.pageSize + i] = i < 12 ? m[i] : 0 }
+                if format == .image { for i in 0..<stride { r[i] ^= 0xFF } }
             }
             let (b, c) = geo.busCE(cs)
             let n = rec.withUnsafeBytes {
@@ -539,7 +551,7 @@ public enum K48NAND {
             guard let base = b.baseAddress else { return }
             var off = 0
             while off < b.count,
-                let hit = old.withUnsafeBytes({ memmem(base + off, b.count - off, $0.baseAddress, old.count) })
+                let hit = old.withUnsafeBytes({ memmem(base + off, b.count - off, $0.baseAddress!, old.count) })
             {
                 let at = base.distance(to: UnsafeRawPointer(hit))
                 let (pg, o) = at.quotientAndRemainder(dividingBy: page)
@@ -583,6 +595,7 @@ public enum K48NAND {
         force: Bool = false,
         whitening: Bool = true,
         sigFlags: UInt32? = nil,
+        format: StoreFormat = .image,
         log: (String) -> Void = { _ in }
     ) async throws -> BuildResult {
         let fm = FileManager.default
@@ -647,7 +660,7 @@ public enum K48NAND {
             )
         }
 
-        let st = try Store(create: out, geo: geo, plain: !whitening)
+        let st = try Store(create: out, geo: geo, plain: !whitening, format: format)
         try writeMetadata(st, geo, kernelVersion: kernelVersion, epoch: epoch, sigFlags: sigFlags)
         let ftl = FTLWriter(st, geo)
         // LPN == 4 KiB LBA, segments in ascending LBA order

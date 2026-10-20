@@ -9,8 +9,12 @@ public enum StorageCapacity {
     nonisolated public static func available(at directory: URL) throws -> Int64 {
         try available(
             important: {
+                #if canImport(Darwin)
                 try? directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
                     .volumeAvailableCapacityForImportantUsage
+                #else
+                nil
+                #endif
             },
             physical: {
                 let values = try FileManager.default.attributesOfFileSystem(forPath: directory.path)

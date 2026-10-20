@@ -71,6 +71,9 @@ public struct IPSWArchive: Sendable {
         let archive = try archive()
         let entry = try entry(member, in: archive)
         let pipe = Pipe()
+        // When body stops reading early, the writer must get EPIPE, not a SIGPIPE that kills the process before
+        // body's error is reported (nothing in firmwarekit ignores SIGPIPE).
+        suppressSIGPIPE(pipe.fileHandleForWriting.fileDescriptor)
         let failure = StreamFailure()
         let done = DispatchSemaphore(value: 0)
         Thread.detachNewThread {

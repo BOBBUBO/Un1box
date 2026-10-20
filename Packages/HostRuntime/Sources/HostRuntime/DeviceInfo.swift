@@ -2,7 +2,9 @@
 // contrib/ios-app/qemu-ios-ui.h). The helper reports it in its hello and lists every machine with
 // `LightTouchDevice '{"mode":{"machines":{}}}'`; nothing on this side keeps a copy.
 
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 public struct DeviceInfo: Codable, Sendable, Equatable {

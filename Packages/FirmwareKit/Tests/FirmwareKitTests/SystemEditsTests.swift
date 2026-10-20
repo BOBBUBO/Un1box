@@ -99,8 +99,8 @@ enum K48Oracle {
                 )
             )
         }
-        #expect(SystemEdits.Options(recipe: try recipe(#", "rtc_epoch": 1371297600"#)).dated)
-        #expect(!SystemEdits.Options(recipe: try recipe("")).dated)
+        #expect(SystemEdits.Options(recipe: try recipe(#", "rtc_epoch": 1371297600"#), version: "6.0").dated)
+        #expect(!SystemEdits.Options(recipe: try recipe(""), version: "6.0").dated)
     }
 
     /// skip_setup: the keys Setup Assistant itself left on walked devices (the data volume diffed before and after the
@@ -127,11 +127,12 @@ enum K48Oracle {
                         #"{"name": "n90", "version": 1, "storage": "16g", "system_mib": 1664, "data_size": "partition", "boot": "kboot", "options": {\#(o)}}"#
                             .utf8
                     )
-                )
+                ),
+                version: "6.0"
             )
         }
         #expect(try options(#""skip_setup": true"#).skipSetup && !options("").skipSetup, "off unless asked for")
-        let (language, locale) = try #require(try SystemEdits.seedLanguage(skeleton, tag: "fr-CA"))
+        let (language, locale, _) = try #require(try SystemEdits.seedLanguage(skeleton, tag: "fr-CA"))
         try SystemEdits.seedFinishedSetup(skeleton, major: major, language: language, locale: locale)
         func plist(_ path: String) -> [String: Any] {
             (try? PropertyListSerialization.propertyList(
@@ -248,6 +249,224 @@ enum K48Oracle {
         #expect(g["AppleLocale"] as? String == "de_DE")
     }
 
+    /// An ICU common data file (icudt42l.dat's shape) whose table of contents names `entries`.
+    static func icuData(_ entries: [String]) -> Data {
+        // header size 32, magic, the data info's size, little-endian ASCII, its format, the rest zero
+        var d = Data([32, 0, 0xDA, 0x27, 20, 0, 0, 0, 0, 0, 2, 0] + Array("CmnD".utf8))
+        d.append(contentsOf: [UInt8](repeating: 0, count: 16))
+        func u32(_ v: Int) { withUnsafeBytes(of: UInt32(v).littleEndian) { d.append(contentsOf: $0) } }
+        u32(entries.count)
+        var names = Data()
+        for e in entries {
+            u32(4 + entries.count * 8 + names.count)
+            u32(0)
+            names.append(contentsOf: Array(e.utf8) + [0])
+        }
+        return d + names
+    }
+
+    /// AppleLocale is the Mac's own locale (or `create --language`'s) where the firmware offers it as a region format,
+    /// whatever the device's language: 3.2's iPad has no Ukrainian, but its Region Format has Ukrainian (Ukraine).
+    @Test func deviceLocaleIsTheMacsWhereTheFirmwareHasTheRegionFormat() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("ltm-icu-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let icu = root.appendingPathComponent("usr/share/icu")
+        try fm.createDirectory(at: icu, withIntermediateDirectories: true)
+        #expect(SystemEdits.regionFormats(root) == nil, "no ICU data")
+        try Self.icuData([
+            "icudt42l/res_index.res", "icudt42l/en.res", "icudt42l/en_US.res", "icudt42l/uk.res",
+            "icudt42l/uk_UA.res", "icudt42l/sr_Latn_RS.res", "icudt42l/coll/hi_IN.res", "icudt42l/cnvalias.icu",
+        ]).write(to: icu.appendingPathComponent("icudt42l.dat"))
+        let formats = try #require(SystemEdits.regionFormats(root))
+        #expect(formats.isSuperset(of: ["en", "en_US", "uk", "uk_UA", "sr_Latn_RS"]))
+        #expect(!formats.contains("hi_IN") && !formats.contains("cnvalias.icu"), "only top-level locales")
+
+        // 3.2.2's AppleLanguages
+        let v322 = ["en", "fr", "de", "ja", "nl", "it", "es", "zh-Hans", "ru"]
+        func pick(_ preferred: String, _ region: String, _ locale: String) -> String {
+            let l = SystemEdits.deviceLanguage(
+                supported: v322,
+                preferred: [preferred],
+                region: region,
+                locale: locale,
+                formats: formats
+            )
+            return "\(l.language) \(l.locale)"
+        }
+        #expect(pick("uk-UA", "UA", "uk_UA") == "en uk_UA")
+        #expect(pick("ru-UA", "UA", "ru_UA") == "ru ru_UA", "a firmware without the format: language and region")
+        #expect(pick("hi-IN", "IN", "hi_IN") == "en en_IN")
+        #expect(pick("fr-FR", "FR", "fr_FR") == "fr fr_FR")
+        #expect(SystemEdits.deviceLanguage(supported: v322, preferred: ["uk-UA"], region: "UA").locale == "en_UA")
+
+        // The Mac's locale is the user's AppleLocale preference, not Locale.current (the app's language in an app
+        // localized only in English); an explicit language wins.
+        #expect(SystemEdits.deviceLocale(tag: nil, appleLocale: "uk_UA") == "uk_UA")
+        #expect(SystemEdits.deviceLocale(tag: nil, appleLocale: "sr-Latn_RS@calendar=gregorian") == "sr_Latn_RS")
+        #expect(SystemEdits.deviceLocale(tag: "fr-CA", appleLocale: "uk_UA") == "fr_CA")
+
+        // seedLanguage, from an explicit language as from the Mac's
+        let skeleton = root.appendingPathComponent("var")
+        let global = skeleton.appendingPathComponent(SystemEdits.globalPreferences)
+        try fm.createDirectory(at: global.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(
+            fromPropertyList: ["AppleLanguages": v322, "AppleLocale": "en_US"],
+            format: .binary,
+            options: 0
+        ).write(to: global)
+        let seeded = try #require(try SystemEdits.seedLanguage(skeleton, tag: "uk-UA", formats: formats))
+        #expect(seeded.language == "en" && seeded.locale == "uk_UA")
+        let g = try #require(
+            try PropertyListSerialization.propertyList(from: Data(contentsOf: global), format: nil) as? [String: Any]
+        )
+        #expect(g["AppleLocale"] as? String == "uk_UA" && g["AppleLanguages"] as? [String] == v322)
+    }
+
+    /// Each firmware's ICU data, read from its own rootfs: Ukrainian (Ukraine) is a region format from 1.0 on.
+    @Test(
+        .enabled(if: FixtureRequirements.corpusEnabled, "Firmware corpus test; set FK_TEST_CORPUS=1 to run"),
+        arguments: [("7B500", "icudt42l.dat"), ("5H11a", "icudt36l.dat"), ("1A543a", "icudt34l.dat")]
+    )
+    func regionFormatsOfRealFirmware(build: String, icu: String) throws {
+        guard Fixtures.hasRootfs(build) else {
+            try FixtureRequirements.missing("SystemEditsTests.swift: Fixtures.hasRootfs(\(build))")
+        }
+        let dir = try Fixtures.tempDir("icu")
+        let root = dir.appendingPathComponent("root/usr/share/icu")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let dat = try Fixtures.extract(build: build, paths: ["usr/share/icu/" + icu], to: dir)[0]
+        try FileManager.default.moveItem(at: dat, to: root.appendingPathComponent(icu))
+        let formats = try #require(SystemEdits.regionFormats(dir.appendingPathComponent("root")))
+        #expect(formats.isSuperset(of: ["uk_UA", "en_US", "fr_FR"]) && !formats.contains("en_UA"))
+    }
+
+    /// AppleKeyboards: the device language's keyboard first, then the Mac's keyboards as the firmware names them (its
+    /// TextInput bundles), named as its own defaults name them, and nothing it lacks.
+    @Test func keyboardsAreTheLanguagesThenTheMacsTheFirmwareHas() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("ltm-kb-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        /// A TextInput directory of `bundles` (name: supported modes) and 5.x+'s language defaults.
+        func catalog(
+            _ name: String,
+            _ bundles: [String: [String: [String: Any]]],
+            defaults: [String: [String]] = [:]
+        ) throws -> SystemEdits.KeyboardCatalog {
+            let dir = root.appendingPathComponent(name)
+            for (bundle, modes) in bundles {
+                let b = dir.appendingPathComponent("TextInput_\(bundle).bundle")
+                try fm.createDirectory(at: b, withIntermediateDirectories: true)
+                let info: [String: Any] = [
+                    "UIKeyboardSupportedInputModes": modes,
+                    "UIKeyboardDefaultLanguageInputModes": defaults.filter { $0.key.hasPrefix(bundle) },
+                ]
+                try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0)
+                    .write(to: b.appendingPathComponent("Info.plist"))
+            }
+            return try #require(SystemEdits.KeyboardCatalog(dir))
+        }
+        // 3.1.3's shape: layout classes, two QWERTY variants of en_US.
+        func layout(_ c: String) -> [String: Any] { ["UIKeyboardLayoutClass": ["Portrait": c, "Landscape": c + "L"]] }
+        let v313 = try catalog(
+            "313",
+            [
+                "en": ["en_GB": layout("QWERTY"), "en_US-BigBear": layout("QWERTY"), "en_US-Zephyr": layout("QWERTY")],
+                "fr": ["fr_CA": layout("QWERTY"), "fr_CH": layout("QWERTY"), "fr_FR": layout("AZERTY")],
+                "ja": ["ja_JP-Kana": layout("Japanese3x3"), "ja_JP-Romaji": layout("QWERTY_ja_JP")],
+                "zh": ["zh_Hans-HWR": layout("HWR"), "zh_Hans-Pinyin": layout("Pinyin"), "zh_Hant-HWR": layout("HWR")],
+                "emoji": ["emoji": layout("Emoji")],
+            ]
+        )
+        // 7.1.2's shape: hardware and software layouts, and the language defaults.
+        func hwsw(_ sw: [String], _ hw: [String] = [], _ hardware: String? = nil) -> [String: Any] {
+            var m: [String: Any] = ["SWLayouts": sw]
+            if !hw.isEmpty { m["HWLayouts"] = hw }
+            if let hardware { m["Hardware"] = ["Layout": hardware, "USBCountry": 8] }
+            return m
+        }
+        let v712 = try catalog(
+            "712",
+            [
+                "en": [
+                    "en_US": hwsw(["QWERTY", "AZERTY"], ["US", "British", "French"], "US"),
+                    "en_GB": hwsw(["QWERTY"], ["British", "US"], "British"),
+                ],
+                "fr": [
+                    "fr_FR": hwsw(["AZERTY-French", "AZERTY"], ["French", "French - numerical", "US"], "French"),
+                    "fr_CA": hwsw(["QWERTY-Accents"], ["Canadian - CSA", "French", "US"], "Canadian - CSA"),
+                ],
+                "ja": [
+                    "ja_JP": hwsw(["Kana", "Kana-Flick"]), "ja_JP-Kana": hwsw(["Kana"], ["US", "KANA"]),
+                    "ja_JP-Romaji": hwsw(["QWERTY-Japanese"], ["US", "French"], "US"),
+                ],
+                "zh": ["zh_Hans-HWR": hwsw(["HWR"]), "zh_Hans-Pinyin": hwsw(["Pinyin"], ["US"], "US")],
+                "emoji": ["emoji": hwsw(["Emoji"])],
+            ],
+            defaults: [
+                "en": ["en_US"], "en_GB": ["en_GB"], "fr_FR": ["fr_FR"],
+                "ja": ["ja_JP-Kana", "ja_JP-Romaji", "emoji", "en_US"],
+            ]
+        )
+        typealias K = SystemEdits.MacKeyboard
+        let french = K(id: "com.apple.keylayout.French", languages: ["fr", "acf"], layout: true)
+        let swissFrench = K(id: "com.apple.keylayout.SwissFrench", languages: ["fr"], layout: true)
+        let us = K(id: "com.apple.keylayout.US", languages: ["en", "fr"], layout: true)
+        let british = K(id: "com.apple.keylayout.British", languages: ["en"], layout: true)
+        let kana = K(id: "com.apple.inputmethod.Kotoeri.KanaTyping.Japanese", languages: ["ja"], name: "Hiragana")
+        let romaji = K(id: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese.Katakana", languages: ["ja"])
+        let pinyin = K(id: "com.apple.inputmethod.SCIM.ITABC", languages: ["zh-Hans"], name: "Pinyin - Simplified")
+        let korean = K(id: "com.apple.inputmethod.Korean.2SetKorean", languages: ["ko"], name: "2-Set Korean")
+        let emoji = K(id: SystemEdits.emojiPalette, languages: ["en"])
+
+        #expect(
+            v313.keyboards(language: "fr", locale: "fr_FR", mac: [french, kana, us, korean, pinyin, emoji])
+                == ["fr_FR", "ja_JP-Kana", "en_US", "zh_Hans-Pinyin", "emoji"]
+        )
+        #expect(
+            v313.keyboards(language: "ja", locale: "ja_JP", mac: [romaji, us]) == [
+                "ja_JP-Kana", "ja_JP-Romaji", "en_US",
+            ]
+        )
+        #expect(
+            v313.keyboards(language: "en", locale: "en_US", mac: []) == ["en_US"],
+            "the built-in iPod: English only"
+        )
+        #expect(v313.keyboards(language: "fr", locale: "fr_CA", mac: []) == ["fr_CA"])
+        // A region format in another language than the device's (3.2's English with uk_UA): the language's keyboard.
+        #expect(v313.keyboards(language: "en", locale: "uk_UA", mac: []) == ["en_US"])
+        #expect(v712.keyboards(language: "en", locale: "uk_UA", mac: [us]) == ["en_US@hw=US"])
+        #expect(
+            v712.keyboards(language: "fr", locale: "fr_FR", mac: [french, kana, us])
+                == ["fr_FR@hw=French", "ja_JP-Kana", "en_US@hw=US"]
+        )
+        #expect(
+            v712.keyboards(language: "en", locale: "en_US", mac: [british, us, pinyin, emoji, korean])
+                == ["en_US@hw=US", "en_GB@hw=British", "zh_Hans-Pinyin", "emoji"]
+        )
+        #expect(
+            v712.keyboards(language: "ja", locale: "ja_JP", mac: [french])
+                == ["ja_JP-Kana", "ja_JP-Romaji", "emoji", "en_US", "fr_FR@hw=French"]
+        )
+        // A Mac layout the keyboard does not list as a hardware layout: the bare keyboard, its own.
+        #expect(v712.keyboards(language: "en", locale: "en_US", mac: [swissFrench]) == ["en_US", "fr_FR"])
+
+        // seedLanguage writes them beside the language, from the explicit keyboards (none here: the language's own).
+        let skeleton = root.appendingPathComponent("var")
+        let global = skeleton.appendingPathComponent(SystemEdits.globalPreferences)
+        try fm.createDirectory(at: global.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try PropertyListSerialization.data(
+            fromPropertyList: ["AppleLanguages": ["en", "fr", "ja"], "AppleLocale": "en_US"],
+            format: .binary,
+            options: 0
+        ).write(to: global)
+        let seeded = try #require(try SystemEdits.seedLanguage(skeleton, tag: "ja-JP", keyboards: [], catalog: v712))
+        let g = try #require(
+            try PropertyListSerialization.propertyList(from: Data(contentsOf: global), format: nil) as? [String: Any]
+        )
+        #expect(g["AppleKeyboards"] as? [String] == seeded.keyboards && seeded.keyboards.first == "ja_JP-Kana")
+    }
+
     @Test func plistEdits() throws {
         let real = NSMutableDictionary(dictionary: [
             "CurrentSet": "/Sets/S", "NetworkServices": ["W": ["Interface": ["DeviceName": "en0"]]],
@@ -323,7 +542,9 @@ enum K48Oracle {
                     v.appendingPathComponent(SystemEdits.daemons + "/com.qemu.it-pbd.plist")
                 )
                 try SystemEdits.mkdirs(sv.deletingLastPathComponent())
-                try (["ProductBuildVersion": build] as NSDictionary).write(to: sv)
+                try PropertyListSerialization.data(
+                    fromPropertyList: ["ProductBuildVersion": build], format: .xml, options: 0
+                ).write(to: sv)
                 return v
             }
             let a = try volume("swift")
@@ -371,7 +592,7 @@ enum K48Oracle {
                     work: swift,
                     systemBytes: parts[0].count * 4096,
                     dataBytes: Int64(parts[1].count) * 4096,
-                    options: .init(recipe: recipe),
+                    options: .init(recipe: recipe, version: entry.version),
                     helpers: helpers
                 ) { print("  \($0)") }
             }
@@ -386,8 +607,9 @@ enum K48Oracle {
                     format: nil
                 ) as! NSDictionary
             let order =
-                (prefs.value(forKeyPath: "Sets.\(SystemEdits.netSet).Network.Global.IPv4.ServiceOrder") as? [String])
-                ?? []
+                ((((((prefs["Sets"] as? [String: Any])?[SystemEdits.netSet] as? [String: Any])?["Network"]
+                    as? [String: Any])?["Global"] as? [String: Any])?["IPv4"] as? [String: Any])?["ServiceOrder"]
+                    as? [String]) ?? []
             #expect(order.first == SystemEdits.wifiService)
             // the seed is there: loader, current -> pkgs/<serial>, its offer record, a hook and its .baked copy, no baked helper job
             let sv = try HFSPlusVolume(swift.appendingPathComponent("system.img"))
@@ -453,7 +675,7 @@ enum K48Oracle {
                         work: work,
                         systemBytes: parts[0].count * 4096,
                         dataBytes: Int64(parts[1].count) * 4096,
-                        options: .init(recipe: recipe),
+                        options: .init(recipe: recipe, version: entry.version),
                         helpers: helpers,
                         dataVolumeUUID: [1, 2, 3, 4, 5, 6, 7, 8]
                     ) { _ in }

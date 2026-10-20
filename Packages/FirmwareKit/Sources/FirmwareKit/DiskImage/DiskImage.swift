@@ -17,7 +17,11 @@
 
 import Foundation
 import Subprocess
+#if canImport(System)
 import System
+#else
+import SystemPackage
+#endif
 
 public enum DiskImage {
     public enum Backend: String, Sendable { case diskutil, hdiutil }

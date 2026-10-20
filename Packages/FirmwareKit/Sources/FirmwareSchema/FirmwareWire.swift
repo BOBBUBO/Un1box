@@ -31,9 +31,12 @@ nonisolated public enum FirmwareWire {
     public struct BootAdmission: Codable, Sendable, Equatable {
         public let event: String
         public let changed: Bool
-        public init(event: String = "admitted", changed: Bool) {
+        /// What the device's window should say, quietly (a storage update that couldn't run, and why).
+        public let notice: String?
+        public init(event: String = "admitted", changed: Bool, notice: String? = nil) {
             self.event = event
             self.changed = changed
+            self.notice = notice
         }
     }
 
@@ -133,6 +136,9 @@ nonisolated public enum FirmwareWire {
                 }
             }
             public var name: String
+            /// Raised when users' devices of the row must be prepared again (the app offers Prepare Again for a lower
+            /// one, after FirmwareWire.admissionRecipeSteps). Every change to what preparation writes into a base also
+            /// appends a PreparationChanges entry, whether or not it raises this.
             public var version: Int
             public var storage: String
             public var systemMiB: Int

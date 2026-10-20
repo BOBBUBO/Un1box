@@ -50,8 +50,8 @@ public enum JSONValue: Codable, Sendable, Equatable {
     public init(_ any: Any?) throws {
         switch any {
         case nil, is NSNull: self = .null
-        case let v as NSNumber where CFGetTypeID(v) == CFBooleanGetTypeID(): self = .bool(v.boolValue)
-        case let v as NSNumber where CFNumberIsFloatType(v): self = .double(v.doubleValue)
+        case let v as NSNumber where v.isJSONBoolean: self = .bool(v.boolValue)
+        case let v as NSNumber where v.isJSONFloat: self = .double(v.doubleValue)
         case let v as NSNumber: self = .int(v.int64Value)
         case let v as String: self = .string(v)
         case let v as [Any]: self = .array(try v.map(JSONValue.init))
@@ -233,6 +233,8 @@ public struct DeviceLock: Codable, Sendable, Equatable {
     }
     /// Prepared past Setup Assistant (the Skip Setup option): it boots to the Home screen.
     public var skippedSetup: Bool { entry?["content"]?["recipe"]?["options"]?["skip_setup"]?.bool == true }
+    /// The layout has a data partition (fstab mounts it on /private/var): the recipe's data_size "partition".
+    public var hasDataVolume: Bool { entry?["content"]?["recipe"]?["data_size"]?.string == "partition" }
     /// The entry content's board (the recipe's board, for admission steps).
     public var entryBoard: String? { entry?["content"]?["board"]?.string }
     /// Whether the preparer activated the volume (inputs.activation is a record).

@@ -19,6 +19,18 @@ public enum UDIF {
                 return
             }
         }
+        #if !os(macOS)
+        // No hdiutil: the HFS partition straight out of the UDIF chunks, without a whole raw disk first.
+        let image = try UDIFImage(src)
+        let (off, len) = try APM.hfsSlice(try image.read(sector: 0, count: 64))
+        try? fm.removeItem(at: out)
+        let fd = open(out.path, O_RDWR | O_CREAT | O_TRUNC, 0o644)
+        guard fd >= 0 else { throw FirmwareError(.internal, "cannot create \(out.path)") }
+        defer { close(fd) }
+        guard ftruncate(fd, off_t(len)) == 0 else { throw FirmwareError(.internal, "cannot size \(out.path)") }
+        try image.write(to: fd, sectors: off / 512..<(off + len) / 512)
+        return
+        #else
         let work = out.deletingLastPathComponent().appendingPathComponent(".udif-\(UUID().uuidString)")
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: work) }
@@ -40,6 +52,7 @@ public enum UDIF {
             try o.write(contentsOf: chunk)
             left -= chunk.count
         }
+        #endif
     }
 }
 

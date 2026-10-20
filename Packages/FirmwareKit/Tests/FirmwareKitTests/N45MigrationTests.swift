@@ -7,6 +7,8 @@ import Testing
 
 /// Boot admission moves a recipe-1 M68 (and a recipe-2 N45) to the SystemConfiguration path 1.x reads.
 @Suite(.detachesItsImages) struct N45MigrationTests {
+    /// The volume has no SpringBoard job (1.0 to 1.1.2's root SpringBoard): configd's preferences in root's home.
+    static let scPrefs = N45Board.rootLibrary + "/Preferences/SystemConfiguration"
     static func record(_ device: URL) throws -> [String: Any] {
         try DeviceRecord.object(Data(contentsOf: device.appendingPathComponent(DeviceRecord.name)))
     }
@@ -34,7 +36,7 @@ import Testing
         // What 1.x's configd writes there at first boot (measured on 1A543a): its own AirPort service on en0, and
         // no known networks.
         try await VolumeMount.withMounted(image, at: root.appendingPathComponent("initial")) { mount in
-            let sc = mount.appendingPathComponent(N45Board.scPrefs)
+            let sc = mount.appendingPathComponent(Self.scPrefs)
             try fm.createDirectory(at: sc, withIntermediateDirectories: true)
             let service: [String: Any] = [
                 "Interface": ["DeviceName": "en0", "Hardware": "AirPort", "Type": "Ethernet"],
@@ -55,8 +57,8 @@ import Testing
         }
         let dirs = [
             "private", "private/var", "private/var/root", N45Board.rootLibrary, N45Board.rootLibrary + "/Preferences",
-            N45Board.scPrefs,
-            N45Board.scPrefs + "/preferences.plist", N45Board.wifiPrefs,
+            Self.scPrefs,
+            Self.scPrefs + "/preferences.plist", Self.scPrefs + "/com.apple.wifi.plist",
         ]
         // root's, as the recipe leaves them
         try HFSPlusVolume(image, writable: true).setOwner(dirs, uid: 0, gid: 0, mode: 0o755)
@@ -102,7 +104,7 @@ import Testing
         )
         let prefs =
             try PropertyListSerialization.propertyList(
-                from: volume.contents(volume.record(at: N45Board.scPrefs + "/preferences.plist")),
+                from: volume.contents(volume.record(at: Self.scPrefs + "/preferences.plist")),
                 format: nil
             ) as? [String: Any]
         let services = try #require(prefs?["NetworkServices"] as? [String: [String: Any]])
@@ -120,7 +122,7 @@ import Testing
             (global?["Proxies"] as? [String: Any])?["ProxyAutoConfigURLString"] as? String == "file:///"
                 + SystemEdits.pacPath
         )
-        let wifi = try volume.record(at: N45Board.wifiPrefs)
+        let wifi = try volume.record(at: Self.scPrefs + "/com.apple.wifi.plist")
         let known =
             try PropertyListSerialization.propertyList(from: volume.contents(wifi), format: nil) as? [String: Any]
         #expect(known?["JoinMode"] as? String == "Automatic" && known?["AllowEnable"] as? Bool == true)

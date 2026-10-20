@@ -4,9 +4,9 @@
 // (N45NOR over the IPSW's all_flash IMG2s). The bootrom (bootrom_s5l8900) is a boot input, like the 2G's.
 // Volume: the IPSW rootfs grown to the recipe, then the 1.x bake of devos50's qemu-ios-generate-nand
 // changes through SystemEdits: fstab rw with no /private/var line (one partition), the kernelcache (the
-// IPSW's 8900 container, which the machine's 8900 engine decrypts) where iBoot loads it, SpringBoard's
-// LK_ENABLE_MBX2D=0 (no MBX 2D on this machine), the LaunchDaemons that changes.md keeps (and 1.1.3+'s lockbot), and the
-// /var/root/Library skeleton; then ipod1g_device.bake: when the stock OpenGLES exports exactly
+// IPSW's 8900 container, which the machine's 8900 engine decrypts) where iBoot loads it, the LaunchDaemons
+// that changes.md keeps (and 1.1.3+'s lockbot), and the /var/root/Library skeleton; then ipod1g_device.bake:
+// when the stock OpenGLES exports exactly
 // opengles-1x.exports (a guest helper), the seed package's n45-ios1 hook (OpenGLES-1x, the GL front end) replaces it
 // (the stock binary kept as OpenGLES.baked) and SpringBoard gets LK_ENABLE_OGL=1 LK_AUTO_ENABLE_OGL=0 (else
 // LK_ENABLE_OGL stays unset: software LayerKit); the loader and the seed package go in either way, as on every board
@@ -104,17 +104,25 @@ final class N45Board: Board {
         return plist?["UserName"] as? String == "mobile" ? ("private/var/mobile/Library", 501) : (rootLibrary, 0)
     }
     static let openGLESExports = "opengles-1x.exports"
-    /// 1.x's SCPreferences live in the user's home, root's: SystemConfiguration (1.0 and 1.1) opens
-    /// ~/Library/Preferences/SystemConfiguration (2.x moved them to /var/preferences, where 1.x never looks).
-    static let scPrefs = rootLibrary + "/Preferences/SystemConfiguration"
+    /// Where configd keeps its SCPreferences. While everything runs as root (1.0 to 1.1.2), SystemConfiguration opens
+    /// ~/Library/Preferences/SystemConfiguration, root's home. From 1.1.3, where SpringBoard and the apps run as mobile
+    /// (springBoardUser), it opens /Library/Preferences/SystemConfiguration, which the root links to
+    /// /private/var/preferences, and never looks in root's home: 1.1.4's configd creates that directory at its first
+    /// boot, next to a seeded one in root's home, and joins nothing.
+    static func scPrefs(_ m: URL) -> String {
+        springBoardUser(m).uid == 0
+            ? rootLibrary + "/Preferences/SystemConfiguration" : "private/var/preferences/SystemConfiguration"
+    }
     /// configd's Aeropuerto plug-in (AirPort-53 on 1.0, -63 on 1.1) keeps the Wi-Fi power preference (AllowEnable)
     /// and the networks it has joined ("List of known networks", entries keyed by SSID_STR) in this file.
-    static let wifiPrefs = scPrefs + "/com.apple.wifi.plist"
+    static func wifiPrefs(_ m: URL) -> String { scPrefs(m) + "/com.apple.wifi.plist" }
     /// The PAC, the en0 AirPort service carrying it (preferences.plist) and the known network (wifiPrefs) in scPrefs.
     /// Returns the paths to make root-owned. The recipe writes them on a fresh volume; its admission step
     /// (N45Migration) on a device whose configd has already written both files there: the PAC goes on configd's own
     /// en0 service (not a second one) and qemu-ios joins its known networks, the rest of each file kept.
     static func seedSystemConfiguration(_ m: URL) throws -> [String] {
+        let scPrefs = scPrefs(m)
+        let wifiPrefs = wifiPrefs(m)
         let owned = try SystemEdits.installPAC(m, dirs: [scPrefs])
         try SystemEdits.seedPlist(m.appendingPathComponent(scPrefs + "/preferences.plist")) { d in
             let en0 = ((d["NetworkServices"] as? NSDictionary)?.allValues ?? []).compactMap {
@@ -187,7 +195,19 @@ final class N45Board: Board {
         bytes = recipe.systemMiB << 20
     }
 
+    /// The piece a 2.0-or-later entry is refused for (PreparationJob words it for the user).
+    static let onePiece = "iPhone OS 1.x boot chain"
+
     func check(_ c: Recipe.Context) throws {
+        // 2.0 and later boot an IMG3 chain (LLB, iBoot-385+, IMG3 all_flash) that qemu-ios's ipod_touch_1g doesn't
+        // model, nor their kernels' drivers: refused here, before the IPSW is hashed, instead of at N45NOR's IMG2 read.
+        guard (Int(c.e.version.prefix { $0 != "." }) ?? 1) < 2 else {
+            throw FirmwareError(
+                .unsupported,
+                "\(c.e.id): this machine boots iPhone OS 1.x only (\(c.e.version) is an IMG3 firmware)",
+                piece: Self.onePiece
+            )
+        }
         // 1.0's lockdownd starts an afc2 entry but its afcd answers no path (AFC object not found): no jailbreak on 1.x.
         guard recipe.options["jailbreak"] != true else {
             throw FirmwareError(.unsupported, "\(c.e.id): the jailbreak option needs iPhone OS 2.0 or later")
@@ -326,7 +346,7 @@ final class N45Board: Board {
             )
             owners += try Self.seedSystemConfiguration(m).map { (UInt32(0), $0) }
             derived["wifi"] =
-                "en0 AirPort service (PAC /\(SystemEdits.pacPath)); known network qemu-ios, Wi-Fi on (/\(Self.wifiPrefs))"
+                "en0 AirPort service (PAC /\(SystemEdits.pacPath)); known network qemu-ios, Wi-Fi on (/\(Self.wifiPrefs(m)))"
             // 1.x runs no guest helpers (it_prefs): its SpringBoard preferences, in the home of the user SpringBoard
             // runs as (root's on 1.0 and 1.1.2; mobile's from 1.1.3, its launchd job's UserName)
             let user = Self.springBoardUser(m)
@@ -335,8 +355,14 @@ final class N45Board: Board {
             derived["prefs"] =
                 try Self.bakeNoIdleSleep(m, prefs: sbPrefs) ? prefs + "; SBDisableIdleSleep (no deep sleep)" : prefs
             if fm.fileExists(atPath: at(sbPrefs).path) { owners.append((user.uid, sbPrefs)) }
-            if let l = try SystemEdits.seedLanguage(at("private/var"), tag: c.o.language) {
-                derived["language"] = "\(l.language), region \(l.locale)"
+            if let l = try SystemEdits.seedLanguage(
+                at("private/var"),
+                tag: c.o.language,
+                keyboards: c.o.keyboards,
+                catalog: SystemEdits.KeyboardCatalog(at("System/Library/TextInput")),
+                formats: SystemEdits.regionFormats(m)
+            ) {
+                derived["language"] = "\(l.language), region \(l.locale), keyboards \(l.keyboards)"
             }
             let (report, record, owned) = try Self.bake(
                 m,
@@ -392,20 +418,23 @@ final class N45Board: Board {
             log: log
         )
         if front, !record.hooks.contains("/" + N72Board.openGLES) {
-            // LK_ENABLE_OGL=1 over the stock IMG driver drives the unemulated MBX: fail rather than wedge
+            // LK_ENABLE_OGL=1 over the stock IMG driver drives the MBX's tile accelerator, which qemu-ios doesn't
+            // model: fail rather than wedge
             throw FirmwareError(
                 .internal,
                 "\(SystemEdits.Helpers.itpack("armv6")) has no OpenGLES hook for this build; rebuild the guest package"
             )
         }
-        try fit.check(
-            FitCheck.environment(
-                FitCheck.Firmware(root: m, arch: "armv6"),
-                (front ? [["LK_ENABLE_OGL"], ["LK_AUTO_ENABLE_OGL"]] : []) + [["LK_ENABLE_MBX2D"]]
-            ),
-            required: false,
-            outcome: "kept: a switch nothing reads is inert"
-        )
+        if front {
+            try fit.check(
+                FitCheck.environment(
+                    FitCheck.Firmware(root: m, arch: "armv6"),
+                    [["LK_ENABLE_OGL"], ["LK_AUTO_ENABLE_OGL"]]
+                ),
+                required: false,
+                outcome: "kept: a switch nothing reads is inert"
+            )
+        }
         try SystemEdits.editSpringBoardJob(m) { env, _ in
             if front {
                 env["LK_ENABLE_OGL"] = "1"
@@ -413,7 +442,6 @@ final class N45Board: Board {
             } else {
                 env.removeObjects(forKeys: ["LK_ENABLE_OGL", "LK_AUTO_ENABLE_OGL"])
             }
-            env["LK_ENABLE_MBX2D"] = "0"  // never the unemulated MBX 2D path
         }
         report["gles_engine"] = front ? "OpenGLES" : NSNull()
         log("bake: \(report)")

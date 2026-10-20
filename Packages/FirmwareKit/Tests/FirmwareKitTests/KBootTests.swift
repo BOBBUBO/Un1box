@@ -127,12 +127,44 @@ struct KBootTests {
         #expect(dt.value("", "model-number")?.prefix(5) == Data("MC540".utf8))
     }
 
+    /// The IPSW's device-clocks entries for BASE1, SPI2-CLK, DP and ETHERNET (candidate parent lists, flags).
+    static func deviceClocks() -> Data {
+        func entry(_ head: String, _ name: String) -> Data {
+            Data(hex: head)! + Data(count: 8) + Data(name.utf8) + Data(count: 16 - name.utf8.count)
+        }
+        return entry("000080090000000001020304", "BASE1") + entry("00008020000000000c0d0000", "SPI2-CLK")
+            + entry("00010176000000001a190000", "DP") + entry("000000590000000016000000", "ETHERNET")
+    }
+    static func pmgr() -> Data {
+        node([("name", Data("pmgr\0".utf8)), ("device-clocks", deviceClocks())])
+    }
+    static func entries(_ d: Data?) -> [String] {
+        guard let d else { return [] }
+        return stride(from: 0, to: d.count, by: 36).map { d[d.startIndex + $0..<d.startIndex + $0 + 12].hexString }
+    }
+
+    static func panel() -> Data {
+        node(
+            [("name", Data("mipi-dsim\0".utf8))],
+            [node([("name", Data("lcd\0".utf8)), ("lcd-panel-id", z(4)), ("raw-panel-id", z(16))])]
+        )
+    }
+    static func backlight() -> Data {
+        node([("name", Data("backlight\0".utf8)), ("backlight-id", Data([0xFF, 0xFF, 0xFF, 0xFF]))])
+    }
+
     /// N90: 512 MiB (memSize, vram, pram at its top) and the baseband node kept matchable for the machine.
     @Test func n90Board() throws {
         let n = { (s: String) in Data((s + "\0").utf8) }
         let bb = Self.node([("name", n("baseband")), ("compatible", n("baseband,n90")), ("device_type", n("baseband"))])
-        var tree = try DeviceTree(Self.deviceTree(armIO: [Self.node([("name", n("spi0"))])], top: [bb]))
+        var tree = try DeviceTree(
+            Self.deviceTree(
+                armIO: [Self.node([("name", n("spi0"))]), Self.pmgr(), Self.panel()],
+                top: [bb, Self.backlight()]
+            )
+        )
         try tree.add("", "compatible", Data("N90AP\0iPhone3,1\0AppleARM\0".utf8))
+        try tree.add("arm-io", "chip-revision", Self.z(4))
         #expect(KBoot.Board.of(tree) == .n90)
         let img = try KBoot.build(
             kernel: Self.kernel(at: 0x8000_0000),
@@ -148,6 +180,42 @@ struct KBootTests {
         #expect(out.value("baseband", "compatible") == n("baseband,n90"))
         #expect(out.value("vram", "reg") == DeviceTree.Value.le([0x5F70_0000, 0x8F_C000]))
         #expect(out.value("chosen", "board-id") == DeviceTree.Value.le([0]))
+        // The real iPhone 4's clock table (4.3): APLL, EPLL, FMI, the pixel clock, SPI and I2C, not 100 MHz everywhere.
+        let clocks = out.value("arm-io", "clock-frequencies").map { d in (0..<64).map { Self.u32(d, $0 * 4) } } ?? []
+        #expect(
+            [1, 2, 3, 13, 14, 27, 33, 39, 44, 49, 52, 55].map { clocks[$0] }
+                == [
+                    800_000_000, 500_000_000, 1_026_000_000, 160_000_000, 51_300_000, 100_000_000, 102_600_000,
+                    68_400_000, 0, 48_857_142, 1_000_000, 0,
+                ]
+        )
+        // The IPSW's candidate parents, as iBoot hands them over: the kernel settles them.
+        #expect(out.value("arm-io/pmgr", "device-clocks") == Self.deviceClocks())
+        // The iPhone 4's A4 stepping, its panel's ID as iBoot reads it, and the backlight table that panel selects.
+        #expect(out.value("arm-io", "chip-revision") == DeviceTree.Value.le([0x20]))
+        #expect(out.value("arm-io/mipi-dsim/lcd", "lcd-panel-id") == DeviceTree.Value.le([0xA18A_05C8]))
+        #expect(out.value("arm-io/mipi-dsim/lcd", "raw-panel-id") == Data([0xA1, 0x8A, 0x58, 0x09, 7]) + Self.z(11))
+        #expect(out.value("backlight", "backlight-id") == DeviceTree.Value.le([5]))
+        var k48 = try DeviceTree(Self.deviceTree(armIO: [Self.pmgr(), Self.panel()], top: [Self.backlight()]))
+        try k48.add("arm-io", "chip-revision", Self.z(4))
+        let k48Image = try KBoot.build(
+            kernel: Self.kernel(at: 0x8000_0000),
+            deviceTree: k48.data,
+            identity: Self.placeholder
+        )
+        let k0 = Int(k48Image.bootArgsPA - k48Image.loadPA)
+        let kp = Int(Self.u32(k48Image.image, k0 + 0x30)) - 0x8000_0000
+        let kdt = try DeviceTree(k48Image.image[kp..<kp + Int(Self.u32(k48Image.image, k0 + 0x34))])
+        // The real iPad's (3.2.2): a 1 GHz APLL, PLL1 off, 166.67 and 68.4 MHz where the iPhone 4 has 160 and 51.3.
+        let k48Clocks = kdt.value("arm-io", "clock-frequencies").map { d in (0..<64).map { Self.u32(d, $0 * 4) } } ?? []
+        #expect(
+            [1, 2, 13, 14, 33, 44, 49].map { k48Clocks[$0] }
+                == [1_000_000_000, 0, 166_666_666, 68_400_000, 102_600_000, 0, 24_000_000]
+        )
+        #expect(kdt.value("arm-io", "chip-revision") == DeviceTree.Value.le([0x11]))
+        #expect(kdt.value("arm-io/mipi-dsim/lcd", "lcd-panel-id") == DeviceTree.Value.le([0xA1E5_06C9]))
+        #expect(kdt.value("backlight", "backlight-id") == DeviceTree.Value.le([6]))
+        #expect(kdt.value("arm-io/pmgr", "device-clocks") == Self.deviceClocks())
     }
 
     /// N88 (S5L8920): its own platform-name/chip-id, a 320x480 panel, its own NOR kept (nothing grafted) with
@@ -270,7 +338,7 @@ struct KBootTests {
         )
         #expect(words("chosen", "unique-chip-id") == [1, 0] && words("chosen", "die-id") == [0, 0])
         #expect(words("chosen", "chip-id") == [0x8930] && words("cpus/cpu0", "timebase-frequency") == [24_000_000])
-        #expect(words("vram", "reg") == [0x4F70_0000, 0x8F_C000] && words("pram", "reg") == [0x4FFF_C000, 0x4000])
+        #expect(words("vram", "reg") == [0x4F70_0000, 0x8F_C000] && words("pram", "reg") == [0x5FFF_C000, 0x4000])
         #expect(words("chosen", "display-rotation") == [270])
 
         // 4.x link base; RAM-disk mode puts the disk after the kernel (0x80004800 -> page 0x80005000), DT after it.

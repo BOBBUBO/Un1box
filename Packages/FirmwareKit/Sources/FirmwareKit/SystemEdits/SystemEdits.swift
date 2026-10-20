@@ -7,7 +7,7 @@
 //               CA_ENABLE_OGL=0) + stdio on /dev/console; [appsync] process-local libappsync.dylib injected into installd;
 //               [ca_ogl] the GL front end as OpenGLES.framework/OpenGLES
 //               (+ dyld's override switch: OpenGLES is cached); [web_proxy] the PAC; the guest helpers; storage_mounter loads
-//               it_msmquiet; BTServer Disabled (unless [bluetooth]); lockdownd activated (Activation); the guest-package loader and
+//               it_msmquiet; BTServer Disabled (unless the machine answers its HCI); lockdownd activated (Activation); the guest-package loader and
 //               seed package from armv7.itpack (GuestPackage.seed), whose jobs it_boot loads.
 //   data.img    fresh journaled HFSX "Data" (sparse) seeded with the system volume's /private/var skeleton
 //               (+ [web_proxy] the en0 AirPort service with the PAC), owners
@@ -29,15 +29,15 @@ public enum SystemEdits {
     /// The recipe options SystemEdits reads (FirmwareEntry.Recipe.options), plus bake's switches.
     public struct Options: Sendable, Equatable {
         public var caOGL = true, appsync = false, webProxy = true
-        /// data_journal false: an unjournaled data volume (the iPod touch 3G's 3.1.x mount_hfs refuses the journaled
-        /// one the Mac makes with EINVAL).
+        /// A journaled data volume: data_journal, else FirmwareEntry.journaledData (unjournaled before 3.2).
         public var dataJournal = true
         /// bake --seal: the one-shot clean halt the seal step needs (always on for a prepared device).
         public var seal = true
         /// bake --gl-test: the GL fixture job (test devices only: recipe option gl_test, never set in the catalog).
         public var glTest = false
-        /// Leave BTServer enabled: boards whose machine answers the HCI (N88). Off, BTServer is Disabled: with
-        /// nothing on the UART, BlueTool's HCI_Reset never completes.
+        /// Leave BTServer enabled: the board's machine answers the HCI (KBoot.Board.bluetoothHCI, which K48Board sets;
+        /// never a recipe option). Off, BTServer is Disabled: with nothing on the UART, BlueTool's HCI_Reset never
+        /// completes.
         public var bluetooth = false
         /// Bake the guest helpers, their jobs and the guest-package seed. Off for firmware whose dyld predates
         /// LC_DYLD_INFO (3.0, as the iPod 2G's 7A341): such a device gets no it_seal either, so no seal boot.
@@ -56,15 +56,18 @@ public enum SystemEdits {
         /// The device's language, a BCP 47 tag ("fr-FR", its region the device's too); nil: the Mac's preferred
         /// languages and region (seedLanguage).
         public var language: String?
+        /// The device's keyboards besides its language's, Mac input source IDs (com.apple.keylayout.French); nil: the
+        /// Mac's enabled ones (seedLanguage).
+        public var keyboards: [String]?
         public init() {}
-        public init(recipe: FirmwareEntry.Recipe) {
+        /// `version`: the entry's iOS version, for the options its rules decide (FirmwareEntry.journaledData).
+        public init(recipe: FirmwareEntry.Recipe, version: String) {
             let o = recipe.options
             caOGL = o["ca_ogl"] ?? true
             appsync = o["appsync"] ?? false
             webProxy = o["web_proxy"] ?? true
             glTest = o["gl_test"] ?? false
-            dataJournal = o["data_journal"] ?? true
-            bluetooth = o["bluetooth"] ?? false
+            dataJournal = o["data_journal"] ?? FirmwareEntry.journaledData(version: version)
             guestTools = o["guest_tools"] ?? true
             dated = recipe.rtcEpoch != nil
             skipSetup = o["skip_setup"] ?? false
@@ -125,10 +128,12 @@ public enum SystemEdits {
     static let springBoardJob = daemons + "/com.apple.SpringBoard.plist"
     static let msmJob = daemons + "/com.apple.mobile.storage_mounter.plist"
     /// The stock jobs that raise the USB "not supported" notice for a device nothing claims (the emulated keyboard):
-    /// MobileStorageMounter through 4.x; 5.x moved it to USBDeviceArbitrator, LaunchBuddy's catch-all for IOUSBDevice.
+    /// MobileStorageMounter through 4.x; 5.x moved it to USBDeviceArbitrator, LaunchBuddy's catch-all for IOUSBDevice;
+    /// 7.x to DeviceOMatic, which launchd starts for a removable IOUSBDevice.
     static let noticeJobs = [
         (msmJob, "com.apple.mobile.storage_mounter"),
         (daemons + "/com.apple.mobile.usb_device_arbitrator.plist", "com.apple.mobile.usb_device_arbitrator"),
+        (daemons + "/com.apple.device-o-matic.plist", "com.apple.device-o-matic"),
     ]
     static let btJob = daemons + "/com.apple.BTServer.plist"
     static let installdJob = daemons + "/com.apple.mobile.installd.plist"
@@ -234,30 +239,32 @@ public enum SystemEdits {
         var rootModes: [(path: String, mode: UInt16)] = []
         var mobileOwned: [String] = []
         var productMajor = 0
+        var keyboards: KeyboardCatalog?
+        var formats: Set<String>?
         try await VolumeMount.withMounted(system, at: work.appendingPathComponent("mnt-system")) { m in
             let at = { (rel: String) in m.appendingPathComponent(rel) }
+            keyboards = KeyboardCatalog(at("System/Library/TextInput"))
+            formats = regionFormats(m)
             // every baked helper proven to load on this firmware (FitCheck.loads), read before any edit
             let fw = FitCheck.Firmware(root: m, arch: "armv7", kernelcache: kernel)
             // a dyld without LC_DYLD_INFO_ONLY (3.0's: none of its own executables carry one) takes the legacy builds
             let legacy = fw.precedent[MachO32.lcDyldInfoOnly] == nil
             let pick = { (n: String) in legacy ? Helpers.legacy(n) : n }
             if legacy { log("this dyld predates LC_DYLD_INFO_ONLY: the legacy-linked helpers and AppSync") }
-            // it_msmquiet only where the mounter raises the notice it recognizes; else left out, job untouched
-            // (3.1.x has no storage_mounter job at all)
+            // it_msmquiet only in the jobs that raise the notice it recognizes; else left out, jobs untouched (3.1.x
+            // has no storage_mounter job at all). One job raises it per version, so the others' misfits are no warning.
             let msm = Helpers.msmQuiet
-            var quietJobs: [(String, String)] = []
-            for (job, label) in noticeJobs where o.guestTools && fm.fileExists(atPath: at(job).path) {
-                if try fit.check(
+            let candidates = noticeJobs.filter { o.guestTools && fm.fileExists(atPath: at($0.0).path) }
+            let quietFits = fit.checkAny(
+                try candidates.map { job, label in
                     FitCheck.msmQuiet(
                         fw,
                         program: try stockProgram(m, job, label: label),
-                        dylib: Data(contentsOf: try helper(pick(msm.name)))
-                    ),
-                    required: false
-                ) {
-                    quietJobs.append((job, label))
+                        dylib: try Data(contentsOf: helper(pick(msm.name)))
+                    )
                 }
-            }
+            )
+            let quietJobs = zip(candidates, quietFits).filter(\.1).map(\.0)
             let quiet = !quietJobs.isEmpty
             if !quiet { tools.removeAll { $0.name == msm.name } }
             if o.guestTools {
@@ -399,7 +406,15 @@ public enum SystemEdits {
 
         log("data volume (\(dataBytes / 1_000_000) MB, sparse) seeded from /private/var")
         defer { try? fm.removeItem(at: skeleton) }
-        try seedData(skeleton, o, productMajor: productMajor, dataArk: result.activation?.dataArk, log: log)
+        try seedData(
+            skeleton,
+            o,
+            productMajor: productMajor,
+            dataArk: result.activation?.dataArk,
+            keyboards: keyboards,
+            formats: formats,
+            log: log
+        )
         try? fm.removeItem(at: data)
         try await VolumeMount.makeHFS(data, size: dataBytes, journaled: o.dataJournal)
         var byOwner: [[UInt32]: [String]] = [:]
@@ -515,7 +530,8 @@ public enum SystemEdits {
         if oldStyle { return ("afc2: com.apple.afc2 runs afcd at / (Lockdown/Services.plist)", []) }
         try put(try afc2Copy(stock), m.appendingPathComponent(afc2d), mode: 0o755)
         let jobURL = m.appendingPathComponent(daemons + "/com.apple.afcd.plist")
-        guard let job = NSMutableDictionary(contentsOf: jobURL), job["Label"] as? String == "com.apple.afcd" else {
+        guard let job = PlistBridge.mutableDictionary(contentsOf: jobURL), job["Label"] as? String == "com.apple.afcd"
+        else {
             throw FirmwareError(.unsupported, "\(jobURL.lastPathComponent): not com.apple.afcd's job")
         }
         job["Label"] = "com.apple.afc2"
@@ -523,7 +539,7 @@ public enum SystemEdits {
         job["ProgramArguments"] = ["/" + afc2d]
         job.removeObject(forKey: "UserName")
         try put(
-            PropertyListSerialization.data(fromPropertyList: job, format: .xml, options: 0),
+            PropertyListSerialization.data(fromPropertyList: PlistBridge.native(job), format: .xml, options: 0),
             m.appendingPathComponent(afc2Job)
         )
         return (
@@ -732,14 +748,24 @@ public enum SystemEdits {
         _ o: Options,
         productMajor: Int,
         dataArk: [String: String]?,
+        keyboards: KeyboardCatalog? = nil,
+        formats: Set<String>? = nil,
         log: (String) -> Void
     ) throws {
         let sc = skeleton.appendingPathComponent("preferences/SystemConfiguration")
         if o.webProxy { try seedPlist(sc.appendingPathComponent("preferences.plist"), wifiProxyPrefs) }
-        let language = try seedLanguage(skeleton, tag: o.language)
-        if let language { log("language \(language.language), region \(language.locale)") }
+        let language = try seedLanguage(
+            skeleton,
+            tag: o.language,
+            keyboards: o.keyboards,
+            catalog: keyboards,
+            formats: formats
+        )
+        if let language {
+            log("language \(language.language), region \(language.locale), keyboards \(language.keyboards)")
+        }
         if o.skipSetup, productMajor >= 5 {
-            let (l, locale) = language ?? ("en", "en_US")
+            let (l, locale) = language.map { ($0.language, $0.locale) } ?? ("en", "en_US")
             try seedFinishedSetup(skeleton, major: productMajor, language: l, locale: locale)
             log("Setup Assistant: seeded as finished (iOS \(productMajor))")
         }
@@ -777,17 +803,23 @@ public enum SystemEdits {
     static func rewritePlist(_ url: URL, _ edit: (NSMutableDictionary) throws -> Void) throws {
         var fmt = PropertyListSerialization.PropertyListFormat.xml
         guard
-            let d = try PropertyListSerialization.propertyList(
-                from: Data(contentsOf: url),
-                options: .mutableContainersAndLeaves,
-                format: &fmt
+            let d = PlistBridge.mutable(
+                try PropertyListSerialization.propertyList(
+                    from: Data(contentsOf: url),
+                    options: .mutableContainersAndLeaves,
+                    format: &fmt
+                )
             ) as? NSMutableDictionary
         else {
             throw FirmwareError(.unsupported, "\(url.lastPathComponent) is not a dictionary plist")
         }
         try edit(d)
         try put(
-            PropertyListSerialization.data(fromPropertyList: d, format: fmt == .binary ? .binary : .xml, options: 0),
+            PropertyListSerialization.data(
+                fromPropertyList: PlistBridge.native(d),
+                format: fmt == .binary ? .binary : .xml,
+                options: 0
+            ),
             url
         )
     }
@@ -798,7 +830,7 @@ public enum SystemEdits {
         try mkdirs(url.deletingLastPathComponent())
         let d = NSMutableDictionary()
         try edit(d)
-        try put(PropertyListSerialization.data(fromPropertyList: d, format: .xml, options: 0), url)
+        try put(PropertyListSerialization.data(fromPropertyList: PlistBridge.native(d), format: .xml, options: 0), url)
     }
 
     // MARK: - Files (in place, umask-default modes, as the oracle's open()/makedirs())

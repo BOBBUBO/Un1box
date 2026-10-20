@@ -7,9 +7,9 @@
 // stages what iBoot's restore path would have, over the helper's gdbstub: the ramdisk at topOfKernelData, a
 // chosen/memory-map RAMDisk (pa, len) in a spare MemoryMapReserved slot, an empty chosen/root-matching, and
 // topOfKernelData past the ramdisk and the one-shot command line. The 4.x DeviceTree's secure-root-prefix "md" makes md0 a SecureRoot.
-// Then the overlay's pages (stored at their logical homes) are folded into nand/ and the written NOR
-// replaces nor.bin. The boot uses aes-uid=engine, as the device's own boots do (the keybag's keys are
-// UID-derived).
+// The guest writes nand/ in place (an image store; its pages land at their logical homes) and the written NOR
+// replaces nor.bin. The boot uses the recipe's aes-uid, as the device's own boots do (the keybag's keys are
+// UID-derived, and iBoot unwraps the NOR's SHSH with a UID-derived key).
 
 import Foundation
 import HostRuntime
@@ -30,27 +30,27 @@ enum N72Keybag {
         helper: URL,
         work: URL,
         log: (String) -> Void
-    ) async throws -> Int {
+    ) async throws {
         let fm = FileManager.default
         let rd = try await Preparer.ramdiskWithHelper(ramdisk, helper: itKeybag, work: work)
         let nor = work.appendingPathComponent("nor.rw")
-        let ovl = work.appendingPathComponent("keybag-overlay")
         let serial = work.appendingPathComponent("keybag.log")
         try fm.copyItem(at: out.appendingPathComponent("nor.bin"), to: nor)
         chmod(nor.path, 0o644)
-        try fm.createDirectory(at: ovl, withIntermediateDirectories: true)
         let port = try GDBRemote.freePort()
         let file = { (n: String) in Preparer.esc(out.appendingPathComponent(n)) }
         Machines.helper = helper
         guard let hardware = HostRuntime.Board.n72.hardware else {
             throw FirmwareError(.internal, "\(helper.lastPathComponent)'s emulator library has no machine for n72ap")
         }
-        let machine = [
-            "\(hardware.machine),bootrom=\(Preparer.esc(bootrom))", "nand=\(file("nand"))", "nor=\(file("nor.bin"))",
-            "nor-rw=\(Preparer.esc(nor))", "nandrw=\(Preparer.esc(ovl))", "direct-iboot=\(file("iBoot.bin"))",
-            "gid-blobs=\(file("gid-blobs.bin"))", "aes-uid=engine", "boot-args=",
-        ]
-        .joined(separator: ",")
+        let machine =
+            [
+                "\(hardware.machine),bootrom=\(Preparer.esc(bootrom))", "nand=\(file("nand"))",
+                "nor=\(file("nor.bin"))",
+                "nor-rw=\(Preparer.esc(nor))", "direct-iboot=\(file("iBoot.bin"))",
+                "gid-blobs=\(file("gid-blobs.bin"))", "boot-args=",
+            ]
+            .joined(separator: ",") + BootRecipe.options(N72Board.machine)
         let argv = [
             "LightTouchDevice", "-M", machine, "-m", "128M", "-display", "none", "-audio", "driver=none", "-monitor",
             "none",
@@ -86,11 +86,9 @@ enum N72Keybag {
         guard written != (try Data(contentsOf: out.appendingPathComponent("nor.bin"))) else {
             throw FirmwareError(.oneshotFailed, "keybag boot: NOR unchanged, effaceable was not written")
         }
-        let pages = try foldOverlay(ovl, into: out.appendingPathComponent("nand"))
         try written.write(to: out.appendingPathComponent("nor.bin"))
-        for u in [rd, nor, ovl, serial] { try? fm.removeItem(at: u) }
-        log("keybag boot: effaceable in nor.bin, \(pages) NAND pages folded in")
-        return pages
+        for u in [rd, nor, serial] { try? fm.removeItem(at: u) }
+        log("keybag boot: effaceable in nor.bin, the system keybag in nand/")
     }
 
     /// (entry pc, link base): LC_UNIXTHREAD's pc and __TEXT's vmaddr top nibble.
@@ -188,25 +186,6 @@ enum N72Keybag {
             bootArgs
         )
     }
-
-    /// ipod2g_keybag.fold_overlay: the overlay's page files over the device's.
-    static func foldOverlay(_ ovl: URL, into nand: URL) throws -> Int {
-        let fm = FileManager.default
-        var n = 0
-        for cs in try fm.contentsOfDirectory(atPath: ovl.path).sorted() {
-            for name in try fm.contentsOfDirectory(atPath: ovl.appendingPathComponent(cs).path) {
-                if name.hasSuffix(".erased") {
-                    throw FirmwareError(.oneshotFailed, "erase markers in the keybag overlay; not folding")
-                }
-                guard name.hasSuffix(".page"), !name.hasPrefix(".") else { continue }
-                let dst = nand.appendingPathComponent(cs).appendingPathComponent(name)
-                try? fm.removeItem(at: dst)
-                try fm.copyItem(at: ovl.appendingPathComponent(cs).appendingPathComponent(name), to: dst)
-                n += 1
-            }
-        }
-        return n
-    }
 }
 
 /// Just enough of the gdb remote protocol (QEMU's gdbstub): breakpoints, registers, memory, continue.
@@ -216,15 +195,9 @@ final class GDBRemote {
 
     /// A port nothing listens on now.
     static func freePort() throws -> Int {
-        let s = socket(AF_INET, SOCK_STREAM, 0)
+        let s = tcpSocket()
         defer { close(s) }
-        var a = sockaddr_in(
-            sin_len: UInt8(MemoryLayout<sockaddr_in>.size),
-            sin_family: sa_family_t(AF_INET),
-            sin_port: 0,
-            sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")),
-            sin_zero: (0, 0, 0, 0, 0, 0, 0, 0)
-        )
+        var a = sockaddr_in.loopback(port: 0)
         var len = socklen_t(MemoryLayout<sockaddr_in>.size)
         let ok = withUnsafeMutablePointer(to: &a) { p in
             p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
@@ -238,14 +211,8 @@ final class GDBRemote {
     /// Connects, retrying for up to 10 s while the helper starts QEMU.
     init(port: Int) throws {
         for _ in 0..<100 {
-            let s = socket(AF_INET, SOCK_STREAM, 0)
-            var a = sockaddr_in(
-                sin_len: UInt8(MemoryLayout<sockaddr_in>.size),
-                sin_family: sa_family_t(AF_INET),
-                sin_port: UInt16(port).bigEndian,
-                sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")),
-                sin_zero: (0, 0, 0, 0, 0, 0, 0, 0)
-            )
+            let s = tcpSocket()
+            var a = sockaddr_in.loopback(port: UInt16(port))
             let ok = withUnsafePointer(to: &a) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                     connect(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0

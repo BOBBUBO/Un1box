@@ -58,6 +58,12 @@ import Testing
     }
 
     /// ipod2g_nand.selfcheck.
+    /// iBoot's first AES request encrypts the seed under the UID (mode 6, | 1, | 8 with the mode read back); the NOR
+    /// wraps every SHSH with that key (openssl enc -aes-128-ecb of kdfConst under 0123...EF).
+    @Test func wrappingKeyIsTheUIDEncrypt() throws {
+        #expect(try N72NOR.wrappingKey() == Data(hexLiteral: "435473c386c2c7df0b61d1e6ead8b50e"))
+    }
+
     @Test func metadataSelfcheck() throws {
         let p = N72NAND.metadataPages(blocks: 128000, epoch: 1)
         #expect(p.count == 50 && p.values.allSatisfy { $0.count == 4096 + 64 })
@@ -162,7 +168,9 @@ import Testing
                 try SystemEdits.mkdirs(m.appendingPathComponent(N72Board.openGLES).deletingLastPathComponent())
                 try SystemEdits.put(Data(contentsOf: stock), m.appendingPathComponent(N72Board.openGLES), mode: 0o755)
                 try SystemEdits.mkdirs(sv.deletingLastPathComponent())
-                try (["ProductBuildVersion": "5F138"] as NSDictionary).write(to: sv)
+                try PropertyListSerialization.data(
+                    fromPropertyList: ["ProductBuildVersion": "5F138"], format: .xml, options: 0
+                ).write(to: sv)
                 return m
             }
             let a = try volume("swift")

@@ -1,5 +1,17 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Android)
+import Android
+#elseif canImport(ucrt)
+import ucrt
+#endif
 import Foundation
 import HostRuntime
 
@@ -144,11 +156,9 @@ public enum StoppedVolumeEdit {
         }
         // Certify the fixed mapping in legacy locks before applying its writer.
         // Arbitrary page directories are not an interchangeable storage format.
+        let read = try N72NANDImage.reader(base: source.base, overlay: nil)
         for (page, bytes) in N72NAND.metadataPages(blocks: 0, epoch: epoch) where page.page < 128 {
-            guard
-                try Data(contentsOf: source.base.appendingPathComponent("cs\(page.cs)/\(page.page).page"))
-                    == Data(bytes)
-            else {
+            guard try read(page) == bytes else {
                 throw FirmwareError(.unsupported, "N72 mapping metadata differs; use guest services for this store")
             }
         }
@@ -226,7 +236,7 @@ public enum StoppedVolumeEdit {
                     before: before
                 )
             }
-            if fm.fileExists(atPath: edit.base.appendingPathComponent("nand/bank0").path) {
+            if (try? VolumeRebuild.board(of: edit.base.appendingPathComponent("nand"))) == .legacy {
                 guard amend == nil else { throw FirmwareError(.unsupported, "this edit needs a YaFTL or N72 store") }
                 try await commitLegacy(edit: edit, image: session.image, log: log)
                 return
@@ -320,7 +330,9 @@ public enum StoppedVolumeEdit {
                 "lock": try edit.recordPath(lockURL), "sha256": StorageGeneration.hash(lockData),
             ]
             try Preparer.readOnly(edit.base)
-            try await edit.publish(record: edit.candidateRecord(provenance: provenance))
+            // K48NAND.rebuild and N72NAND.write lay out image stores: a format 1 device leaves the edit in format 2
+            let format = DeviceRecord.imageFormat
+            try await edit.publish(record: edit.candidateRecord(provenance: provenance, format: format))
             log("published storage generation \(id.uuidString)")
             // the old store's clones would keep its blocks for as long as this generation lives
             for input in ["guest-nand", "guest-overlay"] {
@@ -337,6 +349,11 @@ public enum StoppedVolumeEdit {
     {
         try HFSPlusVolume(image, writable: true).leaveJournalToDevice()
         let nand = edit.base.appendingPathComponent("nand")
+        // an image store (format 2) is edited in the generation's live clone, made here if the device has none yet
+        let live =
+            PageNANDImage.of(nand) == nil
+            ? nil
+            : try PageNANDImage.Store(PreparedDeviceBoot.liveNAND(base: nand, overlay: edit.overlay), writable: true)
         let ftl = try N45FTL(base: nand, overlay: edit.overlay)
         let f = try FileHandle(forReadingFrom: image)
         defer { try? f.close() }
@@ -348,15 +365,19 @@ public enum StoppedVolumeEdit {
             let old = ftl.read(lpn: lpn)
             if data != old?.data ?? [UInt8](repeating: 0, count: ps) {
                 let p = ftl.location(lpn: lpn)
-                let dir = edit.overlay.appendingPathComponent("bank\(p.bank)")
-                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-                try Data(data + (old?.spare ?? N45NAND.dataSpare(lpn))).write(
-                    to: dir.appendingPathComponent("\(p.page).page")
-                )
+                let record = data + (old?.spare ?? N45NAND.dataSpare(lpn))
+                if let live {
+                    try live.write(p, record)
+                } else {
+                    let dir = edit.overlay.appendingPathComponent("bank\(p.bank)")
+                    try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                    try Data(record).write(to: dir.appendingPathComponent("\(p.page).page"))
+                }
                 changed += 1
             }
             lpn += 1
         }
+        try live?.sync()
         log("wrote \(changed) changed pages through the 1.x FTL")
         let lockURL = edit.base.appendingPathComponent("device.lock.json")
         let provenance: [String: Any] = [

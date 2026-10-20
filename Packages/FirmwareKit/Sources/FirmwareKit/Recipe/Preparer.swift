@@ -11,7 +11,11 @@
 // to STAGING_DIR/work and is removed before `done`. Decrypted components are cached as CACHE/<ipsw sha1>/ (a
 // version/key-specific manifest makes an entry valid).
 
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import HostRuntime
 
@@ -65,6 +69,8 @@ public enum Preparer {
         public var stopAfterVolumes = false
         /// The device's language (`create --language`, SystemEdits.Options.language); nil: the Mac's.
         public var language: String?
+        /// The device's keyboards (`create --keyboards`, SystemEdits.Options.keyboards); nil: the Mac's.
+        public var keyboards: [String]?
         public init(
             entry: FirmwareEntry,
             ipsw: URL,
@@ -282,6 +288,7 @@ public enum Preparer {
         try await DiskImage.detachAll(under: staging)
     }
 
+    #if canImport(Darwin)
     /// Every process below `root` (depth first, children before their parent), as libproc sees it now.
     static func descendants(of root: pid_t) -> [pid_t] {
         var buf = [pid_t](repeating: 0, count: 512)
@@ -304,6 +311,37 @@ public enum Preparer {
             && info.pbi_start_tvsec == process.seconds && info.pbi_start_tvusec == process.microseconds
             && info.pbi_status != SZOMB
     }
+    #else
+    /// /proc/<pid>/stat's parent, start time (clock ticks since boot) and whether it is a zombie.
+    private static func procStat(_ pid: pid_t) -> (parent: pid_t, start: UInt64, zombie: Bool)? {
+        guard let text = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8),
+            let close = text.lastIndex(of: ")")
+        else { return nil }
+        // After "pid (comm)": state, ppid, then starttime is field 22 overall (index 19 here).
+        let fields = text[text.index(after: close)...].split(separator: " ")
+        guard fields.count > 19, let parent = pid_t(fields[1]), let start = UInt64(fields[19]) else { return nil }
+        return (parent, start, fields[0] == "Z")
+    }
+
+    /// Every process below `root` (depth first, children before their parent), from /proc now.
+    static func descendants(of root: pid_t) -> [pid_t] {
+        let pids = ((try? FileManager.default.contentsOfDirectory(atPath: "/proc")) ?? []).compactMap { pid_t($0) }
+        var children: [pid_t: [pid_t]] = [:]
+        for pid in pids { if let s = procStat(pid) { children[s.parent, default: []].append(pid) } }
+        func below(_ pid: pid_t) -> [pid_t] { (children[pid] ?? []).flatMap { below($0) + [$0] } }
+        return below(root)
+    }
+
+    private static func childProcesses(of root: pid_t) -> [ChildProcess] {
+        descendants(of: root).compactMap { pid in
+            procStat(pid).map { ChildProcess(pid: pid, seconds: $0.start, microseconds: 0) }
+        }
+    }
+    private static func isSameProcess(_ process: ChildProcess) -> Bool {
+        guard let s = procStat(process.pid) else { return false }
+        return s.start == process.seconds && !s.zombie
+    }
+    #endif
     static func terminateDescendants(of root: pid_t, grace: TimeInterval) async {
         let children = childProcesses(of: root)
         await Task.detached { await terminate(children, grace: grace) }.value

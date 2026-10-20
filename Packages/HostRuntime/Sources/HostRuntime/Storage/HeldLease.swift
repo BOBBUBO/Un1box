@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
 
 /// A device helper's hold on its storage lease (Devices/<uuid>/work/lease): taken at hello, kept until the process
 /// exits, so a second helper on the same storage — from another Light Touch, or beside one still finishing its

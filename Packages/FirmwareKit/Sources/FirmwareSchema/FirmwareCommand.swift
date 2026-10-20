@@ -42,6 +42,11 @@ public enum FirmwareCommand {
         @Option public var stopAfter: Stop? = nil
         @Option(help: "The device's language and region, as a BCP 47 tag (fr-FR) (default: the Mac's).")
         public var language: String? = nil
+        @Option(
+            help:
+                "The device's keyboards besides its language's, as Mac input source IDs (default: the Mac's enabled ones)."
+        )
+        public var keyboards: String? = nil
         @Flag(help: "Adds the GL fixture job to a test device.") public var glTest = false
         @Flag(help: "Seeds Setup Assistant's finished state (iOS 5 and later): the device starts at the Home screen.")
         public var skipSetup = false
@@ -60,7 +65,8 @@ public enum FirmwareCommand {
             sibling: (entry: URL, ipsw: URL)? = nil,
             skipSetup: Bool = false,
             jailbreak: Bool = false,
-            language: String? = nil
+            language: String? = nil,
+            keyboards: String? = nil
         ) {
             self.entry = entry.path
             self.ipsw = ipsw.path
@@ -78,6 +84,7 @@ public enum FirmwareCommand {
             self.skipSetup = skipSetup
             self.jailbreak = jailbreak
             self.language = language
+            self.keyboards = keyboards
         }
 
         public func validate() throws {
@@ -92,7 +99,7 @@ public enum FirmwareCommand {
                     "entry": entry, "catalog": catalog, "id": id, "ipsw": ipsw, "out": out, "seed": seed,
                     "helper": helper, "cache": cache, "guest-tools": guestTools, "sibling-entry": siblingEntry,
                     "sibling-ipsw": siblingIpsw, "stop-after": stopAfter?.rawValue,
-                    "language": language,
+                    "language": language, "keyboards": keyboards,
                 ]) + (glTest ? ["--gl-test"] : []) + (skipSetup ? ["--skip-setup"] : [])
                 + (jailbreak ? ["--jailbreak"] : [])
         }
@@ -104,15 +111,27 @@ public enum FirmwareCommand {
         @Option public var blob: String
         @Option public var out: String
         @Option public var seed: String
+        @Option(help: "The device's language and region, as a BCP 47 tag (fr-FR) (default: the Mac's).")
+        public var language: String? = nil
+        @Option(
+            help:
+                "The device's keyboards besides its language's, as Mac input source IDs (default: the Mac's enabled ones)."
+        )
+        public var keyboards: String? = nil
 
         public init() {}
         public init(blob: URL, out: URL, seed: String) {
             self.blob = blob.path
             self.out = out.path
             self.seed = seed
+            language = nil
+            keyboards = nil
         }
 
-        public var arguments: [String] { ["unpack-base"] + options(["blob": blob, "out": out, "seed": seed]) }
+        public var arguments: [String] {
+            ["unpack-base"]
+                + options(["blob": blob, "out": out, "seed": seed, "language": language, "keyboards": keyboards])
+        }
     }
 
     /// `pack-base`: a create output as one blob (the release build).
@@ -120,14 +139,17 @@ public enum FirmwareCommand {
         public static let configuration = CommandConfiguration(commandName: "pack-base")
         @Option(help: "A create output.") public var base: String
         @Option public var out: String
+        @Option(help: "The previous build's packed base: its chunks are reused where the raw bytes are unchanged.")
+        public var reuse: String?
 
         public init() {}
-        public init(base: URL, out: URL) {
+        public init(base: URL, out: URL, reuse: URL? = nil) {
             self.base = base.path
             self.out = out.path
+            self.reuse = reuse?.path
         }
 
-        public var arguments: [String] { ["pack-base"] + options(["base": base, "out": out]) }
+        public var arguments: [String] { ["pack-base"] + options(["base": base, "out": out, "reuse": reuse]) }
     }
 
     /// `boot-admit`: a stopped device's storage checked and migrated before its helper starts.
@@ -160,6 +182,9 @@ public enum FirmwareCommand {
             /// 2.0 and later: what the jailbreak option adds (begin, mount, the edits, commit), Cydia's bootstrap kept
             /// beside the decrypt cache --cache.
             case jailbreak
+            /// 1.x: --prefs, a plist array of {domain, key, value} (no value: remove the key), into the user's
+            /// Preferences (begin, mount, the plists, commit).
+            case preferences
         }
         @Option public var device: String
         @Option public var action: Action
@@ -168,6 +193,7 @@ public enum FirmwareCommand {
         @Option(help: "A DER certificate, for trust-anchor.") public var cert: String? = nil
         @Option public var mountPoint: String? = nil
         @Option(help: "The decrypt cache, for jailbreak.") public var cache: String? = nil
+        @Option(help: "A plist of preference changes, for preferences.") public var prefs: String? = nil
 
         public init() {}
         public init(
@@ -177,7 +203,8 @@ public enum FirmwareCommand {
             recordPolicy: RecordPolicy,
             cert: URL? = nil,
             mountPoint: URL? = nil,
-            cache: URL? = nil
+            cache: URL? = nil,
+            prefs: URL? = nil
         ) {
             self.device = device.path
             self.action = action
@@ -186,6 +213,7 @@ public enum FirmwareCommand {
             self.cert = cert?.path
             self.mountPoint = mountPoint?.path
             self.cache = cache?.path
+            self.prefs = prefs?.path
         }
 
         public var arguments: [String] {
@@ -193,6 +221,7 @@ public enum FirmwareCommand {
                 + options([
                     "device": device, "action": action.rawValue, "session": session,
                     "record-policy": recordPolicy.rawValue, "cert": cert, "mount-point": mountPoint, "cache": cache,
+                    "prefs": prefs,
                 ])
         }
     }

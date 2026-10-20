@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 import HostRuntime
 import Testing
@@ -69,7 +73,12 @@ struct IdentityTests {
             bluetooth: false
         )
         #expect(id["unique-chip-id"] == nil)
-        #expect(id["bt-mac"] == nil && id["wifi-mac"] == pod["wifi-mac"] && id["serial-number"] == pod["serial-number"])
+        #expect(id["bt-mac"] == nil && id["wifi-mac"] == pod["wifi-mac"])
+        // Made in 2008 (PPYWW…), as lockdownd's load_nikita reads it: the January apps come with the unit.
+        let serial = try #require(id["serial-number"])
+        let other = try #require(pod["serial-number"])
+        #expect(serial.prefix(2) == other.prefix(2) && serial.dropFirst(5) == other.dropFirst(5))
+        #expect(Array(serial)[2] == "8" && (1...36).contains(Int(serial.dropFirst(3).prefix(2)) ?? 0))
         #expect(
             id.udid == Data(Insecure.SHA1.hash(data: Data((id["serial-number"]! + id["wifi-mac"]!).utf8))).hexString
         )

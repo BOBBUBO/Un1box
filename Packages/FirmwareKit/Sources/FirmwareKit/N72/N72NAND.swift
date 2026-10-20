@@ -1,7 +1,7 @@
-// N72NAND: the iPod touch 2G page directory (cs{0..3}/<page>.page, 4096 data + 64 spare bytes each) of the
-// legacy FTL layout hw/arm/ipod_touch_fmss.c serves: one HFSX volume striped by a closed formula, plus the ~50
-// bookkeeping pages the formula does not cover. Ports imgtools/ftlmap.predict, ipod2g_nand.metadata_pages and
-// build_nand.write_pages (zero blocks are not written; no page file reads back as zeros).
+// N72NAND: the iPod touch 2G's NAND (4096 data + 64 spare bytes a page) in the generated FTL layout
+// hw/arm/ipod_touch_fmss.c serves: one HFSX volume striped by a closed formula, plus the ~50 bookkeeping pages the
+// formula does not cover, written as an image store (N72NANDImage). Ports imgtools/ftlmap.predict,
+// ipod2g_nand.metadata_pages and build_nand.write_pages (zero blocks are not written: they read blank).
 //
 //   N72NAND.predict(block)                                   // (cs, page) of an allocation block
 //   N72NAND.metadataPages(blocks: n, epoch: e)               // [(cs, page): data + spare]
@@ -152,45 +152,37 @@ public enum N72NAND {
         return pages
     }
 
-    static func path(_ out: URL, _ p: Page) -> URL { out.appendingPathComponent("cs\(p.cs)/\(p.page).page") }
-
-    /// The page directory for a flat volume of `blocks` 4 KiB blocks: metadata pages, then every non-zero block.
-    /// Callers supply the actual HFS extent; this low-level writer does not parse
+    /// The image store (N72NANDImage) for a flat volume of `blocks` 4 KiB blocks: metadata pages, then every
+    /// non-zero block. Callers supply the actual HFS extent; this low-level writer does not parse
     /// arbitrary backing-file padding or repair a malformed filesystem.
     @discardableResult
     public static func write(volume: URL, blocks: Int, epoch: Int, out: URL) throws -> (volume: Int, metadata: Int) {
-        let fm = FileManager.default
-        for cs in 0..<4 {
-            try fm.createDirectory(at: out.appendingPathComponent("cs\(cs)"), withIntermediateDirectories: true)
-        }
+        let store = try N72NANDImage.create(out)
         let meta = metadataPages(blocks: blocks, epoch: epoch)
-        for (p, d) in meta { try Data(d).write(to: path(out, p)) }
+        for (p, d) in meta { try store.write(p, d) }
         let f = try FileHandle(forReadingFrom: volume)
         defer { try? f.close() }
         var n = 0
         var written = 0
         let chunk = 1024
         while n < blocks {
-            // Drain autoreleased NSData/NSURL/file-I/O temporaries after each
-            // 4 MiB chunk, including all page writes, instead of after a 7 GiB scan.
+            // Drain autoreleased NSData/file-I/O temporaries after each 4 MiB chunk instead of after a 7 GiB scan.
             written += try withFirmwareAutoreleasePool {
                 var data = try f.read(upToCount: chunk * page) ?? Data()
                 if data.count < chunk * page { data.append(Data(count: chunk * page - data.count)) }
+                let bytes = [UInt8](data)
                 var count = 0
-                try data.withUnsafeBytes { (b: UnsafeRawBufferPointer) in
-                    for i in 0..<min(chunk, blocks - n) {
-                        let blk = UnsafeRawBufferPointer(rebasing: b[i * page..<(i + 1) * page])
-                        if blk.allSatisfy({ $0 == 0 }) { continue }
-                        var rec = Data(blk)
-                        rec.append(contentsOf: blankSpare)
-                        try rec.write(to: path(out, predict(n + i)))
-                        count += 1
-                    }
+                for i in 0..<min(chunk, blocks - n) {
+                    let blk = bytes[i * page..<(i + 1) * page]
+                    if blk.allSatisfy({ $0 == 0 }) { continue }
+                    try store.write(predict(n + i), Array(blk) + blankSpare)
+                    count += 1
                 }
                 return count
             }
             n += chunk
         }
+        try store.sync()
         return (written, meta.count)
     }
 
@@ -221,6 +213,8 @@ public enum N72NAND {
     /// Returns whether anything was written.
     public static func migrateLegacyGPT(base: URL, overlay: URL, storageKey: String?, marker: URL) throws -> Bool {
         let fm = FileManager.default
+        // an image store (format 2) is written by a recipe with the exact GPT, or migrated after this step
+        guard !N72NANDImage.isImage(base.appendingPathComponent("nand")) else { return false }
         func path(_ p: Page) -> String { "cs\(p.cs)/\(p.page).page" }
         func current(_ p: Page) -> [UInt8]? {
             if let d = try? Data(contentsOf: overlay.appendingPathComponent(path(p))) { return [UInt8](d.prefix(page)) }
