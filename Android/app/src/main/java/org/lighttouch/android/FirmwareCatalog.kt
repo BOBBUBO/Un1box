@@ -23,6 +23,7 @@ internal data class CatalogFirmware(
     val label get() = if (prerelease.isEmpty()) version else "$version $prerelease"
     val fileName get() = "${productType}_${version}_${build}_Restore.ipsw"
     val support get() = when {
+        id in slowFirmwares -> Support.TESTED_SLOW
         id in testedFirmwares -> Support.TESTED
         status == "available" || status == "experimental" -> Support.EXPERIMENTAL
         else -> Support.UNTESTED
@@ -32,12 +33,18 @@ internal data class CatalogFirmware(
 /** How far a firmware has been tried: LightTouch's own compatibility runs first, then the catalog's label. */
 internal enum class Support(val label: String, val detail: String) {
     TESTED("Tested", "Checked on LightTouch for Android."),
+    TESTED_SLOW("Tested, slow", "Checked on LightTouch for Android, but slower than the iPod touch 2G on iOS 3.1.3."),
     EXPERIMENTAL("Experimental", "Starts in Light Touch for Mac's checks; not yet checked on LightTouch for Android."),
     UNTESTED("Untested", "Nobody has tried these yet. They may not start."),
+    ;
+    val tested get() = this == TESTED || this == TESTED_SLOW
 }
 
 /** Firmwares that pass LightTouch's compatibility runs on Android (docs/COMPATIBILITY.md). */
 internal val testedFirmwares = setOf("n72ap-7E18", "n81ap-10B500")
+
+/** Tested firmwares that run noticeably slower than the iPod touch 2G on iOS 3.1.3, the one to pick first. */
+internal val slowFirmwares = setOf("n81ap-10B500")
 
 internal object FirmwareCatalog {
     fun load(context: Context): List<CatalogFirmware> =

@@ -158,6 +158,7 @@ private fun ChoiceRow(icon: ImageVector?, title: String, detail: String, enabled
 private fun SupportBadge(support: Support) {
     val color = when (support) {
         Support.TESTED -> MaterialTheme.colorScheme.primary
+        Support.TESTED_SLOW -> MaterialTheme.colorScheme.tertiary
         Support.EXPERIMENTAL -> LtColors.Warning
         Support.UNTESTED -> MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -169,11 +170,11 @@ private fun SupportBadge(support: Support) {
 private fun DeviceStep(state: PrepareState) {
     Heading("Choose a device", "Pick the device to emulate. You'll choose its iOS version next.")
     val devices = state.catalog.groupBy { it.productType }.entries.sortedBy { deviceOrder.indexOf(it.key).let { i -> if (i < 0) 99 else i } }
-    val (tested, others) = devices.partition { (_, firmwares) -> firmwares.any { it.support == Support.TESTED } }
-    for ((product, firmwares) in tested) {
-        val versions = firmwares.filter { it.support == Support.TESTED }.sortedWith(versionOrder).joinToString(", ") { "iOS ${it.label}" }
-        val more = firmwares.count { it.support != Support.TESTED && it.prerelease.isEmpty() }
-        DeviceRow(state, product, "Tested: $versions" + if (more > 0) " · $more more to try" else "", Support.TESTED)
+    val (tested, others) = devices.partition { (_, firmwares) -> firmwares.any { it.support.tested } }
+    for ((product, firmwares) in tested.sortedBy { (_, firmwares) -> firmwares.minOf { it.support } }) {
+        val versions = firmwares.filter { it.support.tested }.sortedWith(versionOrder).joinToString(", ") { "iOS ${it.label}" }
+        val more = firmwares.count { !it.support.tested && it.prerelease.isEmpty() }
+        DeviceRow(state, product, "Tested: $versions" + if (more > 0) " · $more more to try" else "", firmwares.minOf { it.support })
     }
     if (others.isNotEmpty()) {
         SectionLabel("Not tested on LightTouch yet")
