@@ -37,7 +37,7 @@ internal enum class Support(val label: String, val detail: String) {
 }
 
 /** Firmwares that pass LightTouch's compatibility runs on Android (docs/COMPATIBILITY.md). */
-internal val testedFirmwares = setOf("n72ap-7E18")
+internal val testedFirmwares = setOf("n72ap-7E18", "n81ap-10B500")
 
 internal object FirmwareCatalog {
     fun load(context: Context): List<CatalogFirmware> =
