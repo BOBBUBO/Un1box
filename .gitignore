@@ -20,5 +20,6 @@ docs/*
 !docs/GUEST-BENCHMARKS.md
 !docs/BUILDING.md
 !docs/PROFILING.md
+!docs/COMPATIBILITY.md
 scripts/build.env
 *.profraw
