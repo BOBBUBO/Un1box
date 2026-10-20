@@ -6,7 +6,10 @@ import HostRuntime
 extension PreparedBase {
     /// Final admission of an already extracted private stage. No extraction,
     /// conversion, identity reseeding or writable device state is performed.
-    nonisolated public static func verifySharedImport(_ base: URL) throws {
+    /// `progress` gets (bytes hashed, bytes to hash) on the calling thread; files hash on `workers` threads.
+    nonisolated public static func verifySharedImport(
+        _ base: URL, workers: Int = 4, progress: (Int64, Int64) -> Void = { _, _ in }
+    ) throws {
         let fm = FileManager.default
         func asset(_ name: String, directory: Bool = false) throws -> URL {
             let parts = name.split(separator: "/", omittingEmptySubsequences: false)
@@ -47,19 +50,9 @@ extension PreparedBase {
             }
             _ = try digest(record, integrity)
         }
-        func fileDigest(_ file: URL) throws -> String {
-            let fd = open(file.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-            guard fd >= 0 else { throw invalid(base, "cannot open output") }
-            let input = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            defer { try? input.close() }
-            var hash = SHA256()
-            while true {
-                try Task.checkCancellation()
-                guard let bytes = try input.read(upToCount: 1024 * 1024), !bytes.isEmpty else { break }
-                hash.update(data: bytes)
-            }
-            return hash.finalize().map { String(format: "%02x", $0) }.joined()
-        }
+        // Every digest is queued here, then computed together (hashAll).
+        var queued: [URL] = []
+        func fileDigest(_ file: URL) -> Int { queued.append(file); return queued.count - 1 }
         let packed = nand["format"] as? String == "ITNAND01"
         try require("nand", "nand", packed ? "sha256" : "listing_sha256")
         try require("nor", "nor.bin")
@@ -68,6 +61,8 @@ extension PreparedBase {
             if (lock["boot_strategy"] as? String ?? "iboot") == "iboot" { try require("iboot", "iBoot.bin") }
         } else { try require("kboot", "kboot.bin") }
         if packed { try PackedNAND.verify(base: base) }
+        var checks: [(Int, String, String)] = []  // (queued file, expected digest, what failed)
+        var listings: [(names: [String], files: [Int], digest: String, pages: Int?, name: String)] = []
         for (key, record) in outputs {
             try Task.checkCancellation()
             guard let name = record["path"] as? String else { throw invalid(base, "output path missing") }
@@ -75,9 +70,7 @@ extension PreparedBase {
                 let file = try asset(name)
                 // PackedNAND already hashed this file while checking its index.
                 if !(packed && key == "nand") {
-                    guard try fileDigest(file) == digest(record, "sha256") else {
-                        throw invalid(base, "output checksum differs: \(name)")
-                    }
+                    checks.append((fileDigest(file), try digest(record, "sha256"), "output checksum differs: \(name)"))
                 }
             }
             if record["listing_sha256"] != nil {
@@ -94,23 +87,95 @@ extension PreparedBase {
                     names.append(relative)
                     guard names.count <= 1_000_000 else { throw invalid(base, "NAND listing exceeds supported bound") }
                 }
-                var hash = SHA256()
-                for relative in names.sorted() {
-                    try Task.checkCancellation()
-                    let checksum = try fileDigest(directory.appendingPathComponent(relative))
-                    hash.update(data: Data((relative + " " + checksum + "\n").utf8))
-                }
-                let checksum = hash.finalize().map { String(format: "%02x", $0) }.joined()
-                guard try checksum == digest(record, "listing_sha256"),
-                    record["pages"] == nil || record["pages"] as? Int == names.count
-                else { throw invalid(base, "NAND listing checksum or page count differs") }
+                names.sort()
+                listings.append((names, names.map { fileDigest(directory.appendingPathComponent($0)) },
+                                 try digest(record, "listing_sha256"), record["pages"] == nil ? nil : (record["pages"] as? Int ?? -1), name))
             }
         }
         let identity = try asset("identity.json")
         if let record = lock["identity"] as? [String: Any], record["sha256"] != nil {
-            guard try fileDigest(identity) == digest(record, "sha256") else {
-                throw invalid(base, "identity checksum differs")
-            }
+            checks.append((fileDigest(identity), try digest(record, "sha256"), "identity checksum differs"))
         }
+        let digests = try hashAll(queued, base: base, workers: workers, progress: progress)
+        for (file, expected, failure) in checks where digests[file] != expected { throw invalid(base, failure) }
+        for listing in listings {
+            var hash = SHA256()
+            for (relative, file) in zip(listing.names, listing.files) {
+                hash.update(data: Data((relative + " " + digests[file] + "\n").utf8))
+            }
+            guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == listing.digest,
+                listing.pages == nil || listing.pages == listing.names.count
+            else { throw invalid(base, "\(listing.name) listing checksum or page count differs") }
+        }
+    }
+
+    /// SHA-256 of each file, on up to `workers` threads. The calling thread stays in its task: it reports progress
+    /// and turns a cancelled task into stopping the workers.
+    nonisolated static func hashAll(_ files: [URL], base: URL, workers: Int, progress: (Int64, Int64) -> Void) throws
+        -> [String]
+    {
+        var total: Int64 = 0
+        for file in files {
+            var info = stat()
+            guard lstat(file.path, &info) == 0 else { throw invalid(base, "cannot open output") }
+            total += Int64(info.st_size)
+        }
+        final class Shared: @unchecked Sendable {
+            let lock = NSLock()
+            var next = 0, done: Int64 = 0, stop = false, failure: String?
+            var digests: [String]
+            init(_ count: Int) { digests = Array(repeating: "", count: count) }
+        }
+        let shared = Shared(files.count)
+        let group = DispatchGroup()
+        for _ in 0..<max(1, min(workers, files.count)) {
+            group.enter()
+            Thread {
+                defer { group.leave() }
+                var buffer = [UInt8](repeating: 0, count: 1 << 20)
+                while true {
+                    shared.lock.lock()
+                    let index = shared.next
+                    shared.next += 1
+                    let stop = shared.stop
+                    shared.lock.unlock()
+                    guard !stop, index < files.count else { return }
+                    let fd = open(files[index].path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+                    var hash = SHA256(), failed = fd < 0
+                    while !failed {
+                        let n = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+                        if n < 0 && errno == EINTR { continue }
+                        if n <= 0 { failed = n < 0; break }
+                        buffer.withUnsafeBytes { hash.update(bufferPointer: UnsafeRawBufferPointer(rebasing: $0[..<n])) }
+                        shared.lock.lock()
+                        shared.done += Int64(n)
+                        let stop = shared.stop
+                        shared.lock.unlock()
+                        if stop { break }
+                    }
+                    if fd >= 0 { close(fd) }
+                    shared.lock.lock()
+                    if failed {
+                        shared.stop = true
+                        shared.failure = shared.failure ?? "cannot read output \(files[index].lastPathComponent)"
+                    } else {
+                        shared.digests[index] = hash.finalize().map { String(format: "%02x", $0) }.joined()
+                    }
+                    shared.lock.unlock()
+                }
+            }.start()
+        }
+        var cancelled = false
+        while group.wait(timeout: .now() + .milliseconds(100)) == .timedOut {
+            shared.lock.lock()
+            if Task.isCancelled { shared.stop = true; cancelled = true }
+            let done = shared.done
+            shared.lock.unlock()
+            progress(done, total)
+        }
+        if cancelled || Task.isCancelled { throw CancellationError() }
+        if let failure = shared.failure { throw invalid(base, failure) }
+        progress(total, total)
+        return shared.digests
     }
 }

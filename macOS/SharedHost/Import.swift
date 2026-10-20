@@ -100,9 +100,14 @@ nonisolated func finalizeImport(_ args: HostArguments) throws {
     var target = stat()
     guard lstat(destination.path, &target) != 0, errno == ENOENT else { throw POSIXError(.EEXIST) }
     try Task.checkCancellation()
-    hostLine("import phase=verifying percent=0 done=0 total=1")
-    try PreparedBase.verifySharedImport(stage)
-    hostLine("import phase=verifying percent=100 done=1 total=1")
+    var reported = -1
+    try PreparedBase.verifySharedImport(stage) { done, total in
+        let percent = total > 0 ? Int(done * 100 / total) : 100
+        if percent != reported {
+            reported = percent
+            hostLine("import phase=verifying percent=\(percent) done=\(done) total=\(total)")
+        }
+    }
     var protecting = false, published = false
     defer {
         // Frozen staged permissions must not prevent the caller's cancellation
