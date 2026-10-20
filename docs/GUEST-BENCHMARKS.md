@@ -23,7 +23,7 @@ repeatable figure, a median well above it means interference).
 | `icall` | an indirect call through a 4-entry table, and its return | indirect branches: TB exits, the per-site branch cache, `helper_lookup_tb_ptr` |
 | `fib` | a recursive call and return | returns to many sites |
 | `objc-send` | `objc_msgSend` to `+[NSObject class]` | Objective-C dispatch: the guest method-cache lookup, then an indirect branch to the method |
-| `runloop` | an autorelease pool around `-[NSRunLoop runMode:beforeDate:]` (`distantPast`) on a thread whose run loop has no sources, then the pool's release | a game loop that polls its run loop: message sends, CoreFoundation's mode lookup by name and its empty-mode check (Battle Bears: Zombies! spends about half its guest time here) |
+| `runloop` | an autorelease pool around `-[NSRunLoop runMode:beforeDate:]` (`distantPast`) on a thread whose run loop has no sources, then the pool's release | a game loop that polls its run loop: message sends, CoreFoundation's mode lookup by name and its empty-mode check (Battle Bears: Zombies!' OpenFeint thread spins here; a faster poll does not help a spinning thread) |
 | `memcpy` | 1 KiB copied (libSystem `memcpy`, 256 KiB blocks) | guest loads/stores through the softmmu TLB fast path |
 | `syscall` | `getppid()` | SWI, exception entry and return, kernel entry/exit |
 | `time` | `mach_absolute_time()` | the guest time base (a Mach trap, plus the timer read) |
