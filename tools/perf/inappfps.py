@@ -90,17 +90,18 @@ def black_box():
 def shot():
     raw = subprocess.run(["adb", "exec-out", "screencap"], capture_output=True).stdout
     w, h = struct.unpack("<II", raw[:8]); return w, h, raw[len(raw)-w*h*4:]
-def avg(rect, fx0, fy0, fx1, fy1):
-    w, h, px = shot(); gx, gy, gw, gh = rect; r = g = b = n = 0
+def avg(rect, fx0, fy0, fx1, fy1, frame=None):
+    w, h, px = frame or shot(); gx, gy, gw, gh = rect; r = g = b = n = 0
     for y in range(int(gy+gh*fy0), int(gy+gh*fy1), 8):
         for x in range(int(gx+gw*fx0), int(gx+gw*fx1), 8):
             i = (y*w+x)*4; r += px[i]; g += px[i+1]; b += px[i+2]; n += 1
     return r/n, g/n, b/n
 def is_lock(rect):
-    r, g, b = avg(rect, .12, .27, .88, .69)
+    f = shot()  # one capture: the guest re-sleeps ~5 s after a wake
+    r, g, b = avg(rect, .12, .27, .88, .69, f)
     if b > 60 and b > r+25: return True  # the default blue wallpaper
     # Any wallpaper: the slide-to-unlock knob is light grey on a dark track.
-    k = avg(rect, .10, .87, .27, .93); t = avg(rect, .40, .88, .85, .92)
+    k = avg(rect, .10, .87, .27, .93, f); t = avg(rect, .40, .88, .85, .92, f)
     return min(k) > 140 and max(k) - min(k) < 30 and max(t) < 100
 def gpt(rect, fx, fy):
     gx, gy, gw, gh = rect; return str(int(gx+gw*fx)), str(int(gy+gh*fy))

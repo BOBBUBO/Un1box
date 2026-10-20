@@ -28,7 +28,7 @@ GAMES = {
     "asphalt5": [(.857, .313), 10, (.294, .497), 12, (.5, .5), 1.5, (.92, .06), 20, (.5, .5), 8,
                  (.925, .916), 5, (.112, .523), 5, (.112, .523), 50, (.5, .5), 15],
     "ltbench-pixel": [(.9, .5, .15, .5), 3, (.857, .505), 30],  # LT Bench, Home page 3 (Pixel layout): one pass
-    "ltbench": [(.380, .312), 40],                        # LT Bench, one pass (old Poco record's layout; not on the current record)
+    "ltbench": [(.143, .497), 40],                        # LT Bench, one pass (Poco layout)
     "doodlejump-poco": [(.143, .127), 22],                 # Doodle Jump main menu (Poco layout)
     "jellycar-poco": [(.619, .127), 20, (.294, .497), 8],  # JellyCar, dismiss the push prompt (Poco layout)
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
