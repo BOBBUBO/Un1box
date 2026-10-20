@@ -263,6 +263,14 @@ class WindowsStorage(StorageOps):
         import msvcrt
         if not self.api.flush(msvcrt.get_osfhandle(fd)): self.api.fail("Cannot flush LightTouch metadata.")
 
+    def make_sparse(self, fd):
+        # FSCTL_SET_SPARSE: an iPod touch 4G NAND image is 17 GiB of mostly unwritten pages.
+        import msvcrt
+        returned = wt.DWORD()
+        if not self.api.kernel.DeviceIoControl(wt.HANDLE(msvcrt.get_osfhandle(fd)), wt.DWORD(0x000900C4), None, 0, None, 0,
+                                               ctypes.byref(returned), None):
+            self.api.fail("Cannot mark the new NAND image sparse.")
+
     def replace_and_sync(self, source, destination):
         source, destination = checked_path(source), checked_path(destination)
         if PureWindowsPath(source).parent != PureWindowsPath(destination).parent:

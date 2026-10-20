@@ -66,6 +66,9 @@ class StorageOps:
     def flush_file(self, fd):
         os.fsync(fd)
 
+    def make_sparse(self, fd):
+        """Let a new file keep unwritten ranges as holes; POSIX files already do."""
+
     def replace_and_sync(self, source, destination):
         """Publish an owned temp and durably flush its containing directory.
 

@@ -74,7 +74,9 @@ The board, iOS build and guest architecture must match; for the iPod touch 4G ro
 **1 iOS system**, `armv6.itpack` in **2 Guest tools** and `bootrom.bin` in **3 Boot file**
 (companion files in the same folder may fill in by themselves). Click **Set up device**,
 wait for the import to finish, then **Start iOS**. Use **Stop** and wait for shutdown
-before closing.
+before closing. For a system prepared on a Mac (the iPod touch 4G, [route 5](#5-prepare-a-system-from-an-ipsw-instead)),
+use **Choose folder…** in **1 iOS system** and pick the packed `.itbase` folder, with `armv7.itpack`
+as the guest tools and no boot file.
 
 **Android:** in **Add a device** (the setup screen on first launch), under **Or add a prepared
 device image**, choose `n72ap-7E18.itbase` as the **iOS system** and `bootrom.bin` as the **Boot
@@ -105,12 +107,12 @@ IPSW in the iOS system picker does **not** do this. Android needs nothing else: 
 its own guest tools. The other routes need the upstream guest tools folder: make it with
 `python3 tools/get-assets.py --verified-tools`.
 
-| Host | n72ap-7E18 (iPod touch 2G, iOS 3.1.3) | n81ap-8C148 (iPod touch 4G, iOS 4.2.1) |
+| Host | n72ap-7E18 (iPod touch 2G, iOS 3.1.3) | n81ap-10B500 (iPod touch 4G, iOS 6.1.6) |
 | --- | --- | --- |
 | Android | In-app: **Prepare from an IPSW** | Prepare on a Mac, then add the folder in the app |
-| Linux | `lighttouch-prepare` (build it from [Portable/firmware](../Portable/firmware/README.md)) | Upstream Mac app only |
-| macOS | Upstream app's **Add Device**, or its bundled `firmwarekit` | Same |
-| Windows | Use one of the others, then copy the `.itbase` | Same |
+| Linux | `lighttouch-prepare` (build it from [Portable/firmware](../Portable/firmware/README.md)) | Prepare on a Mac, then **Choose folder…** |
+| macOS | Upstream app's **Add Device**, or its bundled `firmwarekit` | Same, then **Choose folder…** |
+| Windows | Use one of the others, then copy the `.itbase` | Prepare on a Mac, then **Choose folder…** |
 
 The stock n72 input is `iPod2,1_3.1.3_7E18_Restore.ipsw` (SHA-1 and size are checked
 against the [firmware catalog](../Portable/firmware/firmware-catalog.json)). Apple
@@ -132,7 +134,7 @@ SHA-256. **Prepare device** takes under a minute on a recent phone and needs abo
 the device is added and selected when it finishes.
 
 Every device and iOS version in the catalog can be chosen, marked **Tested** (checked on LightTouch
-for Android), **Experimental** (passes upstream's Mac checks) or **Untested**. Only n72ap-7E18
+for Android), **Tested, slow** (works, but slower than the iPod touch 2G on 3.1.3), **Experimental** (passes upstream's Mac checks) or **Untested**. Only n72ap-7E18
 prepares on the phone so far. For the others the app shows the `firmwarekit` commands for a Mac
 (below); copy the packed `.itbase` folder to the phone and tap **Choose the folder**, or use **Add a
 device › Choose a folder**. The iPod touch 4G on iOS 6.1.6 (`n81ap-10B500`) starts this way.
@@ -157,8 +159,8 @@ build (n81 is marked experimental upstream), or run its bundled tool directly:
 ```sh
 APP="/Applications/Light Touch.app"
 "$APP/Contents/MacOS/firmwarekit" create --catalog /path/to/firmware-catalog.json \
-  --id n81ap-8C148 --ipsw /path/to/iPod4,1_4.2.1_8C148_Restore.ipsw --out n81ap-8C148-prepared
-"$APP/Contents/MacOS/firmwarekit" pack-base --base n81ap-8C148-prepared --out n81ap-8C148.itbase
+  --id n81ap-10B500 --ipsw /path/to/iPod4,1_6.1.6_10B500_Restore.ipsw --out n81ap-10B500-prepared
+"$APP/Contents/MacOS/firmwarekit" pack-base --base n81ap-10B500-prepared --out n81ap-10B500.itbase
 ```
 
 n81 uses `armv7.itpack` (`get-assets.py --armv7`) and **no** boot file: its prepared system

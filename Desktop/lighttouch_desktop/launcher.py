@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .profiles import InterruptedStateError
+from .prepared_import import packed_folder
 
 PALETTE = {"paper": "#F3F6FA", "ink": "#1C304A", "muted": "#596C83", "blue": "#285BB5", "line": "#D9E2EF", "white": "#FFFFFF"}
 
@@ -160,7 +161,7 @@ class Launcher:
         notebook.add(diagnostics, text="  Session details  ")
         ttk.Label(setup, textvariable=self.selection_hint, wraplength=620, style="Muted.TLabel").pack(anchor="w", pady=(0, 12))
         for title, hint, variable, action, caption in (
-            ("1   iOS system", "Choose n72ap-7E18.itbase for iOS 3.1.3.", self.system_file, self.choose_system, "Choose .itbase…"),
+            ("1   iOS system", "Choose n72ap-7E18.itbase for iOS 3.1.3, or a prepared folder from Light Touch for Mac for other devices (iPod touch 4G).", self.system_file, self.choose_system, "Choose .itbase…"),
             ("2   Guest tools", "Choose armv6.itpack for iOS 3.1.3 (armv7.itpack for iPod touch 4).", self.vars["guest_package"], lambda: self.browse("guest_package", "file"), "Choose .itpack…"),
             ("3   Boot file", "Choose bootrom.bin for iOS 3.1.3. iPod touch 4 does not need this file.", self.vars["bootrom"], lambda: self.browse("bootrom", "file"), "Choose boot file…"),
         ):
@@ -172,6 +173,8 @@ class Launcher:
             picker.pack(fill="x")
             if variable is self.vars["bootrom"]:
                 self.button(picker, "Clear", lambda: self.vars["bootrom"].set("")).pack(side="right", padx=(8, 0))
+            if variable is self.system_file:
+                self.button(picker, "Choose folder…", self.choose_system_folder).pack(side="right", padx=(8, 0))
             self.button(picker, caption, action).pack(side="right", padx=(8, 0))
             entry = ttk.Entry(picker, textvariable=variable, state="readonly")
             entry.pack(side="left", fill="x", expand=True)
@@ -232,8 +235,19 @@ class Launcher:
     def choose_system(self):
         source = filedialog.askopenfilename(parent=self.window, title="Step 1: choose n72ap-7E18.itbase (iOS 3.1.3)",
                                            filetypes=[("iOS system (.itbase)", "*.itbase"), ("All files", "*")])
+        if source:
+            self.use_system(source)
+
+    def choose_system_folder(self):
+        source = filedialog.askdirectory(parent=self.window, title="Step 1: choose the prepared folder (it holds index.json)", mustexist=True)
         if not source:
             return
+        if not packed_folder(source):
+            self.error(ValueError("This folder is not a prepared iOS system. Choose the .itbase folder Light Touch for Mac made (it holds index.json and files)."))
+            return
+        self.use_system(source)
+
+    def use_system(self, source):
         if not self.current or any(p["id"] == self.current and p.get("base") for p in self.store.devices):
             self.new()
         self.selected_source = source
@@ -243,12 +257,13 @@ class Launcher:
         self.vars["guest_package"].set("")
         self.vars["bootrom"].set("")
         packages = list(parent.glob("*.itpack"))
-        preferred = parent / ("armv7.itpack" if "n81" in Path(source).name.lower() else "armv6.itpack")
+        armv7 = "n81" in Path(source).name.lower() or packed_folder(source)
+        preferred = parent / ("armv7.itpack" if armv7 else "armv6.itpack")
         if preferred.is_file():
             self.vars["guest_package"].set(str(preferred))
         elif len(packages) == 1:
             self.vars["guest_package"].set(str(packages[0]))
-        if "n81" not in Path(source).name.lower() and (parent / "bootrom.bin").is_file():
+        if not armv7 and (parent / "bootrom.bin").is_file():
             self.vars["bootrom"].set(str(parent / "bootrom.bin"))
         self.start_button.configure(text="Set up device")
         self.message.set("iOS system selected. Check the guest tools and boot file, then Set up device.")

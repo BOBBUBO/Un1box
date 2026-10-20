@@ -44,6 +44,9 @@ class Preparation:
             self.events.put_nowait((done, total))
 
     def _run(self):
+        from .prepared_import import packed_folder
+        if packed_folder(self.source):
+            return self._run_folder()
         try:
             fd = self.storage.open_regular(self.source)
             with os.fdopen(fd, "rb") as stream:
@@ -88,4 +91,26 @@ class Preparation:
                     raise SetupError("Setup cancelled. Your original files are unchanged.")
                 self.result = {"sha256": digest.hexdigest(), "expanded_bytes": expanded}
         except (OSError, ValueError, KeyError, TypeError) as error:
+            self.error = str(error)
+
+    def _run_folder(self):
+        # A packed folder is checked chunk by chunk as it unpacks; here only its index is pinned and sized.
+        try:
+            fd = self.storage.open_regular(self.source / "index.json")
+            with os.fdopen(fd, "rb") as stream:
+                index = stream.read(64 * 1024**2 + 1)
+            if len(index) > 64 * 1024**2:
+                raise SetupError("The prepared folder has an invalid file list.")
+            listing = json.loads(index)
+            if listing.get("format") != 2:
+                raise SetupError("This folder is not a prepared iOS system from Light Touch for Mac.")
+            # Unwritten NAND pages stay holes: count the whole files and the stored chunks.
+            chunk = listing["chunkBytes"]
+            expanded = sum(entry["size"] for entry in listing["files"]) + sum(
+                min(chunk, image["size"] - int(number) * chunk) for image in listing["images"] for number in image["chunks"])
+            if type(expanded) is not int or expanded > 64 * 1024**3:
+                raise SetupError("The prepared folder exceeds the supported size.")
+            self.update(1, 1)
+            self.result = {"sha256": hashlib.sha256(index).hexdigest(), "expanded_bytes": expanded}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
             self.error = str(error)

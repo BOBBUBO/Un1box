@@ -27,7 +27,9 @@ def import_command(platform, frontend, source, destination, sha256, *, storage=N
     import re
     storage = storage or DEFAULT_STORAGE
     source, destination = Path(source).absolute(), Path(destination).absolute()
-    regular(source, "iOS system archive (.itbase)", storage=storage)
+    from lighttouch_desktop.prepared_import import packed_folder
+    if not packed_folder(source):
+        regular(source, "iOS system archive (.itbase)", storage=storage)
     regular(frontend, "native import finalizer", storage=storage)
     if not isinstance(sha256, str) or not re.fullmatch("[a-fA-F0-9]{64}", sha256):
         raise SetupError("The selected archive requires its calculated SHA-256.")
@@ -56,7 +58,7 @@ def _remove_stage(stage):
 
 
 def run(args, *, storage=None, cancelled=None):
-    from lighttouch_desktop.prepared_import import ImportCancelled, import_prepared
+    from lighttouch_desktop.prepared_import import ImportCancelled, import_packed_folder, import_prepared, packed_folder
     storage = storage or DEFAULT_STORAGE
     cancelled = cancelled or threading.Event()
     destination = Path(args.destination).absolute()
@@ -79,8 +81,8 @@ def run(args, *, storage=None, cancelled=None):
             last[:] = [phase, now]
 
     try:
-        import_prepared(Path(args.source), stage, args.sha256, storage=storage,
-                        progress=progress, cancelled=cancelled.is_set)
+        unpack = import_packed_folder if packed_folder(args.source) else import_prepared
+        unpack(Path(args.source), stage, args.sha256, storage=storage, progress=progress, cancelled=cancelled.is_set)
         print("[import-timing] phase=streaming seconds=%.3f" % (time.monotonic() - started), flush=True)
         if cancelled.is_set():
             raise ImportCancelled("Setup cancelled. Your original files are unchanged.")

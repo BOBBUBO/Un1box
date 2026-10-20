@@ -10,7 +10,7 @@ import unittest
 import zlib
 
 from lighttouch_desktop.prepared_import import (
-    ImportCancelled, PAGES_PER_CS, RECORD_SIZE, SLOTS, import_prepared,
+    CHUNK, ImportCancelled, PAGES_PER_CS, RECORD_SIZE, SLOTS, import_packed_folder, import_prepared, packed_folder,
 )
 from lighttouch_desktop.storage import StorageOps
 
@@ -238,6 +238,71 @@ class PreparedImportTests(unittest.TestCase):
                 os.utime(source, ns=(1_000_000_000, 1_000_000_000))
         with self.assertRaises(ValueError):
             import_prepared(source, self.root / "mutation", digest, progress=progress)
+
+
+class PackedFolderTests(unittest.TestCase):
+    """Light Touch for Mac's packed folder: whole files plus NAND images as 1 MiB zlib chunks, zero chunks absent."""
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def folder(self, board="n81ap"):
+        size = 3 * CHUNK + 5
+        image = bytearray(size)
+        image[CHUNK:CHUNK + 4] = b"used"           # chunk 1 stored
+        image[3 * CHUNK:] = b"tail!"              # the short last chunk stored
+        pages = {"bus0-ce0.pages": bytes(image), "geometry.json": b'{"chips":1}'}
+        files = {"nor.bin": b"nor", "identity.json": b'{"name":"synthetic"}', "kboot.bin": b"kboot",
+                 "nand/geometry.json": pages["geometry.json"]}
+        outputs = {"nor": {"path": "nor.bin", "sha256": sha(b"nor")}, "kboot": {"path": "kboot.bin", "sha256": sha(b"kboot")}}
+        listing = b"".join((n + " " + sha(d) + "\n").encode() for n, d in sorted(pages.items()))
+        outputs["nand"] = {"path": "nand", "listing_sha256": sha(listing)}
+        lock = {"format": 1, "board": board, "build": "TEST", "outputs": outputs, "identity": {"sha256": sha(files["identity.json"])}}
+        files["device.lock.json"] = json.dumps(lock).encode()
+        source = self.root / "source.itbase"
+        for name, data in files.items():
+            (source / "files" / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / "files" / name).write_bytes(data)
+        chunks = {}
+        (source / "nand/bus0-ce0").mkdir(parents=True)
+        for number in (1, 3):
+            raw = bytes(image[number * CHUNK:(number + 1) * CHUNK])
+            chunks["%06d" % number] = sha(raw)
+            (source / "nand/bus0-ce0" / ("%06d.z" % number)).write_bytes(zlib.compress(raw))
+        index = {"format": 2, "chunkBytes": CHUNK,
+                 "files": [{"name": n, "size": len(d), "mode": 0o644, "sha256": sha(d)} for n, d in files.items()],
+                 "images": [{"name": "nand/bus0-ce0.pages", "size": size, "mode": 0o644, "chunks": chunks}]}
+        (source / "index.json").write_bytes(json.dumps(index).encode())
+        return source, image, files
+
+    def test_unpacks_holes_and_whole_files(self):
+        source, image, files = self.folder()
+        self.assertTrue(packed_folder(source))
+        events = []
+        stage = self.root / "stage"
+        lock = import_packed_folder(source, stage, sha((source / "index.json").read_bytes()),
+                                    progress=lambda *event: events.append(event))
+        self.assertEqual((stage / "nand/bus0-ce0.pages").read_bytes(), bytes(image))
+        self.assertLess(os.stat(stage / "nand/bus0-ce0.pages").st_blocks * 512, 3 * CHUNK)  # the zero chunks stay holes
+        for name, data in files.items():
+            self.assertEqual((stage / name).read_bytes(), data)
+        self.assertEqual((stage / "source-device.lock.json").read_bytes(), files["device.lock.json"])
+        self.assertEqual(lock["board"], "n81ap")
+        self.assertEqual(events[-1], ("complete", CHUNK + 5 + sum(map(len, files.values())), CHUNK + 5 + sum(map(len, files.values()))))
+
+    def test_rejects_changed_index_bad_chunk_and_n72(self):
+        source, _, _ = self.folder()
+        with self.assertRaisesRegex(ValueError, "changed"):
+            import_packed_folder(source, self.root / "a", "0" * 64)
+        chunk = source / "nand/bus0-ce0/000001.z"
+        chunk.write_bytes(zlib.compress(b"x" * CHUNK))
+        with self.assertRaisesRegex(ValueError, "checksum"):
+            import_packed_folder(source, self.root / "b", sha((source / "index.json").read_bytes()))
+        source.rename(self.root / "old")
+        source, _, _ = self.folder(board="n72ap")
+        with self.assertRaisesRegex(ValueError, ".itbase file"):
+            import_packed_folder(source, self.root / "c", sha((source / "index.json").read_bytes()))
 
 
 if __name__ == "__main__":
