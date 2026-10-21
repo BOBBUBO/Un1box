@@ -107,6 +107,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var preparationOpen by mutableStateOf(false)
     private val prep = PrepareState()
     private var preparedImported = ""
+    /** A preparation that finished while LightTouch was closed: added as soon as the device worker is up. */
+    private var addRetainedWhenReady = false
     // A finished run the user went back from; the worker keeps reporting it until it is replaced.
     private var dismissedRun = ""
     private val firmwareConnection = object : ServiceConnection {
@@ -222,6 +224,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                         }
                         engineFailure?.let { workerExited(); if (!engineExpectedExit) error = "Guest worker unavailable: $it. Writable state retained; Start creates a fresh worker." }
                     }
+                    // After the catalog too: it names the device.
+                    if (addRetainedWhenReady && engine != null && prep.catalog.isNotEmpty() && !preparedImportInFlight && prep.preparation?.getString("state") == "complete") {
+                        addRetainedWhenReady = false; prep.preparation?.let { importPreparedOutput(it) }
+                    }
                     if (firmware?.asBinder() == observedFirmware?.asBinder() && !firmwareRestarting) {
                         firmwareState?.let { pollPreparation(it) }
                         firmwareFailure?.let { error = "Firmware worker unavailable: $it" }
@@ -282,7 +288,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (retainedPreparedOutput.isNotEmpty()) {
             prep.preparation = retainedPreparation(); preparedImported = retainedPreparedOutput
             prep.importError = "The prepared device is kept; try adding it again."
-        }
+        } else resumePreparation()
         Thread({
             try {
                 val catalog = FirmwareCatalog.load(this)
@@ -601,6 +607,39 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         putString("state", "complete"); putString("stage", "Prepared output retained")
         putString("destination", retainedPreparedOutput); putString("firmwareId", prep.firmwareId)
         putBoolean("consumed", false)
+        putString("timings", PreparationNote.read(this@MainActivity)?.takeIf { it.optString("destination") == retainedPreparedOutput }?.optString("timings") ?: "")
+    }
+    /**
+     * The preparation worker's note of a run LightTouch was closed or restarted during (PreparationNote): show it
+     * again if it is still going, add its device if it finished, say why if it failed or Android ended it.
+     */
+    private fun resumePreparation() {
+        val note = PreparationNote.read(this) ?: return
+        val job = note.optString("destination")
+        note.optString("firmwareId").takeIf { it.isNotEmpty() }?.let { prep.firmwareId = it }
+        fun failed(error: String) {
+            PreparationNote.clear(this)
+            prep.preparation = Bundle().apply { putString("state", "failed"); putString("error", error); putBoolean("consumed", true) }
+            preparationOpen = true
+        }
+        when (note.optString("state")) {
+            "preparing" -> {
+                val pid = note.optInt("pid")
+                val alive = try { File("/proc/$pid/cmdline").readText().contains(":firmware") } catch (_: Exception) { false }
+                if (alive) { preparationOpen = true; bindFirmware() }
+                else {
+                    Thread({ File(job).takeIf { it.isDirectory }?.let { dir -> dir.walkTopDown().forEach { it.setWritable(true, true) }; dir.deleteRecursively() } }, "stale-preparation").start()
+                    failed("Android stopped the preparation before it finished. Try again.")
+                }
+            }
+            "complete" -> if (job != preparedImported && File(job, "device.lock.json").isFile) {
+                retainedPreparedOutput = job; addRetainedWhenReady = true
+                prep.preparation = retainedPreparation()
+                preparationOpen = true; bindFirmware()
+            } else PreparationNote.clear(this)
+            "failed" -> failed(note.optString("error").ifEmpty { "Firmware preparation failed" })
+            else -> PreparationNote.clear(this)
+        }
     }
     private fun preparationActive() = firmwareRestarting || prep.preparation?.getString("state") in listOf("starting", "preparing", "cancelling")
     private fun closePreparation() {
@@ -710,13 +749,16 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (phase == "idle" && prep.preparation?.getString("state") != "starting") { prep.preparation = null; return }
         // The user went back from a finished run; the worker keeps reporting it until it is replaced.
         if (phase in listOf("failed", "cancelled") && prep.preparation == null) return
+        // Shown here, so not again at the next launch.
+        if (phase in listOf("failed", "cancelled")) PreparationNote.clear(this)
         prep.preparation = state
         if (phase == "complete" && state.getString("destination") != preparedImported) {
             retainedPreparedOutput = state.getString("destination") ?: ""
             getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("pendingPrepared", retainedPreparedOutput).apply()
         }
         state.getString("firmwareId")?.takeIf { it.isNotEmpty() }?.let { prep.firmwareId = it }
-        if (!preparedImportInFlight && phase == "complete" && state.getString("destination") != preparedImported) importPreparedOutput(state)
+        // After the catalog (it names the device); the next poll tries again.
+        if (!preparedImportInFlight && phase == "complete" && prep.catalog.isNotEmpty() && state.getString("destination") != preparedImported) importPreparedOutput(state)
     }
     private fun importPreparedOutput(state: Bundle) {
         if (preparedImportInFlight) return
@@ -728,6 +770,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val rom = if (prep.bootrom != null && prep.romReady) prep.romPath else ""
         val board = chosen?.board ?: prep.firmwareId.substringBefore('-'); val build = chosen?.build ?: prep.firmwareId.substringAfter('-')
         val before = records.mapNotNull { it.getString("id") }.toSet()
+        val timings = state.getString("timings") ?: ""; val started = SystemClock.elapsedRealtime()
         Thread({
             var name = ""; var selected = false
             val result = try {
@@ -754,10 +797,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 busy = false; preparedImportInFlight = false; prep.importError = result
                 if (result.isEmpty()) {
                     retainedPreparedOutput = ""
+                    if (PreparationNote.read(this)?.optString("destination") == destination) PreparationNote.clear(this)
                     if (ipsw.startsWith(filesDir.absolutePath)) prep.ipswPath = ""
                     getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().putString("preparedImported", destination).remove("pendingPrepared").remove("ipsw").apply()
                     refreshDevices(); releaseFirmware(); preparationOpen = false; prep.preparation = null; prep.step = PrepareStep.DEVICE
-                    if (selected) { setup.reset(firstRun = false); setup.created = name; setup.step = SetupStep.DONE; overlay = Screen.SETUP }
+                    if (selected) {
+                        setup.reset(firstRun = false); setup.created = name; setup.step = SetupStep.DONE; overlay = Screen.SETUP
+                        setup.timings = timings + "Adding the device\t${(SystemClock.elapsedRealtime() - started) / 100 / 10.0}\n"
+                    }
                     else notice = "Added $name; stop the running device to switch to it"
                 }
             }

@@ -18,7 +18,8 @@ Each level needs the ones before it.
 | `clean` | iOS shut down cleanly when asked |
 
 A firmware is **Tested** in the Android app (`testedFirmwares` in `FirmwareCatalog.kt`) once it reaches
-`clean` on a phone; one that runs noticeably slower than the iPod touch 2G on iOS 3.1.3 is also in
+`clean` on a phone or has been checked by hand on one (2026-10-21: iPod touch 3G 4.2.1, iPhone 3GS 5.1.1 and iPhone 4
+4.2.1/4.3.5); one that runs noticeably slower than the iPod touch 2G on iOS 3.1.3 is also in
 `slowFirmwares` and shows **Tested, slow**, so the 2G stays the obvious first pick.
 
 ## Running

@@ -24,6 +24,8 @@ class FirmwareService : Service() {
     @Volatile private var stage = ""
     @Volatile private var done = 0L
     @Volatile private var total = 0L
+    /** Each finished step's name and seconds, a line each ("name\tseconds"), for the finished screen's details. */
+    @Volatile private var timings = ""
     @Volatile private var process: java.lang.Process? = null
 
     private val binder = object : IFirmware.Stub() {
@@ -38,6 +40,7 @@ class FirmwareService : Service() {
             val parent = File(filesDir, "prepared").apply { mkdirs() }
             val job = java.lang.Long.toHexString(SystemClock.uptimeMillis())
             destination = File(parent, "job-$job").absolutePath
+            note("preparing")
             Thread({ prepare(firmwareId, ipswPath, File(trustedToolsRoot), bootromPath) }, "firmwarekit").start()
             return status()
         }
@@ -50,7 +53,7 @@ class FirmwareService : Service() {
             putString("state", phase); putString("stage", stage)
             putBoolean("consumed", consumed.get())
             putLong("done", done); putLong("total", total); putInt("code", if (failure.isEmpty()) 0 else 1)
-            putString("error", failure); putString("destination", destination)
+            putString("error", failure); putString("destination", destination); putString("timings", timings)
             putInt("uid", Process.myUid()); putInt("pid", Process.myPid()); putString("firmwareId", currentFirmwareId)
         }
         override fun cancel() { cancelling = true; process?.destroy() }
@@ -86,9 +89,12 @@ class FirmwareService : Service() {
             File(out, "work").let { writable(it); it.deleteRecursively() }
             done = total
             state = "complete"
+            note("complete")
+            foreground("Your device is prepared. Open LightTouch to add it.")
         } catch (e: Exception) {
             if (cancelling) state = "cancelled" else { failure = e.message ?: "Firmware preparation failed"; state = "failed" }
             writable(out); out.deleteRecursively()
+            if (cancelling) PreparationNote.clear(this) else note("failed")
         } finally {
             process = null
             if (awake.isHeld) awake.release()
@@ -113,11 +119,16 @@ class FirmwareService : Service() {
         val child = builder.start().also { process = it }
         var weights = listOf<Long>(); var step = 0
         var message = ""
+        var stepName = ""; var stepStarted = 0L
+        fun endStep() { if (stepName.isNotEmpty()) timings += "$stepName\t${(SystemClock.elapsedRealtime() - stepStarted) / 100 / 10.0}\n" }
         child.inputStream.bufferedReader().forEachLine { line ->
             val event = try { JSONObject(line) } catch (_: Exception) { return@forEachLine }
             when (event.optString("event")) {
                 "begin" -> event.optJSONArray("seconds")?.let { a -> weights = (0 until a.length()).map { maxOf(1L, a.getLong(it)) * 1000 }; total = weights.sum() }
-                "step" -> { step = event.optInt("index"); stage = event.optString("name"); done = weights.take(step - 1).sum() }
+                "step" -> {
+                    endStep(); stepName = event.optString("name"); stepStarted = SystemClock.elapsedRealtime()
+                    step = event.optInt("index"); stage = stepName; done = weights.take(step - 1).sum()
+                }
                 "progress" -> {
                     if (step > 0 && step <= weights.size) done = weights.take(step - 1).sum() + (event.optDouble("fraction", 0.0) * weights[step - 1]).toLong()
                     // What the step is doing now, with its elapsed time: "Starting the Home screen — 45 s".
@@ -127,21 +138,43 @@ class FirmwareService : Service() {
             }
         }
         val exit = child.waitFor()
+        endStep()
         check(!cancelling) { "Cancelled" }
         check(exit == 0) { message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" } }
     }
+
+    private fun note(phase: String) = PreparationNote.write(this, JSONObject().put("state", phase).put("pid", Process.myPid())
+        .put("firmwareId", currentFirmwareId).put("destination", destination).put("timings", timings).put("error", failure))
 
     /** firmwarekit leaves its outputs read-only; delete needs the folders writable again. */
     private fun writable(root: File) { if (root.exists()) root.walkTopDown().forEach { it.setWritable(true, true) } }
 
     override fun onBind(intent: Intent): IBinder = binder
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { foreground(); return START_NOT_STICKY }
-    private fun foreground() {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        foreground(if (state == "complete") "Your device is prepared. Open LightTouch to add it." else "Preparing a device; return to view progress or cancel")
+        return START_NOT_STICKY
+    }
+    private fun foreground(text: String = "Preparing a device; return to view progress or cancel") {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("firmware", "Firmware preparation", NotificationManager.IMPORTANCE_LOW))
         val launch = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         startForeground(2, Notification.Builder(this, "firmware").setSmallIcon(android.R.drawable.ic_menu_upload)
-            .setContentTitle("LightTouch preparation").setContentText("Preparing a device; return to view progress or cancel")
+            .setContentTitle("LightTouch preparation").setContentText(text)
             .setContentIntent(launch).setOngoing(true).build())
     }
+}
+
+/**
+ * The worker's own record of its run, so a LightTouch that Android closed or restarted while preparation ran in the
+ * background finds it again: still preparing (the worker's pid), complete (its output, waiting to be added), or
+ * failed (why). The app clears it once it has shown or added the result.
+ */
+internal object PreparationNote {
+    private fun file(context: android.content.Context) = File(context.filesDir, "prepared/current.json")
+    fun write(context: android.content.Context, note: JSONObject) {
+        val target = file(context).apply { parentFile?.mkdirs() }
+        File(target.path + ".tmp").apply { writeText(note.toString()); renameTo(target) }
+    }
+    fun read(context: android.content.Context): JSONObject? = try { JSONObject(file(context).readText()) } catch (_: Exception) { null }
+    fun clear(context: android.content.Context) { file(context).delete() }
 }

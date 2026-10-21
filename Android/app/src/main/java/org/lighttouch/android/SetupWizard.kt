@@ -46,10 +46,12 @@ internal class SetupState {
     var progress by mutableFloatStateOf(-1f)
     var error by mutableStateOf("")
     var created by mutableStateOf<String?>(null)
+    /** How long each stage of a preparation took ("stage\tseconds" lines), shown folded on the finished screen. */
+    var timings by mutableStateOf("")
     var scanned by mutableStateOf<String?>(null)
     fun reset(firstRun: Boolean) {
         step = if (firstRun) SetupStep.WELCOME else SetupStep.FILES
-        system = null; rom = null; name = ""; phase = ""; progress = -1f; error = ""; created = null; scanned = null
+        system = null; rom = null; name = ""; phase = ""; progress = -1f; error = ""; created = null; scanned = null; timings = ""
     }
 }
 
@@ -82,7 +84,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: ()
                     SetupStep.WELCOME -> Welcome { state.step = SetupStep.FILES }
                     SetupStep.FILES -> Files(state, onPickFolder, onPickSystem, onPickRom, onCreate, onPrepare)
                     SetupStep.CREATING -> Creating(state.phase, state.progress)
-                    SetupStep.DONE -> Done(state.created ?: "Your device", onFinish)
+                    SetupStep.DONE -> Done(state.created ?: "Your device", state.timings, onFinish)
                 }
             }
         }
@@ -217,7 +219,7 @@ private fun Creating(phase: String, progress: Float) {
 }
 
 @Composable
-private fun Done(name: String, onFinish: (Boolean) -> Unit) {
+private fun Done(name: String, timings: String, onFinish: (Boolean) -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(Icons.Filled.CheckCircle, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(24.dp))
@@ -230,5 +232,24 @@ private fun Done(name: String, onFinish: (Boolean) -> Unit) {
             Icon(LtIcons.Play, null, Modifier.size(20.dp)); Spacer(Modifier.width(10.dp)); Text("Start it now", style = MaterialTheme.typography.titleMedium)
         }
         TextButton(onClick = { onFinish(false) }, modifier = Modifier.padding(top = 8.dp)) { Text("Not now") }
+        if (timings.isNotEmpty()) StageTimes(timings)
+    }
+}
+
+/** A preparation's stages and their seconds, folded until asked for (for debugging slow preparations). */
+@Composable
+private fun StageTimes(timings: String) {
+    var open by remember { mutableStateOf(false) }
+    val rows = timings.lines().mapNotNull { line -> line.split('\t').takeIf { it.size == 2 }?.let { it[0] to it[1] } }
+    TextButton(onClick = { open = !open }, modifier = Modifier.padding(top = 24.dp).testTag("setup_details")) {
+        Text(if (open) "Hide details" else "Details")
+    }
+    if (open) Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        for ((stage, seconds) in rows + ("Total" to "%.1f".format(rows.sumOf { it.second.toDoubleOrNull() ?: 0.0 }))) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                Text(stage, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("$seconds s", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }

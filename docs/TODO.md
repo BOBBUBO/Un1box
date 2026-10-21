@@ -3,6 +3,40 @@
 Tick items off here as they land (with the commit), so nothing is lost between sessions.
 Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 
+## Support targets
+
+Performance and graphics work aims at one good iOS per device first. Upstream Light Touch for Mac marks as
+tested only the iPad on 3.2, 3.2.2 and 4.2.1 and the iPod touch 2G on 2.2, 2.2.1 and 3.1.3 (catalog
+`available`); everything below starts from its `experimental` set.
+
+| Device | Target iOS | Why | Today (Android) |
+| --- | --- | --- | --- |
+| iPod touch 2G (n72ap) | 3.1.3 (7E18) | upstream's tested pick, fastest on phones | Tested, recommended |
+| iPod touch 2G | 4.2.1 (8C148) | its last iOS; apps that need iOS 4 | Tested |
+| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested, slow |
+| iPhone 4 (n90ap) | 6.1.3 (10B329) | its last iOS 6 (6.1.6 shipped only for the 3GS and iPod touch 4G); wide app range | not run off the Mac |
+
+Later: the iPhone 4 on 4.2.1/4.3.5 and the 3GS on 5.1.1 (Tested, slow), the iPod touch 3G 4.2.1 (Tested), the
+iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 7 (skipped for now).
+
+- [ ] Bring up the iPhone 4 on 6.1.3: prepare on Linux and the Poco, `compat.py` and `services.py` to `clean`.
+- [ ] A validation run per target that a person doesn't have to watch, extending LT Bench and the
+  compat harness (`tools/compat/`):
+  1. Machine-readable results: LT Bench writes its results as JSON to its Documents folder, and the
+     harness launches it through the guest tools and fetches the file over the USB bridge (house_arrest), in
+     place of reading screenshots.
+  2. Graphics correctness: fixed scenes drawn into an offscreen framebuffer, read back with `glReadPixels` and
+     compared with reference images within a tolerance. ES 1.1 on every device: texture formats (PVRTC,
+     RGB565/4444/5551, A8/L8/LA88), blend modes, texture environment and multitexture, point sprites, depth,
+     stencil, mipmaps, framebuffer objects. ES 2.0 on SGX devices (iPod touch 3G and later, not the 2G's MBX):
+     shaders, render to texture, non-power-of-two textures, depth and stencil formats. Reference images from
+     a real device where possible, else from the macOS host; the harness keeps the diff image of a failure.
+  3. Performance at a fixed workload, frame times as median and 1% low: a 2D sprite scene (Jetpack's
+     title, ~230 sprites), a 3D ES 1.1 mesh scene (Asphalt 5's race, ~125 draws), an ES 2.0 shader scene on
+     SGX devices. Plus boot to Home, app launch and Home-screen swipe fps. The current microbenchmarks stay.
+  4. A short list of real games per target with the frame rate each should hold, for checks by hand.
+  5. Run on Linux, the Poco and the Pixel; results per target in COMPATIBILITY.md and PERFORMANCE.md.
+
 ## Performance (current focus)
 
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes

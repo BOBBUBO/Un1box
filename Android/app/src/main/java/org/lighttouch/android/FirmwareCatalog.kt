@@ -41,13 +41,19 @@ internal enum class Support(val label: String, val detail: String) {
 }
 
 /** Firmwares that pass LightTouch's compatibility runs on Android (docs/COMPATIBILITY.md). */
-internal val testedFirmwares = setOf("n72ap-7E18", "n72ap-8C148", "n81ap-10B500")
+internal val testedFirmwares = setOf(
+    "n72ap-7E18", "n72ap-8C148",  // iPod touch 2G 3.1.3, 4.2.1
+    "n18ap-8C148",  // iPod touch 3G 4.2.1
+    "n81ap-10B500",  // iPod touch 4G 6.1.6
+    "n88ap-9B206",  // iPhone 3GS 5.1.1
+    "n90ap-8C148", "n90ap-8L1",  // iPhone 4 4.2.1, 4.3.5
+)
 
 /** The firmware to pick first: the fastest and most complete on phones. */
 internal const val recommendedFirmware = "n72ap-7E18"
 
 /** Tested firmwares that run noticeably slower than the iPod touch 2G on iOS 3.1.3, the one to pick first. */
-internal val slowFirmwares = setOf("n81ap-10B500")
+internal val slowFirmwares = setOf("n81ap-10B500", "n88ap-9B206", "n90ap-8C148", "n90ap-8L1")
 
 internal object FirmwareCatalog {
     fun load(context: Context): List<CatalogFirmware> =
