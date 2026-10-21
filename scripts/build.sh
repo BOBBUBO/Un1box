@@ -240,7 +240,7 @@ build_firmware_tools() {
         ARMV6_SDK=$LT_MAC_ARMV6_SDK PATH=/opt/homebrew/bin:\$PATH \
         bash contrib/export-guest-artifacts.sh ~/$remote/out > ~/$remote/build.log 2>&1'" ||
         { ssh "$LT_MAC" "tail -30 ~/$remote/build.log" >&2; exit 1; }
-    rm -rf "$OUT/firmware-tools"
+    rm -rf "$OUT/firmware-tools"; mkdir -p "$OUT"
     scp -qr "$LT_MAC:$remote/out/ipad-guest-tools" "$OUT/firmware-tools"
     scp -q "$LT_MAC:$remote/out/manifest.json" "$OUT/firmware-tools.manifest.json"
     ls -la "$OUT/firmware-tools"
