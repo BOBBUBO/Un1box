@@ -146,6 +146,8 @@ public enum SystemEdits {
     /// Jobs launchd starts at boot for services an emulated device has no use for, each Disabled where present: Apple's
     /// servers for them are gone or refuse these releases, or the hardware is absent. Traced on n81ap 6.1.6 (it_seal
     /// per-process CPU): together ~12% of the first start's guest CPU and a share of every boot's.
+    /// Not usbptpd: every USB configuration carries PTP, and the device stack starts no USB until each function has
+    /// registered, so without it usbmux never enumerates (iPhone 4 4.2.1 and 4.3.5: the host's SETUP is NAKed).
     static let deadServiceJobs = [
         "com.apple.imagent", "com.apple.imavagent",  // iMessage, FaceTime
         "com.apple.itunescloudd",  // iTunes in the Cloud
@@ -154,7 +156,6 @@ public enum SystemEdits {
         // raises without it, and DataMigrator and atc abort)
         "com.apple.apsd",  // push notifications
         "com.apple.AOSNotification",  // Find My iPhone
-        "com.apple.usbptpd",  // camera import over USB
         "com.apple.mobile.fud",  // accessory firmware updates
         "com.apple.mobile.softwareupdated", "com.apple.softwareupdateservicesd",  // software update
         "com.apple.OTATaskingAgent", "com.apple.OTACrashCopier",

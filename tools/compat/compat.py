@@ -132,6 +132,28 @@ def prepare(args):
 
 # --- headless Linux -----------------------------------------------------------------------------
 
+def import_base(exe, firmware_id, base, result):
+    """Import BASES' base for an ID into `base` once; False (with result["error"]) when that fails."""
+    if base.exists():
+        return True
+    base.parent.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    source = base_source(firmware_id).resolve()
+    # An archive must match its SHA-256; a folder is checked against its own lock.
+    sha256 = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else "0" * 64
+    run = subprocess.run([str(exe), "--import", str(source), "--sha256", sha256, "--base", str(base)],
+                         capture_output=True, text=True)
+    result["import_s"] = round(time.monotonic() - started, 1)
+    if not (base / "device.lock.json").exists():
+        result["error"] = (run.stderr or run.stdout).strip().splitlines()[-1:] or ["import failed"]
+        return False
+    return True
+
+
+# Boards that start from a boot ROM, and its file in BASES.
+ROMS = {"n72ap": "bootrom.bin", "n45ap": "bootrom_s5l8900", "m68ap": "bootrom_s5l8900"}
+
+
 def linux(args):
     build = REPO / "build"
     exe, engine = build / "linux/lighttouch-linux", build / "linux/libqemu-arm.so"
@@ -145,18 +167,8 @@ def linux(args):
         result = {"id": firmware_id, "board": entry["board"], "build": entry["build"], "version": entry["version"],
                   "catalog_status": entry.get("status", ""), "host": f"linux-{socket.gethostname()}",
                   "date": datetime.datetime.now().isoformat(timespec="seconds"), "seconds": args.seconds}
-        if not base.exists():
-            work.mkdir(parents=True, exist_ok=True)
-            started = time.monotonic()
-            source = base_source(firmware_id).resolve()
-            # An archive must match its SHA-256; a folder is checked against its own lock.
-            sha256 = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else "0" * 64
-            run = subprocess.run([str(exe), "--import", str(source), "--sha256", sha256, "--base", str(base)],
-                                 capture_output=True, text=True)
-            result["import_s"] = round(time.monotonic() - started, 1)
-            if not (base / "device.lock.json").exists():
-                result["error"] = (run.stderr or run.stdout).strip().splitlines()[-1:] or ["import failed"]
-                save(grade(result)); continue
+        if not import_base(exe, firmware_id, base, result):
+            save(grade(result)); continue
         for path in (state, shots):
             if path.exists():
                 shutil.rmtree(path)
@@ -172,7 +184,7 @@ def linux(args):
         command = [str(exe), "--base", str(base), "--state", str(state), "--engine", str(engine), "--package", str(package),
                    "--headless", "--seconds", str(args.seconds + 60), "--script", str(script), "--no-audio"]
         # The iPod touch 2G, the iPod touch 1G and the original iPhone start from their boot ROM.
-        rom = {"n72ap": "bootrom.bin", "n45ap": "bootrom_s5l8900", "m68ap": "bootrom_s5l8900"}.get(entry["board"])
+        rom = ROMS.get(entry["board"])
         if rom:
             command += ["--rom", str(BASES / rom)]
         log = work / "run.log"

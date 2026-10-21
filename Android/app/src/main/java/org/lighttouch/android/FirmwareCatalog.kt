@@ -145,8 +145,11 @@ internal object IpswDownload {
     fun start(context: Context, firmware: CatalogFirmware, onDone: (File?, String) -> Unit) {
         if (running) return
         running = true; cancelled = false; firmwareId = firmware.id; progress = -1f; status = "Looking up ${firmware.fileName}"
+        val app = context.applicationContext
+        DownloadService.hold(app, "Downloading iOS ${firmware.label}")
         Thread({
-            val result = try { download(context.applicationContext, firmware) to "" } catch (e: Exception) { null to (e.message ?: "Download failed") }
+            val result = try { download(app, firmware) to "" } catch (e: Exception) { null to (e.message ?: "Download failed") }
+            DownloadService.release(app)
             running = false
             status = if (result.first != null) "" else result.second
             onDone(result.first, result.second)

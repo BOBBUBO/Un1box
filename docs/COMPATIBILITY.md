@@ -57,3 +57,38 @@ python3 tools/compat/compat.py table                   # newest result per firmw
 | n81ap-10B500 (iPod touch 4G) | 6.1.6 | Poco F3 | clean | 6.1 | | lock screen after Setup; Start 4.6 s |
 
 Known: the iPod touch 4G logs its first lit frame at 0.0 s wall time (CPU time is right).
+
+## Guest services
+
+[`services.py`](../tools/compat/services.py) checks what the app services need from a running guest. It boots a fresh
+state of the same base on headless Linux, with a private usbmuxd-qemu bridge as the desktop and Android apps use, and
+grades how far it got:
+
+| Level | Meaning |
+| --- | --- |
+| usb | usbmuxd found the guest and lockdown answered |
+| install | the IPA (LT Bench by default) installed and is in the installed-app list |
+| launch | the guest tools unlocked the device, launched Settings and reported it in front |
+| clean | iOS shut down cleanly |
+
+```sh
+python3 tools/compat/services.py n90ap-8L1 n72ap-7E18   # LT_SERVICES_ROOT: an extracted Linux AppDir
+python3 tools/compat/services.py table
+```
+
+Results go to `compat/services-results/`; the USB bridge log, screenshots and engine log go to
+`compat/work/<id>/services/`.
+
+| Config | iOS | Level | USB up (s) | Install (s) | Notes |
+| --- | --- | --- | --- | --- | --- |
+| n72ap-7E18 (iPod touch 2G) | 3.1.3 | clean | 48.8 | 1.2 | |
+| n72ap-8C148 (iPod touch 2G) | 4.2.1 | clean | 45.9 | 4.2 | |
+| n72ap-5F138 (iPod touch 2G) | 2.1.1 | usb | 27.7 | | LT Bench needs iOS 3 |
+| n18ap-8C148 (iPod touch 3G) | 4.2.1 | clean | 47.9 | 3.2 | |
+| n88ap-9B206 (iPhone 3GS) | 5.1.1 | clean | 53.5 | 15.5 | prepared on Linux in 135 s; first start 95 s Linux, 168 s Poco |
+| n90ap-8C148 (iPhone 4) | 4.2.1 | clean | 54.6 | 3.3 | |
+| n90ap-8L1 (iPhone 4) | 4.3.5 | clean | 74.0 | 4.2 | |
+| n81ap-10B500 (iPod touch 4G) | 6.1.6 | install | 78.1 | 45.3 | Mac base without `--skip-setup`: Setup Assistant in front |
+
+Linux (Ryzen 7 3700X), 2026-10-21. A4 bases prepared between 2201b407 and the fix after it never start USB (usbptpd was
+disabled; every USB configuration needs it), so lockdown is never found: prepare them again.

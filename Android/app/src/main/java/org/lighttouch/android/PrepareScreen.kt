@@ -81,7 +81,7 @@ private val versionOrder = Comparator<CatalogFirmware> { a, b ->
  */
 private data class PreparationCost(val time: String, val space: String)
 private fun preparationCost(firmware: CatalogFirmware?) =
-    if (firmware?.board == "n72ap") PreparationCost("about a minute", "1.5 GB") else PreparationCost("3 to 5 minutes", "5 GB")
+    if (firmware?.board == "n72ap") PreparationCost("about a minute", "1.5 GB") else PreparationCost("a few minutes", "5 GB")
 
 /**
  * Builds a device on this phone from a stock IPSW: pick the device, then the iOS version, then get
@@ -360,9 +360,12 @@ private fun Progress(state: PrepareState, preparing: Boolean, busy: Boolean, onP
             preparing -> {
                 Text("Preparing $title", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(8.dp))
-                val stage = run?.getString("stage") ?: ""
+                // firmwarekit's detail is "What the step is doing — 45 s": the step centred, its time on a line of its own.
+                val (stage, elapsed) = (run?.getString("stage") ?: "").split(" — ", limit = 2).let { it[0] to it.getOrElse(1) { "" } }
                 Text(if (phase == "cancelling") "Cancelling…" else stage.ifEmpty { "Starting" }, Modifier.testTag("preparation_status"),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                if (elapsed.isNotEmpty() && phase != "cancelling")
+                    Text(elapsed, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(24.dp))
                 val done = run?.getLong("done") ?: 0L; val total = run?.getLong("total") ?: 0L
                 if (total > 0 && done > 0) LinearProgressIndicator(progress = { (done.toFloat() / total).coerceIn(0f, 1f) }, Modifier.fillMaxWidth())

@@ -15,6 +15,10 @@ import time
 from .catalog import Target
 from .ipa import InstallError
 
+# ProductType -> CPU architecture of every board that boots (n45, m68, n72; n18, n88, k48, n81, n90).
+PRODUCT_ARCH = {"iPod1,1": "armv6", "iPhone1,1": "armv6", "iPod2,1": "armv6", "iPod3,1": "armv7",
+                "iPhone2,1": "armv7", "iPad1,1": "armv7", "iPod4,1": "armv7", "iPhone3,1": "armv7"}
+
 P = C.c_void_p
 PP = C.POINTER(P)
 CALLBACK = C.CFUNCTYPE(None, P, P, P)
@@ -119,11 +123,11 @@ class Mobile:
 
     def target(self):
         product, ios = self.value("ProductType"), self.value("ProductVersion")
-        # Current baseline coverage only: do not infer an architecture for other boards.
-        arch = {"iPod2,1": "armv6", "iPod4,1": "armv7"}.get(product)
+        # The boards LightTouch boots (lighttouch_desktop/boards.py); no architecture is inferred for any other.
+        arch = PRODUCT_ARCH.get(product)
         if arch is None:
-            raise InstallError("IPA installation currently supports n72/n81 guest contracts only.")
-        return Target(product, ios, arch)
+            raise InstallError("IPA installation does not support this device ({}).".format(product))
+        return Target(product, ios, arch, "2" if product.startswith("iPad") else "1")
 
     def start_service(self, name, descriptor):
         """lockdownd drops a client left idle, as the first one is across a long AFC upload: starting

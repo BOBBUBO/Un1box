@@ -777,6 +777,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val chosen = prep.firmware ?: return
         if (preparationActive() || busy) return
         busy = true; prep.ipswError = ""; prep.ipswChecking = "Copying ${displayName(uri)}"
+        DownloadService.hold(applicationContext, "Copying iOS ${chosen.label}")
         Thread({
             val target = File(IpswDownload.directory(this).apply { mkdirs() }, chosen.fileName)
             val partial = File(target.path + ".copy")
@@ -799,7 +800,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } catch (e: Exception) {
                 partial.delete()
                 handler.post { prep.ipswError = e.message ?: "Could not use that IPSW"; prep.ipswChecking = ""; busy = false }
-            }
+            } finally { DownloadService.release(applicationContext) }
         }, "stock-ipsw-import").start()
     }
     private fun downloadBootrom() {

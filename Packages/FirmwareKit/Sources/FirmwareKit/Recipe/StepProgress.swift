@@ -102,6 +102,20 @@ struct StepPlan: Sendable {
         ]
     )
 
+    /// iOS 5's seal boot: after it_prefs, DataMigrator builds the first-boot databases (Photos, Media, Mail) and then
+    /// SpringBoard lays out the Home screen, which it_seal waits for (it prints nothing in between). n88ap-9B206 on a
+    /// Ryzen desktop under Linux, 2026-10-21: launchd 2 s, it_prefs 21 s, it_seal 87 s, halted by 95 s; a phone takes ~3x.
+    static let seal5 = StepPlan(
+        seconds: 95,
+        text: "First start: loading iOS",
+        milestones: [
+            .init(file: "seal.log", marker: "FTL_Open", at: 1, text: "First start: opening the flash"),
+            .init(file: "seal.log", marker: "launchd[1] has started", at: 2, text: "First start: starting iOS"),
+            .init(file: "seal.log", marker: "it_prefs:", at: 21, text: "First start: setting up iOS"),
+            .init(file: "seal.log", marker: "it_seal:", at: 87, text: "First start: shutting down"),
+        ]
+    )
+
     /// iOS 6's keybag boot, same machine: the restore ramdisk opens the flash at 6 s and it_keybag is done at 23 s,
     /// halted by 49 s. On a new flash the FTL first rebuilds its index, minutes on a phone.
     static let keybag6 = StepPlan(
@@ -117,6 +131,7 @@ struct StepPlan: Sendable {
     static func plan(_ name: String, major: Int = 0) -> StepPlan {
         if name == sealStep, major >= 7 { return seal7 }
         if name == sealStep, major == 6 { return seal6 }
+        if name == sealStep, major == 5 { return seal5 }
         if name == "Creating the data-protection keybag", major == 6 { return keybag6 }
         return plans[name] ?? .init(seconds: 10, text: name)
     }
