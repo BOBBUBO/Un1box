@@ -131,7 +131,9 @@ int main() {
     }
     assert(receipts >= 3 && received.latest().done == received.latest().total && received.latest().total > 131089);
 
-    // A real control datagram cancels the next checked digest chunk, releasing the actual native lease.
+    // A real control datagram cancels the next checked digest chunk, releasing the actual native lease. The open
+    // above cached the base's digests; without them this open hashes the base again.
+    fs::remove(state / ".verified-digests");
     put(state / ".dirty", "retained interrupted session");
     config.allow_dirty = 1;
     lt::AdmissionObserver cancelled(
