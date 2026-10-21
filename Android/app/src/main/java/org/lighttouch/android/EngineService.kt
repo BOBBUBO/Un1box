@@ -19,7 +19,8 @@ class EngineService : Service() {
     private val stopping = AtomicBoolean(false)
     private val alive = AtomicBoolean(true)
     @Volatile private var audio: AudioTrack? = null
-    @Volatile private var focus: AudioFocusRequest? = null
+    /** The guest's audio plays (mixed with other apps' audio: LightTouch takes no audio focus). */
+    @Volatile private var audioOn = false
     private val touchAdmissionGuard = Any()
     private val lifecycleAdmission = WorkerLifecycleAdmission()
     private val touchTimestampOrder = TouchTimestampOrder()
@@ -27,7 +28,6 @@ class EngineService : Service() {
     private val audioGuard = AudioPacketEpoch()
     private val audioObservations = AudioObservations()
     @Volatile private var audioError = ""
-    private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val buttonDownAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonUpAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonRejections = java.util.concurrent.atomic.AtomicLong(0)
@@ -86,6 +86,11 @@ class EngineService : Service() {
                 putString("directory", directory.absolutePath); putBoolean("detailed", events != null)
                 putLong("snapshotNs", System.nanoTime()); putString("engineLog", Native.status().getOrElse(3) { "" })
             }
+        }
+        // Asked of the guest tools, at most ~2.5 s.
+        override fun frontmostApp(): Bundle = Bundle().apply {
+            val app = profileCapture.frontmostIdentity()
+            putString("bundleId", app?.first ?: ""); putString("appName", app?.second ?: "")
         }
         override fun performance(observationEpoch: Long): Bundle = performanceSampler.request(Binder.getCallingPid(), observationEpoch)
         private fun requireDebugDiagnosis() { check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Debug diagnosis is unavailable in this build" } }
@@ -160,7 +165,7 @@ class EngineService : Service() {
                 }
             }
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId) else Native.start(libraryRoot, recordId)
-            if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) requestAudioFocus() }
+            if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
                 persistStopError(error)
@@ -232,7 +237,7 @@ class EngineService : Service() {
             }
             if (result == "Display ownership retired") return@run
             if (result.isNotEmpty()) { error = result; return@run }
-            abandonAudioFocus()
+            stopAudioOutput()
         } }
         override fun pause(paused: Boolean) { lifecycleAdmission.run {
             // A background callback can race the stop button. Shutdown already
@@ -245,8 +250,8 @@ class EngineService : Service() {
             val result = Native.pause(paused)
             if (result.isNotEmpty()) error = result
             synchronized(audioGuard) { if (paused) audioObservations.pauses++ else audioObservations.resumes++ }
-            if (paused) abandonAudioFocus()
-            else requestAudioFocus()
+            if (paused) stopAudioOutput()
+            else startAudioOutput()
         } }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
@@ -449,13 +454,13 @@ class EngineService : Service() {
                     continue
                 }
                 if (count > 0) synchronized(audioGuard) { audioObservations.samples(samples, 0, count, false) }
-                if (count > 0 && focus != null && !focusPaused && !userPaused && !stopping.get()) {
+                if (count > 0 && audioOn && !focusPaused && !userPaused && !stopping.get()) {
                     try {
                         val spec = Native.audioInfo()
                         require(spec[0] > 0 && spec[1] in 1..2) { "Invalid guest audio format" }
                         val next = spec.joinToString()
                         synchronized(audioGuard) {
-                            if (!audioGuard.isCurrent(packetEpoch) || focus == null || focusPaused || userPaused || stopping.get()) {
+                            if (!audioGuard.isCurrent(packetEpoch) || !audioOn || focusPaused || userPaused || stopping.get()) {
                                 audioObservations.discardedReadPackets++; audioObservations.discardedReadSamples += count
                                 return@synchronized
                             }
@@ -473,7 +478,7 @@ class EngineService : Service() {
                             var offset = 0
                             // A positive short write retains the unwritten tail. Stop,
                             // pause and focus loss are checked before each retry.
-                            while (offset < count && audioGuard.isCurrent(packetEpoch) && alive.get() && focus != null && !focusPaused && !userPaused && !stopping.get()) {
+                            while (offset < count && audioGuard.isCurrent(packetEpoch) && alive.get() && audioOn && !focusPaused && !userPaused && !stopping.get()) {
                                 val requested = count - offset
                                 val written = audio!!.write(samples, offset, requested, AudioTrack.WRITE_BLOCKING)
                                 audioObservations.writeCalls++; audioObservations.lastWriteCode = written
@@ -540,7 +545,7 @@ class EngineService : Service() {
         putBundle("audio", synchronized(audioGuard) { audioObservations.snapshot().apply {
             putLong("packetGeneration", audioGuard.currentGeneration()); putBoolean("packetAdmissionOpen", audioGuard.admissionOpen())
         } })
-        putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioFocusHeld", focus != null)
+        putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioOutputOn", audioOn)
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
         putLong("buttonRejections", buttonRejections.get())
@@ -567,39 +572,22 @@ class EngineService : Service() {
         })
     }
     private fun audioAttributes() = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
-    private fun requestAudioFocus() { lifecycleAdmission.run {
+    /**
+     * Guest audio starts with the guest and mixes with whatever else plays: LightTouch requests no audio focus, so
+     * music or a video playing in the background carries on, and another app's audio never pauses the guest.
+     */
+    private fun startAudioOutput() { lifecycleAdmission.run {
         if (userPaused || stopping.get()) return@run
-        if (focus != null) { playAudio(); return@run }
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(audioAttributes())
-            .setOnAudioFocusChangeListener({ change -> lifecycleAdmission.run {
-                if (change < 0) {
-                    focusPaused = true
-                    pauseAudio()
-                    synchronized(audioGuard) { audioObservations.focusLosses++ }
-                    Native.cancelInput(); Native.pause(true)
-                    if (change == AudioManager.AUDIOFOCUS_LOSS) abandonAudioFocus()
-                } else if (change == AudioManager.AUDIOFOCUS_GAIN && focusPaused && !userPaused && !stopping.get()) {
-                    focusPaused = false
-                    synchronized(audioGuard) { audioObservations.focusGains++ }
-                    Native.pause(false); playAudio()
-                }
-            } }, Handler(mainLooper)).build()
-        if (audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            synchronized(audioGuard) {
-                // Resume the retained track before the audio thread sees focus.
-                // Backgrounding pauses it without changing the PCM format.
-                audio?.play()
-                audioGuard.resume()
-                focus = request
-            }
-        }
-        else {
-            synchronized(audioGuard) { audioObservations.focusDenied++ }
-            focusPaused = true; pauseAudio(); Native.cancelInput(); Native.pause(true)
-            audioError = "Audio focus unavailable. Pause and resume after other audio stops."
+        if (audioOn) { playAudio(); return@run }
+        synchronized(audioGuard) {
+            // Resume the retained track before the audio thread sees it on.
+            // Backgrounding pauses it without changing the PCM format.
+            audio?.play()
+            audioGuard.resume()
+            audioOn = true
         }
     } }
-    private fun abandonAudioFocus() { lifecycleAdmission.run { focus?.let { audioManager.abandonAudioFocusRequest(it) }; focus = null } }
+    private fun stopAudioOutput() { lifecycleAdmission.run { audioOn = false } }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("guest", "Running guest", NotificationManager.IMPORTANCE_LOW))
@@ -607,5 +595,5 @@ class EngineService : Service() {
         startForeground(1, Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("LightTouch guest").setContentText("Tap to return; Stop ends this worker").setContentIntent(launch).setOngoing(true).build())
     }
-    override fun onDestroy() { detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); abandonAudioFocus(); super.onDestroy() }
+    override fun onDestroy() { detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); super.onDestroy() }
 }

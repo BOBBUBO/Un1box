@@ -65,6 +65,10 @@ class FirmwareService : Service() {
      * (adoptPrepared: no pack-base, no copy, no second hash). The IPSW is only read.
      */
     private fun prepare(firmwareId: String, ipsw: String, tools: File, bootrom: String) {
+        // Preparation boots iOS (the keybag, the first start) against timeouts: the CPU stays awake while the phone
+        // locks or the user switches away. The foreground service only keeps the process alive, not the CPU running.
+        val awake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LightTouch:preparation")
+        awake.acquire(60 * 60 * 1000L)
         val libs = File(applicationInfo.nativeLibraryDir)
         val cache = File(cacheDir, "firmwarekit")
         val out = File(destination)
@@ -87,6 +91,7 @@ class FirmwareService : Service() {
             writable(out); out.deleteRecursively()
         } finally {
             process = null
+            if (awake.isHeld) awake.release()
             // Decrypted firmware is only worth keeping for another build of the same IPSW; it is large.
             cache.deleteRecursively()
         }

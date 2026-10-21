@@ -408,29 +408,16 @@ class GuestMediaLifecycleTest {
                             .setOnAudioFocusChangeListener({ }, Handler(Looper.getMainLooper())).build()
                         competingFocus = focus
                         assertEquals(AudioManager.AUDIOFOCUS_REQUEST_GRANTED, manager.requestAudioFocus(focus))
-                        awaitState("paused"); assertTrue(snapshot("focus-lost").getBoolean("focusPaused"))
+                        // Guest audio mixes with other apps' and holds no focus: another app taking it pauses nothing.
+                        Thread.sleep(1000); assertEquals("running", snapshot("focus-taken-elsewhere").getString("state"))
+                        assertFalse(snapshot("focus-taken-elsewhere").getBoolean("focusPaused"))
                         manager.abandonAudioFocusRequest(focus); competingFocus = null
-                        awaitState("running"); assertFalse(snapshot("focus-restored").getBoolean("focusPaused"))
                         if (heldFocus) {
-                            val restored = worker.status(); val old = requireNotNull(heldStatus); val priorInput = requireNotNull(heldInput)
-                            assertEquals("Display owner changed; this did not isolate audio-focus cancellation", old.getLong("displayInputOwner"), restored.getLong("displayInputOwner"))
-                            assertTrue("Full cancellation did not advance the native generation", restored.getLong("displayInputGeneration") > old.getLong("displayInputGeneration"))
-                            assertArrayEquals("View callbacks already cancelled contacts; this did not exercise unnotified focus cancellation", intArrayOf(7, 23), input().getIntArray("androidContactIds"))
-                            capture("focus-restored-before-continuation")
-                            val requests = restored.getBundle("observations")!!.getLong("inputRequests")
-                            touch(MotionEvent.ACTION_MOVE, intArrayOf(7, 23))
-                            val cancelled = input()
-                            assertArrayEquals(intArrayOf(), cancelled.getIntArray("androidContactIds"))
-                            assertTrue(cancelled.getBoolean("awaitingNewDown"))
-                            assertEquals(priorInput.getLong("expectedCancellationBatches") + 1, cancelled.getLong("expectedCancellationBatches"))
-                            assertEquals(priorInput.getLong("rejectedBatches"), cancelled.getLong("rejectedBatches"))
+                            // Nothing cancelled the held contacts either.
+                            assertArrayEquals(intArrayOf(7, 23), input().getIntArray("androidContactIds"))
                             touch(MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), intArrayOf(7, 23))
                             touch(MotionEvent.ACTION_UP, intArrayOf(7))
-                            assertEquals("Old continuations reached native input admission", requests, worker.status().getBundle("observations")!!.getLong("inputRequests"))
-                            touch(MotionEvent.ACTION_DOWN, intArrayOf(7)); touch(MotionEvent.ACTION_UP, intArrayOf(7))
-                            assertArrayEquals(intArrayOf(), input().getIntArray("androidContactIds"))
-                            assertEquals("Fresh DOWN/UP was not admitted", requests + 2, worker.status().getBundle("observations")!!.getLong("inputRequests"))
-                            Thread.sleep(500); snapshot("focus-fresh-down-reused"); capture("focus-fresh-down-reused")
+                            capture("focus-held-kept")
                             result.put("heldFocusHostChecksPassed", true)
                         }
                     }

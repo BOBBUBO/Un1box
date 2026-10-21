@@ -98,12 +98,22 @@ internal class StoreModel(private val context: Context, private val muxSocket: (
     private fun background(name: String, work: () -> Unit) = Thread(work, name).start()
     private fun post(work: () -> Unit) = handler.post(work)
 
-    /** Target from the selected device record, until a running guest reports its own. */
-    fun useRecord(next: StoreTarget?) {
+    /** The device record the store is for: the installed apps and the confirmed target are that device's alone. */
+    private var recordId = ""
+
+    /**
+     * Target from the selected device record, until a running guest reports its own. Another record starts over,
+     * even of the same model: two iPod touch 2Gs on different iOS versions have different apps.
+     */
+    fun useRecord(id: String, next: StoreTarget?) {
+        if (id != recordId) { recordId = id; installed = emptyMap(); targetConfirmed = false; target = null; results = emptyList(); chosen = null }
         if (next == target || (targetConfirmed && next?.productType == target?.productType)) return
         target = next; targetConfirmed = false; results = emptyList(); chosen = null
         if (next != null) search()
     }
+
+    /** Another guest (or none) is behind the usbmux socket: what the last one reported no longer holds. */
+    fun guestChanged() { installed = emptyMap(); targetConfirmed = false }
 
     /** Ask the running guest for its exact model and iOS version, and which apps it already has. */
     fun refreshGuest() {
@@ -114,6 +124,7 @@ internal class StoreModel(private val context: Context, private val muxSocket: (
                 val exact = apps.target(socket)
                 val list = apps.installed(socket)
                 post {
+                    if (muxSocket() != socket) return@post  // a different guest answered by now
                     installed = list
                     if (exact != target) { target = exact; targetConfirmed = true; search() } else targetConfirmed = true
                 }

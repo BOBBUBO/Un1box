@@ -47,7 +47,8 @@ internal fun HitchInspector(data: HitchData?, loadError: String?, onResume: () -
                 IconButton(onClick = onResume, modifier = Modifier.testTag("hitch_close")) { Icon(Icons.Filled.Close, "Close and resume") }
                 Column(Modifier.weight(1f)) {
                     Text("Frame inspector", style = MaterialTheme.typography.titleLarge)
-                    Text("Guest paused", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(listOfNotNull(data?.appName?.takeIf { it.isNotEmpty() }, "Guest paused").joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 FilledTonalButton(onClick = onResume, modifier = Modifier.padding(end = 8.dp).testTag("hitch_resume")) {
                     Icon(LtIcons.Play, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Resume")

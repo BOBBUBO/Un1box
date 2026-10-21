@@ -91,7 +91,7 @@ internal fun DockButton(icon: ImageVector, label: String, onClick: () -> Unit, m
 internal fun ErrorBanner(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     AnimatedVisibility(message.isNotEmpty(), modifier) {
         var expanded by remember(message) { mutableStateOf(false) }
-        Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(14.dp),
+        Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(14.dp), shadowElevation = 6.dp,
             modifier = Modifier.fillMaxWidth().testTag("session_error").clickable { expanded = !expanded }) {
             Row(Modifier.padding(start = 14.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.Top) {
                 Icon(Icons.Filled.Warning, null, Modifier.size(18.dp).padding(top = 1.dp), tint = MaterialTheme.colorScheme.onErrorContainer)

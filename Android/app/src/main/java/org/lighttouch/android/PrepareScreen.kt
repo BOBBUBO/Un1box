@@ -44,7 +44,9 @@ internal class PrepareState {
     /** Copying and checking an IPSW the user chose; empty when idle. */
     var ipswChecking by mutableStateOf("")
     var ipswError by mutableStateOf("")
+    /** A boot ROM whose bytes matched [romFor]'s, and where it came from. */
     var romPath by mutableStateOf("")
+    var romFor by mutableStateOf<Bootrom?>(null)
     var romLabel by mutableStateOf("")
     var romChecking by mutableStateOf(false)
     var romError by mutableStateOf("")
@@ -56,7 +58,9 @@ internal class PrepareState {
     var showBetas by mutableStateOf(false)
     val firmware get() = catalog.firstOrNull { it.id == firmwareId }
     val ipswReady get() = ipswPath.isNotEmpty() && ipswFor == firmwareId
-    val romReady get() = firmware?.let { !needsBootrom(it.board) } == true || romPath.isNotEmpty()
+    /** The boot ROM [firmware]'s device starts from; null when it starts from its prepared files. */
+    val bootrom get() = firmware?.let { Bootrom.forBoard(it.board) }
+    val romReady get() = firmware != null && (bootrom == null || (romPath.isNotEmpty() && romFor == bootrom))
     /** This phone builds [firmware] from its IPSW; the others are added as a copy prepared elsewhere. */
     val preparesHere get() = firmware?.id?.let { it in supported } == true
 }
@@ -206,8 +210,9 @@ private fun VersionStep(state: PrepareState) {
         if (group.isEmpty()) continue
         SectionLabel(support.label)
         Text(support.detail, Modifier.padding(bottom = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        for (firmware in group) {
-            val detail = released(firmware) + if (firmware.id in state.supported) "" else "\nPrepared on a computer, then added here"
+        for (firmware in group.sortedBy { it.id != recommendedFirmware }) {
+            val detail = (if (firmware.id == recommendedFirmware) "Recommended · " else "") + released(firmware) +
+                if (firmware.id in state.supported) "" else "\nPrepared on a computer, then added here"
             ChoiceRow(null, "iOS ${firmware.label}", detail, true, "prepare_version_${firmware.id}") {
                 state.firmwareId = firmware.id; state.step = PrepareStep.FILES
             }
@@ -293,9 +298,12 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onDownload
             }
         }
     }
-    // Boot file
-    if (needsBootrom(firmware.board)) Card(icon = LtIcons.Chip, title = "Boot file", done = state.romReady,
-        detail = if (state.romReady) state.romLabel else "The $name's boot ROM (64 KB). It is part of the chip, not the IPSW.") {
+    // Boot file: which one the device starts from, always shown.
+    val rom = state.bootrom
+    if (rom == null) Card(icon = LtIcons.Chip, title = "Boot file", done = true,
+        detail = "None needed. The $name starts from the files preparation makes.") {}
+    else Card(icon = LtIcons.Chip, title = "Boot file · ${rom.label} boot ROM", done = state.romReady,
+        detail = if (state.romReady) state.romLabel else "64 KB, part of the chip rather than the IPSW. The same for every iOS version.") {
         when {
             state.romReady -> TextButton(onClick = onChooseRom, enabled = !busy) { Text("Use a different file") }
             state.romChecking -> LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -307,7 +315,7 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onDownload
                     }
                     OutlinedButton(onClick = onChooseRom, enabled = !busy, modifier = Modifier.testTag("prepare_choose_rom")) { Text("Choose a file") }
                 }
-                Text("Downloads come from securerom.fun's archive of boot ROM dumps, or its GitHub copy.", Modifier.padding(top = 8.dp),
+                Text("Downloads come from ${rom.sources}, and must match the ${rom.label} boot ROM exactly.", Modifier.padding(top = 8.dp),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

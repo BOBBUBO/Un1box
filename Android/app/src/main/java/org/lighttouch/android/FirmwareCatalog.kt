@@ -41,7 +41,10 @@ internal enum class Support(val label: String, val detail: String) {
 }
 
 /** Firmwares that pass LightTouch's compatibility runs on Android (docs/COMPATIBILITY.md). */
-internal val testedFirmwares = setOf("n72ap-7E18", "n81ap-10B500")
+internal val testedFirmwares = setOf("n72ap-7E18", "n72ap-8C148", "n81ap-10B500")
+
+/** The firmware to pick first: the fastest and most complete on phones. */
+internal const val recommendedFirmware = "n72ap-7E18"
 
 /** Tested firmwares that run noticeably slower than the iPod touch 2G on iOS 3.1.3, the one to pick first. */
 internal val slowFirmwares = setOf("n81ap-10B500")
@@ -66,18 +69,23 @@ internal object FirmwareCatalog {
     }
 }
 
-/** Whether a device needs its boot ROM to start (the iPod touch 2G does; it is not in the IPSW). */
-internal fun needsBootrom(board: String) = board == "n72ap"
-
 /**
- * The iPod touch 2G's SecureROM (S5L8720, iBoot-240.4) is mask ROM in the chip, not part of any IPSW.
- * securerom.fun publishes dumps, from the GitHub repository behind it when the site is down; this
- * one is byte-identical to upstream LightTouchMac's bootrom_240_4, and a download must match it.
+ * A SecureROM a device starts from: mask ROM in the chip, the same for every iOS version and never part of an IPSW.
+ * The iPod touch 1G and the original iPhone share the S5L8900's, the iPod touch 2G has the S5L8720's (iBoot-240.4);
+ * the later devices start from their prepared files and need none. securerom.fun and devos50's qemu-ios releases
+ * publish dumps; a download or a chosen file must be these exact bytes (upstream LightTouchMac's bootrom files).
  */
-internal object BootromDownload {
-    private const val PATH_240_4 = "resources/APROM/SecureROM%20for%20s5l8720xsi%2C%20iBoot-240.4"
-    private val links = listOf("https://securerom.fun/$PATH_240_4", "https://github.com/hekapooios/hekapooios.github.io/raw/master/$PATH_240_4")
-    const val SHA256_240_4 = "55f4d8ea2791ba51dd89934168f38f0fb21ce8762ff614c1e742407c0d3ca054"
+internal enum class Bootrom(val label: String, val sha256: String, private val links: List<String>) {
+    S5L8720("iBoot-240.4", "55f4d8ea2791ba51dd89934168f38f0fb21ce8762ff614c1e742407c0d3ca054", listOf(
+        "https://securerom.fun/resources/APROM/SecureROM%20for%20s5l8720xsi%2C%20iBoot-240.4",
+        "https://github.com/hekapooios/hekapooios.github.io/raw/master/resources/APROM/SecureROM%20for%20s5l8720xsi%2C%20iBoot-240.4",
+        "https://github.com/devos50/qemu-ios/releases/download/n72ap_v1/bootrom_240_4")),
+    S5L8900("S5L8900", "220027d6f8ea24603f8c5ad5e920ab553d85a9cd809d79c7e6f6f0eefdc2bc95", listOf(
+        "https://github.com/devos50/qemu-ios/releases/download/n45ap_v1/bootrom_s5l8900")),
+    ;
+    /** Where downloads come from, for the prepare screen. */
+    val sources get() = links.map { URL(it).host }.distinct().joinToString(" or ")
+    fun matches(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) } == sha256
 
     /** Downloads the boot ROM to [target]; blocking, so call it off the main thread. */
     fun fetch(target: File) {
@@ -90,8 +98,7 @@ internal object BootromDownload {
                     check(connection.responseCode == 200) { "HTTP ${connection.responseCode}" }
                     connection.inputStream.use { it.readBytes() }
                 } finally { connection.disconnect() }
-                val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-                check(digest == SHA256_240_4) { "the file did not match" }
+                check(matches(bytes)) { "the file did not match" }
                 val partial = File(target.path + ".partial"); partial.writeBytes(bytes)
                 check(partial.renameTo(target)) { "could not save it" }
                 return
@@ -99,7 +106,19 @@ internal object BootromDownload {
         }
         error(failure)
     }
+
+    companion object {
+        /** The ROM [board] starts from, or null when it starts from its prepared files. */
+        fun forBoard(board: String) = when (board) {
+            "n72ap" -> S5L8720
+            "n45ap", "m68ap" -> S5L8900
+            else -> null
+        }
+    }
 }
+
+/** Whether a device needs its boot ROM to start (Bootrom.forBoard). */
+internal fun needsBootrom(board: String) = Bootrom.forBoard(board) != null
 
 /**
  * Downloads a stock IPSW: the link ipsw.me (api.ipsw.me/v4) lists for the build, then the catalog's

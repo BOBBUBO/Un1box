@@ -161,10 +161,13 @@ private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () 
         Spacer(Modifier.height(8.dp))
         FileRow(LtIcons.Folder, "Choose a folder", state.scanned ?: "LightTouch finds the files in it", null, onPickFolder, "setup_folder", action = true)
         FileRow(LtIcons.Layers, "iOS system", "Required · .itbase", state.system, onPickSystem, "setup_system")
-        // Only the iPod touch 2G boots from a boot ROM; a system known to be for another device needs none.
+        // Only the iPod touch 1G and 2G and the original iPhone boot from a boot ROM; a system known to be for
+        // another device needs none.
         val board = state.system?.board ?: ""
-        if (board.isEmpty() || needsBootrom(board)) FileRow(LtIcons.Chip, "Boot file", "Required for iPod touch 2G · bootrom.bin", state.rom, onPickRom, "setup_rom")
-        if (state.system != null && state.rom == null && (board.isEmpty() || needsBootrom(board))) Text("Without the boot file the iPod touch 2G will not start; you can still add it now.",
+        val rom = Bootrom.forBoard(board)
+        if (board.isEmpty() || rom != null) FileRow(LtIcons.Chip, "Boot file",
+            rom?.let { "Required · the ${it.label} boot ROM" } ?: "Required for iPod touch 1G and 2G, and the original iPhone · bootrom.bin", state.rom, onPickRom, "setup_rom")
+        if (state.system != null && state.rom == null && rom != null) Text("Without the boot file this device will not start; you can still add it now.",
             style = MaterialTheme.typography.bodySmall, color = LtColors.Warning, modifier = Modifier.padding(top = 4.dp))
         Spacer(Modifier.height(16.dp))
         OutlinedTextField(state.name, { if (fitsDeviceName(it)) state.name = it }, Modifier.fillMaxWidth().testTag("setup_name"), singleLine = true,

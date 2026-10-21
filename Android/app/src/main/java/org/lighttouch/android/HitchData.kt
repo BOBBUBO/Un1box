@@ -28,7 +28,9 @@ internal data class SlowEvent(val startNs: Long, val endNs: Long, val kind: Even
 
 /** Everything the hitch inspector shows, loaded from one hitch snapshot directory. */
 internal class HitchData(val directory: File, val frames: List<HitchFrame>, val breakdown: List<FrameBreakdown>,
-                         val events: List<SlowEvent>, val snapshotNs: Long, val detailed: Boolean, val engineLog: String) {
+                         val events: List<SlowEvent>, val snapshotNs: Long, val detailed: Boolean, val engineLog: String,
+                         /** The iOS app in front when the inspector opened ("" when the guest could not say). */
+                         val appName: String = "", val bundleId: String = "") {
     val startNs get() = frames.firstOrNull()?.publishedNs ?: snapshotNs
     val endNs get() = maxOf(frames.lastOrNull()?.publishedNs ?: snapshotNs, snapshotNs.coerceAtMost((frames.lastOrNull()?.publishedNs ?: 0) + 2_000_000_000L))
 
@@ -56,7 +58,8 @@ internal class HitchData(val directory: File, val frames: List<HitchFrame>, val 
             val breakdown = ArrayList<FrameBreakdown>()
             val events = ArrayList<SlowEvent>()
             if (detailed) readEvents(File(directory, "events.tsv"), snapshotNs - WINDOW_NS, breakdown, events)
-            return HitchData(directory, frames, breakdown, events, snapshotNs, detailed, snapshot.getString("engineLog") ?: "")
+            return HitchData(directory, frames, breakdown, events, snapshotNs, detailed, snapshot.getString("engineLog") ?: "",
+                snapshot.getString("appName") ?: "", snapshot.getString("bundleId") ?: "")
         }
 
         /** Parse the tail of a profile capture (at most 24 MiB) into per-frame deltas and slow events. */
@@ -125,7 +128,10 @@ internal data class RangeStats(val frames: Int, val seconds: Float, val avgFps: 
 internal fun saveHitchReport(context: Context, data: HitchData, from: Long, to: Long): Uri {
     val stats = RangeStats.of(data.framesIn(from, to))
     val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(java.util.Date())
-    val name = "lighttouch-hitch-$stamp.zip"
+    // Named for the app it measured, so reports from different games tell apart at a glance.
+    val app = data.appName.ifEmpty { data.bundleId.substringAfterLast('.') }
+        .replace(Regex("[^A-Za-z0-9]+"), "-").trim('-').take(40)
+    val name = "lighttouch-hitch-${if (app.isEmpty()) "" else "$app-"}$stamp.zip"
     val values = ContentValues().apply {
         put(MediaStore.Downloads.DISPLAY_NAME, name); put(MediaStore.Downloads.MIME_TYPE, "application/zip")
         put(MediaStore.Downloads.RELATIVE_PATH, "Download/LightTouch"); put(MediaStore.Downloads.IS_PENDING, 1)
@@ -138,6 +144,8 @@ internal fun saveHitchReport(context: Context, data: HitchData, from: Long, to: 
             entry("summary.txt") { out -> out.write(buildString {
                 appendLine("LightTouch hitch report  ${java.util.Date()}")
                 appendLine("Android ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, LightTouch ${BuildConfig.VERSION_NAME}")
+                appendLine("App in front: " + if (data.appName.isEmpty() && data.bundleId.isEmpty()) "unknown (the guest tools did not answer)"
+                    else "${data.appName} (${data.bundleId})")
                 appendLine("Selection: ${String.format(Locale.ROOT, "%.3f", (from - data.startNs) / 1e9)} s to ${String.format(Locale.ROOT, "%.3f", (to - data.startNs) / 1e9)} s of the timeline (CLOCK_MONOTONIC $from..$to)")
                 appendLine(String.format(Locale.ROOT, "Frames %d over %.2f s: average %.1f fps (%.2f ms), 1%% low %.1f fps, worst %.1f ms, %d frames over 50 ms",
                     stats.frames, stats.seconds, stats.avgFps, stats.avgMs, stats.lowFps, stats.worstMs, stats.hitches))

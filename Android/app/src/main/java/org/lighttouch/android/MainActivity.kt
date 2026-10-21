@@ -208,13 +208,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                                 it.getBoolean("runtimeDiagnosticsAvailable") && it.getLong("engineReady") != 0L && it.getLong("displaySleeping") != 0L
                             } ?: false
                             val reportedError = b.getString("profileError")?.takeIf { it.isNotEmpty() } ?: b.getString("error") ?: ""
-                            if (reportedError.isNotEmpty() || status == "running") error = reportedError
+                            if (reportedError != dismissedError) dismissedError = ""
+                            if (reportedError.isNotEmpty() || status == "running") error = if (reportedError == dismissedError) "" else reportedError
                             workerPid = b.getInt("pid")
                             profileRecording = b.getBoolean("profileRecording"); profileAutomatic = b.getBoolean("profileAutomatic")
                             profileNotice = b.getString("profileNotice") ?: ""
                             sessionOwned = b.getBoolean("sessionStarted")
                             val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
-                            if (socket != muxSocket) { muxSocket = socket; if (socket.isNotEmpty() && overlay == Screen.STORE) store.refreshGuest() }
+                            if (socket != muxSocket) { muxSocket = socket; store.guestChanged(); if (socket.isNotEmpty() && overlay == Screen.STORE) store.refreshGuest() }
                             appServicesError = b.getString("appServicesError") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
@@ -288,7 +289,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 firmwareTargets = catalog.associate { "${it.board}-${it.build}" to StoreTarget.of(it.productType, it.version) }
                 // firmwarekit prepares every catalog firmware; an APK built without it only adds copies prepared elsewhere.
                 val supported = if (File(applicationInfo.nativeLibraryDir, "libfirmwarekit.so").canExecute()) catalog.map { it.id }.toSet() else emptySet()
-                handler.post { prep.catalog = catalog; prep.supported = supported; catalogVersion++; if (overlay == Screen.STORE) store.useRecord(recordTarget()); if (engine != null) refreshDevices() }
+                handler.post { prep.catalog = catalog; prep.supported = supported; catalogVersion++; if (overlay == Screen.STORE) store.useRecord(selectedRecordId(), recordTarget()); if (engine != null) refreshDevices() }
             } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
         }, "store-targets").start()
         bindWorker()
@@ -360,7 +361,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     }
 
     // GuestHost: the screens' requests.
-    override fun dismissError() { error = "" }
+    /** The message the user dismissed: the worker goes on reporting it each poll, and it stays hidden until it changes. */
+    private var dismissedError = ""
+    override fun dismissError() { dismissedError = error; error = "" }
     override fun start() = startGuest()
     override fun recover() = startGuest(coldRecovery = true)
     override fun stop() = stopGuest()
@@ -424,12 +427,17 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val worker = engine ?: return
         if (status !in listOf("running", "paused")) return
         hitchResume = status == "running"
-        if (hitchResume) setPaused(true)
         hitchData = null; hitchError = null; hitchNotice = null; hitchReport = null
         overlay = Screen.HITCH
+        val running = hitchResume
         Thread({
             try {
-                val data = HitchData.load(worker.hitchSnapshot())
+                // The app in front, for the report's name: the guest tools answer only while the guest runs, so ask
+                // before pausing it.
+                val app = if (running) try { worker.frontmostApp() } catch (_: RemoteException) { null } else null
+                if (running) handler.post { if (overlay == Screen.HITCH) setPaused(true) }
+                val snapshot = worker.hitchSnapshot().apply { app?.let { putAll(it) } }
+                val data = HitchData.load(snapshot)
                 handler.post { if (overlay == Screen.HITCH) hitchData = data }
             } catch (e: Exception) { handler.post { hitchError = e.message ?: "Frame history unavailable" } }
         }, "hitch-snapshot").start()
@@ -611,15 +619,26 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (firmwareBound) { unbindService(firmwareConnection); firmwareBound = false }
         firmwareBound = bindService(Intent(this, FirmwareService::class.java), firmwareConnection, BIND_AUTO_CREATE)
     }
-    /** A boot ROM already on this phone for [board]: another device's, or the one earlier builds kept in files/. */
+    /**
+     * A boot ROM already on this phone for [board]'s chip: another device's, or the one earlier builds kept in files/.
+     * Each candidate's bytes are checked (64 KB), so the label says which ROM the preparation will use.
+     */
     private fun findBootrom(board: String) {
-        if (prep.romPath.isNotEmpty() && File(prep.romPath).isFile) return
-        val record = records.firstOrNull { it.getString("board") == board && it.getBoolean("bootromAvailable") &&
-            File(filesDir, "library/records/${it.getString("id")}/assets/bootrom.bin").isFile }
-        when {
-            record != null -> { prep.romPath = File(filesDir, "library/records/${record.getString("id")}/assets/bootrom.bin").absolutePath; prep.romLabel = "Reusing the one from ${record.getString("name")}. It is the same for every iOS version." }
-            File(filesDir, "bootrom.bin").isFile && board == "n72ap" -> { prep.romPath = File(filesDir, "bootrom.bin").absolutePath; prep.romLabel = "Reusing the saved one. It is the same for every iOS version." }
-        }
+        val rom = Bootrom.forBoard(board) ?: return
+        if (prep.romFor == rom && prep.romPath.isNotEmpty() && File(prep.romPath).isFile) return
+        prep.romPath = ""; prep.romFor = null; prep.romLabel = ""
+        val candidates = records.filter { Bootrom.forBoard(it.getString("board") ?: "") == rom && it.getBoolean("bootromAvailable") }
+            .map { File(filesDir, "library/records/${it.getString("id")}/assets/bootrom.bin") to "Reusing the one from ${it.getString("name")}" } +
+            listOf(File(filesDir, "bootrom.bin") to "Reusing the saved one")
+        Thread({
+            val found = candidates.firstOrNull { (file, _) -> file.isFile && file.length() <= (1L shl 20) && rom.matches(file.readBytes()) }
+            if (found != null) handler.post {
+                if (prep.firmware?.let { Bootrom.forBoard(it.board) } == rom && prep.romFor == null) {
+                    prep.romPath = found.first.absolutePath; prep.romFor = rom
+                    prep.romLabel = "${found.second} (${rom.label}). It is the same for every iOS version."
+                }
+            }
+        }, "find-bootrom").start()
     }
     @Composable
     private fun PrepareOverlay() {
@@ -704,7 +723,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val worker = engine
         val destination = requireNotNull(state.getString("destination")); preparedImported = destination; busy = true; preparedImportInFlight = true
         prep.importPhase = ""; prep.importProgress = -1f
-        val chosen = prep.firmware; val rom = prep.romPath; val ipsw = prep.ipswPath
+        val chosen = prep.firmware; val ipsw = prep.ipswPath
+        // Only the boot ROM this device starts from: one picked for another device stays out of its record.
+        val rom = if (prep.bootrom != null && prep.romReady) prep.romPath else ""
         val board = chosen?.board ?: prep.firmwareId.substringBefore('-'); val build = chosen?.build ?: prep.firmwareId.substringAfter('-')
         val before = records.mapNotNull { it.getString("id") }.toSet()
         Thread({
@@ -782,27 +803,28 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }, "stock-ipsw-import").start()
     }
     private fun downloadBootrom() {
+        val rom = prep.bootrom ?: return
         prep.romChecking = true; prep.romError = ""
         Thread({
             try {
-                val target = File(filesDir, "prepare-bootrom.bin")
-                BootromDownload.fetch(target)
-                handler.post { prep.romPath = target.absolutePath; prep.romLabel = "Downloaded · iBoot-240.4"; prep.romChecking = false }
+                val target = File(filesDir, "prepare-bootrom-${rom.name.lowercase()}.bin")
+                rom.fetch(target)
+                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "Downloaded · ${rom.label}"; prep.romChecking = false }
             } catch (e: Exception) { handler.post { prep.romError = "Could not download the boot file: ${e.message}"; prep.romChecking = false } }
         }, "bootrom-download").start()
     }
     private fun importPrepRom(uri: Uri) {
+        val rom = prep.bootrom ?: return
         Thread({
             try {
-                val target = File(filesDir, "prepare-bootrom.bin")
+                val target = File(filesDir, "prepare-bootrom-${rom.name.lowercase()}.bin")
                 contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } } ?: error("Cannot read the boot file")
                 require(target.length() in 1..(1L shl 20)) { "That file is not a boot ROM" }
-                // The chip's mask ROM: every good dump is these bytes, and preparation boots it (the iOS 4 keybag).
-                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(target.readBytes()).joinToString("") { "%02x".format(it) }
-                require(digest == BootromDownload.SHA256_240_4) { "That file is not the iPod touch 2G boot ROM (iBoot-240.4)" }
+                // The chip's mask ROM: every good dump is these bytes, and the device boots it.
+                require(rom.matches(target.readBytes())) { "That file is not the ${rom.label} boot ROM" }
                 val name = displayName(uri)
-                handler.post { prep.romPath = target.absolutePath; prep.romLabel = name }
-            } catch (e: Exception) { handler.post { error = e.message ?: "Could not use that boot file" } }
+                handler.post { prep.romPath = target.absolutePath; prep.romFor = rom; prep.romLabel = "$name · ${rom.label}" }
+            } catch (e: Exception) { handler.post { prep.romError = e.message ?: "Could not use that boot file" } }
         }, "prepare-bootrom").start()
     }
     private fun refreshDevices(afterDelete: Boolean = false) {
@@ -1053,10 +1075,11 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }
     }
     private fun recordTarget(): StoreTarget? = records.firstOrNull { it.getBoolean("selected") }?.let { firmwareTargets["${it.getString("board")}-${it.getString("build")}"] }
+    private fun selectedRecordId() = records.firstOrNull { it.getBoolean("selected") }?.getString("id") ?: ""
     private fun openStore() {
         overlay = Screen.STORE
         store.close(); store.dismissJob() // Reopen on the search, not a finished install's details.
-        store.useRecord(recordTarget())
+        store.useRecord(selectedRecordId(), recordTarget())
         if (muxSocket.isNotEmpty()) store.refreshGuest()
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit

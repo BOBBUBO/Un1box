@@ -59,6 +59,11 @@ internal class ProfileCapture(private val context: android.content.Context, priv
         return reply
     }
 
+    /** The iOS app in front (bundle id, display name), or null when the guest tools cannot say. */
+    fun frontmostIdentity(): Pair<String, String>? = try {
+        frontmostApp()[2].trimEnd().lines().takeIf { it.size >= 2 && it[1].isNotBlank() }?.let { it[0] to it[1] }
+    } catch (_: Exception) { null }
+
     /** The capture's events file while one is recording. */
     @Synchronized fun currentEvents(): File? = directory?.let { File(it, "events.tsv") }
     @get:Synchronized val automatic get() = metadata?.optBoolean("automatic") == true

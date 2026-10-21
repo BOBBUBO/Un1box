@@ -46,7 +46,6 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
             listOf(MaterialTheme.colorScheme.primary.copy(alpha = if (dark) 0.07f else 0.10f), Color.Transparent))))
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             TopBar(host)
-            ErrorBanner(host.error, host::dismissError, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
                 DeviceFrame(DeviceSkin.forBoard(host.selected?.board), enabled = host.running, button = host::button,
                     screen = { modifier -> GuestScreen(host, guestSurface, modifier, overlayScale = 0.85f, inDeviceView = true) },
@@ -56,6 +55,9 @@ internal fun HomeScreen(host: GuestHost, guestSurface: @Composable (Modifier) ->
             AnimatedVisibility(host.active, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) { Dock(host) { confirmStop = true } }
             if (!host.active) Spacer(Modifier.height(16.dp))
         }
+        // Floats over the device under the top bar, so a message never resizes the guest screen.
+        ErrorBanner(host.error, host::dismissError, Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(start = 16.dp, end = 16.dp, top = 64.dp))
         // For automation (tools/perf): the raw session state as text.
         Text(host.status, Modifier.align(Alignment.TopStart).size(1.dp).testTag("session_status"), color = Color.Transparent, fontSize = 1.sp)
     }
