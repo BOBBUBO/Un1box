@@ -129,7 +129,7 @@ Performance results go in [PERFORMANCE.md](PERFORMANCE.md).
 - [x] Rewrite [ASSETS.md](ASSETS.md) easiest route first: `tools/get-assets.py` (downloads the
   upstream app ZIP and unpacks it on any OS, including guest.aar's LZFSE Apple Archive), then by
   hand, then IPSW preparation. `--verified-tools` makes the folder IPSW preparation needs
-  (Linux `lighttouch-prepare` verified with it).
+  (the n72-only `lighttouch-prepare` was verified with it; `firmwarekit` replaced it).
 - [x] Boot the bases `get-assets.py` unpacks. LightTouchMac prepares them with `aes-uid=hardware`
   (its NOR wraps the SHSH with iBoot's encrypting UID derivation), and the v0.0.5 engine accepted only
   `engine` or `legacy`, so every port failed at engine start with "aes-uid must be 'engine' or

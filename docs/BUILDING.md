@@ -50,8 +50,8 @@ tracked). The defaults are the development machine's paths.
 | `LT_INPUTS` | `~/Documents/LightTouch-Development/port-workspace/builds` | prebuilt inputs: `backend/deps/arm64-v8a/prefix` and `backend/deps-linux/prefix` (glib, pixman and the rest), plus `backend/crypto/*` (gcrypt), built by qemu-ios `contrib/portable/build-deps.py` and `build-crypto-deps.py` (see that directory's README); `mobile-android/arm64-v8a` (the USB bridge helpers `libusbmuxd_qemu.so` and `liblt_appservice.so`, from `Android/packaging/build-mobile-android.py`); `graphics/angle-android-arm64-gl-build-01/candidate-01` (ANGLE for arm64, with its ELF closure and notices); `product/frontend-inputs-15` (the frontend notice bundle). The APK build checks the ANGLE and frontend bundles against the SHA-256 pins in the script. |
 | `LT_ENGINE_KIT` | `~/Documents/LightTouch-Development/perf/engine-api29/arm64-v8a` | the NDK's `libc++_shared.so`, the engine notice bundle and a fallback `portable-manifest.json`, which go next to an Android engine |
 | `ANDROID_HOME`, `ANDROID_NDK_VERSION`, `JAVA_HOME` | `~/Android/Sdk`, `28.2.13676358`, JDK 17 | Android SDK, NDK and JDK (`Android/README.md` lists the pinned tool versions) |
-| `LT_XPWN` | `~/.hermes/cache/scratch/lighttouchwin-xpwn` | the XPwn source the firmware tools build from |
-| `LT_GUEST_TOOLS` | `build/guest-package` | the `armv6.itpack` and `armv7.itpack` the APK carries (`-PguestToolsDir`); new devices get the matching one, and IPSW preparation takes its guest files from `armv6.itpack` |
+| `LT_SWIFT_ENV`, `LT_SWIFT_ANDROID_SDK` | `~/.local/share/swiftly/env.sh`, `swift-6.4.1-RELEASE_android` (target `aarch64-unknown-linux-android29`) | Swift 6.4.1 (swiftly) and the Swift SDK for Android that `firmwarekit` and `firmwarekit-android` build with. The SDK's static runtime needs NDK r30's libc++; relink the bundle to NDK r30 (`setup-android-sdk.sh`) |
+| `LT_GUEST_TOOLS` | `build/firmware-tools` | the guest tools the APK carries (`-PguestToolsDir`): `armv6.itpack` and `armv7.itpack`, which new devices get, and the helpers IPSW preparation installs (`it_seal` and the rest; `scripts/build.sh firmware-tools` on the Mac) |
 | `LT_MAC` | unset | `user@host` of a Mac for `guest-package` and `ltbench` |
 | `LT_MAC_DEVELOPER_DIR`, `LT_MAC_IPAD_SDK` | Xcode.app; `~/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk` on the Mac | see the Mac below |
 | `JOBS` | `nproc` | parallel jobs |
@@ -99,7 +99,7 @@ scripts/build-release.sh 0.0.8 finish publish           # checksums into the not
 
 | Step | Output in `out/` | How |
 | --- | --- | --- |
-| `android` | `LightTouch-vX-android-arm64.apk` | `scripts/build.sh android` from the worktree, `LT_DEBUGGABLE=false`, with `$LT_GUEST_TOOLS`; checked non-debuggable and versioned |
+| `android` | `LightTouch-vX-android-arm64.apk` | `scripts/build.sh android` from the worktree, `LT_DEBUGGABLE=false`, with the guest tools and firmwarekit; checked non-debuggable and versioned |
 | `windows` | `LightTouch-vX-Windows-x86_64.zip` | `Windows/tools/build-engine.sh` (MinGW engine and FFmpeg), then `scripts/release/package-windows.py` |
 | `linux` | `LightTouch-vX-Linux-x86_64.AppImage` | `scripts/release/linux-inner.sh` in the Debian 11 Docker image `$LT_LINUX_IMAGE` (engine, frontend, ctest, runtime), then `Linux/packaging/seal-appimage.py` |
 | `macos` | `LightTouch-vX-macOS-arm64.zip` | on `$LT_MAC`: fetches both commits from GitHub, `macOS/build-engine.py`, `macOS/build-shared.py`, `ditto` |
@@ -107,6 +107,6 @@ scripts/build-release.sh 0.0.8 finish publish           # checksums into the not
 
 A run skips steps already done; name a step to run it again. The prebuilt inputs (dependency
 prefixes, the MinGW sysroot, the Windows Python/Tk runtime and helper, the Mac's Python runtime and
-LightTouchMac app) are variables at the top of the script, settable in `scripts/build.env`. Not
-covered: a guest-tools rebuild (`guest-package` above; point `LT_GUEST_TOOLS` at the result) and the
-iPod touch 4G build. `Android/BUILD-AND-RUN.md` has the sealed two-ABI Android recipe.
+LightTouchMac app) are variables at the top of the script, settable in `scripts/build.env`. The `android`
+step builds the guest tools from the release's engine on `$LT_MAC` (`firmware-tools`) unless
+`LT_GUEST_TOOLS` names a folder, and `firmwarekit-android` with the local Swift SDK for Android. `Android/BUILD-AND-RUN.md` has the sealed two-ABI Android recipe.

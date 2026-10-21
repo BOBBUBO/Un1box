@@ -1,105 +1,44 @@
 # LightTouch
 
-LightTouch runs classic iPhone OS and iOS in an emulator on **Android, Linux,
-Windows and macOS**. This fork extends
-[LightTouchMac](https://github.com/samhenrigold/LightTouchMac) around the shared
-[qemu-ios engine](https://github.com/blake-lucas/qemu-ios).
+LightTouch runs classic iPhone OS and iOS in an emulator on **Android, Linux, Windows and macOS**. It is a fork of [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac), built around a shared [qemu-ios engine](https://github.com/blake-lucas/qemu-ios).
 
-The desktop ports share one device-library/setup UI and the same guest-window
-controls. Android uses a touch-oriented UI. Prepared systems can be reused by
-several saved devices, each with its own writable storage.
+The desktop ports share one device library and setup UI. Android has its own touch UI. A prepared iOS system can back several saved devices, each with its own storage.
 
-[Download v0.0.1 — provisional alpha](https://github.com/blake-lucas/LightTouch/releases/tag/v0.0.1).
-Working features and test coverage differ by platform; this is an early
-development release with the qualification limits below.
+[Download the latest pre-release](https://github.com/blake-lucas/LightTouch/releases) (v0.0.8). These are early builds: what works differs by platform, as listed below.
 
 ## Current platforms
 
-| Platform | Build | Current status |
+| Platform | Build | Status |
 | --- | --- | --- |
-| Android | APK; ARM64 and x86_64, Android 10+ | Real guest boot, graphics, input and audio exercised on Poco and Pixel hardware. Complete lifecycle, concurrent media and 4/16 KiB compatibility acceptance is ongoing. |
-| Linux | x86_64 AppImage | Guest boot, input, accelerated graphics and audio exercised, including a Radeon desktop. Local IPA installation works; Legacy Store HTTPS trust/logging fixes are included. |
-| Windows | x86_64 ZIP | Shared UI boot/render/audio, shutdown and startup status user-tested. Legacy Store guest installation user-confirmed through the shared Apps window. Packed NAND import is user-confirmed. Local IPA services are implemented; wider acceptance is ongoing. |
-| macOS | Apple Silicon app ZIP | Shared desktop UI and native host compile/package successfully. Shared guest execution and Apps services remain unqualified. Current packaged dependencies require macOS 26. |
+| Android | APK, ARM64 (Android 10+) | The main test platform, on a Poco F3 and a Pixel 10. Prepares devices from an IPSW on the phone. Graphics, audio, touch, tilt, the Legacy Store and IPA installs work. |
+| Linux | x86_64 AppImage | Boot, input, accelerated graphics, audio, the Legacy Store and IPA installs work. Prepares devices with `firmwarekit` from the command line. |
+| Windows | x86_64 ZIP | Boot, graphics, audio and Legacy Store installs confirmed by users. Cannot prepare devices yet: copy a prepared `.itbase` from another computer. |
+| macOS | Apple Silicon app ZIP | The shared desktop UI builds and packages. Guest services are not yet fully checked. Needs macOS 26. Upstream's [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac/releases) is the tested Mac app. |
 
-Intel macOS and 32-bit Android hosts are not qualified. Virtual devices supplement
-physical testing; their graphics drivers do not reproduce every phone GPU.
+## Devices
+
+| Device | iOS | Status |
+| --- | --- | --- |
+| iPod touch 2G | 3.1.3 | **Tested**: the main target, fastest. Games such as Flight Control and Jetpack Joyride run at or near 60 fps on recent phones. |
+| iPod touch 4G | 6.1.6 | **Tested, slow**: starts and runs on Linux and Android; slower than the 2G. |
+| Others in the [firmware catalog](Portable/firmware/firmware-catalog.json) | iPhone OS 1 to iOS 7 | Can be prepared and tried; not yet checked on LightTouch. [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) records what has been run. |
 
 ## Getting started
 
-Use the supplied platform development package: launch the Linux AppImage, install
-the Android APK, extract the Windows ZIP and run `LightTouch.cmd`, or extract the
-macOS ZIP and open its app. Release downloads include checksums, install notes and component revisions.
-Detailed build logs are retained in the development workspace.
-Upstream notarized macOS releases remain available from
-[LightTouchMac releases](https://github.com/samhenrigold/LightTouchMac/releases).
+Install or unpack the build for your platform. You also need an iOS system for it to run. The [asset guide](docs/ASSETS.md) covers both routes:
 
-Firmware and prepared guest assets are supplied separately from these port
-packages. Follow the step-by-step [asset guide](docs/ASSETS.md) to obtain a
-`.itbase`, matching guest tools and boot file from public upstream releases or
-preparation tools. The app checks hashes automatically.
+- **Prepare one from Apple's IPSW.** On Android, tap **Add a device › Prepare from an IPSW**, pick the device and iOS version, and the app downloads the IPSW and prepares it on the phone (the iPod touch 2G takes about a minute). On Linux and macOS, `firmwarekit` does the same. Every platform uses the same preparer ([Portable/firmware](Portable/firmware/README.md)).
+- **Use an already prepared system** (`.itbase`), for example the one `tools/get-assets.py` takes from upstream's Mac app, along with its guest tools (`armv6.itpack` or `armv7.itpack`) and, for the iPod touch 2G, its boot ROM.
 
-Start with a compatible prepared system:
+Then start the device. Use the on-screen Home, Power and volume buttons, and **Stop** to shut iOS down cleanly. Each device keeps its own storage, and the prepared system is never changed.
 
-1. Import the prepared system's `.itbase` archive.
-2. Select the matching guest-tools `.itpack`: ARMv6 for the iPod touch 2G/n72,
-   ARMv7 for the iPod touch 4G/n81.
-3. Supply board-specific boot assets when requested. The n72 route needs its
-   matching SecureROM; a prepared n81 system boots through its included
-   `kboot.bin` and needs no separate hardware boot ROM.
-4. Save the configuration and start it. Use the virtual Home, Power, volume,
-   Pause/Resume, rotation and screenshot controls in the desktop guest window.
-5. Use **Stop** and wait for confirmed shutdown before closing. Saved devices
-   keep independent writable state; the prepared base remains immutable.
+## Performance
 
-The desktop **New from selected** action creates a fresh device configuration
-using the same imported system, without copying another device's saves. Existing
-saved configurations can be selected without choosing all their files again.
-See [Linux setup](Linux/launcher/README.md),
-[Android build/run notes](Android/BUILD-AND-RUN.md) and
-[shared desktop documentation](Desktop/README.md) for platform details.
-
-## Firmware and performance
-
-The main exercised baseline is **iPod touch 2G, iOS 3.1.3 (n72ap-7E18)**. A
-prepared iPod touch 4G/iOS 4.2.1 route is also present, with further qualification
-in progress. Upstream's broader
-[firmware catalog](Portable/firmware/firmware-catalog.json) and device list
-are preparation references, not verified compatibility claims for these ports.
-A selected firmware/device matrix covering iPhone OS/iOS 1–7 is planned; betas
-and untested preparation routes are outside the current cohort.
-
-Guest CPUs currently run through **QEMU TCG dynamic translation**. Hardware
-virtualization is not an implemented guest CPU backend. Host graphics acceleration
-is used by the supported rendering paths. The persistent translation-cache
-experiment remains **disabled and unqualified** on Linux and Android; no
-cross-session speed improvement is claimed. The performance display measures the
-host QEMU worker and host memory, not CPU/RAM use inside iOS. Gyroscope support
-is deferred and unqualified.
-
-Legacy Store search/download and local IPA installation share desktop service
-code. Linux has the working service route. Windows now bundles and connects its
-native providers, and Windows Legacy Store guest installation is user-confirmed.
-macOS provider integration and guest service acceptance remain unfinished.
+Guests run through QEMU's TCG dynamic translation; there is no hardware virtualization of the guest CPU. Much of this fork's engine work is speed: cross-page chaining, indirect-branch caches, fewer big-lock waits, and a faster OpenGL ES path. The history and measurements are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). On Android the vCPU is kept on the phone's fast cores. The performance overlay shows host-side engine load and memory, not CPU use inside iOS.
 
 ## Building and contributing
 
-Both maintained forks use **`main`**. Start with the coordinated desktop entrypoint:
-
-```sh
-python3 Desktop/build.py --matrix
-```
-
-[Desktop/README.md](Desktop/README.md) documents Linux AppImage, shared Windows
-staging and native macOS build/package recipes. Builds use the appropriate
-platform toolchains and explicit dependency inputs. Android currently uses its
-[Gradle/native build route](Android/BUILD-AND-RUN.md). See also
-[Linux packaging](Linux/packaging/README.md) and
-[macOS shared host](macOS/SharedDesktop/README.md).
-
-[CONTRIBUTING.md](CONTRIBUTING.md) covers the repository layout, firmware preparation, tests and style. Compile/package success is distinct from
-actual guest acceptance. Use focused checks for changed behavior, preserve
-working saves and retain failed test evidence.
+`scripts/build.sh` builds the engine, the Linux frontend, the Android APK, `firmwarekit` and (on a Mac, over ssh) the guest tools; `scripts/build-release.sh` builds a release for all four platforms. Windows and macOS app builds run through `Desktop/build.py` on their own hosts. [docs/BUILDING.md](docs/BUILDING.md) covers the inputs, and [CONTRIBUTING.md](CONTRIBUTING.md) the repository layout, firmware preparation, tests and style. Development happens on `dev/*` branches of this repository and the engine; releases come from `main`.
 
 ## License and credits
 
@@ -112,7 +51,7 @@ It builds on [LightTouchMac](https://github.com/samhenrigold/LightTouchMac),
 [devos50's qemu-ios](https://github.com/devos50/qemu-ios),
 [libimobiledevice](https://libimobiledevice.org), libusbmuxd, libplist, libtatsu,
 the upstream usbmuxd fork, iBoot32Patcher, FFmpeg, GLib, libslirp, PCRE2, pixman,
-OpenSSL and Unrar.swift with RARLAB's UnRAR. Preserve each package's bundled
+OpenSSL, Swift and its Foundation, swift-crypto, ZIPFoundation and Unrar.swift with RARLAB's UnRAR. Preserve each package's bundled
 license and source notices.
 
 iPhone, iPod touch and iPad are trademarks of Apple Inc. LightTouch is not

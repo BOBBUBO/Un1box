@@ -9,7 +9,7 @@ this fork started from has been removed; the macOS port is the shared desktop UI
 
 | Path | What |
 |---|---|
-| `Portable/` | The shared C/C++ base: runtime, storage, library, guest package and screenshot code, plus `firmware/` (the firmware preparer, `lighttouch-prepare`, and the shared `firmware-catalog.json`) |
+| `Portable/` | The shared C/C++ base: runtime, storage, library, guest package and screenshot code, plus `firmware/` (the shared `firmware-catalog.json`; the preparer is `Packages/FirmwareKit`) |
 | `Desktop/` | The shared Tk/SDL desktop UI (`lighttouch_desktop`, `ui`), the SDL window (`native/`), app services, and the `build.py` dispatcher over `targets.json` |
 | `Linux/`, `Windows/`, `macOS/`, `Android/` | One directory per port: its host, packaging recipes and port-specific tests |
 | `Package.swift` | The macOS SwiftPM build: `LightTouchDesktopHost` (`macOS/SharedHost`), `LightTouchSharedDesktopMac` (`macOS/SharedDesktop`) and `LightTouchDevice`, the per-device engine helper |
@@ -27,8 +27,8 @@ this fork started from has been removed; the macOS port is the shared desktop UI
 ## Firmwares in the catalog
 
 The shared [firmware catalog](Portable/firmware/firmware-catalog.json) is the source of truth for builds,
-availability, keys and preparation recipes. `lighttouch-prepare` (see [Portable/firmware/README.md](Portable/firmware/README.md))
-and the Swift CLI both read it:
+availability, keys and preparation recipes. `firmwarekit`, the preparer every port uses (see [Portable/firmware/README.md](Portable/firmware/README.md)),
+reads it:
 
 ```sh
 firmwarekit create --catalog Portable/firmware/firmware-catalog.json \
@@ -133,7 +133,7 @@ those two places; its firmware is catalog entries, and preparing it is a Firmwar
 
 ## Rules
 
-- **No Python bridge in the preparer.** `firmwarekit` and `lighttouch-prepare` are native; qemu-ios's Python `imgtools/` is the test oracle, not a runtime.
+- **No Python bridge in the preparer.** `firmwarekit` is native; qemu-ios's Python `imgtools/` is the test oracle, not a runtime.
 - **Activation is maintained separately.** FirmwareKit runs it as a built-in preparation step
   (`Packages/FirmwareKit/Sources/CActivation`, `tools/activation/`). Treat it as a black box.
 - **No firmware in any repo.** IPSWs, decrypted components, NAND images, SDKs and prepared devices stay outside the repositories.

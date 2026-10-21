@@ -102,59 +102,32 @@ existing device yet.
 
 ## 5. Prepare a system from an IPSW instead
 
-Preparation turns Apple's stock firmware into an emulator-ready system. Importing a stock
-IPSW in the iOS system picker does **not** do this. Android needs nothing else: the app carries
-its own guest tools. The other routes need the upstream guest tools folder: make it with
-`python3 tools/get-assets.py --verified-tools`.
+Preparation turns Apple's stock firmware into an emulator-ready system. Importing a stock IPSW in the iOS system picker does **not** do this. Every port prepares with the same tool, `firmwarekit` ([Portable/firmware](../Portable/firmware/README.md)), for any device and iOS version in the [firmware catalog](../Portable/firmware/firmware-catalog.json).
 
-| Host | n72ap-7E18 (iPod touch 2G, iOS 3.1.3) | n81ap-10B500 (iPod touch 4G, iOS 6.1.6) |
-| --- | --- | --- |
-| Android | In-app: **Prepare from an IPSW** | Prepare on a Mac, then add the folder in the app |
-| Linux | `lighttouch-prepare` (build it from [Portable/firmware](../Portable/firmware/README.md)) | Prepare on a Mac, then **Choose folder…** |
-| macOS | Upstream app's **Add Device**, or its bundled `firmwarekit` | Same, then **Choose folder…** |
-| Windows | Use one of the others, then copy the `.itbase` | Prepare on a Mac, then **Choose folder…** |
+| Host | How |
+| --- | --- |
+| Android | In-app: **Prepare from an IPSW** |
+| Linux | `firmwarekit create`, then **Choose folder…** on the packed `.itbase` |
+| macOS | Upstream app's **Add Device**, or `firmwarekit` (its bundled copy or `scripts/build.sh firmwarekit`), then **Choose folder…** |
+| Windows | Not yet: prepare on another computer, then copy the `.itbase` |
 
-The stock n72 input is `iPod2,1_3.1.3_7E18_Restore.ipsw` (SHA-1 and size are checked
-against the [firmware catalog](../Portable/firmware/firmware-catalog.json)). Apple
-never hosted this update publicly and ipsw.me does not list it; the Internet Archive's
-[iOS Firmware Exhibit Collection](https://archive.org/download/iOS_Firmware_Exhibit_Collection)
-has it, and nearly every other IPSW the catalog names.
+**Android:** in **Add a device** (or Settings), tap **Prepare from an IPSW**, choose the device, then the iOS version. **Download** fetches the IPSW (from the link ipsw.me lists, else the catalog's mirrors and the Internet Archive) and checks it against the catalog; **Choose a file** uses one already on the phone. The iPod touch 2G also needs its boot file: it comes from another device on the phone when one has it, or **Download** fetches it from securerom.fun (GitHub as the fallback), checked against its SHA-256. **Prepare device** shows each step with a progress bar; the device is added when it finishes. On a Poco F3 the iPod touch 2G on iOS 3.1.3 takes about a minute; the iPod touch 4G on iOS 6.1.6 takes several minutes, because preparation starts iOS once so its first-start setup is done.
 
-The n72 boot file is the S5L8720's SecureROM (iBoot-240.4), mask ROM in the chip: no IPSW contains
-it. [securerom.fun](https://securerom.fun) publishes dumps (also in its GitHub repository,
-`hekapooios/hekapooios.github.io`, under `resources/APROM/`); its "s5l8720xsi, iBoot-240.4" file is
-byte-identical to upstream's `bootrom_240_4` (SHA-256 `55f4d8ea…ca054`).
-
-**Android:** in **Add a device** (or Settings), tap **Prepare from an IPSW**, choose the device,
-then the iOS version. **Download** fetches the IPSW (from the link ipsw.me lists, else the
-catalog's mirrors and the Internet Archive) and checks it against the catalog; **Choose a file**
-uses one already on the phone. The boot file comes from another device on the phone when one has
-it, or **Download** fetches it from securerom.fun (GitHub as the fallback), checked against its
-SHA-256. **Prepare device** takes under a minute on a recent phone and needs about 1.5 GB free;
-the device is added and selected when it finishes.
-
-Every device and iOS version in the catalog can be chosen, marked **Tested** (checked on LightTouch
-for Android), **Tested, slow** (works, but slower than the iPod touch 2G on 3.1.3), **Experimental** (passes upstream's Mac checks) or **Untested**. Only n72ap-7E18
-prepares on the phone so far. For the others the app shows the `firmwarekit` commands for a Mac
-(below); copy the packed `.itbase` folder to the phone and tap **Choose the folder**, or use **Add a
-device › Choose a folder**. The iPod touch 4G on iOS 6.1.6 (`n81ap-10B500`) starts this way.
+Every device and iOS version in the catalog can be chosen, marked **Tested** (checked on LightTouch for Android), **Tested, slow** (works, but slower than the iPod touch 2G on 3.1.3), **Experimental** (passes upstream's Mac checks) or **Untested**.
 
 **Linux:**
 
 ```sh
-python3 tools/get-assets.py --verified-tools
-lighttouch-prepare Portable/firmware/firmware-catalog.json n72ap-7E18 \
-  iPod2,1_3.1.3_7E18_Restore.ipsw \
-  LightTouch-assets/verified-tools/release-guest-unpacked/guest-tools \
-  LightTouch-assets/verified-tools/inventory.json \
-  n72ap-7E18-prepared
+scripts/build.sh linux firmwarekit
+build/firmwarekit/linux/firmwarekit create --catalog Portable/firmware/firmware-catalog.json \
+  --id n81ap-10B500 --ipsw iPod4,1_6.1.6_10B500_Restore.ipsw --out n81ap-10B500 \
+  --helper build/firmwarekit/linux/lighttouch-oneshot --guest-tools GUEST-TOOLS
+build/firmwarekit/linux/firmwarekit pack-base --base n81ap-10B500 --out n81ap-10B500.itbase
 ```
 
-The output folder must not exist yet. Load it with **Add a device › Choose a folder** (Android) or
-pack it with the upstream `firmwarekit pack-base` to get an `.itbase`.
+`lighttouch-oneshot` loads `build/linux/libqemu-arm.so` (or set `LTM_QEMU_DYLIB`). `GUEST-TOOLS` is the folder of guest tools preparation installs (`armv6.itpack`, `armv7.itpack`, `it_seal`, …): build it on a Mac with `scripts/build.sh firmware-tools`, or copy `assets/guest-tools` out of a LightTouch APK. On a desktop PC the iPod touch 2G takes about 35 seconds and the 4G about 5½ minutes.
 
-**macOS, and the n81 route:** in the upstream app use **Add Device** for the board and
-build (n81 is marked experimental upstream), or run its bundled tool directly:
+**macOS:** in the upstream app use **Add Device** for the board and build, or run its bundled tool directly:
 
 ```sh
 APP="/Applications/Light Touch.app"
@@ -163,9 +136,7 @@ APP="/Applications/Light Touch.app"
 "$APP/Contents/MacOS/firmwarekit" pack-base --base n81ap-10B500-prepared --out n81ap-10B500.itbase
 ```
 
-n81 uses `armv7.itpack` (`get-assets.py --armv7`) and **no** boot file: its prepared system
-boots from its own `kboot.bin`. See upstream's
-[preparation notes](https://github.com/samhenrigold/LightTouchMac/blob/v1.0-2026.10.15b/CONTRIBUTING.md#firmwares-in-the-catalog).
+The iPod touch 2G's IPSW is `iPod2,1_3.1.3_7E18_Restore.ipsw`. Apple never hosted this update publicly and ipsw.me does not list it; the Internet Archive's [iOS Firmware Exhibit Collection](https://archive.org/download/iOS_Firmware_Exhibit_Collection) has it, and nearly every other IPSW the catalog names. Its boot file is the S5L8720's SecureROM (iBoot-240.4), mask ROM in the chip: no IPSW contains it. [securerom.fun](https://securerom.fun) publishes dumps (also in its GitHub repository, `hekapooios/hekapooios.github.io`, under `resources/APROM/`); its "s5l8720xsi, iBoot-240.4" file is byte-identical to upstream's `bootrom_240_4` (SHA-256 `55f4d8ea…ca054`). The iPod touch 4G needs **no** boot file: its prepared system boots from its own `kboot.bin`. See upstream's [preparation notes](https://github.com/samhenrigold/LightTouchMac/blob/v1.0-2026.10.15b/CONTRIBUTING.md#firmwares-in-the-catalog).
 
 ## File types
 
@@ -185,9 +156,7 @@ package"). A record keeps the guest tools it was imported with until they are re
 tools" on a stopped device; on Linux, `lighttouch-linux --library LIB --record ID --set-guest-package
 ITPACK`. A newer serial installs over the existing system at the next boot, keeping apps and data.
 
-Storage note: the importers, and on-phone preparation, store n72 NAND as one indexed file
-(ITNAND01). Alpha builds do not
-migrate old library layouts; keep the original `.itbase` so you can re-import.
+Storage note: alpha builds do not migrate old library layouts; keep the original `.itbase` so you can re-import.
 
 Use firmware you are entitled to use, and keep firmware, ROMs and personal guest data out
 of public bug reports and repositories.

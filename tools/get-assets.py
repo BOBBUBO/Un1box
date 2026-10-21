@@ -309,7 +309,7 @@ def main():
     ap.add_argument('--armv7', action='store_true', help='also write armv7.itpack (iPod touch 4G guest tools)')
     ap.add_argument('--verified-tools', action='store_true',
                     help='also unpack all of guest.aar into OUT/verified-tools with an inventory.json, '
-                         'the folder that IPSW preparation (Android "Verified tools", Linux lighttouch-prepare) reads')
+                         '(upstream\'s guest helpers as released)')
     ap.add_argument('--any-zip', action='store_true', help='accept a ZIP that is not the checked upstream release')
     ap.add_argument('--list-aar', metavar='AAR', help='list the entries of a guest.aar and exit')
     a = ap.parse_args()

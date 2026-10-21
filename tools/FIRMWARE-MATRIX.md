@@ -158,7 +158,7 @@ public uploads. Store only distributable source/tooling in Git.
 ## Remaining portable routes and qualification
 
 `Linux/launcher/model.py` and `Portable/src/Storage.cpp` currently admit n72/n81
-only. `Portable/firmware/src/firmware.cpp` prepares only n72ap-7E18. Thus the selected k48/n45/n90
+only. Preparation is now firmwarekit for every route (2026-10-20); Thus the selected k48/n45/n90
 routes still need typed portable boot/storage/identity/package admission and
 appropriate host adapters. N81 later-major packages and services also require
 version-specific validation, beyond the existing 4.2.1 reference. Collecting a base does not implement
