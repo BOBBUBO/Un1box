@@ -54,6 +54,8 @@ public enum FirmwareCommand {
         public var jailbreak = false
         @Flag(help: "Hashes the store before its boots too, for the lock's built_listing_sha256 (reproducibility checks).")
         public var builtListing = false
+        @Option(help: "The iPod touch 2G's SecureROM (iBoot-240.4), for its keybag boot (default: the app bundle's).")
+        public var bootrom: String? = nil
 
         public init() {}
         public init(
@@ -101,7 +103,7 @@ public enum FirmwareCommand {
                     "entry": entry, "catalog": catalog, "id": id, "ipsw": ipsw, "out": out, "seed": seed,
                     "helper": helper, "cache": cache, "guest-tools": guestTools, "sibling-entry": siblingEntry,
                     "sibling-ipsw": siblingIpsw, "stop-after": stopAfter?.rawValue,
-                    "language": language, "keyboards": keyboards,
+                    "language": language, "keyboards": keyboards, "bootrom": bootrom,
                 ]) + (glTest ? ["--gl-test"] : []) + (skipSetup ? ["--skip-setup"] : [])
                 + (jailbreak ? ["--jailbreak"] : []) + (builtListing ? ["--built-listing"] : [])
         }

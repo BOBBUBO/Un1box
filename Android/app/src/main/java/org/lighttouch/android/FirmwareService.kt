@@ -30,7 +30,7 @@ class FirmwareService : Service() {
         override fun supports(firmwareId: String): Boolean =
             File(applicationInfo.nativeLibraryDir, "libfirmwarekit.so").canExecute() &&
                 FirmwareCatalog.load(this@FirmwareService).any { it.id == firmwareId }
-        override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String): Bundle {
+        override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String, bootromPath: String): Bundle {
             check(consumed.compareAndSet(false, true)) { "A fresh firmware worker is required" }
             foreground()
             currentFirmwareId = firmwareId
@@ -38,7 +38,7 @@ class FirmwareService : Service() {
             val parent = File(filesDir, "prepared").apply { mkdirs() }
             val job = java.lang.Long.toHexString(SystemClock.uptimeMillis())
             destination = File(parent, "job-$job").absolutePath
-            Thread({ prepare(firmwareId, ipswPath, File(trustedToolsRoot)) }, "firmwarekit").start()
+            Thread({ prepare(firmwareId, ipswPath, File(trustedToolsRoot), bootromPath) }, "firmwarekit").start()
             return status()
         }
         override fun status(): Bundle = Bundle().apply {
@@ -64,7 +64,7 @@ class FirmwareService : Service() {
      * create into `destination`, the device folder the engine worker then moves into its library as it is
      * (adoptPrepared: no pack-base, no copy, no second hash). The IPSW is only read.
      */
-    private fun prepare(firmwareId: String, ipsw: String, tools: File) {
+    private fun prepare(firmwareId: String, ipsw: String, tools: File, bootrom: String) {
         val libs = File(applicationInfo.nativeLibraryDir)
         val cache = File(cacheDir, "firmwarekit")
         val out = File(destination)
@@ -75,7 +75,9 @@ class FirmwareService : Service() {
                 "--helper", File(libs, "liblighttouch_oneshot.so").path, "--guest-tools", tools.path, "--cache", cache.path,
                 "--language", Locale.getDefault().toLanguageTag(),
                 // iOS 5 and later start at the Home screen, not Setup Assistant (ignored before 5, which has none)
-                "--skip-setup"))
+                "--skip-setup") +
+                // the iPod touch 2G's keybag boot (iOS 4) runs its SecureROM, which no IPSW carries
+                (if (bootrom.isNotEmpty()) listOf("--bootrom", bootrom) else emptyList()))
             // create's own lease and boot logs; the device is the rest
             File(out, "work").let { writable(it); it.deleteRecursively() }
             done = total

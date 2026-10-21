@@ -224,6 +224,10 @@ final class GDBRemote {
             if ok {
                 var tv = timeval(tv_sec: 120, tv_usec: 0)  // `c` waits for iBoot to reach the kernel
                 setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+                // Each packet is answered, then acked by a separate "+": without TCP_NODELAY, Linux's Nagle and
+                // delayed ACKs cost ~40 ms a packet, ~11 min for a 16 MB ramdisk (past the boot's timeout).
+                var on: Int32 = 1
+                setsockopt(s, Int32(IPPROTO_TCP), TCP_NODELAY, &on, socklen_t(MemoryLayout<Int32>.size))
                 fd = s
                 return
             }

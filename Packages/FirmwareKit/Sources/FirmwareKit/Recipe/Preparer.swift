@@ -78,6 +78,8 @@ public enum Preparer {
         public var language: String?
         /// The device's keyboards (`create --keyboards`, SystemEdits.Options.keyboards); nil: the Mac's.
         public var keyboards: [String]?
+        /// The iPod touch 2G's SecureROM, for its keybag boot (`create --bootrom`); nil: N72Board.bootromPath's.
+        public var bootrom: URL?
         public init(
             entry: FirmwareEntry,
             ipsw: URL,

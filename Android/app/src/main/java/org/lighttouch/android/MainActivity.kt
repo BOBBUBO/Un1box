@@ -644,8 +644,12 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val chosen = prep.firmware ?: return
         if (!prep.ipswReady || !prep.romReady) return
         val worker = firmware ?: run { pendingFirmwareStart = true; firmwareRestarting = true; bindFirmware(); return }
-        if (prep.preparation?.getBoolean("consumed") == true || prep.preparation?.getString("state") in listOf("failed", "cancelled")) { restartFirmwareForPreparation(); return }
+        // Ask the worker, not prep.preparation: Back clears that, and a spent worker would refuse start while its
+        // status went on reporting the earlier run (its error and firmware id) as this one's.
+        val spent = try { worker.status().getBoolean("consumed") } catch (_: RemoteException) { true }
+        if (spent) { restartFirmwareForPreparation(); return }
         val selectedIpsw = prep.ipswPath
+        val selectedRom = if (needsBootrom(chosen.board)) prep.romPath else ""
         prep.importError = ""
         prep.preparation = Bundle().apply { putString("state", "starting"); putString("firmwareId", chosen.id) }
         startForegroundService(Intent(this, FirmwareService::class.java))
@@ -653,7 +657,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 // firmwarekit bakes the APK's own guest helpers and packages into the system.
                 val tools = GuestTools.firmwareTools(this)
-                val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath)
+                val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath, selectedRom)
                 handler.post { prep.preparation = state }
             } catch (e: Exception) { handler.post { prep.preparation = Bundle().apply { putString("state", "failed"); putString("error", e.message ?: "Cannot start preparation"); putBoolean("consumed", true) } } }
         }, "prepare-start").start()

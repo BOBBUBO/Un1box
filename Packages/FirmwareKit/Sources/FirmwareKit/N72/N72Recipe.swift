@@ -85,7 +85,7 @@ final class N72Board: Board {
     func check(_ c: Recipe.Context) throws {
         let fm = FileManager.default
         helper = c.o.helper
-        bootrom = Self.bootromPath(helper: helper)
+        bootrom = c.o.bootrom.flatMap { fm.fileExists(atPath: $0.path) ? $0 : nil } ?? Self.bootromPath(helper: helper)
         if dataProtection {
             guard let helper, fm.isExecutableFile(atPath: helper.path) else {
                 throw FirmwareError(
@@ -96,7 +96,7 @@ final class N72Board: Board {
             guard bootrom != nil else {
                 throw FirmwareError(
                     .internal,
-                    "the keybag boot needs the iPod bootrom (bootrom_240_4) next to the helper"
+                    "the keybag boot needs the iPod touch 2G's boot ROM (iBoot-240.4): --bootrom, or bootrom_240_4 next to the helper"
                 )
             }
             guard fm.fileExists(atPath: c.o.guestTools.appendingPathComponent(itKeybag).path) else {
