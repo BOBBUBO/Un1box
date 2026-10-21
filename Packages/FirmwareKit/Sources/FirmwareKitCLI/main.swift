@@ -148,6 +148,7 @@ default:  // the root alone, or help
             }
         )
         options.stopAfterVolumes = command.stopAfter == .volumes
+        options.builtListing = command.builtListing
         options.language = command.language
         options.keyboards = command.keyboards.map { $0.split(separator: ",").map(String.init) }
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)

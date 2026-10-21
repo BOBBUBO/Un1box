@@ -7,7 +7,7 @@
 //
 // Shared here: the IPSW sha1 and Restore.plist checks, the decrypt cache (versioned immutable entries with a validated manifest),
 // the seed name ("<board.seedPrefix>-<build>-default"), the step/progress events, the read-only outputs, the
-// store listing hashes (built_listing_sha256 before any boot, listing_sha256 after) and the lock, whose
+// store listing hashes (listing_sha256; built_listing_sha256 before any boot, opt-in) and the lock, whose
 // board-specific keys are merged in from `board.lock`. Helper file names and cache paths derive from
 // `board.arch` (SystemEdits.Helpers.name, SystemEdits.dyldCache).
 
@@ -191,10 +191,13 @@ public enum Recipe {
             return
         }
 
-        step()  // the store, and its listing before any boot writes into it (the lock's built_listing_sha256)
+        step()  // the store; with --built-listing, its listing before any boot writes into it
         try await board.store(c)
-        c.built = try Preparer.nandListing(c.nand, files: try nandFiles(c.nand)).sha256
-        c.log("store as built: listing sha256 \(c.built)")
+        let boots = board.dataProtection || board.needsSeal
+        if o.builtListing && boots {
+            c.built = try Preparer.nandListing(c.nand, files: try nandFiles(c.nand)).sha256
+            c.log("store as built: listing sha256 \(c.built)")
+        }
 
         if board.dataProtection {
             step()  // 4.x data protection: effaceable + system keybag from the IPSW's own ramdisk
@@ -249,7 +252,7 @@ public enum Recipe {
                 "seed": c.seed, "udid": ident.udid ?? "",
                 "sha256": try Preparer.digest(c.file("identity.json"), SHA256()),
             ],
-            "outputs": ["nand": ["path": "nand", "listing_sha256": c.listing, "built_listing_sha256": c.built]],
+            "outputs": ["nand": ["path": "nand", "listing_sha256": c.listing, "built_listing_sha256": boots ? opt(c.built.isEmpty ? nil : c.built) : c.listing]],
             "guest_package": opt(c.guestPackage?.object),
             "fit": c.fit.object,
         ]

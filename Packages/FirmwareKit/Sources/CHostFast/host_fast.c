@@ -2,8 +2,12 @@
 #include "CHostFast.h"
 
 #if defined(__linux__)
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <sched.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +29,13 @@ typedef struct evp_md_st EVP_MD;
 extern const EVP_MD *EVP_sha1(void);
 extern unsigned char *HMAC(const EVP_MD *, const void *, int, const unsigned char *, size_t, unsigned char *,
                            unsigned int *);
+typedef struct evp_md_ctx_st EVP_MD_CTX;
+extern const EVP_MD *EVP_sha256(void);
+extern EVP_MD_CTX *EVP_MD_CTX_new(void);
+extern void EVP_MD_CTX_free(EVP_MD_CTX *);
+extern int EVP_DigestInit_ex(EVP_MD_CTX *, const EVP_MD *, void *);
+extern int EVP_DigestUpdate(EVP_MD_CTX *, const void *, size_t);
+extern int EVP_DigestFinal_ex(EVP_MD_CTX *, unsigned char *, unsigned int *);
 
 int lt_fast_aes_cbc(int decrypt, const void *key, size_t key_len, const void *iv, const void *in, size_t len,
                     void *out) {
@@ -59,6 +70,96 @@ int lt_vfdecrypt_chunks(const void *aes_key, const void *hmac_key, size_t hmac_l
              (size_t)got == n;
     }
     EVP_CIPHER_CTX_free(ctx);
+    return ok ? 0 : -1;
+}
+
+// A hole reads as zeros without a read: the digest is the file's own, but a sparse NAND page file (2.2 GB, a tenth
+// of it written) costs its data reads plus hashing, not 2.2 GB of kernel zero-fill.
+static const unsigned char zeros[1 << 20];
+
+int lt_sha256_file(const char *path, unsigned char digest[32], void (*count)(void *, size_t), void *opaque) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    struct stat st;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    size_t cap = 4 << 20;
+    unsigned char *buf = malloc(cap);
+    int ok = ctx && buf && fstat(fd, &st) == 0 && EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) == 1;
+    off_t size = st.st_size, at = 0;
+    while (ok && at < size) {
+        off_t data = lseek(fd, at, SEEK_DATA);
+        if (data < 0) data = errno == ENXIO ? size : at;  // ENXIO: a hole to the end; else no SEEK_DATA: read it all
+        off_t end = data == at ? lseek(fd, at, SEEK_HOLE) : data;
+        if (end < 0 || end > size) end = size;
+        if (end <= at) end = size;
+        if (data > at) {  // the hole [at, data)
+            for (off_t left = data - at; ok && left > 0;) {
+                size_t n = left < (off_t)sizeof zeros ? (size_t)left : sizeof zeros;
+                ok = EVP_DigestUpdate(ctx, zeros, n) == 1;
+                if (count) count(opaque, n);
+                left -= n;
+            }
+        } else {  // data [at, end)
+            for (off_t left = end - at, pos = at; ok && left > 0;) {
+                ssize_t got = pread(fd, buf, left < (off_t)cap ? (size_t)left : cap, pos);
+                if (got < 0 && errno == EINTR) continue;
+                ok = got > 0 && EVP_DigestUpdate(ctx, buf, (size_t)got) == 1;
+                if (ok && count) count(opaque, (size_t)got);
+                if (got > 0) { left -= got; pos += got; }
+            }
+        }
+        at = data > at ? data : end;
+    }
+    unsigned int len = 0;
+    ok = ok && EVP_DigestFinal_ex(ctx, digest, &len) == 1 && len == 32;
+    free(buf);
+    if (ctx) EVP_MD_CTX_free(ctx);
+    close(fd);
+    return ok ? 0 : -1;
+}
+
+// A reflink where the filesystem has one (btrfs, XFS), else the data extents only: the copy keeps the source's holes
+// (Foundation's copyItem writes them out, 17.7 GB for a 1.8 GB NAND).
+int lt_sparse_copy(const char *from, const char *to) {
+    int in = open(from, O_RDONLY | O_CLOEXEC);
+    if (in < 0) return -1;
+    struct stat st;
+    int out = fstat(in, &st) == 0 ? open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, st.st_mode & 0777) : -1;
+    if (out < 0) { close(in); return -1; }
+#ifndef FICLONE
+#define FICLONE _IOW(0x94, 9, int)
+#endif
+    int ok = ioctl(out, FICLONE, in) == 0;
+    if (!ok) {
+        ok = ftruncate(out, st.st_size) == 0;
+        size_t cap = 4 << 20;
+        unsigned char *buf = ok ? malloc(cap) : NULL;
+        ok = buf != NULL;
+        for (off_t at = 0; ok && at < st.st_size;) {
+            off_t data = lseek(in, at, SEEK_DATA);
+            if (data < 0) { if (errno == ENXIO) break; data = at; }
+            off_t end = lseek(in, data, SEEK_HOLE);
+            if (end < 0 || end > st.st_size) end = st.st_size;
+            for (off_t pos = data; ok && pos < end;) {
+                ssize_t got = pread(in, buf, end - pos < (off_t)cap ? (size_t)(end - pos) : cap, pos);
+                if (got < 0 && errno == EINTR) continue;
+                ok = got > 0;
+                for (ssize_t done = 0; ok && done < got;) {
+                    ssize_t put = pwrite(out, buf + done, (size_t)(got - done), pos + done);
+                    if (put < 0 && errno == EINTR) continue;
+                    ok = put > 0;
+                    if (ok) done += put;
+                }
+                if (ok) pos += got;
+            }
+            at = end;
+        }
+        free(buf);
+    }
+    ok = ok && fsync(out) == 0;
+    close(in);
+    if (close(out) != 0) ok = 0;
+    if (!ok) unlink(to);
     return ok ? 0 : -1;
 }
 
@@ -101,6 +202,16 @@ int lt_fast_aes_cbc(int decrypt, const void *key, size_t key_len, const void *iv
 int lt_vfdecrypt_chunks(const void *aes_key, const void *hmac_key, size_t hmac_len, unsigned first,
                         size_t chunk_size, const void *in, size_t len, void *out) {
     (void)aes_key; (void)hmac_key; (void)hmac_len; (void)first; (void)chunk_size; (void)in; (void)len; (void)out;
+    return -1;
+}
+
+int lt_sha256_file(const char *path, unsigned char digest[32], void (*count)(void *, size_t), void *opaque) {
+    (void)path; (void)digest; (void)count; (void)opaque;
+    return -1;
+}
+
+int lt_sparse_copy(const char *from, const char *to) {
+    (void)from; (void)to;
     return -1;
 }
 

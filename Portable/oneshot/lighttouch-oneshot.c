@@ -203,6 +203,13 @@ int main(int argc, char **argv) {
     if (pipe(wake) != 0) return 71;
     pthread_t t;
     pthread_create(&t, NULL, quitter, NULL);
+    // A mask is inherited across exec: FirmwareKit starts this from a Dispatch worker thread, which blocks SIGTERM, so
+    // its quit (and a cancel) stayed pending until the SIGKILL 60 s later.
+    sigset_t quit_signals;
+    sigemptyset(&quit_signals);
+    sigaddset(&quit_signals, SIGTERM);
+    sigaddset(&quit_signals, SIGINT);
+    pthread_sigmask(SIG_UNBLOCK, &quit_signals, NULL);
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_handler = on_signal;

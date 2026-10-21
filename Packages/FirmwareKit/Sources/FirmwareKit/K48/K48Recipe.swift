@@ -373,7 +373,7 @@ final class K48Board: Board {
         try KBoot.write(decrypted: c.decrypted(), to: kboot, identity: ident.filled("the identity"), ramdisk: rd)
         let norBefore = try Data(contentsOf: nor)
         let pre = work.appendingPathComponent("store.pre")
-        try fm.copyItem(at: store, to: pre)
+        try SparseFile.copyTree(store, to: pre)
         let attempts = 3
         for attempt in 1...attempts {
             let serial = work.appendingPathComponent("keybag-\(attempt).log")
@@ -400,7 +400,7 @@ final class K48Board: Board {
                 )
             )
             try fm.removeItem(at: store)
-            try fm.copyItem(at: pre, to: store)
+            try SparseFile.copyTree(pre, to: store)
             try norBefore.write(to: nor)
         }
         guard try Data(contentsOf: nor) != norBefore else {

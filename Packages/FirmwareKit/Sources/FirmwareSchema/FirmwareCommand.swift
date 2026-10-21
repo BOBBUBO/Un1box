@@ -52,6 +52,8 @@ public enum FirmwareCommand {
         public var skipSetup = false
         @Flag(help: "Prepares the device jailbroken: afc2 (the whole file system over USB), Cydia and Substrate.")
         public var jailbreak = false
+        @Flag(help: "Hashes the store before its boots too, for the lock's built_listing_sha256 (reproducibility checks).")
+        public var builtListing = false
 
         public init() {}
         public init(
@@ -101,7 +103,7 @@ public enum FirmwareCommand {
                     "sibling-ipsw": siblingIpsw, "stop-after": stopAfter?.rawValue,
                     "language": language, "keyboards": keyboards,
                 ]) + (glTest ? ["--gl-test"] : []) + (skipSetup ? ["--skip-setup"] : [])
-                + (jailbreak ? ["--jailbreak"] : [])
+                + (jailbreak ? ["--jailbreak"] : []) + (builtListing ? ["--built-listing"] : [])
         }
     }
 

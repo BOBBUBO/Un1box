@@ -134,8 +134,9 @@ build_android() {
     local w="$LT_INPUTS" angle="$LT_INPUTS/graphics/angle-android-arm64-gl-build-01/candidate-01"
     need "$angle/lib" "ANGLE arm64 libraries"
     need "$w/mobile-android/arm64-v8a" "Android mobile services"
-    # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android, built when missing).
-    [ -x "$OUT/firmwarekit/android/firmwarekit" ] || build_firmwarekit_android
+    # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android): rebuilt every time (SwiftPM is
+    # incremental), or the APK carries whatever firmwarekit and lighttouch-oneshot were last built.
+    build_firmwarekit_android
     # Guest tools the APK carries (new devices get the packages; firmwarekit bakes the helpers into the systems it
     # prepares); without them the APK still builds, but new devices get no guest tools and preparation cannot run.
     local tools="${LT_GUEST_TOOLS:-$OUT/firmware-tools}" guest=()

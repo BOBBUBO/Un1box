@@ -17,7 +17,9 @@ scripts/build.sh --clean android       # reconfigure from scratch (after a confi
 | `linux-engine` | `build/linux/libqemu-arm.so` | qemu-ios (`$QEMU_IOS`), portable board, x86_64 |
 | `linux` | the engine and `build/linux/lighttouch-linux` | `Linux/CMakeLists.txt` (includes `Portable/`) |
 | `android-engine` | `build/android/engine/arm64-v8a/` (`libqemu-arm.so`, `libc++_shared.so`, manifest, notices) | qemu-ios with NDK clang, API 29 |
-| `android` | the engine and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
+| `android` | the engine, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
+| `firmwarekit` | `build/firmwarekit/linux/` (`firmwarekit`, `lighttouch-oneshot`) | `Packages/FirmwareKit` (Swift) and `Portable/oneshot`; links the system's OpenSSL 3 `libcrypto` (`libssl-dev`) |
+| `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same with the Swift SDK for Android (its static `libcrypto`) and NDK clang |
 | `portable-tests` | test results | `Portable/` with `-DLIGHTTOUCH_BUILD_TESTS=ON` |
 | `guest-package` | `build/guest-package/{armv6,armv7}.itpack`, `build.log`, `VERSION`, `SHA256SUMS` | qemu-ios `contrib/guest-package/build.sh`, run on the Mac over ssh |
 | `ltbench` | `build/ltbench/LTBench.ipa` | `tools/guestbench/build.sh`, on the Mac over ssh |
