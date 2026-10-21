@@ -96,7 +96,7 @@ import Testing
                 Thread.sleep(forTimeInterval: 0.6)
             }
             p.next(index: 2, name: StepPlan.sealStep)
-            try Data("iBoot version: iBoot-817.29\n[FTL:MSG] FTL_Open            [OK]\n".utf8).write(
+            try Data("iBoot version: iBoot-817.29\n[FTL:MSG] CXT is not valid\n".utf8).write(
                 to: work.appendingPathComponent("seal.log")
             )
             Thread.sleep(forTimeInterval: 1.5)
@@ -123,9 +123,9 @@ import Testing
             }
             #expect(steps[0].dropLast().contains { $0.0 >= 0.6 }, "bytes measured: \(steps[0])")
             let details = steps[1].map(\.1)
-            #expect(details.first == "Starting iOS — 0 s")
-            #expect(details.contains { $0.hasPrefix("Opening the flash — ") })
-            #expect(details.last!.hasPrefix("Starting iOS — "), "\(details)")
+            #expect(details.first == "First start: loading iOS — 0 s")
+            #expect(details.contains { $0.hasPrefix("First start: indexing the flash — ") })
+            #expect(details.last!.hasPrefix("First start: starting iOS — "), "\(details)")
         }
     }
 

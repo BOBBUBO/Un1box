@@ -27,24 +27,24 @@ struct StepPlan: Sendable {
         "Writing the NAND": .init(seconds: 8, text: "Writing the flash image"),
         "Creating the data-protection keybag": .init(
             seconds: 6,
-            text: "Booting the restore ramdisk",
+            text: "Encryption setup: starting",
             milestones: [
-                .init(file: "keybag-", marker: "FTL_Open", at: 2, text: "Opening the flash"),
-                .init(file: "keybag-", marker: "it_keybag:", at: 4, text: "Creating the keybag"),
+                .init(file: "keybag-", marker: "FTL_Open", at: 2, text: "Encryption setup: opening the flash"),
+                .init(file: "keybag-", marker: "it_keybag:", at: 4, text: "Encryption setup: creating the keybag"),
             ]
         ),
         // The seal one-shot (Recipe.sealStep): boot the new flash until it_seal halts, then a check boot. Each line is
         // one every release prints; a release that skips one moves on by time (fraction(elapsed:seen:)).
         sealStep: .init(
             seconds: 72,
-            text: "Starting iOS",
+            text: "First start: loading iOS",
             milestones: [
-                .init(file: "seal.log", marker: "CXT is not valid", at: 1, text: "Indexing the flash"),
-                .init(file: "seal.log", marker: "FTL_Open", at: 6, text: "Opening the flash"),
-                .init(file: "seal.log", marker: "launchd[1] has started", at: 19, text: "Starting iOS"),
-                .init(file: "seal.log", marker: "SpringBoard[", at: 30, text: "Starting the Home screen"),
-                .init(file: "seal.log", marker: "it_prefs:", at: 41, text: "Starting the Home screen"),
-                .init(file: "seal.log", marker: "it_seal:", at: 65, text: "Shutting down"),
+                .init(file: "seal.log", marker: "CXT is not valid", at: 1, text: "First start: indexing the flash"),
+                .init(file: "seal.log", marker: "FTL_Open", at: 6, text: "First start: opening the flash"),
+                .init(file: "seal.log", marker: "launchd[1] has started", at: 19, text: "First start: starting iOS"),
+                .init(file: "seal.log", marker: "SpringBoard[", at: 30, text: "First start: starting the Home screen"),
+                .init(file: "seal.log", marker: "it_prefs:", at: 41, text: "First start: starting the Home screen"),
+                .init(file: "seal.log", marker: "it_seal:", at: 65, text: "First start: shutting down"),
                 .init(file: "check.log", marker: "iBoot version", at: 68, text: "Checking the flash"),
             ]
         ),
@@ -55,15 +55,15 @@ struct StepPlan: Sendable {
         // 4.x data protection (N72Keybag): iBoot, the kernel entry handoff, then the ramdisk's it_keybag
         "Booting the restore ramdisk": .init(
             seconds: 40,
-            text: "Booting the restore ramdisk",
+            text: "Encryption setup: starting",
             milestones: [
                 .init(
                     file: "keybag.log",
                     marker: "FTL_Open",
                     at: 10,
-                    text: "Booting the restore ramdisk: opening the flash"
+                    text: "Encryption setup: opening the flash"
                 ),
-                .init(file: "keybag.log", marker: "it_keybag:", at: 30, text: "Creating the data-protection keybag"),
+                .init(file: "keybag.log", marker: "it_keybag:", at: 30, text: "Encryption setup: creating the keybag"),
             ]
         ),
     ]
@@ -76,14 +76,14 @@ struct StepPlan: Sendable {
     /// 204 s, lockdown 239 s, it_seal 328 s, the check boot done at 336 s.
     static let seal7 = StepPlan(
         seconds: 336,
-        text: "Starting iOS",
+        text: "First start: loading iOS",
         milestones: [
-            .init(file: "seal.log", marker: "FTL_Open", at: 4, text: "Opening the flash"),
-            .init(file: "seal.log", marker: "launchd[1] has started", at: 8, text: "Starting iOS"),
-            .init(file: "seal.log", marker: "AirPort: Link Up", at: 60, text: "Starting iOS"),
-            .init(file: "seal.log", marker: "SpringBoard[", at: 204, text: "Starting the Home screen"),
-            .init(file: "seal.log", marker: "lockdown says", at: 239, text: "Starting the Home screen"),
-            .init(file: "seal.log", marker: "it_seal:", at: 328, text: "Shutting down"),
+            .init(file: "seal.log", marker: "FTL_Open", at: 4, text: "First start: opening the flash"),
+            .init(file: "seal.log", marker: "launchd[1] has started", at: 8, text: "First start: starting iOS"),
+            .init(file: "seal.log", marker: "AirPort: Link Up", at: 60, text: "First start: starting iOS"),
+            .init(file: "seal.log", marker: "SpringBoard[", at: 204, text: "First start: starting the Home screen"),
+            .init(file: "seal.log", marker: "lockdown says", at: 239, text: "First start: starting the Home screen"),
+            .init(file: "seal.log", marker: "it_seal:", at: 328, text: "First start: shutting down"),
             .init(file: "check.log", marker: "iBoot version", at: 331, text: "Checking the flash"),
         ]
     )
@@ -93,13 +93,13 @@ struct StepPlan: Sendable {
     /// 42 s, it_prefs 68 s, it_seal 192 s, the check boot done at 258 s.
     static let seal6 = StepPlan(
         seconds: 258,
-        text: "Starting iOS",
+        text: "First start: loading iOS",
         milestones: [
-            .init(file: "seal.log", marker: "FTL_Open", at: 4, text: "Opening the flash"),
-            .init(file: "seal.log", marker: "launchd[1] has started", at: 9, text: "Starting iOS"),
-            .init(file: "seal.log", marker: "AirPort: Link Up", at: 42, text: "Starting iOS"),
-            .init(file: "seal.log", marker: "it_prefs:", at: 68, text: "Finishing iOS’s first start"),
-            .init(file: "seal.log", marker: "it_seal:", at: 192, text: "Shutting down"),
+            .init(file: "seal.log", marker: "FTL_Open", at: 4, text: "First start: opening the flash"),
+            .init(file: "seal.log", marker: "launchd[1] has started", at: 9, text: "First start: starting iOS"),
+            .init(file: "seal.log", marker: "AirPort: Link Up", at: 42, text: "First start: starting iOS"),
+            .init(file: "seal.log", marker: "it_prefs:", at: 68, text: "First start: setting up iOS"),
+            .init(file: "seal.log", marker: "it_seal:", at: 192, text: "First start: shutting down"),
             .init(file: "check.log", marker: "iBoot version", at: 196, text: "Checking the flash"),
         ]
     )
@@ -108,10 +108,10 @@ struct StepPlan: Sendable {
     /// halted by 49 s. On a new flash the FTL first rebuilds its index, minutes on a phone.
     static let keybag6 = StepPlan(
         seconds: 49,
-        text: "Booting the restore ramdisk",
+        text: "Encryption setup: starting",
         milestones: [
-            .init(file: "keybag-", marker: "FTL_Open", at: 6, text: "Opening the flash"),
-            .init(file: "keybag-", marker: "it_keybag:", at: 23, text: "Creating the keybag"),
+            .init(file: "keybag-", marker: "FTL_Open", at: 6, text: "Encryption setup: opening the flash"),
+            .init(file: "keybag-", marker: "it_keybag:", at: 23, text: "Encryption setup: creating the keybag"),
         ]
     )
 
