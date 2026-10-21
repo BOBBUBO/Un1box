@@ -1,6 +1,6 @@
 // Off the Mac, what the host does faster in C than FirmwareKit's portable Swift: AES-CBC and SHA-256 through the
 // OpenSSL libcrypto that Foundation already links (CPU AES/SHA instructions, vs swift-crypto's block-at-a-time _CBC),
-// sparse-file hashing and copying that skip holes, and keeping the process on the fast cores of a big.LITTLE phone.
+// sparse-file hashing that skips holes, and keeping the process on the fast cores of a big.LITTLE phone.
 #ifndef CHOSTFAST_H
 #define CHOSTFAST_H
 #include <stddef.h>
@@ -20,10 +20,6 @@ int lt_vfdecrypt_chunks(const void *aes_key, const void *hmac_key, size_t hmac_l
 /// hole is hashed as the zeros it reads as. `count` (may be NULL) gets each span's byte count, holes included.
 /// 0 on success, -1 otherwise (or without libcrypto: the caller then hashes it the portable way).
 int lt_sha256_file(const char *path, unsigned char digest[32], void (*count)(void *, size_t), void *opaque);
-
-/// Copies the file `from` to the new file `to` keeping its holes: a reflink where the filesystem has one, else its
-/// data extents only. 0 on success; -1 otherwise, with `to` removed.
-int lt_sparse_copy(const char *from, const char *to);
 
 /// Restricts this process (and the children it starts later) to the cores with at least half the biggest core's
 /// capacity, when the slowest has under half (Android phones); a no-op elsewhere. LT_ENGINE_CPUS=off skips it.

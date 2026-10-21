@@ -54,8 +54,8 @@ import Testing
         var seen = unseen
         seen[2] = 3  // launchd already up at 3 s (a fast 4.x boot): jumps to its milestone, then on by time
         #expect(
-            abs(seal.fraction(elapsed: 3, seen: seen) - 19 / 72) < 1e-9
-                && seal.fraction(elapsed: 13, seen: seen) > 19 / 72
+            abs(seal.fraction(elapsed: 3, seen: seen) - 19 / 68) < 1e-9
+                && seal.fraction(elapsed: 13, seen: seen) > 19 / 68
         )
         #expect(seal.fraction(elapsed: 1e6, seen: seen) < end)
         let lock = StepPlan.plan("Writing the lock")
@@ -70,7 +70,7 @@ import Testing
     @Test func iOS7SealKeepsMoving() throws {
         let seal = StepPlan.plan(StepPlan.sealStep, major: 7)
         #expect(seal.seconds > 300 && StepPlan.plan(StepPlan.sealStep, major: 5).seconds < 100)
-        #expect(StepPlan.plan(StepPlan.sealStep, major: 6).seconds > 200)  // the first-boot migration
+        #expect(StepPlan.plan(StepPlan.sealStep, major: 6).seconds > 150)  // the first-boot migration
         var seen = [Double?](repeating: nil, count: seal.milestones.count)
         seen[0] = 4
         seen[1] = 8  // FTL_Open, launchd; no Wi-Fi line (a boot without it), no SpringBoard yet

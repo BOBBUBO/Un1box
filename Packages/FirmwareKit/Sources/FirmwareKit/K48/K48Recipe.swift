@@ -10,7 +10,7 @@
 // Boot files by strategy: `iboot` (default) iBoot.bin (pattern-patched), nor.bin (packed, writable) and
 // gid-blobs.bin; `kboot` (debugging, recipe.boot) kboot.bin and, for 4.x data protection, a blank nor.bin.
 // Volumes: SystemEdits.buildK48 (system + data, the shared bake). Store: K48NAND. The keybag one-shot (4.x)
-// is retried from copies; the seal is one clean halt and a check boot on a throwaway overlay.
+// and the seal (one clean halt) each boot once; a failure fails the preparation.
 
 #if canImport(CryptoKit)
 import CryptoKit
@@ -353,8 +353,8 @@ final class K48Board: Board {
     func norURL(_ c: Recipe.Context) -> URL? { iboot || kbootNOR ? c.file("nor.bin") : nil }
 
     /// 4.x data protection: effaceable + system keybag from the IPSW's own Update ramdisk (ipad1_keybag): the
-    /// ramdisk with it_keybag as restored_external, booted once as md0 on the store + NOR; retried (from copies
-    /// taken before the first) when it panics or does not halt.
+    /// ramdisk with it_keybag as restored_external, booted once as md0 on the store + NOR. One attempt: a panic fails
+    /// the preparation, which starts over (a new device has nothing to keep).
     nonisolated(nonsending) func keybag(_ c: Recipe.Context) async throws {
         let fm = FileManager.default
         // keybag runs only with dataProtection, which ships a NOR on either chain
@@ -363,7 +363,6 @@ final class K48Board: Board {
         let (source, name) = try await Recipe.keybagRamdisk(c)
         ramdisk = name
         let work = c.work
-        let store = c.nand
         let rd = try await Preparer.ramdiskWithHelper(
             source,
             helper: c.o.guestTools.appendingPathComponent(SystemEdits.Helpers.name("it_keybag", arch)),
@@ -372,45 +371,32 @@ final class K48Board: Board {
         let kboot = work.appendingPathComponent("kboot-restore.bin")
         try KBoot.write(decrypted: c.decrypted(), to: kboot, identity: ident.filled("the identity"), ramdisk: rd)
         let norBefore = try Data(contentsOf: nor)
-        let pre = work.appendingPathComponent("store.pre")
-        try SparseFile.copyTree(store, to: pre)
-        let attempts = 3
-        for attempt in 1...attempts {
-            let serial = work.appendingPathComponent("keybag-\(attempt).log")
-            let (r, text) = try oneshot(
-                c,
-                .kernel(image: kboot.path, writableNOR: nor.path),
-                store: store,
-                overlay: nil,
-                serial: serial,
-                stop: "panic(",
-                timeout: oneshotTimeout
-            )
-            for line in text.split(separator: "\n") where line.contains("it_keybag:") { c.log(String(line)) }
-            if r.exited, text.contains(Preparer.keybagDone) { break }
+        let (r, text) = try oneshot(
+            c,
+            .kernel(image: kboot.path, writableNOR: nor.path),
+            store: c.nand,
+            overlay: nil,
+            serial: work.appendingPathComponent("keybag-1.log"),
+            stop: "panic(",
+            timeout: oneshotTimeout
+        )
+        for line in text.split(separator: "\n") where line.contains("it_keybag:") { c.log(String(line)) }
+        guard r.exited, text.contains(Preparer.keybagDone) else {
             let why =
                 text.split(separator: "\n").lazy.compactMap { line in
                     line.range(of: "panic(").map { String(line[$0.lowerBound...].prefix(160)) }
                 }.first
                 ?? (r.exited ? "halted without the keybag" : "no halt")
-            guard attempt < attempts else { throw FirmwareError(.oneshotFailed, "keybag boot: \(why)") }
-            c.emit(
-                .warning(
-                    "keybag boot attempt \(attempt)/\(attempts) failed after \(Int(r.seconds)) s: \(why); retrying"
-                )
-            )
-            try fm.removeItem(at: store)
-            try SparseFile.copyTree(pre, to: store)
-            try norBefore.write(to: nor)
+            throw FirmwareError(.oneshotFailed, "keybag boot: \(why)")
         }
         guard try Data(contentsOf: nor) != norBefore else {
             throw FirmwareError(.oneshotFailed, "keybag boot: effaceable was not written to the NOR")
         }
-        for u in [pre, rd, kboot] { try? fm.removeItem(at: u) }
+        for u in [rd, kboot] { try? fm.removeItem(at: u) }
     }
 
-    /// ipad1_seal: boot the store until the guest halts (it_seal), then check a boot on an overlay opens the FTL
-    /// without the full R/O restore.
+    /// ipad1_seal: boot the store until the guest halts (it_seal); the clean halt writes the FTL context. No check
+    /// boot after it: the lock's hashes are the sanity check, and a bad seal fails the device's first start.
     func seal(_ c: Recipe.Context) throws {
         let work = c.work
         let store = c.nand
@@ -441,26 +427,6 @@ final class K48Board: Board {
                 "seal boot: \(r.exited ? "QEMU exited without it_seal" : "no clean halt") after \(Int(r.seconds)) s"
             )
         }
-        let overlay = work.appendingPathComponent("seal-overlay")
-        try FileManager.default.createDirectory(at: overlay, withIntermediateDirectories: true)
-        let (ck, check) = try oneshot(
-            c,
-            boot,
-            store: store,
-            overlay: overlay,
-            serial: work.appendingPathComponent("check.log"),
-            stop: nil,
-            stopPattern: Preparer.ftlOpen,
-            timeout: 120
-        )
-        guard ck.marker, Preparer.ftlOpened(check), !check.contains(Preparer.rescan) else {
-            throw FirmwareError(
-                .oneshotFailed,
-                "check boot: \(check.contains(Preparer.rescan) ? "the store still rescans" : "no FTL_Open")"
-            )
-        }
-        try? FileManager.default.removeItem(at: overlay)
-        c.log(check.split(separator: "\n").first { $0.contains("FTL_Open") }.map(String.init) ?? "FTL_Open [OK]")
     }
 
     /// One `LightTouchDevice` oneshot boot of the store as the device boots (BootRecipe.iPad, the lock's machine

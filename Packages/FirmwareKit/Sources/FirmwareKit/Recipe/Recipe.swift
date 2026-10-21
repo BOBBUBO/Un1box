@@ -204,7 +204,7 @@ public enum Recipe {
             try await board.keybag(c)
         }
         if board.needsSeal {
-            step()  // one clean halt, then a check boot on a throwaway overlay
+            step()  // one clean halt (the FTL context)
             try board.seal(c)
         }
 

@@ -33,10 +33,10 @@ struct StepPlan: Sendable {
                 .init(file: "keybag-", marker: "it_keybag:", at: 4, text: "Encryption setup: creating the keybag"),
             ]
         ),
-        // The seal one-shot (Recipe.sealStep): boot the new flash until it_seal halts, then a check boot. Each line is
+        // The seal one-shot (Recipe.sealStep): boot the new flash until it_seal halts. Each line is
         // one every release prints; a release that skips one moves on by time (fraction(elapsed:seen:)).
         sealStep: .init(
-            seconds: 72,
+            seconds: 68,
             text: "First start: loading iOS",
             milestones: [
                 .init(file: "seal.log", marker: "CXT is not valid", at: 1, text: "First start: indexing the flash"),
@@ -45,7 +45,6 @@ struct StepPlan: Sendable {
                 .init(file: "seal.log", marker: "SpringBoard[", at: 30, text: "First start: starting the Home screen"),
                 .init(file: "seal.log", marker: "it_prefs:", at: 41, text: "First start: starting the Home screen"),
                 .init(file: "seal.log", marker: "it_seal:", at: 65, text: "First start: shutting down"),
-                .init(file: "check.log", marker: "iBoot version", at: 68, text: "Checking the flash"),
             ]
         ),
         "Writing the lock": .init(seconds: 3, text: "Hashing the prepared flash"),
@@ -73,9 +72,9 @@ struct StepPlan: Sendable {
 
     /// iOS 7's seal boot: launchd starts our daemons ~3 minutes in (K48Recipe.oneshotTimeout), so SpringBoard and
     /// the halt come late. n90ap-11D257 on an M4 Max under load, 2026-10-07: launchd 8 s, Wi-Fi 60 s, SpringBoard
-    /// 204 s, lockdown 239 s, it_seal 328 s, the check boot done at 336 s.
+    /// 204 s, lockdown 239 s, it_seal 328 s, halted by 331 s.
     static let seal7 = StepPlan(
-        seconds: 336,
+        seconds: 331,
         text: "First start: loading iOS",
         milestones: [
             .init(file: "seal.log", marker: "FTL_Open", at: 4, text: "First start: opening the flash"),
@@ -84,15 +83,14 @@ struct StepPlan: Sendable {
             .init(file: "seal.log", marker: "SpringBoard[", at: 204, text: "First start: starting the Home screen"),
             .init(file: "seal.log", marker: "lockdown says", at: 239, text: "First start: starting the Home screen"),
             .init(file: "seal.log", marker: "it_seal:", at: 328, text: "First start: shutting down"),
-            .init(file: "check.log", marker: "iBoot version", at: 331, text: "Checking the flash"),
         ]
     )
 
     /// iOS 6's seal boot: after it_prefs, the first-boot data migration runs and it_seal waits for it, then a further
     /// 60 s for SpringBoard (it_seal.c). n81ap-10B500 on a Ryzen desktop under Linux, 2026-10-20: launchd 9 s, Wi-Fi
-    /// 42 s, it_prefs 68 s, it_seal 192 s, the check boot done at 258 s.
+    /// 42 s, it_prefs 68 s, it_seal 192 s, halted by 195 s.
     static let seal6 = StepPlan(
-        seconds: 258,
+        seconds: 195,
         text: "First start: loading iOS",
         milestones: [
             .init(file: "seal.log", marker: "FTL_Open", at: 4, text: "First start: opening the flash"),
@@ -100,7 +98,6 @@ struct StepPlan: Sendable {
             .init(file: "seal.log", marker: "AirPort: Link Up", at: 42, text: "First start: starting iOS"),
             .init(file: "seal.log", marker: "it_prefs:", at: 68, text: "First start: setting up iOS"),
             .init(file: "seal.log", marker: "it_seal:", at: 192, text: "First start: shutting down"),
-            .init(file: "check.log", marker: "iBoot version", at: 196, text: "Checking the flash"),
         ]
     )
 

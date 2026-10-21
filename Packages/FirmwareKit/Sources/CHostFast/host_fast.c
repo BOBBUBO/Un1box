@@ -6,7 +6,6 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <sched.h>
-#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -118,51 +117,6 @@ int lt_sha256_file(const char *path, unsigned char digest[32], void (*count)(voi
     return ok ? 0 : -1;
 }
 
-// A reflink where the filesystem has one (btrfs, XFS), else the data extents only: the copy keeps the source's holes
-// (Foundation's copyItem writes them out, 17.7 GB for a 1.8 GB NAND).
-int lt_sparse_copy(const char *from, const char *to) {
-    int in = open(from, O_RDONLY | O_CLOEXEC);
-    if (in < 0) return -1;
-    struct stat st;
-    int out = fstat(in, &st) == 0 ? open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, st.st_mode & 0777) : -1;
-    if (out < 0) { close(in); return -1; }
-#ifndef FICLONE
-#define FICLONE _IOW(0x94, 9, int)
-#endif
-    int ok = ioctl(out, FICLONE, in) == 0;
-    if (!ok) {
-        ok = ftruncate(out, st.st_size) == 0;
-        size_t cap = 4 << 20;
-        unsigned char *buf = ok ? malloc(cap) : NULL;
-        ok = buf != NULL;
-        for (off_t at = 0; ok && at < st.st_size;) {
-            off_t data = lseek(in, at, SEEK_DATA);
-            if (data < 0) { if (errno == ENXIO) break; data = at; }
-            off_t end = lseek(in, data, SEEK_HOLE);
-            if (end < 0 || end > st.st_size) end = st.st_size;
-            for (off_t pos = data; ok && pos < end;) {
-                ssize_t got = pread(in, buf, end - pos < (off_t)cap ? (size_t)(end - pos) : cap, pos);
-                if (got < 0 && errno == EINTR) continue;
-                ok = got > 0;
-                for (ssize_t done = 0; ok && done < got;) {
-                    ssize_t put = pwrite(out, buf + done, (size_t)(got - done), pos + done);
-                    if (put < 0 && errno == EINTR) continue;
-                    ok = put > 0;
-                    if (ok) done += put;
-                }
-                if (ok) pos += got;
-            }
-            at = end;
-        }
-        free(buf);
-    }
-    ok = ok && fsync(out) == 0;
-    close(in);
-    if (close(out) != 0) ok = 0;
-    if (!ok) unlink(to);
-    return ok ? 0 : -1;
-}
-
 // As Portable's runtime (Runtime.cpp prefer_fast_cores) and lighttouch-oneshot do.
 void lt_prefer_fast_cores(void) {
     const char *env = getenv("LT_ENGINE_CPUS");
@@ -207,11 +161,6 @@ int lt_vfdecrypt_chunks(const void *aes_key, const void *hmac_key, size_t hmac_l
 
 int lt_sha256_file(const char *path, unsigned char digest[32], void (*count)(void *, size_t), void *opaque) {
     (void)path; (void)digest; (void)count; (void)opaque;
-    return -1;
-}
-
-int lt_sparse_copy(const char *from, const char *to) {
-    (void)from; (void)to;
     return -1;
 }
 
