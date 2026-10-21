@@ -102,13 +102,13 @@ scripts/build-release.sh 0.0.8 finish publish           # checksums into the not
 | Step | Output in `out/` | How |
 | --- | --- | --- |
 | `android` | `LightTouch-vX-android-arm64.apk` | `scripts/build.sh android` from the worktree, `LT_DEBUGGABLE=false`, with the guest tools and firmwarekit; checked non-debuggable and versioned |
-| `windows` | `LightTouch-vX-Windows-x86_64.zip` | `Windows/tools/build-engine.sh` (MinGW engine and FFmpeg), then `scripts/release/package-windows.py` |
+| `windows` | `LightTouch-vX-Windows-x86_64.zip` | `Windows/tools/build-engine.sh` (MinGW engine and FFmpeg), the C# helper published offline from the worktree (unless `LT_WIN_HELPER` names one), then `scripts/release/package-windows.py` |
 | `linux` | `LightTouch-vX-Linux-x86_64.AppImage` | `scripts/release/linux-inner.sh` in the Debian 11 Docker image `$LT_LINUX_IMAGE` (engine, frontend, ctest, runtime), then `Linux/packaging/seal-appimage.py` |
 | `macos` | `LightTouch-vX-macOS-arm64.zip` | on `$LT_MAC`: fetches both commits from GitHub, `macOS/build-engine.py`, `macOS/build-shared.py`, `ditto` |
-| `finish` | source archives, `armv6.itpack`, `LICENSE.txt`, `SHA256SUMS`, `RELEASE-MANIFEST.json` | `scripts/release/finish.py`; checks the APK carries `$LT_GUEST_TOOLS` |
+| `finish` | source archives, `armv6.itpack` and `armv7.itpack` (the desktop apps ask for them), `LICENSE.txt`, `SHA256SUMS`, `RELEASE-MANIFEST.json` | `scripts/release/finish.py`; checks the APK carries `$LT_GUEST_TOOLS` |
 
 A run skips steps already done; name a step to run it again. The prebuilt inputs (dependency
-prefixes, the MinGW sysroot, the Windows Python/Tk runtime and helper, the Mac's Python runtime and
+prefixes, the MinGW sysroot, the Windows Python/Tk runtime, .NET SDK and NuGet packages, the Mac's Python runtime and
 LightTouchMac app) are variables at the top of the script, settable in `scripts/build.env`. The `android`
 step builds the guest tools from the release's engine on `$LT_MAC` (`firmware-tools`) unless
 `LT_GUEST_TOOLS` names a folder, and `firmwarekit-android` with the local Swift SDK for Android. `Android/BUILD-AND-RUN.md` has the sealed two-ABI Android recipe.

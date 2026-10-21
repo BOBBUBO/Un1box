@@ -3,7 +3,7 @@
 # workspace ($LT_RELEASE_ROOT/release-X.Y.Z) from worktrees of the release tags, so the checkouts you
 # work in are never built from. See docs/BUILDING.md, "Release builds".
 #
-#   scripts/build-release.sh VERSION [STEP...]        e.g. scripts/build-release.sh 0.0.8
+#   scripts/build-release.sh VERSION [STEP...]        e.g. scripts/build-release.sh 0.0.9
 #
 #   prepare   worktrees app/ and engine/ at tags vX.Y.Z (here) and lighttouch-vX.Y.Z (qemu-ios)
 #   android   non-debuggable arm64 APK carrying the guest tools ($LT_GUEST_TOOLS)
@@ -32,7 +32,7 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_APPIMAGE_TOOLS:=$LT_INPUTS/linux-desktop/dependencies/appimagetool-pinned01}"
 : "${LT_WIN_DEPS:=$D/release-0.0.8/win-deps}"                        # MinGW sysroot (copied; FFmpeg installs into it)
 : "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # python-tk01/, services-mobile01/, FFmpeg archive
-: "${LT_WIN_HELPER:=$D/release-0.0.8/wbuild/helper/publish}"         # LightTouchWin helper (dotnet publish; absent: publish it first)
+: "${LT_WIN_HELPER:=}"                                               # published LightTouchWin helper; empty: published here from app/
 : "${LT_FFMPEG_ARCHIVE:=$LT_WIN_INPUTS/package02/source-and-provenance/ffmpeg-9.0.1.tar.xz}"
 : "${LT_MAC:=}"                                                      # user@host of the Mac
 : "${LT_MAC_ROOT:=Documents}"                                        # on the Mac, relative to home
@@ -104,9 +104,21 @@ step_android() {
 }
 
 step_windows() {
-    need "$LT_WIN_DEPS/sysroot" "Windows dependency sysroot"; need "$LT_WIN_HELPER" "Windows helper"
-    need "$LT_FFMPEG_ARCHIVE" "FFmpeg 9.0.1 archive"
+    need "$LT_WIN_DEPS/sysroot" "Windows dependency sysroot"; need "$LT_FFMPEG_ARCHIVE" "FFmpeg 9.0.1 archive"
     rm -rf "$R/win-cross" "$R/win-deps" "$R/wbuild" "$R/evidence-win"
+    if [ -z "$LT_WIN_HELPER" ]; then
+        # The C# helper from this release's source, offline: the SDK and NuGet packages are prebuilt inputs.
+        local sdk=$LT_WIN_INPUTS/sdk8 h=$R/helper
+        need "$sdk/dotnet" ".NET 8 SDK"; need "$LT_WIN_INPUTS/ui03/nuget" "NuGet packages"
+        rm -rf "$h"; mkdir -p "$h/empty-nuget"
+        (cd "$R/app/Windows" && export DOTNET_ROOT=$sdk DOTNET_PROCESSOR_COUNT=1 DOTNET_CLI_HOME=$h/dotnet-home \
+            DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_NOLOGO=1 NUGET_PACKAGES=$LT_WIN_INPUTS/ui03/nuget &&
+            "$sdk/dotnet" restore LightTouchWin.Headless/LightTouchWin.Headless.csproj -r win-x64 --source "$h/empty-nuget" --disable-parallel &&
+            "$sdk/dotnet" publish LightTouchWin.Headless/LightTouchWin.Headless.csproj --no-restore -c Release -r win-x64 \
+                --self-contained true --disable-build-servers -p:UseSharedCompilation=false -m:1 -p:PublishSingleFile=false \
+                -o "$h/publish") > "$R/windows-helper.log" 2>&1 || { tail -30 "$R/windows-helper.log" >&2; exit 1; }
+        LT_WIN_HELPER=$h/publish
+    fi
     cp -a "$LT_WIN_DEPS" "$R/win-deps"
     bash "$R/app/Windows/tools/build-engine.sh" "$R/engine" "$R/win-deps" "$R/win-cross" "$LT_FFMPEG_ARCHIVE" \
         > "$R/windows-engine.log" 2>&1 || { tail -30 "$R/windows-engine.log" >&2; exit 1; }
@@ -186,7 +198,7 @@ step_publish() {
     grep -q CHECKSUMS "$notes" && { echo "run finish first: NOTES.md has no checksums" >&2; exit 1; }
     title=$(head -1 "$notes" | sed 's/^# *//')
     for f in LightTouch-$V-android-arm64.apk LightTouch-$V-Linux-x86_64.AppImage LightTouch-$V-Windows-x86_64.zip \
-             LightTouch-$V-macOS-arm64.zip armv6.itpack LightTouch-$V-source.tar.gz qemu-ios-$V-source.tar.gz \
+             LightTouch-$V-macOS-arm64.zip armv6.itpack armv7.itpack LightTouch-$V-source.tar.gz qemu-ios-$V-source.tar.gz \
              SHA256SUMS RELEASE-MANIFEST.json LICENSE.txt; do need "$OUTD/$f" "package"; assets+=("$OUTD/$f"); done
     (cd "$OUTD" && sha256sum -c --quiet SHA256SUMS)
     git -C "$REPO" push -q origin "$V"

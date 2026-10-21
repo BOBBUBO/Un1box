@@ -43,7 +43,8 @@ for repo, prefix, name in ((app, 'LightTouch-' + VERSION, 'LightTouch-' + VERSIO
     subprocess.run(['git', 'archive', '--format=tar.gz', '--prefix=' + prefix + '/', '-o', out / name, 'HEAD'],
                    cwd=repo, check=True)
 shutil.copy2(app / 'LICENSE', out / 'LICENSE.txt')
-shutil.copy2(GUEST / 'armv6.itpack', out / 'armv6.itpack')
+for arch in ('armv6', 'armv7'):  # the desktop apps ask for these; the APK carries its own
+    shutil.copy2(GUEST / (arch + '.itpack'), out / (arch + '.itpack'))
 
 apk = out / ('LightTouch-' + VERSION + '-android-arm64.apk')
 with zipfile.ZipFile(apk) as z:
@@ -54,11 +55,11 @@ tools = itpack_manifest(out / 'armv6.itpack')
 
 files = ['LightTouch-' + VERSION + '-android-arm64.apk', 'LightTouch-' + VERSION + '-Linux-x86_64.AppImage',
          'LightTouch-' + VERSION + '-Windows-x86_64.zip', 'LightTouch-' + VERSION + '-macOS-arm64.zip',
-         'armv6.itpack', 'LightTouch-' + VERSION + '-source.tar.gz', 'qemu-ios-' + VERSION + '-source.tar.gz']
+         'armv6.itpack', 'armv7.itpack', 'LightTouch-' + VERSION + '-source.tar.gz', 'qemu-ios-' + VERSION + '-source.tar.gz']
 records = [dict(file=f, bytes=(out / f).stat().st_size, sha256=sha(out / f)) for f in files]
 manifest = dict(version=VERSION, status='provisional alpha (pre-release)',
                 application_revision=app_rev, engine_revision=engine_rev,
-                guest_tools=dict(file='armv6.itpack', serial=tools['serial'], version=tools['version'],
+                guest_tools=dict(files=['armv6.itpack', 'armv7.itpack'], serial=tools['serial'], version=tools['version'],
                                  android_apk_bundles=['armv6.itpack', 'armv7.itpack']),
                 packages=records)
 (out / 'RELEASE-MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n')
