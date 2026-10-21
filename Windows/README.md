@@ -130,7 +130,8 @@ adapter still being developed; they are not provided by this hotfix.
 
 ## Historical WinForms preview scope and limitations
 
-Only the existing n72ap and n81ap prepared routes are exposed. Stock IPSW
+Every board FirmwareKit prepares boots (the iPod touch 1G and 2G and the original iPhone from their SecureROM;
+the others from their prepared files), compile-checked only: no Windows host has run the new boards. Stock IPSW
 preparation, Legacy Store/IPA services, modern networking, rich settings,
 performance metrics and persistent TCG cache are not implemented by this
 Windows preview. No Apple firmware/ROM, prepared NAND or proprietary guest

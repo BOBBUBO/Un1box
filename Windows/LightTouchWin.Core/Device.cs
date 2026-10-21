@@ -9,8 +9,15 @@ public static class Boards
 {
     public static readonly IReadOnlyDictionary<string, Board> All = new Dictionary<string, Board>
     {
+        // Every board FirmwareKit prepares (qemu-ios-ui.c's ios_devices, Portable/src/Storage.cpp's boot_route).
+        ["n45ap"] = new("iPod-Touch-1G", false, false),
+        ["m68ap"] = new("iPhone-2G", true, false),
         ["n72ap"] = new("iPod-Touch", false, false),
-        ["n81ap"] = new("iPod-Touch-4G", false, true)
+        ["n18ap"] = new("n18", false, false),
+        ["n88ap"] = new("n88", true, false),
+        ["k48ap"] = new("ipad1", false, true),
+        ["n81ap"] = new("iPod-Touch-4G", false, true),
+        ["n90ap"] = new("iPhone-4", true, true)
     };
 }
 

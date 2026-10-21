@@ -32,7 +32,7 @@ internal sealed class MainWindow : Form
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 1, Padding = new Padding(12) };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(new Label { Text = "Prepared n72ap / n81ap guests • Experimental Windows build\nSelect an existing prepared folder or import .itbase, then select its matching guest .itpack. n81ap uses prepared kboot.bin. Guest display opens in SDL. Windows guest boot, multitouch, audio and persistence still require qualification.", AutoSize = true, MaximumSize = new Size(980, 0), Padding = new Padding(0, 0, 0, 10) });
+        layout.Controls.Add(new Label { Text = "Prepared guests • Experimental Windows build\nSelect an existing prepared folder or import .itbase, then select its matching guest .itpack. The iPod touch 1G and 2G and the original iPhone also need their SecureROM. Guest display opens in SDL. Windows guest boot, multitouch, audio and persistence still require qualification.", AutoSize = true, MaximumSize = new Size(980, 0), Padding = new Padding(0, 0, 0, 10) });
         var toolbar = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         Add(toolbar, "Open prepared folder…", ImportFolder);
         Add(toolbar, "Import .itbase…", ImportArchive);
@@ -96,9 +96,9 @@ internal sealed class MainWindow : Form
         using var recipe = JsonDocument.Parse(File.ReadAllText(Path.Combine(path, "device.lock.json")));
         string board = recipe.RootElement.GetProperty("board").GetString() ?? "";
         string rom = "";
-        if (board == "n72ap")
+        if (board is "n72ap" or "n45ap" or "m68ap")
         {
-            using var picker = new OpenFileDialog { Title = "Select matching n72ap SecureROM", Filter = "Boot input|*.*" };
+            using var picker = new OpenFileDialog { Title = $"Select the matching {board} SecureROM", Filter = "Boot input|*.*" };
             if (picker.ShowDialog(this) != DialogResult.OK) return false;
             rom = picker.FileName;
         }

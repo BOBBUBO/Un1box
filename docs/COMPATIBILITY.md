@@ -48,6 +48,11 @@ python3 tools/compat/compat.py table                   # newest result per firmw
 | --- | --- | --- | --- | --- | --- | --- |
 | n72ap-7E18 (iPod touch 2G) | 3.1.3 | Linux (Ryzen 7 3700X) | clean | 21.6 | 10.9 | SpringBoard |
 | n72ap-7E18 (iPod touch 2G) | 3.1.3 | Poco F3 | clean | 24.8 | | lock screen; Start 4.5 s |
+| n72ap-8C148 (iPod touch 2G) | 4.2.1 | Poco F3 | clean | | | prepared on the phone in 53 s; works fully (user check) |
+| n72ap-5F138 (iPod touch 2G) | 2.1.1 | Linux (Ryzen 7 3700X) | ui | 101.0 | 38.8 | SpringBoard; prepared in 45 s, boots through the SecureROM |
+| n18ap-8C148 (iPod touch 3G) | 4.2.1 | Linux (Ryzen 7 3700X) | clean | 98.4 | 33.5 | SpringBoard; prepared in 252 s |
+| n90ap-8C148 (iPhone 4) | 4.2.1 | Linux (Ryzen 7 3700X) | clean | 23.9 | 24.1 | SpringBoard; prepared in 122 s |
+| n90ap-8C148 (iPhone 4) | 4.2.1 | Poco F3 | | | | lock screen with carrier signal; prepared on the phone in 186 s |
 | n81ap-10B500 (iPod touch 4G) | 6.1.6 | Linux (Ryzen 7 3700X) | clean | 21.1 | 76.9 | SpringBoard; Setup on a fresh base |
 | n81ap-10B500 (iPod touch 4G) | 6.1.6 | Poco F3 | clean | 6.1 | | lock screen after Setup; Start 4.6 s |
 

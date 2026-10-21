@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import uuid
 
+from . import boards
 from .library import RecordError, check_collection, check_update, display_title
 from .storage import DEFAULT_STORAGE
 
@@ -85,14 +86,16 @@ def inspect_base(base, *, storage=None):
         raise SetupError("This base is writable. Import an immutable copy; the original will stay unchanged.")
     data = _config_bytes(path / "device.lock.json", storage)
     lock = _decode_json(data)
-    if lock.get("format") != 1 or lock.get("board") not in ("n72ap", "n81ap"):
+    if lock.get("format") != 1 or not boards.supported(lock.get("board")):
         raise SetupError("This prepared-base format or board is unsupported.")
     if not isinstance(lock.get("build"), str) or not lock["build"]:
         raise SetupError("Prepared base is missing its iOS build identity.")
     board = lock["board"]
-    strategy = lock.get("boot_strategy", "iboot" if board == "n72ap" else "kboot")
-    if (board == "n81ap" and strategy != "kboot") or (board == "n72ap" and strategy not in ("iboot", "bootrom")):
-        raise SetupError("This board's prepared boot route is unsupported.")
+    strategy = lock.get("boot_strategy", boards.default_strategy(board))
+    try:
+        boards.boot_outputs(board, strategy)
+    except ValueError as error:
+        raise SetupError(str(error)) from error
     return {"board": board, "build": lock["build"], "strategy": strategy,
             "base_identity": hashlib.sha256(data).hexdigest()}
 
@@ -119,10 +122,11 @@ def validate(profile, allow_dirty=False, *, storage=None):
     regular(absolute(profile["guest_package"]), "guest-tools package", storage=storage)
     if profile.get("bootrom"):
         regular(absolute(profile["bootrom"]), "boot ROM", storage=storage)
-    if info["board"] == "n72ap" and not profile.get("bootrom"):
-        raise SetupError("The current n72 route needs its matching boot asset. Select the verified file.")
-    if info["board"] == "n81ap" and profile.get("bootrom"):
-        raise SetupError("The n81 kboot route uses its prepared kboot.bin; clear the separate ROM field.")
+    rom = boards.bootrom(info["board"])
+    if rom and not profile.get("bootrom"):
+        raise SetupError("This device starts from its boot ROM (" + rom[0] + "). Select the verified file.")
+    if not rom and profile.get("bootrom"):
+        raise SetupError("This device starts from its prepared files and needs no boot ROM; clear the ROM field.")
     target = Path(state)
     if target.is_symlink() or (target.exists() and not target.is_dir()):
         raise SetupError("Writable state must be a regular folder, not a symbolic link.")

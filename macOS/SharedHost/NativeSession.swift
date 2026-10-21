@@ -64,14 +64,15 @@ import LightTouchSharedDesktopMac
         guard lstat(base.path, &baseInfo) == 0, baseInfo.st_mode & S_IFMT == S_IFDIR,
             baseInfo.st_mode & 0o222 == 0 || baseInfo.st_flags & UInt32(UF_IMMUTABLE) != 0,
             let lock = try DeviceLock.read(base: base), let boardID = lock.board,
-            ["n72ap", "n81ap"].contains(boardID), let build = lock.build,
-            let board = Board(rawValue: boardID)
+            let build = lock.build, let board = Board(rawValue: boardID)
         else { throw HostArguments.Failure.usage("Choose a read-only supported prepared base.") }
-        if board == .n81, args.values["rom"] != nil {
-            throw HostArguments.Failure.usage("n81 boots prepared kboot.bin; omit the separate ROM.")
+        // The S5L8900 and S5L8720 boards start from their SecureROM; the others from their prepared files.
+        let secureROM = board.soc == .s5l8900 || board.soc == .s5l8720
+        if !secureROM, args.values["rom"] != nil {
+            throw HostArguments.Failure.usage("This device boots its prepared files; omit the separate ROM.")
         }
-        if board == .n72, args.values["rom"] == nil {
-            throw HostArguments.Failure.usage("The n72 route needs its matching boot asset.")
+        if secureROM, args.values["rom"] == nil {
+            throw HostArguments.Failure.usage("This device needs its matching boot ROM.")
         }
         let lockBytes = try Data(contentsOf: base.appendingPathComponent("device.lock.json"))
         let hash = SHA256.hash(data: lockBytes).map { String(format: "%02x", $0) }.joined()

@@ -318,6 +318,56 @@ int main() {
         assert(std::string(argv[i]) != "-m");
     assert(fs::exists(root / "n81state/work/guest-offer/bin/tool"));
     lt_device_close(d);
+
+    // The other boards boot too (Light Touch for Mac's BootRecipe): an iPhone 4 from kboot with its modem and the
+    // IMEI the lock records, and no NOR (null: a 3.x kboot device has none); an iPod touch 1G from its SecureROM,
+    // the NOR a pflash drive.
+    auto prepared = [&](const std::string &name, const std::string &lock,
+                        const std::vector<std::pair<std::string, std::string>> &files) {
+        put(root / (name + "source/device.lock.json"), lock);
+        put(root / (name + "source/nand/cs0/0.page"), page);
+        for (const auto &f : files)
+            put(root / (name + "source") / f.first, f.second);
+        std::string from = (root / (name + "source")).string(), to = (root / (name + "base")).string();
+        lt_import_config c{sizeof(c), 1, from.c_str(), to.c_str(), nullptr, 0, nullptr, nullptr};
+        assert(lt_import_directory(&c, &e) == LT_OK);
+        return to;
+    };
+    std::string n90base = prepared("n90",
+        "{\"format\":1,\"board\":\"n90ap\",\"build\":\"8C148\",\"boot_strategy\":\"kboot\",\"machine\":"
+        "{\"imei\":\"012345678901234\"},\"outputs\":{\"nor\":null,\"nand\":{\"path\":\"nand\",\"listing_sha256\":\"" +
+            hash(listing) + "\",\"pages\":1},\"kboot\":{\"path\":\"kboot.bin\",\"sha256\":\"" + hash(iboot) + "\"}}}",
+        {{"kboot.bin", iboot}});
+    std::string n90state = (root / "n90state").string();
+    lt_device_config n90dc{sizeof(n90dc), 1, n90base.c_str(), n90state.c_str(), 0};
+    assert(lt_device_open(&n90dc, &d, &e) == LT_OK);
+    lt_boot_config n90boot{sizeof(n90boot), 1, "iPhone-4", nullptr, nullptr, nullptr, 0};
+    assert(lt_device_boot_argv(d, &n90boot, &argc, &argv, &e) == LT_OK);
+    args = argv[2];
+    assert(args.find("kboot=" + n90base + "/kboot.bin") != std::string::npos);
+    assert(args.find("baseband=on") != std::string::npos && args.find("imei=012345678901234") != std::string::npos);
+    assert(args.find("nor-rw=") == std::string::npos && args.find("bootrom=") == std::string::npos);
+    lt_device_close(d);
+    std::string n45base = prepared("n45",
+        "{\"format\":1,\"board\":\"n45ap\",\"build\":\"3A101a\",\"machine\":{\"wifi-mac\":\"\"},\"outputs\":{"
+        "\"nor\":{\"path\":\"nor.bin\",\"sha256\":\"" + hash(nor) + "\"},\"iboot\":{\"path\":\"iBoot.bin\",\"sha256\":\"" +
+            hash(iboot) + "\"},\"nand\":{\"path\":\"nand\",\"listing_sha256\":\"" + hash(listing) + "\",\"pages\":1}}}",
+        {{"nor.bin", nor}, {"iBoot.bin", iboot}});
+    std::string n45state = (root / "n45state").string();
+    lt_device_config n45dc{sizeof(n45dc), 1, n45base.c_str(), n45state.c_str(), 0};
+    assert(lt_device_open(&n45dc, &d, &e) == LT_OK);
+    lt_boot_config n45boot{sizeof(n45boot), 1, "iPod-Touch-1G", nullptr, nullptr, nullptr, 0};
+    assert(lt_device_boot_argv(d, &n45boot, &argc, &argv, &e) != LT_OK);  // no boot ROM
+    n45boot.bootrom_path = rom.c_str();
+    assert(lt_device_boot_argv(d, &n45boot, &argc, &argv, &e) == LT_OK);
+    args = argv[2];
+    assert(args.find("bootrom=" + rom) != std::string::npos && args.find("iboot=" + n45base + "/iBoot.bin") != std::string::npos);
+    assert(args.find("nand-overlay=" + n45state + "/nand") != std::string::npos && args.find("wifi-mac") == std::string::npos);
+    bool drive = false;
+    for (int i = 0; i + 1 < argc; i++)
+        drive |= std::string(argv[i]) == "-drive" && std::string(argv[i + 1]) == "if=pflash,format=raw,file=" + n45state + "/nor.bin";
+    assert(drive);
+    lt_device_close(d);
     archive(root / "bad.itbase", "{\"entries\":[{\"name\":\"../escape\",\"size\":1,\"mode\":420}]}", "a");
     source = (root / "bad.itbase").string();
     sha = sha_file(source);

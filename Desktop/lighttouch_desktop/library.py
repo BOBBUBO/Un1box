@@ -5,6 +5,8 @@ Callers supply host path canonicalization; native admission remains authoritativ
 """
 import re
 
+from . import boards
+
 
 class RecordError(ValueError):
     pass
@@ -64,5 +66,5 @@ def display_title(name, board, build):
     versions = {("n72ap", "7E18"): "3.1.3", ("n81ap", "8C148"): "4.2.1"}
     version = versions.get((board, build))
     system = "iOS " + version + " (" + build + ")" if version else build
-    device = {"n72ap": "iPod touch (2nd generation)", "n81ap": "iPod touch (4th generation)"}.get(board, "Prepared device")
+    device = boards.device_name(board)
     return " · ".join([name, device, system, "prepared"])

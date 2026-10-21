@@ -31,7 +31,7 @@ public static class BaseAdmission
         using var document = JsonDocument.Parse(lockStream);
         var root = document.RootElement;
         if (root.GetProperty("format").GetInt32() != 1 ||
-            root.GetProperty("board").GetString() is not ("n72ap" or "n81ap") ||
+            !Boards.All.ContainsKey(root.GetProperty("board").GetString() ?? "") ||
             string.IsNullOrWhiteSpace(root.GetProperty("build").GetString()))
             throw new InvalidDataException("Unsupported prepared base identity.");
         var outputs = root.GetProperty("outputs");
@@ -62,13 +62,19 @@ public static class BaseAdmission
                 Digest(nandRecord, "sha256") != nandRecord.GetProperty("sha256").GetString())
                 throw new InvalidDataException("Packed NAND integrity digests must use lowercase SHA-256.");
         }
-        Require("nand", "nand", !packedNand); Require("nor", "nor.bin");
-        if (root.GetProperty("board").GetString() == "n72ap")
+        Require("nand", "nand", !packedNand);
+        // The files each board's boot reads (Portable/src/Storage.cpp's boot_route).
+        string board = root.GetProperty("board").GetString()!;
+        bool secureRom = board is "n45ap" or "m68ap" or "n72ap";
+        string strategy = root.TryGetProperty("boot_strategy", out var bootStrategy) ? bootStrategy.GetString() ?? "" : secureRom ? "iboot" : "kboot";
+        if (strategy == "kboot" && !secureRom) Require("kboot", "kboot.bin");
+        else if (strategy == "iboot" && (secureRom || board == "k48ap"))
         {
-            Require("gid_blobs", "gid-blobs.bin");
-            if (!root.TryGetProperty("boot_strategy", out var strategy) || strategy.GetString() == "iboot") Require("iboot", "iBoot.bin");
+            Require("iboot", "iBoot.bin"); Require("nor", "nor.bin");
+            if (board is not ("n45ap" or "m68ap")) Require("gid_blobs", "gid-blobs.bin");
         }
-        else Require("kboot", "kboot.bin");
+        else if (strategy == "bootrom" && board == "n72ap") { Require("nor", "nor.bin"); Require("gid_blobs", "gid-blobs.bin"); }
+        else throw new InvalidDataException($"Unsupported boot strategy {strategy} for {board}.");
         var sizes = new SortedDictionary<string, long>(StringComparer.Ordinal);
         var checks = new List<(string Path, string Digest)>();
         var listings = new List<(string Root, List<string> Names, string Digest, long? Pages)>();
@@ -84,6 +90,7 @@ public static class BaseAdmission
         foreach (var output in outputs.EnumerateObject())
         {
             var record = output.Value;
+            if (record.ValueKind == JsonValueKind.Null) continue;  // an output the board leaves out (a 3.x kboot nor.bin)
             string name = record.GetProperty("path").GetString() ?? "";
             PreparedArchive.ValidateName(name);
             if (record.TryGetProperty("sha256", out _)) checks.Add((Asset(name), Digest(record, "sha256")));

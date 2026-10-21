@@ -270,6 +270,46 @@ static std::string dump_digest_cache(const DigestCache &cache) {
         text += entry.first + " " + entry.second + "\n";
     return text;
 }
+// How each board firmwarekit prepares boots (Light Touch for Mac's BootRecipe and Board.requiredFiles): the
+// S5L8900 (iPod touch 1G, original iPhone) and S5L8720 (iPod touch 2G) from their SecureROM, which the caller
+// supplies; the S5L8920/S5L8922 (iPhone 3GS, iPod touch 3G) and A4 boards from prepared files alone. The engine
+// names the -M machine.
+enum class BootFamily { S5L8900, S5L8720, A4 };
+struct BootRoute {
+    BootFamily family;
+    std::string strategy;
+    bool modem;  // baseband=on: the iPhone 3GS and iPhone 4 (the original iPhone's machine has its modem built in)
+    std::vector<std::pair<std::string, std::string>> outputs;  // the lock outputs (key, file) the boot reads
+    bool needs_bootrom() const { return family != BootFamily::A4; }
+};
+static BootRoute boot_route(const std::string &board, const Json &lock) {
+    static const std::map<std::string, std::pair<BootFamily, bool>> boards = {
+        {"n45ap", {BootFamily::S5L8900, false}}, {"m68ap", {BootFamily::S5L8900, false}},
+        {"n72ap", {BootFamily::S5L8720, false}}, {"n18ap", {BootFamily::A4, false}},
+        {"n88ap", {BootFamily::A4, true}},       {"k48ap", {BootFamily::A4, false}},
+        {"n81ap", {BootFamily::A4, false}},      {"n90ap", {BootFamily::A4, true}}};
+    const auto b = boards.find(board);
+    require(b != boards.end(), "no boot route for board " + board, LT_UNSUPPORTED);
+    BootRoute r{b->second.first, "", b->second.second, {}};
+    const Json *strategy = lock.find("boot_strategy");
+    r.strategy = strategy && strategy->kind == Json::String ? strategy->string()
+                                                             : r.family == BootFamily::A4 ? "kboot" : "iboot";
+    const std::pair<std::string, std::string> iboot{"iboot", "iBoot.bin"}, nor{"nor", "nor.bin"},
+        gid{"gid_blobs", "gid-blobs.bin"}, kboot{"kboot", "kboot.bin"};
+    if (r.family == BootFamily::S5L8900 && r.strategy == "iboot")
+        r.outputs = {iboot, nor};
+    else if (r.family == BootFamily::S5L8720 && r.strategy == "iboot")
+        r.outputs = {iboot, nor, gid};
+    else if (r.family == BootFamily::S5L8720 && r.strategy == "bootrom")
+        r.outputs = {nor, gid};
+    else if (r.family == BootFamily::A4 && r.strategy == "kboot")
+        r.outputs = {kboot};  // and nor.bin when the device has one (4.x data protection, the S5L8920's own)
+    else if (board == "k48ap" && r.strategy == "iboot")
+        r.outputs = {iboot, nor, gid};
+    else
+        require(false, "unsupported boot strategy " + r.strategy + " for " + board, LT_UNSUPPORTED);
+    return r;
+}
 // With [cache], files whose identity matches an entry reuse its digest instead of being read again;
 // [cache] is then replaced by the identities and digests of this admission.
 static void validate_base(const fs::path &base, AdmissionProgress *progress = nullptr,
@@ -298,17 +338,8 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
         require(r.at("path").string() == name && r.at("sha256").string().size() == 64,
                 "missing authoritative " + name + " integrity record");
     };
-    if (board == "n72ap") {
-        required_file("nor", "nor.bin");
-        required_file("gid_blobs", "gid-blobs.bin");
-        const auto *strategy = j.find("boot_strategy");
-        if (!strategy || strategy->string() == "iboot")
-            required_file("iboot", "iBoot.bin");
-    }
-    if (board == "n81ap") {
-        required_file("nor", "nor.bin");
-        required_file("kboot", "kboot.bin");
-    }
+    for (const auto &output : boot_route(board, j).outputs)
+        required_file(output.first, output.second);
     // Enumerate once, then hash a stable, sorted, checked file plan. Listing
     // strings and state/lock metadata are not source asset digest input bytes.
     AdmissionProgress quiet{nullptr, nullptr};
@@ -336,6 +367,8 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
     for (const auto &pair : outputs.object) {
         events.checkpoint();
         const Json &o = pair.second;
+        if (o.kind == Json::Null)
+            continue;  // FirmwareKit records an output its board leaves out as null (a 3.x kboot device's nor.bin)
         const Json *path = o.find("path");
         require(path, "output path missing");
         std::string name = path->string();
@@ -1310,23 +1343,16 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         lt::abi(c);
         lt::require(!d->active, "device running", LT_BUSY);
         lt::require(c->machine && *c->machine, "engine machine facts required");
-        std::string board = d->lock.at("board").string();
-        bool n72 = board == "n72ap", kboot = board == "n81ap";
-        lt::require(n72 || kboot, "native boot routes currently n72ap and n81ap only", LT_UNSUPPORTED);
-        std::string strategy =
-            d->lock.find("boot_strategy") ? d->lock.at("boot_strategy").string() : (n72 ? "iboot" : "kboot");
-        lt::require((n72 && (strategy == "iboot" || strategy == "bootrom")) || (kboot && strategy == "kboot"),
-                    "unsupported board boot strategy", LT_UNSUPPORTED);
-        if (n72)
-            lt::require(c->bootrom_path && lt::fs::is_regular_file(c->bootrom_path), "n72 boot ROM missing");
-        for (const char *p : {"nand", "nor.bin"})
-            lt::require(lt::fs::exists(d->base / p), std::string("base missing ") + p);
-        if (n72) {
-            lt::require(lt::fs::exists(d->base / "gid-blobs.bin"), "GID blobs missing");
-            if (strategy == "iboot")
-                lt::require(lt::fs::exists(d->base / "iBoot.bin"), "base iBoot missing");
-        } else
-            lt::require(lt::fs::is_regular_file(d->base / "kboot.bin"), "prepared kboot.bin missing");
+        const std::string board = d->lock.at("board").string();
+        const auto route = lt::boot_route(board, d->lock);
+        const bool n72 = route.family == lt::BootFamily::S5L8720, s5l8900 = route.family == lt::BootFamily::S5L8900;
+        if (route.needs_bootrom())
+            lt::require(c->bootrom_path && lt::fs::is_regular_file(c->bootrom_path),
+                        "this device needs its boot ROM (" + std::string(s5l8900 ? "S5L8900" : "iBoot-240.4") + ")");
+        lt::require(lt::fs::exists(d->base / "nand"), "base missing nand");
+        for (const auto &output : route.outputs)
+            lt::require(lt::fs::is_regular_file(d->base / output.second), "base missing " + output.second);
+        const bool nor = lt::fs::is_regular_file(d->base / "nor.bin");
         auto escape = [](const std::string &s) {
             std::string o;
             for (char b : s) {
@@ -1337,12 +1363,13 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
             }
             return o;
         };
-        const bool image_store = n72 && lt::image_store_in_place(d->base / "nand");
+        // An image store (the 2G's and the 1.x boards'): the emulator writes a live copy in place, with no overlay.
+        const bool image_store = route.family != lt::BootFamily::A4 && lt::image_store_in_place(d->base / "nand");
         std::string machine = c->machine;
         auto option = [&](const std::string &k, const std::string &v) { machine += "," + k + "=" + escape(v); };
         if (n72) {
             option("boot-args", "amfi_allow_any_signature=1 cs_enforcement_disable=1");
-            option("direct-iboot", strategy == "iboot" ? (d->base / "iBoot.bin").string() : "");
+            option("direct-iboot", route.strategy == "iboot" ? (d->base / "iBoot.bin").string() : "");
             option("direct-llb", "");
             option("bootrom", c->bootrom_path);
             option("nor", (d->base / "nor.bin").string());
@@ -1350,8 +1377,18 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
                 option("nandrw", (d->state / "nand").string());
             option("gid-blobs", (d->base / "gid-blobs.bin").string());
             option("wifi", "on");
+        } else if (s5l8900) {
+            option("bootrom", c->bootrom_path);
+            option("iboot", (d->base / "iBoot.bin").string());
+            if (!image_store)
+                option("nand-overlay", (d->state / "nand").string());
         } else {
-            option("kboot", (d->base / "kboot.bin").string());
+            if (route.strategy == "kboot")
+                option("kboot", (d->base / "kboot.bin").string());
+            else {
+                option("iboot", (d->base / "iBoot.bin").string());
+                option("gid-blobs", (d->base / "gid-blobs.bin").string());
+            }
             option("nand-overlay", (d->state / "nand").string());
             if (lt::fs::exists(d->base / "identity.json")) {
                 auto identity = lt::parse(lt::read_file(d->base / "identity.json"));
@@ -1366,9 +1403,13 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
                     option("die-id", value);
                 }
             }
+            if (route.modem)
+                option("baseband", "on");
         }
         option("nand", image_store ? lt::live_image_store(d->base / "nand", d->state).string() : (d->base / "nand").string());
-        option("nor-rw", (d->state / "nor.bin").string());
+        // The S5L8900's NOR is a pflash drive (below); the others' a machine property.
+        if (nor && !s5l8900)
+            option("nor-rw", (d->state / "nor.bin").string());
         std::string package =
             c->guest_package_path && *c->guest_package_path ? c->guest_package_path : lt::prepared_guest_package(d);
         if (!package.empty())
@@ -1382,9 +1423,12 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
                                 v.second.kind == lt::Json::Boolean,
                             "invalid machine option value");
                 static const std::set<std::string> safe_options = {"wifi-mac", "bt-mac", "ecid", "aes-uid",
-                                                                   "rtc-epoch"};
+                                                                   "rtc-epoch", "imei"};
                 lt::require(safe_options.count(v.first), "unsupported prepared machine property: " + v.first,
                             LT_UNSUPPORTED);
+                // FirmwareKit leaves a property the unit has no value for empty: the machine's default then.
+                if (v.second.kind == lt::Json::String && v.second.string().empty())
+                    continue;
                 option(v.first,
                        v.second.kind == lt::Json::Boolean ? (v.second.text == "true" ? "on" : "off") : v.second.text);
             }
@@ -1419,6 +1463,13 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
             d->args.push_back("driver=ipodtouch.timer,property=freq-hz,value=6000000");
 #endif
         }
+        if (s5l8900) {
+            std::string drive = "if=pflash,format=raw,file=" + escape((d->state / "nor.bin").string());
+            d->args.insert(d->args.end(), {"-drive", drive});
+        }
+        // The SIM keeps its PIN, PUK and tries left with the device's own state, as a card in the tray does.
+        if (route.modem)
+            d->args.insert(d->args.end(), {"-global", "ios-baseband.sim-file=" + (d->state / "sim").string()});
         d->args.insert(d->args.end(),
                        {"-display", "none", "-no-shutdown", "-audio", "driver=none", "-serial",
                         c->serial_path && *c->serial_path ? std::string("file:") + c->serial_path : "null"});

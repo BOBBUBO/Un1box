@@ -43,7 +43,9 @@ public static class BootRecipe
             using var packed = File.OpenRead(nand);
             BaseAdmission.VerifyPackedNand(packed, record.GetProperty("pages").GetInt64());
         }
-        var norSource = FileAt("nor.bin");
+        // A kboot device has a NOR only for 4.x data protection (and always on the S5L8920).
+        var hasNor = File.Exists(Path.Combine(device.BasePath, "nor.bin")) || first || second || strategy != "kboot";
+        var norSource = hasNor ? FileAt("nor.bin") : "";
         var nor = Path.Combine(Path.GetFullPath(state), "nor.bin");
         var overlay = Path.Combine(Path.GetFullPath(state), "overlay");
         var machine = board.Machine;
@@ -73,7 +75,7 @@ public static class BootRecipe
         else
         {
             Option(strategy!, FileAt(strategy == "kboot" ? "kboot.bin" : strategy == "iboot" ? "iBoot.bin" : "SecureROM.bin"));
-            Option("nor-rw", nor);
+            if (hasNor) Option("nor-rw", nor);
             if (strategy != "kboot") Option("gid-blobs", FileAt("gid-blobs.bin"));
             if (strategy == "bootrom") Option("development-fuses", "off");
         }
@@ -90,7 +92,8 @@ public static class BootRecipe
                     JsonValueKind.String => p.Value.GetString()!, JsonValueKind.True => "on", JsonValueKind.False => "off",
                     JsonValueKind.Number => p.Value.GetRawText(), _ => throw new InvalidDataException($"Non-scalar option: {p.Name}")
                 };
-                Option(p.Name, value);
+                // FirmwareKit leaves a property the unit has no value for empty: the machine's default then.
+                if (value.Length > 0) Option(p.Name, value);
             }
         }
         // HostRuntime gets the die-id from identity.json; do not silently change a device's hardware identity.
@@ -101,8 +104,8 @@ public static class BootRecipe
             if (identity.RootElement.TryGetProperty("die-id", out var die) && die.ValueKind == JsonValueKind.Array)
                 Option("die-id", string.Join(":", die.EnumerateArray().Select(v => v.GetString())));
         }
-        if (!second && !string.IsNullOrEmpty(device.RomPath))
-            throw new InvalidDataException("n81ap boots prepared kboot.bin; clear the separate SecureROM selection.");
+        if (!first && !second && !string.IsNullOrEmpty(device.RomPath))
+            throw new InvalidDataException($"{boardId} boots its prepared files; clear the separate SecureROM selection.");
         var args = new List<string> { "-M", machine, "-display", "sdl,gl=off,show-cursor=on", "-audio", "driver=sdl", "-no-shutdown" };
         // Chain TCG jumps across guest pages, as the other ports do (Portable/src/Storage.cpp has the measurements).
         args.AddRange(["-accel", "tcg,cross-page-chain=on,indirect-cache=on"]);
@@ -118,7 +121,7 @@ public static class BootRecipe
             // Bind this private state to the exact imported path and recipe; identical
             // lock files in different bases must not silently share writable NAND.
             var identity = Path.GetFullPath(device.BasePath) + "\n" + File.ReadAllText(Path.Combine(device.BasePath, "device.lock.json"));
-            if (second) identity += "\n" + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(device.RomPath)));
+            if (first || second) identity += "\n" + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(device.RomPath)));
             var fingerprint = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity)));
             var pin = Path.Combine(state, "base.sha256");
             if (File.Exists(pin) && File.ReadAllText(pin) != fingerprint)
@@ -129,7 +132,7 @@ public static class BootRecipe
                 File.Move(pin + ".tmp", pin);
             }
             Directory.CreateDirectory(overlay);
-            if (!File.Exists(nor))
+            if (hasNor && !File.Exists(nor))
             {
                 // CopyFile can propagate an immutable base file's Windows
                 // permissions. Create an independent file under the private

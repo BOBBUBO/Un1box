@@ -171,8 +171,10 @@ def linux(args):
         script.write_text("\n".join(lines) + "\n")
         command = [str(exe), "--base", str(base), "--state", str(state), "--engine", str(engine), "--package", str(package),
                    "--headless", "--seconds", str(args.seconds + 60), "--script", str(script), "--no-audio"]
-        if entry["board"] == "n72ap":  # the iPod touch 2G starts from its boot ROM (BASES/bootrom.bin)
-            command += ["--rom", str(BASES / "bootrom.bin")]
+        # The iPod touch 2G, the iPod touch 1G and the original iPhone start from their boot ROM.
+        rom = {"n72ap": "bootrom.bin", "n45ap": "bootrom_s5l8900", "m68ap": "bootrom_s5l8900"}.get(entry["board"])
+        if rom:
+            command += ["--rom", str(BASES / rom)]
         log = work / "run.log"
         with log.open("w") as out:
             subprocess.run(command, stdout=out, stderr=subprocess.STDOUT)

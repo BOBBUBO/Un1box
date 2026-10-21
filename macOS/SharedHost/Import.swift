@@ -52,7 +52,7 @@ nonisolated func importArchive(_ args: HostArguments) throws {
         after.st_ctimespec.tv_sec == initial.st_ctimespec.tv_sec,
         after.st_ctimespec.tv_nsec == initial.st_ctimespec.tv_nsec,
         let lock = try DeviceLock.read(base: staging), let boardID = lock.board,
-        ["n72ap", "n81ap"].contains(boardID), let board = Board(rawValue: boardID)
+        let board = Board(rawValue: boardID)
     else { throw HostArguments.Failure.usage("Source changed or unpacked base is unsupported.") }
     let required = try board.requiredFiles(strategy: lock.bootStrategy)
     for path in [required.boot, "nand", "identity.json"] + required.files {

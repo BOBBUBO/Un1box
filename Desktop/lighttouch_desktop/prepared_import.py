@@ -15,6 +15,7 @@ import struct
 import threading
 import zlib
 
+from . import boards
 from .storage import DEFAULT_STORAGE
 
 CHUNK = 1024 * 1024
@@ -507,20 +508,15 @@ def import_packed_folder(source, destination, expected_sha256, *, storage=DEFAUL
 
 def _verify_lock(lock, hashes, packed, checkpoint):
     if (not isinstance(lock, dict) or type(lock.get("format")) is not int or lock["format"] != 1
-            or lock.get("board") not in ("n72ap", "n81ap")
+            or not boards.supported(lock.get("board"))
             or not isinstance(lock.get("build"), str) or not lock["build"].strip()
             or not isinstance(lock.get("outputs"), dict)):
         raise ValueError("Unsupported prepared base identity.")
     outputs = lock["outputs"]
-    required = {"nor": "nor.bin"}
-    if lock["board"] == "n72ap":
-        required["gid_blobs"] = "gid-blobs.bin"
-        if lock.get("boot_strategy", "iboot") == "iboot":
-            required["iboot"] = "iBoot.bin"
-    else:
-        required["kboot"] = "kboot.bin"
-        if packed:
-            raise ValueError("n81 NAND cannot use n72 packed geometry.")
+    board = lock["board"]
+    required = boards.boot_outputs(board, lock.get("boot_strategy", boards.default_strategy(board)))
+    if packed and board != "n72ap":
+        raise ValueError("Only the iPod touch 2G's NAND uses packed geometry.")
     for key, name in required.items():
         record = outputs.get(key)
         if not isinstance(record, dict) or record.get("path") != name or "sha256" not in record:
@@ -535,6 +531,8 @@ def _verify_lock(lock, hashes, packed, checkpoint):
         raise ValueError("Missing authoritative NAND page count.")
     for record in outputs.values():
         checkpoint()
+        if record is None:
+            continue  # an output the board leaves out (a 3.x kboot device's nor.bin)
         if not isinstance(record, dict):
             raise ValueError("Invalid prepared output integrity record.")
         name = _name(record.get("path"))
