@@ -77,7 +77,7 @@ internal fun needsBootrom(board: String) = board == "n72ap"
 internal object BootromDownload {
     private const val PATH_240_4 = "resources/APROM/SecureROM%20for%20s5l8720xsi%2C%20iBoot-240.4"
     private val links = listOf("https://securerom.fun/$PATH_240_4", "https://github.com/hekapooios/hekapooios.github.io/raw/master/$PATH_240_4")
-    private const val SHA256_240_4 = "55f4d8ea2791ba51dd89934168f38f0fb21ce8762ff614c1e742407c0d3ca054"
+    const val SHA256_240_4 = "55f4d8ea2791ba51dd89934168f38f0fb21ce8762ff614c1e742407c0d3ca054"
 
     /** Downloads the boot ROM to [target]; blocking, so call it off the main thread. */
     fun fetch(target: File) {

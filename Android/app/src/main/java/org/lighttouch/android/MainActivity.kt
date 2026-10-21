@@ -617,8 +617,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val record = records.firstOrNull { it.getString("board") == board && it.getBoolean("bootromAvailable") &&
             File(filesDir, "library/records/${it.getString("id")}/assets/bootrom.bin").isFile }
         when {
-            record != null -> { prep.romPath = File(filesDir, "library/records/${record.getString("id")}/assets/bootrom.bin").absolutePath; prep.romLabel = "From ${record.getString("name")}" }
-            File(filesDir, "bootrom.bin").isFile && board == "n72ap" -> { prep.romPath = File(filesDir, "bootrom.bin").absolutePath; prep.romLabel = "Saved boot file" }
+            record != null -> { prep.romPath = File(filesDir, "library/records/${record.getString("id")}/assets/bootrom.bin").absolutePath; prep.romLabel = "Reusing the one from ${record.getString("name")}. It is the same for every iOS version." }
+            File(filesDir, "bootrom.bin").isFile && board == "n72ap" -> { prep.romPath = File(filesDir, "bootrom.bin").absolutePath; prep.romLabel = "Reusing the saved one. It is the same for every iOS version." }
         }
     }
     @Composable
@@ -797,6 +797,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 val target = File(filesDir, "prepare-bootrom.bin")
                 contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } } ?: error("Cannot read the boot file")
                 require(target.length() in 1..(1L shl 20)) { "That file is not a boot ROM" }
+                // The chip's mask ROM: every good dump is these bytes, and preparation boots it (the iOS 4 keybag).
+                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(target.readBytes()).joinToString("") { "%02x".format(it) }
+                require(digest == BootromDownload.SHA256_240_4) { "That file is not the iPod touch 2G boot ROM (iBoot-240.4)" }
                 val name = displayName(uri)
                 handler.post { prep.romPath = target.absolutePath; prep.romLabel = name }
             } catch (e: Exception) { handler.post { error = e.message ?: "Could not use that boot file" } }

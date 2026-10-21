@@ -13,10 +13,10 @@ build/firmwarekit/linux/firmwarekit create --catalog Portable/firmware/firmware-
 build/firmwarekit/linux/firmwarekit pack-base --base n81ap-10B500 --out n81ap-10B500.itbase
 ```
 
-`create` prints one JSON event per line (`begin` with each step's expected seconds, `step`, `progress`, `warning`, `error`, `done`). Preparation boots the new system twice through `lighttouch-oneshot`, which loads the LightTouch engine (`LTM_QEMU_DYLIB`, else `libqemu-arm.so` beside it): once to create the data-protection keybag, and once so iOS finishes its first-start setup (`it_seal` halts it). Android runs the same two executables from the APK (`FirmwareService`).
+`create` prints one JSON event per line (`begin` with each step's expected seconds, `step`, `progress`, `warning`, `error`, `done`). iOS 4 and later boot the new system through `lighttouch-oneshot`, which loads the LightTouch engine (`LTM_QEMU_DYLIB`, else `libqemu-arm.so` beside it): once to create the data-protection keybag, and on the A4 boards once more so iOS finishes its first-start setup (`it_seal` halts it). The iPod touch 2G's keybag boot runs its boot ROM (iBoot-240.4), which no IPSW carries: pass it with `--bootrom`. Android runs the same two executables from the APK (`FirmwareService`).
 
 Off the Mac, firmwarekit reads and writes disk images itself: UDIF to raw, then HFS+ extracted to a folder and rebuilt, case-insensitive volumes included. Hard links are kept as they were when unchanged, since Android cannot make them.
 
-Measured: on Linux, n72ap-7E18 takes 35 s and n81ap-10B500 5½ minutes. On a Poco F3, n72ap-7E18 takes 54 s.
+Measured on Linux: n72ap-7E18 takes 39 s (no boots), n72ap-8C148 53 s, and n81ap-10B500 about 4½ minutes, against 7 minutes before it installed the preinstalled assets itself and turned off the dead services (interleaved on the same host). On a Poco F3, n72ap-7E18 takes 54 s.
 
 The other files here are historical audit notes from the earlier n72-only C++ preparer, and the read-only shutdown evidence tools ([SHUTDOWN-EVIDENCE.md](SHUTDOWN-EVIDENCE.md)).

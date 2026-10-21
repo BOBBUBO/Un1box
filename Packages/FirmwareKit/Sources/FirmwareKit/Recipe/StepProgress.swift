@@ -86,18 +86,19 @@ struct StepPlan: Sendable {
         ]
     )
 
-    /// iOS 6's seal boot: after it_prefs, the first-boot data migration runs and it_seal waits for it, then a further
-    /// 60 s for SpringBoard (it_seal.c). n81ap-10B500 on a Ryzen desktop under Linux, 2026-10-20: launchd 9 s, Wi-Fi
-    /// 42 s, it_prefs 68 s, it_seal 192 s, halted by 195 s.
+    /// iOS 6's seal boot: after it_prefs, the first-boot data migration runs and it_seal waits for it and for
+    /// SpringBoard's first Home screen (it_seal.c). n81ap-10B500 on a Ryzen desktop under Linux, 2026-10-20: launchd 9 s,
+    /// Wi-Fi 42 s, it_prefs 68 s, it_seal 192 s, halted by 195 s; with the assets preinstalled and the dead services off
+    /// (SystemEdits) the seal took 58% as long in an interleaved A/B on a slower host, so it_seal now ~125 s.
     static let seal6 = StepPlan(
-        seconds: 195,
+        seconds: 128,
         text: "First start: loading iOS",
         milestones: [
             .init(file: "seal.log", marker: "FTL_Open", at: 4, text: "First start: opening the flash"),
             .init(file: "seal.log", marker: "launchd[1] has started", at: 9, text: "First start: starting iOS"),
             .init(file: "seal.log", marker: "AirPort: Link Up", at: 42, text: "First start: starting iOS"),
             .init(file: "seal.log", marker: "it_prefs:", at: 68, text: "First start: setting up iOS"),
-            .init(file: "seal.log", marker: "it_seal:", at: 192, text: "First start: shutting down"),
+            .init(file: "seal.log", marker: "it_seal:", at: 125, text: "First start: shutting down"),
         ]
     )
 

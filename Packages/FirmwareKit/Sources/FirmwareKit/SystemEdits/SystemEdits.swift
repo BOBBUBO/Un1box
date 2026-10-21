@@ -62,6 +62,9 @@ public enum SystemEdits {
         /// The device's keyboards besides its language's, Mac input source IDs (com.apple.keylayout.French); nil: the
         /// Mac's enabled ones (seedLanguage).
         public var keyboards: [String]?
+        /// Disable the jobs of services that cannot work on an emulated device (deadServiceJobs; recipe option
+        /// quiet_services, default on): the first start and every boot are CPU-bound, and these ran at each.
+        public var quietServices = true
         public init() {}
         /// `version`: the entry's iOS version, for the options its rules decide (FirmwareEntry.journaledData).
         public init(recipe: FirmwareEntry.Recipe, version: String) {
@@ -75,6 +78,7 @@ public enum SystemEdits {
             dated = recipe.rtcEpoch != nil
             skipSetup = o["skip_setup"] ?? false
             jailbreak = o["jailbreak"] ?? false
+            quietServices = o["quiet_services"] ?? true
         }
     }
 
@@ -139,6 +143,22 @@ public enum SystemEdits {
         (daemons + "/com.apple.device-o-matic.plist", "com.apple.device-o-matic"),
     ]
     static let btJob = daemons + "/com.apple.BTServer.plist"
+    /// Jobs launchd starts at boot for services an emulated device has no use for, each Disabled where present: Apple's
+    /// servers for them are gone or refuse these releases, or the hardware is absent. Traced on n81ap 6.1.6 (it_seal
+    /// per-process CPU): together ~12% of the first start's guest CPU and a share of every boot's.
+    static let deadServiceJobs = [
+        "com.apple.imagent", "com.apple.imavagent",  // iMessage, FaceTime
+        "com.apple.itunescloudd",  // iTunes in the Cloud
+        "com.apple.mediastream.mstreamd",  // Photo Stream
+        "com.apple.ubd", "com.apple.syncdefaultsd",  // iCloud documents, key-value store (not backupd: MobileBackup
+        // raises without it, and DataMigrator and atc abort)
+        "com.apple.apsd",  // push notifications
+        "com.apple.AOSNotification",  // Find My iPhone
+        "com.apple.usbptpd",  // camera import over USB
+        "com.apple.mobile.fud",  // accessory firmware updates
+        "com.apple.mobile.softwareupdated", "com.apple.softwareupdateservicesd",  // software update
+        "com.apple.OTATaskingAgent", "com.apple.OTACrashCopier",
+    ].map { daemons + "/" + $0 + ".plist" }
     static let installdJob = daemons + "/com.apple.mobile.installd.plist"
     static let appsyncPath = "usr/lib/libappsync.dylib", appsyncLauncherPath = "usr/libexec/appsync-launch"
     static func dyldCache(_ arch: String) -> String { "System/Library/Caches/com.apple.dyld/dyld_shared_cache_" + arch }
@@ -242,6 +262,7 @@ public enum SystemEdits {
         var rootModes: [(path: String, mode: UInt16)] = []
         var mobileOwned: [String] = []
         var productMajor = 0
+        var productVersion = "", productBuild = ""
         var keyboards: KeyboardCatalog?
         var formats: Set<String>?
         try await VolumeMount.withMounted(system, at: work.appendingPathComponent("mnt-system")) { m in
@@ -292,12 +313,10 @@ public enum SystemEdits {
                 try mkdirs(at(kernelcachePath).deletingLastPathComponent())
                 try put(kernelcache, at(kernelcachePath), mode: 0o644)
             }
-            productMajor =
-                Int(
-                    (NSDictionary(contentsOf: at("System/Library/CoreServices/SystemVersion.plist"))?["ProductVersion"]
-                        as? String)?
-                        .split(separator: ".").first ?? ""
-                ) ?? 0
+            let systemVersion = NSDictionary(contentsOf: at("System/Library/CoreServices/SystemVersion.plist"))
+            productVersion = systemVersion?["ProductVersion"] as? String ?? ""
+            productBuild = systemVersion?["ProductBuildVersion"] as? String ?? ""
+            productMajor = Int(productVersion.split(separator: ".").first ?? "") ?? 0
             // 7.x's launchd cannot remount / rw (mount_hfs: Operation not permitted) and reboots; keep its stock ro root
             try put(Data((productMajor >= 7 ? fstabRO : fstabRW).utf8), at(fstab))
             if o.webProxy {
@@ -368,6 +387,11 @@ public enum SystemEdits {
                 }
             }
             if !o.bluetooth { try rewritePlist(at(btJob)) { $0["Disabled"] = true } }
+            if o.quietServices {
+                let quieted = deadServiceJobs.filter { fm.fileExists(atPath: at($0).path) }
+                for job in quieted { try rewritePlist(at(job)) { $0["Disabled"] = true } }
+                log("quiet services: \(quieted.count) jobs disabled")
+            }
             do {
                 result.activation = try activate(m, log: log)
             } catch let e as ActivationFailure {
@@ -418,6 +442,15 @@ public enum SystemEdits {
             formats: formats,
             log: log
         )
+        if let installed = try seedPreinstalledAssets(
+            skeleton,
+            major: productMajor,
+            version: productVersion,
+            build: productBuild,
+            region: String(UnitIdentity.iPadRegion.prefix { $0 != "/" })
+        ) {
+            log("preinstalled assets: \(installed.count) installed as mobileassetd would at the first boot")
+        }
         try? fm.removeItem(at: data)
         try await VolumeMount.makeHFS(data, size: dataBytes, journaled: o.dataJournal)
         var byOwner: [[UInt32]: [String]] = [:]

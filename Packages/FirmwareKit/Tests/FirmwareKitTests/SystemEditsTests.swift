@@ -88,6 +88,54 @@ enum K48Oracle {
         #expect(ark?["-BrickState"] as? Bool == false)
     }
 
+    /// 6.x's asset preinstall, as mobileassetd leaves it on a sealed n81ap 10B500: each asset for this unit's region
+    /// (here none of a font's) at Assets/<type>/<hash>.asset/<hash>, the catalog without FormatVersion and each asset
+    /// Verifying, the completion marker, PreinstalledAssets gone. Not before 6.
+    @Test func preinstalledAssetsAsMobileassetdLeavesThem() throws {
+        let fm = FileManager.default
+        let skeleton = fm.temporaryDirectory.appendingPathComponent("ltm-assets-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: skeleton) }
+        let source = skeleton.appendingPathComponent(SystemEdits.preinstalledAssets)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        func odc(_ members: [(String, Data)]) -> Data {
+            var d = Data()
+            for (name, body) in members + [("TRAILER!!!", Data())] {
+                let n = name.utf8.count + 1
+                d += Data(String(format: "070707%06o%06o%06o%06o%06o%06o%06o%011o%06o%011o", 0, 0, 0o100644, 0, 0, 1, 0, 0, n, body.count).utf8)
+                d += Data(name.utf8) + Data([0]) + body
+            }
+            return d
+        }
+        func catalog(_ type: String, _ assets: [[String: Any]]) throws -> Data {
+            try PropertyListSerialization.data(
+                fromPropertyList: ["AssetType": type, "Assets": assets, "FormatVersion": 1], format: .xml, options: 0)
+        }
+        let dict = "com_apple_MobileAsset_DictionaryServices_dictionary", font = "com_apple_MobileAsset_Font"
+        try odc([
+            ("./aa.cpio", Data("dictionary aa".utf8)), ("./bb.cpio", Data("dictionary bb".utf8)),
+            ("./\(dict).plist", try catalog("d", [["__RelativePath": "\(dict)/aa.cpio"], ["__RelativePath": "\(dict)/bb.cpio"]])),
+        ]).write(to: source.appendingPathComponent(dict + ".cpio"))
+        try odc([
+            ("./cc.cpio", Data("font".utf8)),
+            ("./\(font).plist", try catalog("f", [["__RelativePath": "\(font)/cc.cpio", "__PreinstallRegionCodes": ["CH"]]])),
+        ]).write(to: source.appendingPathComponent(font + ".cpio"))
+
+        #expect(try SystemEdits.seedPreinstalledAssets(skeleton, major: 5, version: "5.1.1", build: "9B206", region: "LL") == nil)
+        let installed = try SystemEdits.seedPreinstalledAssets(skeleton, major: 6, version: "6.1.6", build: "10B500", region: "LL")
+        #expect(installed == ["\(dict)/aa", "\(dict)/bb"])
+        let assets = skeleton.appendingPathComponent(SystemEdits.assets)
+        #expect(try Data(contentsOf: assets.appendingPathComponent("\(dict)/bb.asset/bb")) == Data("dictionary bb".utf8))
+        let out = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: assets.appendingPathComponent("\(dict)/\(dict).plist")), format: nil) as? [String: Any]
+        #expect(out?["FormatVersion"] == nil && out?["AssetType"] as? String == "d")
+        #expect((out?["Assets"] as? [[String: Any]])?.map { $0["__DownloadState"] as? String } == ["Verifying", "Verifying"])
+        #expect(!fm.fileExists(atPath: assets.appendingPathComponent(font).path), "fonts are China, Taiwan and Hong Kong units' only")
+        let done = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: assets.appendingPathComponent("preinstall-is-complete.plist")), format: nil) as? [String: String]
+        #expect(done == ["BuildVersion": "10B500", "ProductVersion": "6.1.6"])
+        #expect(!fm.fileExists(atPath: source.path))
+    }
+
     /// A pinned clock (recipe rtc_epoch, a developer beta) makes the build dated.
     @Test func datedFromRTCEpoch() throws {
         func recipe(_ extra: String) throws -> FirmwareEntry.Recipe {

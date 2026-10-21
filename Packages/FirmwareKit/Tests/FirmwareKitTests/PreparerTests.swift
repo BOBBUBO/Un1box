@@ -70,7 +70,7 @@ import Testing
     @Test func iOS7SealKeepsMoving() throws {
         let seal = StepPlan.plan(StepPlan.sealStep, major: 7)
         #expect(seal.seconds > 300 && StepPlan.plan(StepPlan.sealStep, major: 5).seconds < 100)
-        #expect(StepPlan.plan(StepPlan.sealStep, major: 6).seconds > 150)  // the first-boot migration
+        #expect(StepPlan.plan(StepPlan.sealStep, major: 6).seconds > 100)  // the first-boot migration
         var seen = [Double?](repeating: nil, count: seal.milestones.count)
         seen[0] = 4
         seen[1] = 8  // FTL_Open, launchd; no Wi-Fi line (a boot without it), no SpringBoard yet

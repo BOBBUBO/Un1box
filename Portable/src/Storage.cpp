@@ -705,22 +705,48 @@ static void progress(const lt_import_config *c, uint64_t written, uint64_t total
     if (c->progress)
         require(c->progress(c->opaque, written, total) == 0, "import cancelled", LT_CANCELLED);
 }
-static void copy_file(const fs::path &src, const fs::path &dst) {
-    auto in = open_read(src);
-    Fd out(open(dst.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-    io(out.n >= 0, "create copied file");
-    std::array<char, 65536> b{};
-    for (;;) {
-        ssize_t n = read(in.n, b.data(), b.size());
-        if (n < 0 && errno == EINTR)
-            continue;
-        io(n >= 0, "copy read");
-        if (!n)
-            break;
-        write_all(out.n, b.data(), size_t(n));
+static void clone_sparse(const fs::path &from, const fs::path &to) {
+    auto in = open_read(from);
+    struct stat st {};
+    io(fstat(in.n, &st) == 0, "fstat");
+    Fd out(open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
+    io(out.n >= 0, "create " + to.string());
+#ifdef FICLONE
+    if (ioctl(out.n, FICLONE, in.n) == 0)
+        return;
+#endif
+    io(ftruncate(out.n, st.st_size) == 0, "size " + to.string());
+    std::vector<uint8_t> buffer(1 << 20);
+    off_t at = 0;
+    while (at < st.st_size) {
+        off_t end = st.st_size;
+#ifdef SEEK_DATA
+        off_t data = lseek(in.n, at, SEEK_DATA);
+        if (data < 0)
+            break;  // only a hole remains
+        at = data;
+        end = lseek(in.n, data, SEEK_HOLE);
+        io(end > 0, "seek hole " + from.string());
+#endif
+        while (at < end) {
+            const size_t want = size_t(std::min<off_t>(off_t(buffer.size()), end - at));
+            ssize_t n = pread(in.n, buffer.data(), want, at);
+            io(n > 0, "read " + from.string());
+            if (!std::all_of(buffer.begin(), buffer.begin() + n, [](uint8_t v) { return v == 0; })) {
+                for (ssize_t done = 0; done < n;) {
+                    ssize_t k = pwrite(out.n, buffer.data() + done, size_t(n - done), at + done);
+                    io(k > 0, "write " + to.string());
+                    done += k;
+                }
+            }
+            at += n;
+        }
     }
-    io(fsync(out.n) == 0, "sync copied file");
+    io(fsync(out.n) == 0, "sync " + to.string());
 }
+// Sparse: a prepared folder's NAND chips are mostly holes (an n81ap store is 17.7 GB, ~1.8 GB of data), and a
+// dense copy wrote all of it.
+static void copy_file(const fs::path &src, const fs::path &dst) { clone_sparse(src, dst); }
 std::string prepared_guest_package(lt_device *d) {
     const auto *outputs = d->lock.find("outputs");
     const auto *package = outputs ? outputs->find("guest_package") : nullptr;
@@ -1262,45 +1288,6 @@ static bool image_store_in_place(const fs::path &nand) {
     auto geometry = parse(read_file(nand / "geometry.json", 1 << 16));
     const auto *format = geometry.find("storage_format");
     return format && format->kind == Json::String && format->string() == "nand-xor-blank-v2";
-}
-static void clone_sparse(const fs::path &from, const fs::path &to) {
-    auto in = open_read(from);
-    struct stat st {};
-    io(fstat(in.n, &st) == 0, "fstat");
-    Fd out(open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
-    io(out.n >= 0, "create " + to.string());
-#ifdef FICLONE
-    if (ioctl(out.n, FICLONE, in.n) == 0)
-        return;
-#endif
-    io(ftruncate(out.n, st.st_size) == 0, "size " + to.string());
-    std::vector<uint8_t> buffer(1 << 20);
-    off_t at = 0;
-    while (at < st.st_size) {
-        off_t end = st.st_size;
-#ifdef SEEK_DATA
-        off_t data = lseek(in.n, at, SEEK_DATA);
-        if (data < 0)
-            break;  // only a hole remains
-        at = data;
-        end = lseek(in.n, data, SEEK_HOLE);
-        io(end > 0, "seek hole " + from.string());
-#endif
-        while (at < end) {
-            const size_t want = size_t(std::min<off_t>(off_t(buffer.size()), end - at));
-            ssize_t n = pread(in.n, buffer.data(), want, at);
-            io(n > 0, "read " + from.string());
-            if (!std::all_of(buffer.begin(), buffer.begin() + n, [](uint8_t v) { return v == 0; })) {
-                for (ssize_t done = 0; done < n;) {
-                    ssize_t k = pwrite(out.n, buffer.data() + done, size_t(n - done), at + done);
-                    io(k > 0, "write " + to.string());
-                    done += k;
-                }
-            }
-            at += n;
-        }
-    }
-    io(fsync(out.n) == 0, "sync " + to.string());
 }
 static fs::path live_image_store(const fs::path &base, const fs::path &state) {
     const fs::path live = state / "nand";
