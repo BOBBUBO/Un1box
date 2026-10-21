@@ -175,7 +175,7 @@ static void describe(lt_library *l, const std::string &id, lt_record_info *out) 
     out->dirty = fs::exists(directory / "state/.dirty");
 }
 static void import(lt_library *l, const lt_library_import_config *c, const char *legacy_state, lt_record_info *out,
-                   lt_import_phase_fn observer = nullptr, void *opaque = nullptr) {
+                   lt_import_phase_fn observer = nullptr, void *opaque = nullptr, bool adopt = false) {
     abi(c);
     abi(out);
     require(c->source_path, "record source missing");
@@ -195,15 +195,27 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
     tmp.push_back(0);
     io(mkdtemp(tmp.data()) != nullptr, "record staging");
     fs::path stage = tmp.data();
+    fs::path adopted;  // the caller's folder while it is ours, to hand back if the import fails
     try {
         std::string base = (stage / "base").string();
-        lt_import_config cfg{sizeof(cfg),  1,           c->source_path, base.c_str(), c->expected_sha256,
-                             c->max_bytes, c->progress, c->opaque};
-        lt_error e{sizeof(e), 1, 0, {}};
-        lt_status status = fs::is_directory(fs::symlink_status(c->source_path))
-                               ? lt_import_directory_observed(&cfg, observer, opaque, &e)
-                               : lt_import_archive_observed(&cfg, observer, opaque, &e);
-        require(status == LT_OK, e.message, status);
+        if (adopt) {
+            require(fs::is_directory(fs::symlink_status(c->source_path)), "prepared output must be a folder");
+            struct stat from {}, to {};
+            io(stat(c->source_path, &from) == 0 && stat(l->root.c_str(), &to) == 0, "stat prepared output");
+            require(from.st_dev == to.st_dev, "prepared output must be on the library's storage");
+            adopted = fs::canonical(c->source_path);
+            io(chmod(adopted.c_str(), 0700) == 0, "own prepared output");  // a folder's move rewrites its ".."
+            io(rename(adopted.c_str(), base.c_str()) == 0, "move prepared output");
+            adopt_base(base, observer, opaque);
+        } else {
+            lt_import_config cfg{sizeof(cfg),  1,           c->source_path, base.c_str(), c->expected_sha256,
+                                 c->max_bytes, c->progress, c->opaque};
+            lt_error e{sizeof(e), 1, 0, {}};
+            lt_status status = fs::is_directory(fs::symlink_status(c->source_path))
+                                   ? lt_import_directory_observed(&cfg, observer, opaque, &e)
+                                   : lt_import_archive_observed(&cfg, observer, opaque, &e);
+            require(status == LT_OK, e.message, status);
+        }
         auto lock = parse(read_file(stage / "base/device.lock.json"));
         std::string board = lock.at("board").string(), build = lock.at("build").string(),
                     name = c->display_name && *c->display_name ? c->display_name : board + " " + build;
@@ -239,10 +251,22 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         sync_dir(stage);
         fs::rename(stage, l->root / "records" / id);
         sync_dir(l->root / "records");
+        if (adopt) {
+            // Best effort: without it the first start reads the base once, as after any import.
+            try {
+                seed_admission(l->root / "records" / id / "base", l->root / "records" / id / "state");
+            } catch (const std::exception &) {
+            }
+        }
         if (selected(l).empty())
             atomic_write(l->root / "selected", id);
         describe(l, id, out);
     } catch (...) {
+        std::error_code ec;
+        if (!adopted.empty() && fs::is_directory(stage / "base", ec) && !fs::exists(adopted, ec)) {
+            chmod((stage / "base").c_str(), 0700);
+            fs::rename(stage / "base", adopted, ec);
+        }
         discard(stage);
         throw;
     }
@@ -434,6 +458,13 @@ lt_status lt_library_import_observed(lt_library *l, const lt_library_import_conf
     return lt::guard(e, [&] {
         lt::LibraryLock lock(l);
         lt::import(l, c, nullptr, out, observer, opaque);
+    });
+}
+lt_status lt_library_adopt_prepared(lt_library *l, const lt_library_import_config *c, lt_import_phase_fn observer,
+                                    void *opaque, lt_record_info *out, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::LibraryLock lock(l);
+        lt::import(l, c, nullptr, out, observer, opaque, true);
     });
 }
 lt_status lt_library_adopt_legacy(lt_library *l, const lt_library_import_config *c, const char *state,

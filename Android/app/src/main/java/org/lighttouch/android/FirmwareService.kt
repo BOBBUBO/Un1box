@@ -3,80 +3,138 @@ package org.lighttouch.android
 import android.app.*
 import android.content.Intent
 import android.os.*
+import org.json.JSONObject
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** One userspace preparation per process, independent of a running QEMU worker. */
+/**
+ * One preparation per process, independent of a running QEMU worker: firmwarekit (Packages/FirmwareKit, the
+ * preparer every LightTouch port shares) builds the device from its IPSW, with its build-time boots through
+ * lighttouch-oneshot and the APK's engine, into a device folder that the device worker moves into its library.
+ * Both ship as executables in nativeLibraryDir (libfirmwarekit.so, liblighttouch_oneshot.so).
+ */
 class FirmwareService : Service() {
     private val consumed = AtomicBoolean(false)
     @Volatile private var destination = ""
     @Volatile private var failure = ""
     @Volatile private var currentFirmwareId = ""
     @Volatile private var cancelling = false
+    @Volatile private var state = "idle"
+    @Volatile private var stage = ""
+    @Volatile private var done = 0L
+    @Volatile private var total = 0L
+    @Volatile private var process: java.lang.Process? = null
+
     private val binder = object : IFirmware.Stub() {
-        override fun supports(firmwareId: String): Boolean = FirmwareNative.supports(firmwareId)
+        override fun supports(firmwareId: String): Boolean =
+            File(applicationInfo.nativeLibraryDir, "libfirmwarekit.so").canExecute() &&
+                FirmwareCatalog.load(this@FirmwareService).any { it.id == firmwareId }
         override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String): Bundle {
-            check(FirmwareNative.status().getOrElse(6) { "0" } == "0") { "The native preparer requires a fresh process" }
             check(consumed.compareAndSet(false, true)) { "A fresh firmware worker is required" }
             foreground()
             currentFirmwareId = firmwareId
+            state = "preparing"; stage = "Starting"
             val parent = File(filesDir, "prepared").apply { mkdirs() }
-            destination = File(parent, "job-${java.lang.Long.toHexString(SystemClock.uptimeMillis())}").absolutePath
-            Thread({
-                try {
-                    val catalog = File(filesDir, "firmware-catalog.json")
-                    if (!catalog.exists()) assets.open("firmware-catalog.json").use { input -> catalog.outputStream().use { input.copyTo(it) } }
-                    val root = File(trustedToolsRoot)
-                    FirmwareNative.prepare(catalog.absolutePath, firmwareId, ipswPath,
-                        File(root, "release-guest-unpacked/guest-tools").absolutePath,
-                        File(root, "inventory.json").absolutePath, destination)
-                } catch (e: Exception) { failure = e.message ?: "Firmware preparation failed" }
-            }, "userspace-firmware").start()
+            val job = java.lang.Long.toHexString(SystemClock.uptimeMillis())
+            destination = File(parent, "job-$job").absolutePath
+            Thread({ prepare(firmwareId, ipswPath, File(trustedToolsRoot)) }, "firmwarekit").start()
             return status()
         }
-        override fun status(): Bundle {
-            val values = FirmwareNative.status()
+        override fun status(): Bundle = Bundle().apply {
             val phase = when {
                 failure.isNotEmpty() -> "failed"
-                consumed.get() && values[0] == "idle" -> if (cancelling) "cancelling" else "starting"
-                values[0] == "preparing" && cancelling -> "cancelling"
-                else -> values[0]
+                cancelling && state == "preparing" -> "cancelling"
+                else -> state
             }
-            return Bundle().apply {
-                putString("state", phase); putString("stage", values[1])
-                putBoolean("consumed", consumed.get() || values.getOrElse(6) { "0" } == "1")
-                putLong("done", values[2].toLong()); putLong("total", values[3].toLong()); putInt("code", values[4].toInt())
-                putString("error", if (failure.isNotEmpty()) failure else values[5]); putString("destination", destination)
-                putBoolean("cancellationCheckpointReached", values.getOrElse(7) { "0" } == "1")
-                putInt("uid", Process.myUid()); putInt("pid", Process.myPid()); putString("firmwareId", currentFirmwareId)
-            }
+            putString("state", phase); putString("stage", stage)
+            putBoolean("consumed", consumed.get())
+            putLong("done", done); putLong("total", total); putInt("code", if (failure.isEmpty()) 0 else 1)
+            putString("error", failure); putString("destination", destination)
+            putInt("uid", Process.myUid()); putInt("pid", Process.myPid()); putString("firmwareId", currentFirmwareId)
         }
-        override fun cancel() { cancelling = true; FirmwareNative.cancel() }
+        override fun cancel() { cancelling = true; process?.destroy() }
         override fun finish() {
-            check(status().getString("state") !in listOf("starting", "preparing", "cancelling")) { "Cancel preparation and wait for a terminal result before closing the worker" }
+            check(state != "preparing") { "Cancel preparation and wait for a terminal result before closing the worker" }
             Handler(mainLooper).postDelayed({ stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); Process.killProcess(Process.myPid()) }, 200)
         }
     }
-    override fun onBind(intent: Intent): IBinder {
-        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 && intent.getBooleanExtra("acceptanceCancelAfterSystemEdits", false))
-            FirmwareNative.armCancellationCheckpoint()
-        return binder
+
+    /**
+     * create into `destination`, the device folder the engine worker then moves into its library as it is
+     * (adoptPrepared: no pack-base, no copy, no second hash). The IPSW is only read.
+     */
+    private fun prepare(firmwareId: String, ipsw: String, tools: File) {
+        val libs = File(applicationInfo.nativeLibraryDir)
+        val cache = File(cacheDir, "firmwarekit")
+        val out = File(destination)
+        try {
+            val catalog = File(filesDir, "firmware-catalog.json")
+            assets.open("firmware-catalog.json").use { input -> catalog.outputStream().use { input.copyTo(it) } }
+            run(libs, listOf("create", "--catalog", catalog.path, "--id", firmwareId, "--ipsw", ipsw, "--out", out.path,
+                "--helper", File(libs, "liblighttouch_oneshot.so").path, "--guest-tools", tools.path, "--cache", cache.path,
+                "--language", Locale.getDefault().toLanguageTag(),
+                // iOS 5 and later start at the Home screen, not Setup Assistant (ignored before 5, which has none)
+                "--skip-setup"))
+            // create's own lease and boot logs; the device is the rest
+            File(out, "work").let { writable(it); it.deleteRecursively() }
+            done = total
+            state = "complete"
+        } catch (e: Exception) {
+            if (cancelling) state = "cancelled" else { failure = e.message ?: "Firmware preparation failed"; state = "failed" }
+            writable(out); out.deleteRecursively()
+        } finally {
+            process = null
+            // Decrypted firmware is only worth keeping for another build of the same IPSW; it is large.
+            cache.deleteRecursively()
+        }
     }
+
+    /**
+     * One firmwarekit command. Its stdout is a line of JSON per event (begin: each step's expected seconds; step;
+     * progress: the step's fraction and what it is doing; error), turned into this worker's stage and a weighted done/total.
+     */
+    private fun run(libs: File, args: List<String>) {
+        val builder = ProcessBuilder(listOf(File(libs, "libfirmwarekit.so").path) + args)
+            .redirectError(File(cacheDir, "firmwarekit.log").apply { parentFile?.mkdirs() })
+        builder.environment().apply {
+            put("LTM_QEMU_DYLIB", File(libs, "libqemu-arm.so").path)
+            put("LD_LIBRARY_PATH", libs.path)
+            put("HOME", filesDir.path); put("TMPDIR", cacheDir.path)
+        }
+        check(!cancelling) { "Cancelled" }
+        val child = builder.start().also { process = it }
+        var weights = listOf<Long>(); var step = 0
+        var message = ""
+        child.inputStream.bufferedReader().forEachLine { line ->
+            val event = try { JSONObject(line) } catch (_: Exception) { return@forEachLine }
+            when (event.optString("event")) {
+                "begin" -> event.optJSONArray("seconds")?.let { a -> weights = (0 until a.length()).map { maxOf(1L, a.getLong(it)) * 1000 }; total = weights.sum() }
+                "step" -> { step = event.optInt("index"); stage = event.optString("name"); done = weights.take(step - 1).sum() }
+                "progress" -> {
+                    if (step > 0 && step <= weights.size) done = weights.take(step - 1).sum() + (event.optDouble("fraction", 0.0) * weights[step - 1]).toLong()
+                    // What the step is doing now, with its elapsed time: "Starting the Home screen — 45 s".
+                    event.optString("detail").takeIf { it.isNotEmpty() }?.let { stage = it }
+                }
+                "error" -> message = event.optString("message")
+            }
+        }
+        val exit = child.waitFor()
+        check(!cancelling) { "Cancelled" }
+        check(exit == 0) { message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" } }
+    }
+
+    /** firmwarekit leaves its outputs read-only; delete needs the folders writable again. */
+    private fun writable(root: File) { if (root.exists()) root.walkTopDown().forEach { it.setWritable(true, true) } }
+
+    override fun onBind(intent: Intent): IBinder = binder
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int { foreground(); return START_NOT_STICKY }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("firmware", "Firmware preparation", NotificationManager.IMPORTANCE_LOW))
         val launch = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         startForeground(2, Notification.Builder(this, "firmware").setSmallIcon(android.R.drawable.ic_menu_upload)
-            .setContentTitle("LightTouch preparation").setContentText("Userspace preparation; return to view progress or cancel")
+            .setContentTitle("LightTouch preparation").setContentText("Preparing a device; return to view progress or cancel")
             .setContentIntent(launch).setOngoing(true).build())
     }
-}
-internal object FirmwareNative {
-    init { System.loadLibrary("lighttouch_firmware_jni") }
-    external fun supports(id: String): Boolean
-    external fun prepare(catalog: String, id: String, ipsw: String, tools: String, inventory: String, destination: String): Int
-    external fun status(): Array<String>
-    external fun cancel()
-    external fun armCancellationCheckpoint()
 }

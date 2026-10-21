@@ -127,12 +127,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 firmwareRestarting = false
                 if (workerState.getBoolean("consumed")) restartFirmwareForPreparation() else beginPreparation()
             }
-            Thread({
-                try {
-                    val supported = prep.catalog.ifEmpty { FirmwareCatalog.load(this@MainActivity) }.map { it.id }.filter { worker.supports(it) }.toSet()
-                    handler.post { if (firmware?.asBinder() == binder) prep.supported = supported }
-                } catch (e: Exception) { handler.post { if (firmware?.asBinder() == binder) error = e.message ?: "Cannot load firmware catalog" } }
-            }, "firmware-catalog").start()
         }
         override fun onServiceDisconnected(name: ComponentName) { firmware = null; if (!firmwareRestarting && !firmwareExpectedExit) prep.preparation = workerExitedRun() }
     }
@@ -292,7 +286,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 val catalog = FirmwareCatalog.load(this)
                 firmwareTargets = catalog.associate { "${it.board}-${it.build}" to StoreTarget.of(it.productType, it.version) }
-                handler.post { prep.catalog = catalog; catalogVersion++; if (overlay == Screen.STORE) store.useRecord(recordTarget()); if (engine != null) refreshDevices() }
+                // firmwarekit prepares every catalog firmware; an APK built without it only adds copies prepared elsewhere.
+                val supported = if (File(applicationInfo.nativeLibraryDir, "libfirmwarekit.so").canExecute()) catalog.map { it.id }.toSet() else emptySet()
+                handler.post { prep.catalog = catalog; prep.supported = supported; catalogVersion++; if (overlay == Screen.STORE) store.useRecord(recordTarget()); if (engine != null) refreshDevices() }
             } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
         }, "store-targets").start()
         bindWorker()
@@ -655,8 +651,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         startForegroundService(Intent(this, FirmwareService::class.java))
         Thread({
             try {
-                // The preparer's guest files come from the APK's own armv6 guest tools.
-                val tools = GuestTools.preparerRoot(this)
+                // firmwarekit bakes the APK's own guest helpers and packages into the system.
+                val tools = GuestTools.firmwareTools(this)
                 val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath)
                 handler.post { prep.preparation = state }
             } catch (e: Exception) { handler.post { prep.preparation = Bundle().apply { putString("state", "failed"); putString("error", e.message ?: "Cannot start preparation"); putBoolean("consumed", true) } } }
@@ -713,7 +709,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 checkNotNull(worker) { "Device worker unavailable" }
                 name = defaultDeviceName(board, build, firmwareTargets, devices.map { it.name })
                 val stopWatching = watchImport(worker) { text, fraction -> prep.importPhase = text; prep.importProgress = fraction }
-                try { worker.importPrepared(destination, name, rom) } finally { stopWatching() }.also { result ->
+                // This app's own firmwarekit output moves in as it is; a packed folder from elsewhere is copied.
+                val own = destination.startsWith(filesDir.absolutePath) && File(destination, "device.lock.json").isFile
+                try { if (own) worker.adoptPrepared(destination, name, rom) else worker.importPrepared(destination, name, rom) }
+                finally { stopWatching() }.also { result ->
                     if (result.isEmpty()) {
                         val created = worker.records().firstOrNull { it.getString("id") !in before }
                         selected = created != null && status !in listOf("running", "paused", "starting", "stopping") && worker.select(created.getString("id")).isEmpty()

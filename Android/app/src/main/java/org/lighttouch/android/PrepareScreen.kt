@@ -33,7 +33,7 @@ internal enum class PrepareStep { DEVICE, VERSION, FILES }
 /** The prepare-from-IPSW flow's choices; the activity owns it so pickers, the download and the firmware worker can update it. */
 internal class PrepareState {
     var catalog by mutableStateOf<List<CatalogFirmware>>(emptyList())
-    /** Firmware ids the on-phone preparer implements (FirmwareNative.supports). */
+    /** Firmware ids this phone prepares itself: the whole catalog when the APK ships firmwarekit. */
     var supported by mutableStateOf<Set<String>>(emptySet())
     var step by mutableStateOf(PrepareStep.DEVICE)
     var productType by mutableStateOf("")
@@ -70,18 +70,13 @@ private val versionOrder = Comparator<CatalogFirmware> { a, b ->
     (0 until maxOf(x.size, y.size)).map { (x.getOrElse(it) { 0 }).compareTo(y.getOrElse(it) { 0 }) }.firstOrNull { it != 0 } ?: a.build.compareTo(b.build)
 }
 
-/** The preparer's stage names, as a person would say them. */
-private fun stageText(stage: String) = when {
-    stage == "verify IPSW" -> "Checking the IPSW"
-    stage == "verify" -> "Checking the prepared files"
-    stage == "decrypt rootfs" -> "Unpacking iOS"
-    stage == "install baseline system edits" -> "Adding LightTouch's guest tools"
-    stage == "filesystem" -> "Building the file system"
-    stage == "write NAND" -> "Writing the device's storage"
-    stage == "flush transaction" -> "Saving"
-    stage == "promote transaction" -> "Finishing up"
-    else -> stage.replaceFirstChar { it.uppercase() }.ifEmpty { "Starting" }
-}
+/**
+ * What preparing a firmware costs on a recent phone (Poco F3). The iPod touch 2G on iOS 3 only writes files; later
+ * systems also boot iOS twice during preparation (the data-protection keybag, then iOS's first-start setup).
+ */
+private data class PreparationCost(val time: String, val space: String)
+private fun preparationCost(firmware: CatalogFirmware?) =
+    if (firmware?.board == "n72ap") PreparationCost("about a minute", "1.5 GB") else PreparationCost("about 10 minutes", "5 GB")
 
 /**
  * Builds a device on this phone from a stock IPSW: pick the device, then the iOS version, then get
@@ -317,7 +312,8 @@ private fun ColumnScope.FilesStep(state: PrepareState, busy: Boolean, onDownload
         }
     }
     Spacer(Modifier.height(12.dp))
-    Text("Preparing runs on this phone, takes about a minute and needs about 1.5 GB free. LightTouch's guest tools are added for you.",
+    val cost = preparationCost(firmware)
+    Text("Preparing runs on this phone, takes ${cost.time} and needs about ${cost.space} free. LightTouch's guest tools are added for you.",
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(20.dp))
     Button(onClick = onPrepare, enabled = !busy && state.ipswReady && state.romReady && state.ipswChecking.isEmpty(),
@@ -356,16 +352,14 @@ private fun Progress(state: PrepareState, preparing: Boolean, busy: Boolean, onP
                 Text("Preparing $title", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(8.dp))
                 val stage = run?.getString("stage") ?: ""
-                Text(if (phase == "cancelling") "Cancelling…" else stageText(stage), Modifier.testTag("preparation_status"),
+                Text(if (phase == "cancelling") "Cancelling…" else stage.ifEmpty { "Starting" }, Modifier.testTag("preparation_status"),
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(24.dp))
                 val done = run?.getLong("done") ?: 0L; val total = run?.getLong("total") ?: 0L
-                // Checking the IPSW reports bytes read without a total; the catalog knows the size.
-                val whole = if (total > 0) total else if (stage == "verify IPSW") firmware?.bytes ?: 0L else 0L
-                if (whole > 0 && done > 0) LinearProgressIndicator(progress = { (done.toFloat() / whole).coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
+                if (total > 0 && done > 0) LinearProgressIndicator(progress = { (done.toFloat() / total).coerceIn(0f, 1f) }, Modifier.fillMaxWidth())
                 else LinearProgressIndicator(Modifier.fillMaxWidth())
                 Spacer(Modifier.height(12.dp))
-                Text("This takes about a minute. You can leave LightTouch; preparation continues in the background.",
+                Text("This takes ${preparationCost(firmware).time}. You can leave LightTouch; preparation continues in the background.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(24.dp))
                 OutlinedButton(onClick = onCancel, enabled = phase != "cancelling", modifier = Modifier.testTag("cancel_preparation")) { Text("Cancel") }

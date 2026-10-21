@@ -557,6 +557,20 @@ JNI(importBase) jstring JNICALL Java_org_lighttouch_android_Native_importBase(JN
     import_observed(nullptr,"",0,0);
     return string(env,result(status,error));
 }
+JNI(adoptPrepared) jstring JNICALL Java_org_lighttouch_android_Native_adoptPrepared(JNIEnv *env,jobject,jstring source,jstring root,jstring name,jstring rom) {
+    std::lock_guard<std::mutex> lock(library_guard);
+    Utf src(env,source),path(env,root),label(env,name),bootrom(env,rom);
+    lt_error error=LT_INIT(lt_error);auto status=open_library(path.value,&error);
+    if(status!=LT_OK)return string(env,result(status,error));
+    lt_library_import_config config=LT_INIT(lt_library_import_config);
+    config.source_path=src.value;config.display_name=label.value;
+    config.bootrom_path=bootrom.value && access(bootrom.value,R_OK)==0?bootrom.value:nullptr;
+    lt_record_info record=LT_INIT(lt_record_info);
+    import_observed(nullptr,"",0,0);
+    status=lt_library_adopt_prepared(library,&config,import_observed,nullptr,&record,&error);
+    import_observed(nullptr,"",0,0);
+    return string(env,result(status,error));
+}
 JNI(setGuestPackage) jstring JNICALL Java_org_lighttouch_android_Native_setGuestPackage(JNIEnv *env,jobject,jstring root,jstring id,jstring guest) {
     std::lock_guard<std::mutex> lock(library_guard);
     Utf path(env,root),record_id(env,id),package(env,guest);

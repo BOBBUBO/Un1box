@@ -193,10 +193,9 @@ selected by native code. Recipes, architecture/tool selection and boot arguments
 remain native. Each new job uses a fresh firmware worker. Interrupted staging trees
 are never admitted as devices, and an existing device is preserved on failure.
 
-Native build requires the firmware source, pinned XPwn checkout and static PIC
-OpenSSL prefix at `nativeDepsRoot/{arm64-v8a,x86_64}/prefix` (include/openssl and
-lib/libcrypto.a), built with the same NDK. External symlinks may adapt a private
-build layout. Preparation is not G6 acceptance until the resulting base boots on
+Preparation runs `firmwarekit` (Packages/FirmwareKit) and `lighttouch-oneshot` from the APK's
+nativeLibraryDir; `scripts/build.sh firmwarekit-android` builds them and `-PfirmwareKitDir` packages
+them. Preparation is not G6 acceptance until the resulting base boots on
 Linux and unrooted Android with actual guest rendering and usable input.
 
 Private fixture import is explicit opt-in instrumentation:

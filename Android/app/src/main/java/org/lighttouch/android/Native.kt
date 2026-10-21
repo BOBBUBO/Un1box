@@ -6,6 +6,8 @@ import android.view.Surface
 internal object Native {
     init { System.loadLibrary("lighttouch_jni") }
     external fun importBase(source: String, libraryRoot: String, displayName: String, rom: String, guest: String, sha256: String = ""): String
+    /** A firmwarekit output folder in this app's storage, moved in as a new record's base (lt_library_adopt_prepared). */
+    external fun adoptPrepared(source: String, libraryRoot: String, displayName: String, rom: String): String
     /** The running import's phase, bytes done and bytes total; an empty phase when none runs. */
     external fun importProgress(): Array<String>
     external fun setGuestPackage(libraryRoot: String, id: String, path: String): String

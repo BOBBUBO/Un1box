@@ -10,6 +10,8 @@ interface IEngine {
     String select(String recordId);
     String importBase(String source, String displayName);
     String importPrepared(String source, String displayName, String rom);
+    /** importPrepared for this app's own firmwarekit output: moved in as the base, not copied or hashed again. */
+    String adoptPrepared(String source, String displayName, String rom);
     Bundle importProgress();
     String setGuestPackage(String recordId, String path);
     Bundle status();

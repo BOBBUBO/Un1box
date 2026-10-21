@@ -100,6 +100,12 @@ lt_status lt_import_directory_observed(const lt_import_config *, lt_import_phase
 /* lt_library_import, reporting each phase ("extracting", "verifying", ...) with its bytes done and total. */
 lt_status lt_library_import_observed(lt_library *, const lt_library_import_config *, lt_import_phase_fn, void *,
                                      lt_record_info *, lt_error *);
+/* lt_library_import_observed for a preparer's output folder (device.lock.json with every file's digest, as
+ * firmwarekit create writes it) on the library's own storage: the folder is moved in as the record's base, not
+ * copied, and admitted against its lock's digests without being read again; the new record's state keeps them, so
+ * its first start reads nothing either. The folder is consumed, or handed back where it was on failure. */
+lt_status lt_library_adopt_prepared(lt_library *, const lt_library_import_config *, lt_import_phase_fn, void *,
+                                    lt_record_info *, lt_error *);
 /* Validate/freeze and atomically publish an already-written private sibling
  * stage without copying it. Stage must be an owned 0700 directory; descendants
  * must be owned regular single-link files/directories with no external writers.

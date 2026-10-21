@@ -15,34 +15,30 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Expensive real preparation is never part of the default test suite. */
+/**
+ * Expensive real preparation is never part of the default test suite. Stage the stock IPSW at
+ * files/acceptance-fw/stock.ipsw, then run with -e preparePrivateFirmware true [-e firmwareId n81ap-10B500].
+ */
 @RunWith(AndroidJUnit4::class)
 class FirmwareAcceptanceTest {
-    @Test fun cancelAfterSystemEditsThenPrepareAndImportInFreshWorker() {
-        assumeTrue("Explicit userspace firmware opt-in required", InstrumentationRegistry.getArguments().getString("preparePrivateFirmware") == "true")
+    @Test fun cancelMidwayThenPrepareAndImportInFreshWorker() {
+        assumeTrue("Explicit firmware opt-in required", InstrumentationRegistry.getArguments().getString("preparePrivateFirmware") == "true")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val root = File(context.filesDir, "acceptance-fw")
-        val stock = File(root, "stock.ipsw")
-        val handoff = File(root, "handoff")
-        val expected = JSONObject(File(root, "input-sha256.json").readText())
-        val inventory = File(handoff, "inventory.json")
-        val tools = File(handoff, "release-guest-unpacked/guest-tools")
-        val inputs = listOf(stock, inventory) + tools.walkTopDown().filter { it.isFile }.toList()
-        assertTrue(stock.isFile); assertTrue(inventory.isFile); assertTrue(tools.isDirectory)
-        assertTrue("Hash receipt must cover every staged input", inputs.size >= 9)
-        fun checkInputs() { for (file in inputs) assertEquals("Input hash ${file.relativeTo(root)}", expected.getString(file.relativeTo(root).invariantSeparatorsPath), acceptanceSha256(file)) }
+        val stock = File(context.filesDir, "acceptance-fw/stock.ipsw")
+        assertTrue(stock.isFile)
+        val stockSha = acceptanceSha256(stock)
+        val tools = GuestTools.firmwareTools(context)
         val evidence = File(context.filesDir, "firmware-evidence-${System.currentTimeMillis()}").apply { check(mkdir()) }
-        val result = JSONObject().put("pass", false).put("guestBootProven", false)
+        val result = JSONObject().put("pass", false)
         val trace = JSONArray()
         val id = InstrumentationRegistry.getArguments().getString("firmwareId", "n72ap-7E18")
+        val firmware = FirmwareCatalog.load(context).single { it.id == id }
         val timeoutMs = InstrumentationRegistry.getArguments().getString("firmwareTimeoutSeconds", "1800").toLong().coerceIn(60, 7200) * 1000
         try {
-            checkInputs()
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 var previousPid = 0
-                for (cancelAfterEdits in listOf(true, false)) {
-                    val intent = Intent(context, FirmwareService::class.java).putExtra("acceptanceCancelAfterSystemEdits", cancelAfterEdits)
-                    AcceptanceBinding(context, intent, IFirmware.Stub::asInterface).use { binding ->
+                for (cancelMidway in listOf(true, false)) {
+                    AcceptanceBinding(context, Intent(context, FirmwareService::class.java), IFirmware.Stub::asInterface).use { binding ->
                         val worker = binding.get()
                         val initial = worker.status()
                         assertEquals("Fresh preparer required", "idle", initial.getString("state"))
@@ -50,10 +46,10 @@ class FirmwareAcceptanceTest {
                         assertNotEquals(Process.myPid(), initial.getInt("pid"))
                         if (previousPid != 0) assertNotEquals("Retry reused consumed process", previousPid, initial.getInt("pid"))
                         previousPid = initial.getInt("pid")
-                        assertTrue("Native route discovery", worker.supports(id))
+                        assertTrue("firmwarekit ships in the APK", worker.supports(id))
                         scenario.onActivity { it.startForegroundService(Intent(it, FirmwareService::class.java)) }
                         val started = SystemClock.elapsedRealtime()
-                        val job = worker.start(id, stock.absolutePath, handoff.absolutePath)
+                        val job = worker.start(id, stock.absolutePath, tools.absolutePath)
                         val destination = File(requireNotNull(job.getString("destination")))
                         var terminal = job
                         var lastStage = ""
@@ -65,17 +61,18 @@ class FirmwareAcceptanceTest {
                                     .put("total", terminal.getLong("total")).put("elapsedMs", SystemClock.elapsedRealtime() - started))
                                 File(evidence, "progress.json").writeText(trace.toString(2)); lastStage = stage
                             }
-                            if (SystemClock.elapsedRealtime() - started > timeoutMs) { worker.cancel(); error("Preparation timed out; inspect retained native diagnostics") }
+                            // A third of the way in, firmwarekit is past decrypting and is writing the volumes.
+                            if (cancelMidway && terminal.getString("state") == "preparing" && terminal.getLong("total") > 0 &&
+                                terminal.getLong("done") * 3 > terminal.getLong("total")) worker.cancel()
+                            if (SystemClock.elapsedRealtime() - started > timeoutMs) { worker.cancel(); error("Preparation timed out; see cache/firmwarekit.log") }
                             Thread.sleep(100)
                         }
-                        File(evidence, if (cancelAfterEdits) "cancel-result.txt" else "complete-result.txt").writeText(terminal.toString())
-                        result.put(if (cancelAfterEdits) "cancelNativeLog" else "prepareNativeLog", destination.absolutePath + ".native.log")
-                        result.put(if (cancelAfterEdits) "cancelElapsedMs" else "prepareElapsedMs", SystemClock.elapsedRealtime() - started)
-                        if (cancelAfterEdits) {
-                            assertTrue("Must reach checkpoint after real system edits", terminal.getBoolean("cancellationCheckpointReached"))
-                            assertEquals(terminal.toString(), "cancelled", terminal.getString("state")); assertEquals(6, terminal.getInt("code"))
+                        File(evidence, if (cancelMidway) "cancel-result.txt" else "complete-result.txt").writeText(terminal.toString())
+                        result.put(if (cancelMidway) "cancelElapsedMs" else "prepareElapsedMs", SystemClock.elapsedRealtime() - started)
+                        if (cancelMidway) {
+                            assertEquals(terminal.toString(), "cancelled", terminal.getString("state"))
                             assertFalse("Cancelled output admitted", destination.exists())
-                            assertTrue("Cancelled staging leaked", destination.parentFile!!.listFiles()!!.none { it.name.startsWith(".${destination.name}.prepare-") })
+                            assertTrue("Cancelled work leaked", destination.parentFile!!.listFiles()!!.none { it.name.startsWith("work-") })
                         } else {
                             assertEquals(terminal.toString(), "complete", terminal.getString("state")); assertEquals(0, terminal.getInt("code"))
                             assertTrue(destination.isDirectory)
@@ -84,18 +81,16 @@ class FirmwareAcceptanceTest {
                                 assertEquals("Import must not interrupt a guest", "stopped", engine.status().getString("state"))
                                 val before = engine.records().map { it.getString("id") }.toSet()
                                 val importStart = SystemClock.elapsedRealtime()
-                                assertEquals("Canonical prepared base integrity admission", "", engine.importPrepared(destination.absolutePath, "$id Android prepared", File(context.filesDir, "bootrom.bin").absolutePath))
+                                assertEquals("Prepared base admission", "", engine.adoptPrepared(destination.absolutePath, "$id Android prepared", File(context.filesDir, "bootrom.bin").absolutePath))
                                 val after = engine.records()
-                                assertTrue("Existing baseline lost", after.map { it.getString("id") }.containsAll(before))
+                                assertTrue("Existing devices lost", after.map { it.getString("id") }.containsAll(before))
                                 val record = after.single { it.getString("id") !in before }
-                                assertEquals("n72ap", record.getString("board")); assertEquals("7E18", record.getString("build"))
-                                assertTrue("n72 ROM must be preserved for later boot", record.getBoolean("bootromAvailable"))
-                                assertTrue("Native prepared package must be available", record.getBoolean("guestPackageAvailable"))
+                                assertEquals(firmware.board, record.getString("board")); assertEquals(firmware.build, record.getString("build"))
+                                assertTrue("Guest package must be available", record.getBoolean("guestPackageAvailable"))
                                 result.put("recordId", record.getString("id")).put("importElapsedMs", SystemClock.elapsedRealtime() - importStart)
-                                result.put("preparedManifestSha256", acceptanceSha256(File(destination, "device.lock.json")))
                             }
                         }
-                        checkInputs()
+                        assertEquals("The IPSW is only read", stockSha, acceptanceSha256(stock))
                         val died = CountDownLatch(1)
                         val binder = worker.asBinder()
                         val recipient = IBinder.DeathRecipient { died.countDown() }

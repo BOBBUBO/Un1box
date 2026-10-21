@@ -26,7 +26,7 @@ D=$HOME/Documents/LightTouch-Development
 : "${QEMU_IOS:=$HOME/git-projects/qemu-ios}"                         # engine repository (tags, subprojects)
 : "${LT_INPUTS:=$D/port-workspace/builds}"                           # prebuilt inputs, as for scripts/build.sh
 : "${LT_RELEASE_ROOT:=$D}"                                           # workspaces go in release-X.Y.Z here
-: "${LT_GUEST_TOOLS:=$D/guest-tools/serial-31}"                      # armv6/armv7.itpack shipped and bundled
+: "${LT_GUEST_TOOLS:=}"                                              # guest tools shipped and bundled; empty: built on $LT_MAC
 : "${LT_LINUX_INPUTS:=$D/release-0.0.8/linux-build}"                 # deps-full/ crypto/ mobile-private-runtime-ui15/
 : "${LT_LINUX_IMAGE:=lighttouch-bullseye-collector08}"               # Debian 11 build image
 : "${LT_APPIMAGE_TOOLS:=$LT_INPUTS/linux-desktop/dependencies/appimagetool-pinned01}"
@@ -82,7 +82,13 @@ step_prepare() {
 }
 
 step_android() {
-    need "$LT_GUEST_TOOLS/armv6.itpack" "guest tools"; need "$LT_GUEST_TOOLS/armv7.itpack" "guest tools"
+    # The itpacks new devices get, plus the helpers firmwarekit installs when the app prepares an IPSW (it_seal …),
+    # built from this release's engine.
+    if [ -z "$LT_GUEST_TOOLS" ]; then
+        QEMU_IOS="$R/engine" bash "$R/app/scripts/build.sh" firmware-tools
+        LT_GUEST_TOOLS=$R/app/build/firmware-tools
+    fi
+    for f in armv6.itpack armv7.itpack it_seal; do need "$LT_GUEST_TOOLS/$f" "guest tools"; done
     QEMU_IOS="$R/engine" LT_GUEST_TOOLS="$LT_GUEST_TOOLS" LT_DEBUGGABLE=false \
         LT_SOURCE_REFERENCE="https://github.com/blake-lucas/LightTouch/tree/$V" \
         bash "$R/app/scripts/build.sh" --clean android
@@ -168,7 +174,7 @@ step_macos() {
 }
 
 step_finish() {
-    python3 "$R/app/scripts/release/finish.py" "$R" "$V" "$LT_GUEST_TOOLS"
+    python3 "$R/app/scripts/release/finish.py" "$R" "$V" "${LT_GUEST_TOOLS:-$R/app/build/firmware-tools}"
     (cd "$OUTD" && sha256sum -c --quiet SHA256SUMS)
     if [ ! -f "$OUTD/NOTES.md" ]; then echo "next: write $OUTD/NOTES.md (with CHECKSUMS), then rerun finish"
     elif grep -q CHECKSUMS "$OUTD/NOTES.md"; then echo "NOTES.md still has CHECKSUMS" >&2; exit 1; fi

@@ -51,7 +51,7 @@ Use the tool versions in [README](README.md#pinned-tools): JDK17, NDK28.2.136763
 The verified build requires these supplied local inputs:
 
 - Real Bionic engine inputs for **both** ABIs: each directory contains `libqemu-arm.so`, its producer manifest, the matching NDK `libc++_shared.so`, and its audited notice bundle. Build/relink recipes are in QEMU's `contrib/portable/README.md`; host/glibc libraries cannot substitute.
-- Same-NDK static PIC firmware dependency prefixes under `deps/{arm64-v8a,x86_64}/prefix`, including pinned OpenSSL, plus the hash-verified XPwn checkout or selected source export. Firmware CMake verifies the selected source inputs.
+- `build/firmwarekit/android` from `scripts/build.sh firmwarekit-android` (firmwarekit and lighttouch-oneshot, arm64), passed as `-PfirmwareKitDir`.
 - The frozen candidate02 x86 ANGLE three-library/closure/notice inputs and frontend notice bundle. Use their sealed producer manifest SHA256 pins; keep these legal build inputs separate from firmware/ROM/guest assets. ARM uses the platform provider; packaging ANGLE does not enable it automatically.
 
 Set the following placeholders to your verified source/input directories and to the publisher's sealed manifest pins. The recipe below is the candidate20 command with machine-local paths parameterized; all properties were used in the tested build.
@@ -64,7 +64,6 @@ LT_ANDROID_SRC=/path/to/android-3409-source
 LT_NATIVE_SRC=/path/to/native-53ea-source
 LT_QEMU_SRC=/path/to/qemu-b59-source
 LT_INPUTS=/path/to/verified-build-inputs
-LT_XPWN_SRC=/path/to/pinned-xpwn-source
 LT_BUILD=/path/to/private/new-android-build
 LT_ANGLE_CLOSURE_SHA=b7b6988e39c227d5aa20143102fb98fce8c1a181c5dd0955b2a522c2d3199d8f
 LT_ANGLE_NOTICE_SHA=7d28941a751e15a2f63c060b67d0c549435f87b96d527b7c2a8ff08d831bfd57
@@ -74,9 +73,8 @@ cd "$LT_ANDROID_SRC/Android"
   '-Dorg.gradle.jvmargs=-Xmx768m -XX:MaxMetaspaceSize=384m' \
   -PnativeJobs=2 -PtargetAbis=arm64-v8a,x86_64 \
   "-PportableDir=$LT_NATIVE_SRC/Portable" \
-  "-PfirmwareDir=$LT_NATIVE_SRC/Portable/firmware" \
-  "-PqemuSource=$LT_QEMU_SRC" "-PxpwnSource=$LT_XPWN_SRC" \
-  "-PnativeDepsRoot=$LT_INPUTS/deps" "-PengineRoot=$LT_INPUTS/engine" \
+  "-PfirmwareKitDir=$LT_NATIVE_SRC/build/firmwarekit/android" \
+  "-PqemuSource=$LT_QEMU_SRC" "-PengineRoot=$LT_INPUTS/engine" \
   "-PengineNoticeArm64=$LT_INPUTS/engine/arm64-v8a/notices" \
   "-PengineNoticeX86=$LT_INPUTS/engine/x86_64/notices" \
   -PsourceRevision=3409cce3b21d9617723c80ac88665944f51553c3 \

@@ -12,9 +12,8 @@ export ANDROID_HOME=/home/blake/Android/Sdk JAVA_HOME=/usr/lib/jvm/java-17-openj
 cd "$SRC/Android"
 ./gradlew --offline --no-daemon --max-workers=8 \
   '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs=12 -PtargetAbis=arm64-v8a \
-  -PportableDir=$SRC/Portable -PfirmwareDir=$SRC/Portable/firmware \
-  -PqemuSource=/home/blake/git-projects/qemu-ios -PxpwnSource=/home/blake/.hermes/cache/scratch/lighttouchwin-xpwn \
-  -PnativeDepsRoot=$W/backend/deps -PengineRoot=$ENGINE -PengineNoticeArm64=$ENGINE/arm64-v8a/notices \
+  -PportableDir=$SRC/Portable -PqemuSource=/home/blake/git-projects/qemu-ios \
+  -PengineRoot=$ENGINE -PengineNoticeArm64=$ENGINE/arm64-v8a/notices -PfirmwareKitDir=$SRC/build/firmwarekit/android \
   -PsourceRevision=$(git -C $SRC rev-parse HEAD) -PsourceReference=https://github.com/blake-lucas/LightTouch/tree/dev/perf \
   -PbuildRoot=$P/apk/gradle-build \
   -PmobileServicesArm64=$W/mobile-android/arm64-v8a \

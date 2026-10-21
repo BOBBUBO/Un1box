@@ -20,7 +20,7 @@ android {
         buildConfigField("long", "SHUTDOWN_GRACE_MS", "${shutdownGraceMs}L")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",") }
-        externalNativeBuild { cmake { arguments += listOf("-DLT_NATIVE_JOBS=" + providers.gradleProperty("nativeJobs").orElse("2").get(), "-DANDROID_STL=c++_shared", "-DLT_FIRMWARE_DIR=" + providers.gradleProperty("firmwareDir").orElse(file("../../Portable/firmware").absolutePath).get(), "-DXPWN_SOURCE=" + providers.gradleProperty("xpwnSource").orElse("").get(), "-DLT_NATIVE_DEPS_ROOT=" + providers.gradleProperty("nativeDepsRoot").orElse("").get(), "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get()) } }
+        externalNativeBuild { cmake { arguments += listOf("-DLT_NATIVE_JOBS=" + providers.gradleProperty("nativeJobs").orElse("2").get(), "-DANDROID_STL=c++_shared", "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get()) } }
     }
     // -Pdebuggable=false makes a debug APK the runtime may compile ahead of time. Phones with the
     // JIT off (GrapheneOS) otherwise interpret a debuggable app's whole UI.
@@ -29,8 +29,8 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
-    // Guest app-services executables run from nativeLibraryDir, which holds files only when extracted.
-    packaging { jniLibs { useLegacyPackaging = providers.gradleProperty("mobileServicesArm64").isPresent } }
+    // Guest app-services executables and firmwarekit run from nativeLibraryDir, which holds files only when extracted.
+    packaging { jniLibs { useLegacyPackaging = providers.gradleProperty("mobileServicesArm64").isPresent || providers.gradleProperty("firmwareKitDir").isPresent } }
 }
 dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
@@ -56,14 +56,15 @@ val prepareCatalog = tasks.register<Copy>("prepareFirmwareCatalog") {
 android.sourceSets["main"].assets.srcDir(catalogAssets)
 tasks.named("preBuild").configure { dependsOn(prepareCatalog) }
 
-// Guest tools (-PguestToolsDir holding armv6.itpack and armv7.itpack, built by qemu-ios guest/). New
-// devices get the pack whose families cover their board and build; preparation takes its tools from them.
+// Guest tools (-PguestToolsDir: scripts/build.sh firmware-tools, qemu-ios contrib/export-guest-artifacts.sh's
+// ipad-guest-tools). New devices get the armv6/armv7.itpack whose families cover their board and build; firmwarekit
+// bakes the helpers beside them into each system it prepares.
 providers.gradleProperty("guestToolsDir").orNull?.let { input ->
     val packs = file(input)
-    require(listOf("armv6.itpack", "armv7.itpack").all { packs.resolve(it).isFile }) { "guestToolsDir must hold armv6.itpack and armv7.itpack" }
+    require(listOf("armv6.itpack", "armv7.itpack", "it_seal").all { packs.resolve(it).isFile }) { "guestToolsDir must hold the guest packages and helpers (scripts/build.sh firmware-tools)" }
     val guestToolAssets = layout.buildDirectory.dir("generated/guestToolAssets")
     val stage = tasks.register<Copy>("prepareGuestTools") {
-        from(packs) { include("armv6.itpack", "armv7.itpack") }
+        from(packs)
         into(guestToolAssets.map { it.dir("guest-tools") })
     }
     android.sourceSets["main"].assets.srcDir(guestToolAssets)
@@ -95,26 +96,28 @@ val sourceRevision = providers.gradleProperty("sourceRevision").orElse(
 val sourceReference = providers.gradleProperty("sourceReference").orElse(
     sourceRevision.map { "https://github.com/blake-lucas/LightTouch/tree/$it" }
 )
-val firmwareSource = providers.gradleProperty("firmwareDir").orElse(file("../../Portable/firmware").absolutePath)
-val noticeAssets = layout.buildDirectory.dir("generated/noticeAssets")
-val prepareNotices = tasks.register<Exec>("prepareFirmwareNotices") {
-    inputs.file(firmwareSource.map { file("$it/tools/package-notices.py") })
-    inputs.file(firmwareSource.map { file("$it/NOTICE.firmware.txt") })
-    inputs.dir(firmwareSource.map { file("$it/vendor") })
-    inputs.file(androidComponents.sdkComponents.ndkDirectory.map { it.file("NOTICE.toolchain") })
-    inputs.property("sourceRevision", sourceRevision)
-    inputs.property("sourceReference", sourceReference)
-    outputs.dir(noticeAssets)
-    doFirst {
-        val destination = noticeAssets.get().dir("licenses/firmware").asFile
-        delete(destination)
-        commandLine("python3", file("${firmwareSource.get()}/tools/package-notices.py"), destination,
-            "--ndk-notice", androidComponents.sdkComponents.ndkDirectory.get().file("NOTICE.toolchain").asFile,
-            "--source-reference", sourceReference.get(), "--source-revision", sourceRevision.get())
+// firmwarekit, the preparer every port shares (-PfirmwareKitDir: scripts/build.sh firmwarekit-android): it and
+// lighttouch-oneshot ship as executables in nativeLibraryDir, with the notices of what it links.
+providers.gradleProperty("firmwareKitDir").orNull?.let { input ->
+    val kit = file(input)
+    require(listOf("firmwarekit", "lighttouch-oneshot", "licenses/manifest.json").all { kit.resolve(it).isFile }) {
+        "firmwareKitDir must hold firmwarekit, lighttouch-oneshot and licenses/ (scripts/build.sh firmwarekit-android)"
     }
+    val firmwareKitJniLibs = layout.buildDirectory.dir("generated/firmwareKitJniLibs")
+    val firmwareKitNotices = layout.buildDirectory.dir("generated/firmwareKitNotices")
+    val stage = tasks.register<Copy>("prepareFirmwareKit") {
+        from(kit) { include("firmwarekit"); rename { "libfirmwarekit.so" } }
+        from(kit) { include("lighttouch-oneshot"); rename { "liblighttouch_oneshot.so" } }
+        into(firmwareKitJniLibs.map { it.dir("arm64-v8a") })
+    }
+    val notices = tasks.register<Copy>("prepareFirmwareKitNotices") {
+        from(kit.resolve("licenses"))
+        into(firmwareKitNotices.map { it.dir("licenses/firmwarekit") })
+    }
+    android.sourceSets["main"].jniLibs.srcDir(firmwareKitJniLibs)
+    android.sourceSets["main"].assets.srcDir(firmwareKitNotices)
+    tasks.named("preBuild").configure { dependsOn(stage, notices) }
 }
-android.sourceSets["main"].assets.srcDir(noticeAssets)
-tasks.named("preBuild").configure { dependsOn(prepareNotices) }
 
 // Consume backend-owned, audited bundles; do not regenerate dependency notices here.
 val engineNoticeInputs = mapOf(

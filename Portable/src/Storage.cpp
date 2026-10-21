@@ -11,6 +11,7 @@
 #include <thread>
 #include <sstream>
 #include <sys/file.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -611,6 +612,68 @@ struct Stage {
         sync_dir(destination.parent_path());
     }
 };
+// The digests a lock records for the base files it names (FirmwareKit writes outputs.nand.files besides each
+// output's sha256), keyed by identity as validate_base's cache is: a base fresh from the preparer is admitted
+// without reading it again. Files the lock does not name are left out and read as usual.
+static DigestCache lock_digests(const fs::path &base) {
+    DigestCache cache;
+    Json j = parse(read_file(base / "device.lock.json"));
+    auto add = [&](const fs::path &path, const Json &sha) {
+        struct stat st {};
+        if (sha.kind == Json::String && sha.string().size() == 64 && lstat(path.c_str(), &st) == 0 &&
+            S_ISREG(st.st_mode))
+            cache[file_identity(path, st)] = sha.string();
+    };
+    for (const auto &pair : j.at("outputs").object) {
+        const Json *path = pair.second.find("path");
+        if (!path)
+            continue;
+        std::string name = path->string();
+        safe_name(name);
+        if (const Json *h = pair.second.find("sha256"))
+            add(base / name, *h);
+        if (const Json *files = pair.second.find("files"); files && files->kind == Json::Object)
+            for (const auto &file : files->object) {
+                safe_name(file.first);
+                add(base / name / file.first, file.second);
+            }
+    }
+    if (const Json *i = j.find("identity"))
+        if (const Json *h = i->find("sha256"))
+            add(base / "identity.json", *h);
+    return cache;
+}
+void adopt_base(const fs::path &base, lt_import_phase_fn observer, void *opaque) {
+    ImportObservation observation{observer, opaque};
+    observation.begin("verifying");
+    AdmissionProgress verify{ImportObservation::notify, &observation};
+    DigestCache cache = lock_digests(base);
+    validate_base(base, &verify, {}, &cache);
+    std::vector<fs::path> dirs{base};
+    for (const auto &e : fs::recursive_directory_iterator(base)) {
+        observation.checkpoint();
+        require(!e.is_symlink(), "base symlink refused");
+        if (e.is_directory()) {
+            dirs.push_back(e.path());
+            continue;
+        }
+        require(e.is_regular_file(), "special base file refused");
+        auto file = open_read(e.path());
+        io(fsync(file.n) == 0, "sync adopted base file");
+        io(chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
+    }
+    for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) {
+        sync_dir(*it);
+        io(chmod(it->c_str(), 0500) == 0, "make base directory immutable");
+    }
+}
+void seed_admission(const fs::path &base_path, const fs::path &state) {
+    const auto base = fs::canonical(base_path);  // as open_device_checked names the files
+    DigestCache cache = lock_digests(base);
+    validate_base(base, nullptr, {}, &cache);
+    atomic_write(state / ".base-identity", digest_file(base / "device.lock.json"));
+    atomic_write(state / ".verified-digests", dump_digest_cache(cache));
+}
 static void sparse_write(int fd, const uint8_t *bytes, size_t size) {
     if (std::all_of(bytes, bytes + size, [](uint8_t value) { return value == 0; }))
         io(lseek(fd, off_t(size), SEEK_CUR) >= 0, "seek zero archive span");
@@ -1188,6 +1251,72 @@ void lt_device_close(lt_device *d) {
     if (d && !d->active)
         delete d;
 }
+namespace lt {
+// FirmwareKit's image stores (geometry.json storage_format nand-xor-blank-v2: the iPod touch 2G's) are written in
+// place, with no page overlay: a device boots a copy of its base's store in state/nand, made on its first boot (and
+// again after an erase removes it), as upstream's HostRuntime clones it. Only the chips' data extents are copied;
+// the rest stays holes, which read as blank pages.
+static bool image_store_in_place(const fs::path &nand) {
+    if (!fs::is_regular_file(nand / "geometry.json"))
+        return false;
+    auto geometry = parse(read_file(nand / "geometry.json", 1 << 16));
+    const auto *format = geometry.find("storage_format");
+    return format && format->kind == Json::String && format->string() == "nand-xor-blank-v2";
+}
+static void clone_sparse(const fs::path &from, const fs::path &to) {
+    auto in = open_read(from);
+    struct stat st {};
+    io(fstat(in.n, &st) == 0, "fstat");
+    Fd out(open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
+    io(out.n >= 0, "create " + to.string());
+#ifdef FICLONE
+    if (ioctl(out.n, FICLONE, in.n) == 0)
+        return;
+#endif
+    io(ftruncate(out.n, st.st_size) == 0, "size " + to.string());
+    std::vector<uint8_t> buffer(1 << 20);
+    off_t at = 0;
+    while (at < st.st_size) {
+        off_t end = st.st_size;
+#ifdef SEEK_DATA
+        off_t data = lseek(in.n, at, SEEK_DATA);
+        if (data < 0)
+            break;  // only a hole remains
+        at = data;
+        end = lseek(in.n, data, SEEK_HOLE);
+        io(end > 0, "seek hole " + from.string());
+#endif
+        while (at < end) {
+            const size_t want = size_t(std::min<off_t>(off_t(buffer.size()), end - at));
+            ssize_t n = pread(in.n, buffer.data(), want, at);
+            io(n > 0, "read " + from.string());
+            if (!std::all_of(buffer.begin(), buffer.begin() + n, [](uint8_t v) { return v == 0; })) {
+                for (ssize_t done = 0; done < n;) {
+                    ssize_t k = pwrite(out.n, buffer.data() + done, size_t(n - done), at + done);
+                    io(k > 0, "write " + to.string());
+                    done += k;
+                }
+            }
+            at += n;
+        }
+    }
+    io(fsync(out.n) == 0, "sync " + to.string());
+}
+static fs::path live_image_store(const fs::path &base, const fs::path &state) {
+    const fs::path live = state / "nand";
+    if (fs::is_regular_file(live / "geometry.json"))
+        return live;
+    require(!fs::exists(live) || fs::is_empty(live), "this device's data was written in an older format over a newer system");
+    const fs::path staged = state / ".nand-clone.tmp";
+    fs::remove_all(staged);
+    fs::create_directories(staged);
+    for (const auto &entry : fs::directory_iterator(base))
+        clone_sparse(entry.path(), staged / entry.path().filename());
+    fs::remove_all(live);
+    fs::rename(staged, live);
+    return live;
+}
+}  // namespace lt
 lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, const char *const **argv, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(d && argc && argv, "null boot output");
@@ -1221,6 +1350,7 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
             }
             return o;
         };
+        const bool image_store = n72 && lt::image_store_in_place(d->base / "nand");
         std::string machine = c->machine;
         auto option = [&](const std::string &k, const std::string &v) { machine += "," + k + "=" + escape(v); };
         if (n72) {
@@ -1229,7 +1359,8 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
             option("direct-llb", "");
             option("bootrom", c->bootrom_path);
             option("nor", (d->base / "nor.bin").string());
-            option("nandrw", (d->state / "nand").string());
+            if (!image_store)
+                option("nandrw", (d->state / "nand").string());
             option("gid-blobs", (d->base / "gid-blobs.bin").string());
             option("wifi", "on");
         } else {
@@ -1249,7 +1380,7 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
                 }
             }
         }
-        option("nand", (d->base / "nand").string());
+        option("nand", image_store ? lt::live_image_store(d->base / "nand", d->state).string() : (d->base / "nand").string());
         option("nor-rw", (d->state / "nor.bin").string());
         std::string package =
             c->guest_package_path && *c->guest_package_path ? c->guest_package_path : lt::prepared_guest_package(d);

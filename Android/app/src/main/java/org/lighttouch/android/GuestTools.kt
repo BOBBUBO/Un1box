@@ -4,13 +4,13 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.security.MessageDigest
 import java.util.zip.Inflater
 
 /**
- * The guest tools shipped in the APK (assets/guest-tools/armv6.itpack and armv7.itpack). A new
+ * The guest tools shipped in the APK (assets/guest-tools/armv6.itpack and armv7.itpack, beside the helpers
+ * firmwarekit bakes in). A new
  * device gets the pack with a family for its board and build, matched the way the library's
- * guest_offer matches it; firmware preparation takes its seven guest files from the armv6 pack.
+ * guest_offer matches it; firmware preparation reads the whole folder (firmwareTools).
  */
 internal object GuestTools {
     private class Pack(val asset: String, val files: Map<String, ByteArray>, val families: List<JSONObject>)
@@ -86,29 +86,23 @@ internal object GuestTools {
     }
 
     /**
-     * The tools folder the firmware preparer reads: release-guest-unpacked/guest-tools/ holding the
-     * iPod touch 2G family's guest binaries and armv6.itpack, plus an inventory.json of their
-     * SHA-256 digests. Rebuilt from the APK each time, so it always matches the bundled pack.
+     * The folder firmwarekit create reads (--guest-tools): every file the APK carries under assets/guest-tools/ (the
+     * helpers it bakes into a system, from qemu-ios contrib/export-guest-artifacts.sh, and both guest packages).
+     * Rebuilt from the APK each time, so it always matches what this build ships.
      */
-    fun preparerRoot(context: Context): File {
-        val pack = packs(context).firstOrNull { it.asset.endsWith("/armv6.itpack") } ?: error("This build of LightTouch has no built-in guest tools")
-        val family = pack.families.firstOrNull { covers(it, "n72ap", "7E18") } ?: error("The built-in guest tools do not cover the iPod touch 2G")
-        val prefix = family.getString("family") + "/"
-        val wanted = mapOf("OpenGLES" to "hooks/OpenGLES", "libappsync.dylib" to "hooks/libappsync.dylib", "it_typein.dylib" to "hooks/it_typein.dylib",
-            "it_agent" to "bin/it_agent", "sblaunch" to "bin/sblaunch", "sbdlicon" to "bin/sbdlicon")
-        val root = File(context.filesDir, "preparer-tools")
+    fun firmwareTools(context: Context): File {
+        val names = (context.assets.list("guest-tools") ?: emptyArray()).filter { !it.endsWith(".json") }
+        check(names.any { it == "it_seal" }) { "This build of LightTouch has no device preparation tools" }
+        val root = File(context.filesDir, "firmware-tools")
         root.deleteRecursively()
-        val tools = File(root, "release-guest-unpacked/guest-tools").apply { check(mkdirs()) { "Could not create the preparation tools folder" } }
-        val inventory = JSONArray()
-        fun put(name: String, bytes: ByteArray) {
-            File(tools, name).writeBytes(bytes)
-            inventory.put(JSONObject().put("path", "release-guest-unpacked/guest-tools/$name").put("type", "file").put("sha256", sha256(bytes)))
+        check(root.mkdirs()) { "Could not create the preparation tools folder" }
+        for (name in names) {
+            val target = File(root, name)
+            context.assets.open("guest-tools/$name").use { input -> target.outputStream().use { input.copyTo(it) } }
+            // Mach-O helpers stay as the guest gets them; firmwarekit only reads them, but keeps their modes.
+            if (!name.contains('.') || name.endsWith(".dylib")) target.setExecutable(true, false)
         }
-        for ((name, path) in wanted) put(name, pack.files[prefix + path] ?: error("The built-in guest tools lack $path"))
-        put("armv6.itpack", context.assets.open(pack.asset).use { it.readBytes() })
-        File(root, "inventory.json").writeText(JSONObject().put("schema", 1).put("source", "LightTouch APK").put("entries", inventory).toString(2))
         return root
     }
 
-    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 }

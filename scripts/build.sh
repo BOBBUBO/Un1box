@@ -10,7 +10,11 @@
 #   android-engine build/android/engine/arm64-v8a/              arm64 engine, libc++_shared.so, notices
 #   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
+#   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Swift) + lighttouch-oneshot, x86_64
+#   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Swift SDK for Android)
 #   guest-package  build/guest-package/{armv6,armv7}.itpack   on the Mac ($LT_MAC), Xcode + old SDKs
+#   firmware-tools build/firmware-tools/                       on the Mac: the helpers firmwarekit create bakes in
+#                                                             (--guest-tools; contrib/export-guest-artifacts.sh)
 #   ltbench        build/ltbench/LTBench.ipa                   on the Mac ($LT_MAC)
 #   all            linux android portable-tests (+ guest-package ltbench when LT_MAC is set)
 #
@@ -30,12 +34,15 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${ANDROID_HOME:=$HOME/Android/Sdk}"
 : "${ANDROID_NDK_VERSION:=28.2.13676358}"
 : "${JAVA_HOME:=/usr/lib/jvm/java-17-openjdk-amd64}"
-: "${LT_XPWN:=$HOME/.hermes/cache/scratch/lighttouchwin-xpwn}"
 : "${LT_MAC:=}"                                                                   # user@host of the Mac
 : "${LT_DEBUGGABLE:=true}"                       # false: a non-debuggable APK (release; GrapheneOS AOT)
 : "${LT_MAC_DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"
 : "${LT_MAC_IPAD_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk}"         # expanded on the Mac
+: "${LT_MAC_ARMV6_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.1.3.sdk}"       # expanded on the Mac
 : "${JOBS:=$(nproc 2>/dev/null || echo 4)}"
+: "${LT_SWIFT_ENV:=$HOME/.local/share/swiftly/env.sh}"                           # swiftly's Swift 6.4+
+: "${LT_SWIFT_ANDROID_SDK:=aarch64-unknown-linux-android29}"   # swift sdk install ...android.artifactbundle
+: "${LT_SWIFT_ANDROID_BUNDLE:=$HOME/.swiftpm/swift-sdks/swift-6.4.1-RELEASE_android.artifactbundle}"
 PCLIBDIR=
 export ANDROID_HOME JAVA_HOME
 
@@ -127,20 +134,20 @@ build_android() {
     local w="$LT_INPUTS" angle="$LT_INPUTS/graphics/angle-android-arm64-gl-build-01/candidate-01"
     need "$angle/lib" "ANGLE arm64 libraries"
     need "$w/mobile-android/arm64-v8a" "Android mobile services"
-    need "$LT_XPWN" "XPwn source"
-    # Guest tools the APK carries (new devices and IPSW preparation use them); without them the APK
-    # still builds, but new devices get no guest tools and preparation cannot run.
-    local tools="${LT_GUEST_TOOLS:-$OUT/guest-package}" guest=()
-    if [ -f "$tools/armv6.itpack" ] && [ -f "$tools/armv7.itpack" ]; then guest=(-PguestToolsDir="$tools")
-    else echo "warning: no armv6/armv7.itpack in $tools (set LT_GUEST_TOOLS); the APK will carry no guest tools" >&2; fi
+    # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android, built when missing).
+    [ -x "$OUT/firmwarekit/android/firmwarekit" ] || build_firmwarekit_android
+    # Guest tools the APK carries (new devices get the packages; firmwarekit bakes the helpers into the systems it
+    # prepares); without them the APK still builds, but new devices get no guest tools and preparation cannot run.
+    local tools="${LT_GUEST_TOOLS:-$OUT/firmware-tools}" guest=()
+    if [ -f "$tools/armv6.itpack" ] && [ -f "$tools/armv7.itpack" ] && [ -f "$tools/it_seal" ]; then guest=(-PguestToolsDir="$tools")
+    else echo "warning: no guest packages and helpers in $tools (scripts/build.sh firmware-tools, or set LT_GUEST_TOOLS); the APK will carry no guest tools" >&2; fi
     # A non-debuggable build runs lint-vital, which needs an artifact the offline Gradle cache lacks.
     local lint=()
     [ "$LT_DEBUGGABLE" = false ] && lint=(-x lintVitalAnalyzeDebug -x lintVitalReportDebug -x lintVitalDebug)
     (cd "$REPO/Android" && CMAKE_BUILD_PARALLEL_LEVEL="$JOBS" ./gradlew --offline --no-daemon --max-workers=8 \
         '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs="$JOBS" -PtargetAbis=arm64-v8a \
-        -PportableDir="$REPO/Portable" -PfirmwareDir="$REPO/Portable/firmware" \
-        -PqemuSource="$QEMU_IOS" -PxpwnSource="$LT_XPWN" \
-        -PnativeDepsRoot="$w/backend/deps" -PengineRoot="$OUT/android/engine" \
+        -PportableDir="$REPO/Portable" -PqemuSource="$QEMU_IOS" \
+        -PengineRoot="$OUT/android/engine" -PfirmwareKitDir="$OUT/firmwarekit/android" \
         -PengineNoticeArm64="$OUT/android/engine/arm64-v8a/notices" \
         -PsourceRevision="$(git -C "$REPO" rev-parse HEAD)" \
         -PsourceReference="${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}" \
@@ -166,6 +173,38 @@ build_portable_tests() {
     (cd "$OBJ/portable-tests" && ctest --output-on-failure | tail -3)
 }
 
+# firmwarekit (Packages/FirmwareKit) builds a device from an IPSW off the Mac too; its build-time boots go through
+# lighttouch-oneshot, which loads the engine library ($LTM_QEMU_DYLIB, else libqemu-arm.so beside it).
+build_firmwarekit() {
+    log "firmwarekit (linux)"
+    . "$LT_SWIFT_ENV"
+    (cd "$REPO/Packages/FirmwareKit" && swift build -c release --product firmwarekit 2>&1 | tail -3)
+    mkdir -p "$OUT/firmwarekit/linux"
+    cp "$REPO/Packages/FirmwareKit/.build/release/firmwarekit" "$OUT/firmwarekit/linux/"
+    cc -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/linux/lighttouch-oneshot" "$REPO/Portable/oneshot/lighttouch-oneshot.c" -ldl -lpthread
+    ls -la "$OUT/firmwarekit/linux"
+}
+
+# The Swift SDK for Android's static runtime wants NDK r30's libc++ (setup-android-sdk.sh with ANDROID_NDK_HOME at
+# r30); build-support/android-pkgconfig keeps the host's zlib off the link and takes libc++ statically.
+build_firmwarekit_android() {
+    log "firmwarekit (android arm64)"
+    . "$LT_SWIFT_ENV"
+    (cd "$REPO/Packages/FirmwareKit" && swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
+        --scratch-path .build-android --static-swift-stdlib --pkg-config-path build-support/android-pkgconfig \
+        -Xlinker -lssl -Xlinker -lcrypto 2>&1 | tail -3)
+    mkdir -p "$OUT/firmwarekit/android"
+    cp "$REPO/Packages/FirmwareKit/.build-android/out/Products/Release-android-aarch64/firmwarekit" "$OUT/firmwarekit/android/"
+    "$NDK_BIN/llvm-strip" "$OUT/firmwarekit/android/firmwarekit"
+    "$NDK_BIN/aarch64-linux-android29-clang" -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/android/lighttouch-oneshot" \
+        "$REPO/Portable/oneshot/lighttouch-oneshot.c"
+    python3 "$REPO/Packages/FirmwareKit/build-support/stage-notices.py" "$OUT/firmwarekit/android/licenses" \
+        --checkouts "$REPO/Packages/FirmwareKit/.build-android/checkouts" \
+        --swift-license "$LT_SWIFT_ANDROID_BUNDLE/swift-android/swift-resources/usr/share/swift/LICENSE.txt" \
+        --source-reference "${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}"
+    ls -la "$OUT/firmwarekit/android"
+}
+
 mac() { [ -n "$LT_MAC" ] || { echo "$1 builds on a Mac: set LT_MAC=user@host (docs/BUILDING.md)" >&2; exit 1; }; }
 
 build_guest_package() {
@@ -187,6 +226,25 @@ build_guest_package() {
     ls -la "$OUT/guest-package"
 }
 
+build_firmware_tools() {
+    mac firmware-tools
+    log "firmware-tools on $LT_MAC"
+    local remote=ltfw-build
+    # export-guest-artifacts.sh reads what guest-package/build.sh does, plus the app headers and its own script.
+    ssh "$LT_MAC" "rm -rf $remote && mkdir -p $remote/src/include/hw/arm $remote/src/tests"
+    rsync -az --exclude=.git "$QEMU_IOS/contrib" "$LT_MAC:$remote/src/"
+    rsync -az "$QEMU_IOS/include/hw/arm/" "$LT_MAC:$remote/src/include/hw/arm/"
+    rsync -az "$QEMU_IOS/tests/guest-package" "$LT_MAC:$remote/src/tests/"
+    ssh "$LT_MAC" "zsh -lc 'cd $remote/src && DEVELOPER_DIR=$LT_MAC_DEVELOPER_DIR IPAD_SDK=$LT_MAC_IPAD_SDK \
+        ARMV6_SDK=$LT_MAC_ARMV6_SDK PATH=/opt/homebrew/bin:\$PATH \
+        bash contrib/export-guest-artifacts.sh ~/$remote/out > ~/$remote/build.log 2>&1'" ||
+        { ssh "$LT_MAC" "tail -30 ~/$remote/build.log" >&2; exit 1; }
+    rm -rf "$OUT/firmware-tools"
+    scp -qr "$LT_MAC:$remote/out/ipad-guest-tools" "$OUT/firmware-tools"
+    scp -q "$LT_MAC:$remote/out/manifest.json" "$OUT/firmware-tools.manifest.json"
+    ls -la "$OUT/firmware-tools"
+}
+
 build_ltbench() {
     mac ltbench
     log "ltbench on $LT_MAC"
@@ -197,13 +255,13 @@ clean=0; targets=()
 for a in "$@"; do
     case "$a" in
     --clean) clean=1 ;;
-    -h|--help) sed -n 2,21p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,25p "$0"; exit 0 ;;
     all) targets+=(linux android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
-    linux-engine|linux|android-engine|android|portable-tests|guest-package|ltbench) targets+=("$a") ;;
+    linux-engine|linux|android-engine|android|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
     *) echo "unknown target: $a (scripts/build.sh --help)" >&2; exit 2 ;;
     esac
 done
-[ ${#targets[@]} -gt 0 ] || { sed -n 2,21p "$0"; exit 2; }
+[ ${#targets[@]} -gt 0 ] || { sed -n 2,25p "$0"; exit 2; }
 for t in "${targets[@]}"; do
     if [ $clean = 1 ]; then
         case "$t" in
