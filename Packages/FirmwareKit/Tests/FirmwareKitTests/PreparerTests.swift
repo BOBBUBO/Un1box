@@ -59,14 +59,18 @@ import Testing
         )
         #expect(seal.fraction(elapsed: 1e6, seen: seen) < end)
         let lock = StepPlan.plan("Writing the lock")
-        #expect(abs(lock.fraction(elapsed: 1e6, seen: []) - 0.95) < 1e-9 && StepPlan.plan("no such step").seconds > 0)
+        #expect(abs(lock.fraction(elapsed: 1e6, seen: []) - 0.99) < 1e-9 && StepPlan.plan("no such step").seconds > 0)
+        // a slow host: past the knee it still moves every 10 s
+        let slow = stride(from: 0.0, through: 3.0 * lock.seconds, by: 10).map { lock.fraction(elapsed: $0, seen: []) }
+        #expect(zip(slow, slow.dropFirst()).allSatisfy { $0 < $1 } || lock.seconds < 10)
     }
 
     /// Sam 10-07: the seal of an iOS 7 iPhone sat at ~83% for minutes. Its boot prints launchd at 8 s and nothing
     /// the plan knows for minutes after; the step keeps moving all the while, and its weight is its real length.
     @Test func iOS7SealKeepsMoving() throws {
         let seal = StepPlan.plan(StepPlan.sealStep, major: 7)
-        #expect(seal.seconds > 300 && StepPlan.plan(StepPlan.sealStep, major: 6).seconds < 100)
+        #expect(seal.seconds > 300 && StepPlan.plan(StepPlan.sealStep, major: 5).seconds < 100)
+        #expect(StepPlan.plan(StepPlan.sealStep, major: 6).seconds > 200)  // the first-boot migration
         var seen = [Double?](repeating: nil, count: seal.milestones.count)
         seen[0] = 4
         seen[1] = 8  // FTL_Open, launchd; no Wi-Fi line (a boot without it), no SpringBoard yet

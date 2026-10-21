@@ -2,6 +2,9 @@
 // the device record). Foundation only; the offline checks and tests/drivers/session-driver compile it whole.
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 /// argv and environment for one boot, from paths alone. EmulatorController
 /// fills it from the device record; tests from fixtures.

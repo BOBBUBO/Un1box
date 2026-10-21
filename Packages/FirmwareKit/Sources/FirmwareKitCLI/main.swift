@@ -14,10 +14,17 @@
 // --out. An error prints {"error": ...} and exits 1.
 
 import ArgumentParser
+import CHostFast
 import FirmwareKit
 import FirmwareSchema
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import HostRuntime
+
+// A phone's little cores make preparation several times slower; the build-time boots inherit this.
+lt_prefer_fast_cores()
 
 let commandOutput = PipeOutput(fileDescriptor: STDOUT_FILENO)
 @Sendable func emit(_ event: PrepareEvent) {

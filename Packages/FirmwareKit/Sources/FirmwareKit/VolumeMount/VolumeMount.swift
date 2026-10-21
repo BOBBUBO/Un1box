@@ -14,6 +14,9 @@
 // rename) so an existing file keeps its catalog record and Apple's owner.
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 public enum VolumeMount {
     /// What macOS drops on a mounted volume; removed from its root before unmounting.
@@ -78,6 +81,10 @@ public enum VolumeMount {
         let journal = (try? HFSPlusVolume(image).journalSnapshot()) ?? nil
         if FileManager.default.fileExists(atPath: mountPoint.path) { try removeTree(mountPoint) }
         defer { try? removeTree(mountPoint) }
+        // What the edit adds gets the modes a Mac's mount gives it (umask 022), not this process's (Linux's 002,
+        // an Android app's 077).
+        let mask = umask(0o022)
+        defer { umask(mask) }
         let editor = try HFSPlusEditor(image)
         try editor.extract(to: mountPoint)
         try Task.checkCancellation()

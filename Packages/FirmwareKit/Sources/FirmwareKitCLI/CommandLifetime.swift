@@ -1,5 +1,8 @@
 import FirmwareKit
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import HostRuntime
 
 @MainActor final class CommandLifetime {

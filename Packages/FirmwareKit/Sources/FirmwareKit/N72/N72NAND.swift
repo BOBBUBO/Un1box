@@ -9,6 +9,9 @@
 
 import FirmwareSchema
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import HostRuntime
 import zlib
 

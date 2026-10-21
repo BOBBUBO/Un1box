@@ -6,6 +6,9 @@
 //   try APM.hfsSlice(headerBytes)                                     // (offset, length) in bytes
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 public enum UDIF {
     public static func extractRootfs(dmg src: URL, to out: URL) async throws {

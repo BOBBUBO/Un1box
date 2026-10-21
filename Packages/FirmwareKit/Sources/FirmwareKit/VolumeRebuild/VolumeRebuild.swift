@@ -21,6 +21,9 @@
 // vblocks (the CX01 context) are ignored. MBR partition 1 is "system", 2 is "data".
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 public enum VolumeRebuild {
     public struct Volume: Sendable, Codable, Equatable {

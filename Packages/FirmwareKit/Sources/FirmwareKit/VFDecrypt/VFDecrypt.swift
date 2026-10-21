@@ -5,13 +5,17 @@
 //   try VFDecrypt.decrypt(from: fd, output: plain, key: key36)               // any sequential fd (a pipe)
 //   try ipsw.stream(osImage) { try VFDecrypt.decrypt(from: $0.fileDescriptor, output: plain, key: key36) }
 //
-// Streams in fixed-size chunks; the input is read once, front to back, so it can come straight off
+// Streams in batches of whole chunks; the input is read once, front to back, so it can come straight off
 // `unzip -p` without a temporary copy of the encrypted image.
 
+import CHostFast
 #if canImport(CommonCrypto)
 import CommonCrypto
 #endif
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 public enum VFDecrypt {
     public static func decrypt(input: URL, output: URL, key: Data) throws {
@@ -61,43 +65,67 @@ public enum VFDecrypt {
             throw FirmwareError(.internal, "cannot create \(output.path)")
         }
         defer { try? out.close() }
-        var pending = Data(capacity: 1 << 22)
+        // Batches of whole chunks: one read and one write each, the chunks decrypted on every core (each chunk's IV
+        // depends only on its index). Where libcrypto is missing (the Mac: CommonCrypto), chunk by chunk.
+        let perBatch = max(1, (8 << 20) / bs)
+        if dataOffset < 0x100 { ct.append(contentsOf: [UInt8](repeating: 0, count: perBatch * bs - bs)) } else {
+            ct = [UInt8](repeating: 0, count: perBatch * bs)
+        }
+        pt = [UInt8](repeating: 0, count: perBatch * bs)
+        let slices = max(1, min(ProcessInfo.processInfo.activeProcessorCount, 8))
         var n: UInt32 = 0
         while left > 0 {
-            let r = carried + readFully(fd, &ct, carried, bs - carried)
+            let r = carried + readFully(fd, &ct, carried, perBatch * bs - carried)
             carried = 0
             guard r > 0 else { throw FirmwareError(.unsupported, "short image") }
             guard r % 16 == 0 else {
-                throw FirmwareError(.unsupported, "encrcdsa chunk \(n) is \(r) bytes, not whole AES blocks")
+                throw FirmwareError(.unsupported, "encrcdsa chunk \(n) is \(r % bs) bytes, not whole AES blocks")
             }
-            var nb = [UInt8(n >> 24 & 0xFF), UInt8(n >> 16 & 0xFF), UInt8(n >> 8 & 0xFF), UInt8(n & 0xFF)]
-            var iv = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
-            CCHmac(CCHmacAlgorithm(kCCHmacAlgSHA1), hmacKey, hmacKey.count, &nb, 4, &iv)
-            var got = 0
-            let status = CCCrypt(
-                CCOperation(kCCDecrypt),
-                CCAlgorithm(kCCAlgorithmAES),
-                0,
-                aesKey,
-                16,
-                iv,
-                ct,
-                r,
-                &pt,
-                bs,
-                &got
-            )
-            guard status == kCCSuccess else { throw FirmwareError(.internal, "CCCrypt failed (\(status))") }
-            let take = min(UInt64(got), left)
-            pending.append(contentsOf: pt[0..<Int(take)])
-            left -= take
-            if pending.count >= 1 << 22 {
-                try out.write(contentsOf: pending)
-                pending.removeAll(keepingCapacity: true)
+            let chunks = (r + bs - 1) / bs
+            if !(try decryptBatch(ct, &pt, r, bs: bs, first: n, aesKey: aesKey, hmacKey: hmacKey, slices: slices)) {
+                for k in 0..<chunks {
+                    let at = k * bs, len = min(bs, r - at)
+                    let i = n + UInt32(k)
+                    var nb = [UInt8(i >> 24 & 0xFF), UInt8(i >> 16 & 0xFF), UInt8(i >> 8 & 0xFF), UInt8(i & 0xFF)]
+                    var iv = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
+                    CCHmac(CCHmacAlgorithm(kCCHmacAlgSHA1), hmacKey, hmacKey.count, &nb, 4, &iv)
+                    var got = 0
+                    let status = ct.withUnsafeBytes { c in
+                        pt.withUnsafeMutableBytes { p in
+                            CCCrypt(CCOperation(kCCDecrypt), CCAlgorithm(kCCAlgorithmAES), 0, aesKey, 16, iv,
+                                    c.baseAddress! + at, len, p.baseAddress! + at, len, &got)
+                        }
+                    }
+                    guard status == kCCSuccess else { throw FirmwareError(.internal, "CCCrypt failed (\(status))") }
+                }
             }
-            n += 1
+            let take = Int(min(UInt64(r), left))
+            try pt.withUnsafeBytes { try out.write(contentsOf: Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: $0.baseAddress!), count: take, deallocator: .none)) }
+            left -= UInt64(take)
+            n += UInt32(chunks)
         }
-        try out.write(contentsOf: pending)
+    }
+
+    /// One batch through libcrypto (CHostFast), split across `slices` threads on chunk boundaries; false where this
+    /// build has no libcrypto.
+    static func decryptBatch(_ ct: [UInt8], _ pt: inout [UInt8], _ count: Int, bs: Int, first: UInt32,
+                             aesKey: [UInt8], hmacKey: [UInt8], slices: Int) throws -> Bool {
+        let chunks = (count + bs - 1) / bs
+        let per = (chunks + slices - 1) / slices
+        let failed = FailedSlice()
+        ct.withUnsafeBytes { c in
+            pt.withUnsafeMutableBytes { p in
+                let (cb, pb) = (UInt(bitPattern: c.baseAddress!), UInt(bitPattern: p.baseAddress!))
+                DispatchQueue.concurrentPerform(iterations: (chunks + per - 1) / per) { s in
+                    let at = s * per * bs, len = min(per * bs, count - at)
+                    let r = lt_vfdecrypt_chunks(aesKey, hmacKey, hmacKey.count, first + UInt32(s * per), bs,
+                                                UnsafeRawPointer(bitPattern: cb + UInt(at)), len,
+                                                UnsafeMutableRawPointer(bitPattern: pb + UInt(at)))
+                    if r != 0 { failed.lock.withLock { failed.any = true } }
+                }
+            }
+        }
+        return !failed.any
     }
 
     /// Reads until `count` bytes or EOF; returns the bytes read.
@@ -112,4 +140,10 @@ public enum VFDecrypt {
         }
         return got
     }
+}
+
+/// Whether any of a batch's slices failed (decryptBatch's threads).
+private final class FailedSlice: @unchecked Sendable {
+    let lock = NSLock()
+    var any = false
 }

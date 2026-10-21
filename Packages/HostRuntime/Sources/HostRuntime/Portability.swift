@@ -59,9 +59,23 @@ public func copyfile(_ source: String, _ target: String, _ state: OpaquePointer?
     clonefile(source, target, 0)
 }
 
-/// Darwin's clonefile(2) for one file: a reflink where the filesystem has them (btrfs, XFS), else a copy that keeps
-/// holes, so a chip file's unwritten blocks stay unallocated.
+/// Darwin's clonefile(2): a file as a reflink where the filesystem has them (btrfs, XFS), else a copy that keeps
+/// holes, so a chip file's unwritten blocks stay unallocated; a folder with everything in it; a symlink as itself.
 public func clonefile(_ source: String, _ target: String, _ flags: UInt32) -> Int32 {
+    var link = stat()
+    guard lstat(source, &link) == 0 else { return -1 }
+    if link.st_mode & S_IFMT == S_IFLNK {
+        guard let to = try? FileManager.default.destinationOfSymbolicLink(atPath: source) else { return -1 }
+        return symlink(to, target)
+    }
+    if link.st_mode & S_IFMT == S_IFDIR {
+        // as macOS's: a folder is cloned with everything in it
+        guard mkdir(target, link.st_mode & 0o7777 | 0o700) == 0,
+            let names = try? FileManager.default.contentsOfDirectory(atPath: source)
+        else { return -1 }
+        for name in names where clonefile(source + "/" + name, target + "/" + name, flags) != 0 { return -1 }
+        return chmod(target, link.st_mode & 0o7777)
+    }
     let input = open(source, O_RDONLY)
     guard input >= 0 else { return -1 }
     defer { close(input) }
@@ -158,10 +172,13 @@ public func setxattr(
 }
 #endif
 
-#if !canImport(Darwin)
-/// lseek's SEEK_DATA and SEEK_HOLE (Linux and Android have them; Glibc's module leaves them out).
+#if !canImport(Darwin) && !os(Android)
+/// lseek's SEEK_DATA and SEEK_HOLE (Linux has them; Glibc's module leaves them out).
 public let SEEK_DATA: Int32 = 3
 public let SEEK_HOLE: Int32 = 4
+#endif
+
+#if !canImport(Darwin)
 
 /// <sys/stat.h>'s UF_IMMUTABLE, for chflags (a no-op off Darwin).
 public let UF_IMMUTABLE: UInt32 = 0x2

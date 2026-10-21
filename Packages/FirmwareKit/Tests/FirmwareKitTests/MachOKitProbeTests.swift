@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import MachOKit
 import Testing
@@ -43,3 +44,4 @@ struct MachOKitProbeTests {
         )
     }
 }
+#endif

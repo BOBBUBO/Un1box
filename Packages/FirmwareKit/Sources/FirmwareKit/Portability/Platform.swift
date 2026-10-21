@@ -67,3 +67,16 @@ func punchHole(_ fd: Int32, offset: Int, length: Int) -> Int32 {
     return -1
     #endif
 }
+
+#if os(Android)
+/// Bionic's pread/pwrite take non-null buffers; FirmwareKit passes a buffer's baseAddress, nil only when empty.
+func pread(_ fd: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int, _ offset: off_t) -> Int {
+    guard let buffer else { return 0 }
+    return Android.pread(fd, buffer, count, offset)
+}
+
+func pwrite(_ fd: Int32, _ buffer: UnsafeRawPointer?, _ count: Int, _ offset: off_t) -> Int {
+    guard let buffer else { return 0 }
+    return Android.pwrite(fd, buffer, count, offset)
+}
+#endif

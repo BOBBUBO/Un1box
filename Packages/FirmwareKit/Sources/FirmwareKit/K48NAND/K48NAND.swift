@@ -8,6 +8,9 @@
 // as erased. Stores made before it (legacy-zero-blank-v1) hold records as programmed; the image migration
 // (K48NANDImage) converts them.
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 public enum K48NAND {
     static let meta = 12

@@ -17,6 +17,9 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import HostRuntime
 
 /// One line of the preparer's stdout.
@@ -172,6 +175,11 @@ public enum Preparer {
         log: (String) -> Void,
         during: (@Sendable () throws -> Void)? = nil
     ) throws -> (OneShot, String) {
+        #if !os(macOS)
+        return try engineOneshot(
+            helper, argv: argv, serial: serial, stop: stop, stopPattern: stopPattern, timeout: timeout, log: log,
+            during: during)
+        #endif
         var config: [String: Any] = [
             "boot": ["argv": argv, "environment": [String: String](), "machine": machine],
             "serialLog": serial.path, "timeout": timeout,
@@ -225,6 +233,82 @@ public enum Preparer {
         )
         return (r, text)
     }
+
+    #if !os(macOS)
+    /// oneshot off the Mac: `helper` is lighttouch-oneshot (Portable/oneshot), which runs the engine on `argv` and
+    /// quits it cleanly on SIGTERM; the serial log and the clock are watched here, as LightTouchDevice watches them.
+    static func engineOneshot(
+        _ helper: URL,
+        argv: [String],
+        serial: URL,
+        stop: String?,
+        stopPattern: String?,
+        timeout: Double,
+        log: (String) -> Void,
+        during: (@Sendable () throws -> Void)?
+    ) throws -> (OneShot, String) {
+        let p = Process()
+        p.executableURL = helper
+        p.arguments = argv
+        var environment = ProcessInfo.processInfo.environment
+        environment["IT_TVOUT_READY"] = "1"
+        p.environment = environment
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = FileHandle.standardError
+        p.standardError = FileHandle.standardError
+        let start = Date()
+        try p.run()
+        final class Failure: @unchecked Sendable { var error: Error? }
+        let failure = Failure()
+        let finished = DispatchSemaphore(value: 0)
+        if let during {
+            Thread.detachNewThread {
+                do { try during() } catch {
+                    failure.error = error
+                    p.terminate()
+                }
+                finished.signal()
+            }
+        } else {
+            finished.signal()
+        }
+        var marker = false, stopping = false
+        while p.isRunning {
+            usleep(500_000)
+            if !marker, stop != nil || stopPattern != nil,
+                let text = try? String(contentsOf: serial, encoding: .isoLatin1)
+            {
+                if let stop, text.contains(stop) { marker = true }
+                if let stopPattern,
+                    text.replacingOccurrences(of: "\n", with: "").range(of: stopPattern, options: .regularExpression) != nil
+                {
+                    marker = true
+                }
+            }
+            if !stopping && (marker || Date().timeIntervalSince(start) > timeout) {
+                stopping = true
+                p.terminate()  // SIGTERM: the launcher quits QEMU, which flushes the NAND and NOR
+                let deadline = Date().addingTimeInterval(60)
+                while p.isRunning && Date() < deadline { usleep(100_000) }
+                if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+            }
+        }
+        p.waitUntilExit()
+        finished.wait()
+        if let error = failure.error { throw error }
+        let r = OneShot(
+            exited: !stopping, exitCode: p.terminationStatus, marker: marker, seconds: Date().timeIntervalSince(start))
+        log(
+            String(
+                format: "one-shot: %@ after %.0f s (exit %d)",
+                r.marker ? "marker" : r.exited ? "halted" : "timed out",
+                r.seconds,
+                r.exitCode
+            )
+        )
+        return (r, (try? String(contentsOf: serial, encoding: .isoLatin1)) ?? "")
+    }
+    #endif
 
     /// The sibling entry's restore ramdisk (Update, else Restore), decrypted with that entry's key into `work`.
     static func siblingRamdisk(_ sib: FirmwareEntry, ipsw url: URL, work: URL) throws -> URL {

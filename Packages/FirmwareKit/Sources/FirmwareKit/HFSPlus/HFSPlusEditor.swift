@@ -20,6 +20,9 @@
 // folders) are kept as they are and not extracted. Hard links are not supported (IPSW volumes have none).
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 final class HFSPlusEditor: @unchecked Sendable {
     struct Extent: Equatable {
@@ -123,6 +126,9 @@ final class HFSPlusEditor: @unchecked Sendable {
     var caseSensitive: Bool
     /// Host inode -> what extract wrote there.
     private var extracted: [UInt64: (cnid: UInt32, size: Int, mtime: timespec, link: String?)] = [:]
+    /// A hard link's path -> its record and the copy extract wrote there (no host hard links: Android's SELinux
+    /// refuses them to apps); commit keeps each only as it was (moving, removing or writing one is not supported).
+    private var hardLinks: [String: (cnid: UInt32, inode: UInt64, size: Int, mtime: timespec)] = [:]
     private var reader: HFSPlusVolume?
 
     init(_ url: URL) throws {
@@ -158,8 +164,16 @@ final class HFSPlusEditor: @unchecked Sendable {
         let (catShape, catRecords) = try leafRecords(catalogFile)
         catalogShape = catShape
         if let cs = catShape.header.count > 37 ? catShape.header[37] : nil, vh[1] == 0x58 { caseSensitive = cs == 0xBC }
-        guard caseSensitive else {
-            throw FirmwareError(.unsupported, "\(url.lastPathComponent): a case-insensitive HFS+ volume (not supported here yet)")
+        if !caseSensitive {
+            // The folded order is rebuilt on commit: the volume's own must be that order, or the table is not Apple's.
+            var last: (UInt32, [UInt16])?
+            for r in catRecords {
+                let key = (be32(r, 2), (0..<Int(be16(r, 6))).map { be16(r, 8 + 2 * $0) })
+                if let (p, n) = last, p > key.0 || p == key.0 && HFSPlusCaseFold.compare(n, key.1) >= 0 {
+                    throw FirmwareError(.unsupported, "\(url.lastPathComponent): catalog not in HFS+'s case-folded order")
+                }
+                last = key
+            }
         }
         for r in catRecords {
             let keyLength = Int(be16(r, 0))
@@ -303,9 +317,6 @@ final class HFSPlusEditor: @unchecked Sendable {
             }
         }
         let files = paths.filter { items[$0.key]?.isFolder == false }.map { ($0.key, $0.value) }
-        if let link = files.first(where: { items[$0.0]?.isHardLink == true }) {
-            throw FirmwareError(.unsupported, "\(url.lastPathComponent): \(link.1) is a hard link (not supported here)")
-        }
         let total = files.reduce(0) { $0 + Int(items[$1.0]?.data.logicalSize ?? 0) } + 1
         let state = ExtractState()
         DispatchQueue.concurrentPerform(iterations: max(1, workers)) { worker in
@@ -340,7 +351,8 @@ final class HFSPlusEditor: @unchecked Sendable {
                                 }
                             }
                         }
-                        guard fchmod(out, mode_t(item.mode & 0o7777)) == 0 else {
+                        let mode = item.isHardLink ? try reader.inode(record).mode : item.mode
+                        guard fchmod(out, mode_t(mode & 0o7777)) == 0 else {
                             throw FirmwareError(.internal, "chmod \(path): \(String(cString: strerror(errno)))")
                         }
                         Self.setTimes(out, nil, item.body)
@@ -364,7 +376,13 @@ final class HFSPlusEditor: @unchecked Sendable {
         }
         // What is there now, by inode: commit tells an untouched file from a written one, wherever it went.
         extracted = [:]
-        for (id, path) in files {
+        hardLinks = [:]
+        for (id, path) in files where items[id]?.isHardLink == true {
+            var st = stat()
+            guard lstat(root.appendingPathComponent(path).path, &st) == 0 else { continue }
+            hardLinks[path] = (id, UInt64(st.st_ino), Int(st.st_size), Self.mtime(st))
+        }
+        for (id, path) in files where items[id]?.isHardLink != true {
             var st = stat()
             guard lstat(root.appendingPathComponent(path).path, &st) == 0 else { continue }
             let link = items[id]?.isSymlink == true
@@ -424,10 +442,23 @@ final class HFSPlusEditor: @unchecked Sendable {
                 guard type == S_IFDIR || type == S_IFREG || type == S_IFLNK else {
                     throw FirmwareError(.unsupported, "\(rel): not a file, folder or symlink")
                 }
+                let name = Array(HFSPlusVolume.catalogName(host).decomposedStringWithCanonicalMapping.utf16)
                 if type == S_IFREG && st.st_nlink > 1 {
                     throw FirmwareError(.unsupported, "\(rel): a hard link (not supported here)")
                 }
-                let name = Array(HFSPlusVolume.catalogName(host).decomposedStringWithCanonicalMapping.utf16)
+                if let was = hardLinks[rel] {
+                    guard type == S_IFREG, UInt64(st.st_ino) == was.inode, Int(st.st_size) == was.size,
+                        Self.mtime(st).tv_sec == was.mtime.tv_sec, Self.mtime(st).tv_nsec == was.mtime.tv_nsec,
+                        var item = items[was.cnid], claimed.insert(was.cnid).inserted
+                    else {
+                        throw FirmwareError(.unsupported, "\(rel): a hard link replaced or written (not supported here)")
+                    }
+                    let cnid = was.cnid
+                    item.parent = parent
+                    item.name = name
+                    next[cnid] = item
+                    continue
+                }
                 // Linux has no symlink modes (always 777); macOS makes them 755.
                 let perm = type == S_IFLNK ? 0o755 : UInt16(st.st_mode & 0o7777)
                 var item: Item
@@ -488,6 +519,9 @@ final class HFSPlusEditor: @unchecked Sendable {
             next[Self.rootID] = rootItem
         }
         try walk("", Self.rootID)
+        if let gone = hardLinks.first(where: { !claimed.contains($0.value.cnid) }) {
+            throw FirmwareError(.unsupported, "\(gone.key): a hard link moved or removed (not supported here)")
+        }
 
         // Gone: their blocks and attributes go with them.
         for (id, item) in items where next[id] == nil {
@@ -699,7 +733,15 @@ final class HFSPlusEditor: @unchecked Sendable {
             for (i, u) in item.name.enumerated() { bePut16(&thread, 10 + 2 * i, u) }
             catalog.append((item.cnid, [], Self.catalogKey(item.cnid, []) + thread))
         }
-        catalog.sort { $0.parent != $1.parent ? $0.parent < $1.parent : $0.name.lexicographicallyPrecedes($1.name) }
+        if caseSensitive {
+            catalog.sort { $0.parent != $1.parent ? $0.parent < $1.parent : $0.name.lexicographicallyPrecedes($1.name) }
+        } else {
+            catalog.sort { $0.parent != $1.parent ? $0.parent < $1.parent : HFSPlusCaseFold.compare($0.name, $1.name) < 0 }
+            for (a, b) in zip(catalog, catalog.dropFirst()) where a.parent == b.parent && HFSPlusCaseFold.compare(a.name, b.name) == 0 {
+                throw FirmwareError(
+                    .unsupported, "\(url.lastPathComponent): two names in one folder differ only in case (\(String(decoding: b.name, as: UTF16.self)))")
+            }
+        }
         try writeTree(catalog.map(\.record), shape: catalogShape, fork: &catalogFile, fileID: 4)
 
         if let shape = attributesShape {

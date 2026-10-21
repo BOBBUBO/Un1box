@@ -11,6 +11,9 @@
 // exclusive storage lease. Direct base/overlay sources are for already isolated research fixtures.
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import HostRuntime
 
 public enum VolumeExport {
@@ -121,6 +124,7 @@ public enum VolumeExport {
                 t = Date()
                 let clean = try isClean(v.image)
                 var repaired = false
+                #if os(macOS)
                 // A cleanly unmounted volume can still carry what an old guest's HFS leaves and modern fsck flags
                 // (1.x: folders without kHFSHasFolderCountMask); the staging copy is repaired either way.
                 let findings = clean ? try await !fsckClean(v.image) : false
@@ -146,6 +150,10 @@ public enum VolumeExport {
                     _ = fm.createFile(atPath: root.appendingPathComponent(".metadata_never_index").path, contents: nil)
                 }
                 try? fm.removeItem(at: mnt)
+                #else
+                // No fsck_hfs or Spotlight here: the image is as the guest left it.
+                if !clean { log("\(v.name): not cleanly unmounted (no fsck_hfs here; left as it is)") }
+                #endif
                 result.append(
                     Exported(
                         volume: v.name,

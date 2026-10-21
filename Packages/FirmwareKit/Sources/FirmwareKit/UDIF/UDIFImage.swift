@@ -7,6 +7,9 @@
 //   try image.write(to: fd, sectors: start..<start + count)          // a partition, at offset 0 of fd
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import zlib
 
 public struct UDIFImage: Sendable {

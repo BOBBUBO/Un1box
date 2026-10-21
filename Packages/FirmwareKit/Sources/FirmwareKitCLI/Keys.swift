@@ -9,6 +9,9 @@
 import FirmwareKit
 import FirmwareSchema
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 func verifyKeysCommand(_ command: FirmwareCommand.VerifyKeys) -> Never {
     var allOK = true

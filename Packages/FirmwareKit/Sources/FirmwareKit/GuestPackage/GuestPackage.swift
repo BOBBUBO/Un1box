@@ -10,6 +10,9 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import HostRuntime
 
 public enum GuestPackage {

@@ -24,6 +24,9 @@
 
 public import FirmwareSchema
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 public enum SystemEdits {
     /// The recipe options SystemEdits reads (FirmwareEntry.Recipe.options), plus bake's switches.

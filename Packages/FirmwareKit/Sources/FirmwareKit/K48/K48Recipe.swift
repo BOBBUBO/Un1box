@@ -69,11 +69,10 @@ final class K48Board: Board {
     var ident: UnitIdentity?
     /// The keybag and seal one-shots' limit. 7.x's launchd starts our RunAtLoad daemons (it_seal among them) about
     /// 170 s into the boot, and it_seal halts 40 s later: modem-on 7.0-7.0.6 seals took 118-229 s, 7.1.2's about
-    /// 300 s, longer under host load. Earlier releases seal well inside 300 s.
-    var oneshotTimeout: Double = 300
-    static func oneshotTimeout(productVersion: String) -> Double {
-        (Int(productVersion.split(separator: ".").first ?? "") ?? 0) >= 7 ? 900 : 300
-    }
+    /// 300 s, longer under host load. it_seal also waits out the first boot's data migration (up to 600 s past its
+    /// settle): 6.1.6's took about 2 min on a Ryzen 7 3700X under TCG, so every release gets 900 s off the Mac's speed.
+    var oneshotTimeout: Double = 900
+    static func oneshotTimeout(productVersion: String) -> Double { 900 }
 
     /// A jailbroken device's kernel leaves code signatures to AMFI alone (amfi_get_out_of_my_way), as the
     /// jailbreaks' kernel patches did: with AMFI asking amfid about every ad hoc signed library, Substrate's launcher,

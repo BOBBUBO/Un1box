@@ -5,10 +5,15 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 #if canImport(MachO)
 import MachO
 #endif
+#if os(macOS)
 import MachOKit
+#endif
 
 public struct ActivationFailure: Error, CustomStringConvertible, Sendable {
     public let code = "activation_failed"
@@ -182,11 +187,12 @@ private func putBE32(_ b: inout [UInt8], _ offset: Int, _ value: UInt32) {
     for i in 0..<4 { b[offset + i] = UInt8(truncatingIfNeeded: value >> (24 - i * 8)) }
 }
 
-/// Mach-O header checks for the guest helpers, through MachOKit: thin/fat files, their slices' cpu, load
+/// Mach-O header checks for the guest helpers, through MachOKit (MachOHeaders off the Mac): thin/fat files, their slices' cpu, load
 /// commands and LC_CODE_SIGNATURE.
 enum MachOSignature {
     static let armCPU: Int32 = 12, armv7: Int32 = 9  // CPU_TYPE_ARM, CPU_SUBTYPE_ARM_V7
 
+#if os(macOS)
     static func codeSignature(_ cmds: some Sequence<LoadCommand>) -> LoadCommandInfo<linkedit_data_command>? {
         for lc in cmds { if case .codeSignature(let info) = lc { return info } }
         return nil
@@ -243,6 +249,42 @@ enum MachOSignature {
         }
         return codeSignature(image.loadCommands) == nil ? "unsigned armv6 slice" : nil
     }
+
+#else
+    /// ipad1_rootfs.guest_tool_problem: nil for a thin armv7 Mach-O that 3.2's dyld takes (no LC_MAIN, no
+    /// LC_VERSION_MIN_IPHONEOS) and that is signed; else why not.
+    static func guestToolProblem(_ url: URL) -> String? {
+        guard let m = MachOHeaders(url), !m.fat, let s = m.slices.first, !s.is64Bit else {
+            return "not a thin 32-bit Mach-O"
+        }
+        guard s.cputype == armCPU, s.cpusubtype == armv7 else { return "cpu \(s.cputype)/\(s.cpusubtype), not armv7" }
+        if s.commands.contains(where: { $0 == MachOHeaders.main || $0 == MachOHeaders.versionMinIphoneos }) {
+            return "carries LC_MAIN/LC_VERSION_MIN (not run through machotool mkold)"
+        }
+        return s.commands.contains(MachOHeaders.codeSignature) ? nil : "unsigned (ldid -S)"
+    }
+
+    /// ipad1_rootfs.appsync_problem: nil for a fat Mach-O with an armv7 slice and a signature per slice.
+    static func appSyncProblem(_ url: URL) -> String? {
+        guard let f = MachOHeaders(url), f.fat else { return "not a fat Mach-O (expected armv6+armv7)" }
+        for (i, s) in f.slices.enumerated() where !s.commands.contains(MachOHeaders.codeSignature) {
+            return "slice \(i) (cpu \(s.cputype)/\(s.cpusubtype)) is not ldid-signed"
+        }
+        return f.slices.contains { $0.cputype == armCPU && $0.cpusubtype == armv7 } ? nil : "no armv7 slice"
+    }
+
+    /// 2.x/3.0 dyld needs classic relocations and an ARMv6 slice; fail before baking a modern helper.
+    static func earlyARMProblem(_ url: URL) -> String? {
+        guard let file = MachOHeaders(url) else { return "not a Mach-O" }
+        guard let image = file.slices.first(where: { $0.cputype == armCPU && $0.cpusubtype == 6 }) else {
+            return "no armv6 slice"
+        }
+        let newer = [MachOHeaders.dyldInfoOnly, MachOHeaders.main, MachOHeaders.versionMinIphoneos, MachOHeaders.buildVersion]
+        if image.commands.contains(where: newer.contains) { return "requires a newer dyld; rebuild with LEGACY_LINK=1" }
+        return image.commands.contains(MachOHeaders.codeSignature) ? nil : "unsigned armv6 slice"
+    }
+
+#endif
 
     /// LC_CODE_SIGNATURE's (dataoff, datasize) of a thin 32-bit Mach-O in memory (Activation.signed patches the buffer).
     static func codeSignature(in data: Data) -> (offset: Int, size: Int)? {

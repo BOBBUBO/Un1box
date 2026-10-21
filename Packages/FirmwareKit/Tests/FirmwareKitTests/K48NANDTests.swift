@@ -4,12 +4,12 @@ import Testing
 @testable import FirmwareKit
 
 struct K48NANDTests {
-    /// 7.x's launchd starts it_seal minutes into the boot: its one-shots get 900 s, earlier releases 300 s.
+    /// it_seal waits out 7.x's late launchd and the first boot's data migration: every release's one-shots get 900 s.
     @Test func oneshotTimeoutByVersion() {
         #expect(K48Board.oneshotTimeout(productVersion: "7.1.2") == 900)
         #expect(K48Board.oneshotTimeout(productVersion: "7.0") == 900)
-        #expect(K48Board.oneshotTimeout(productVersion: "6.1.3") == 300)
-        #expect(K48Board.oneshotTimeout(productVersion: "3.2.2") == 300)
+        #expect(K48Board.oneshotTimeout(productVersion: "6.1.3") == 900)
+        #expect(K48Board.oneshotTimeout(productVersion: "3.2.2") == 900)
     }
 
     /// Only a jailbroken device boots with AMFI out of the way (Substrate's library in amfid).

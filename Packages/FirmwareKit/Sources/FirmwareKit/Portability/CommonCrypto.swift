@@ -1,6 +1,8 @@
 // The two CommonCrypto calls FirmwareKit makes (CCCrypt AES-CBC without padding, CCHmac SHA-1), over swift-crypto
-// where Apple's CommonCrypto is missing (Linux, Android, Windows).
+// where Apple's CommonCrypto is missing (Linux, Android, Windows). AES-CBC goes to libcrypto first (CHostFast):
+// swift-crypto's _CBC runs one block per BoringSSL call, ~50x slower on a 800 MB rootfs.
 #if !canImport(CommonCrypto)
+import CHostFast
 import Crypto
 import _CryptoExtras
 import Foundation
@@ -30,6 +32,12 @@ func CCCrypt(
         dataInLength % 16 == 0
     else { return kCCParamError }
     guard dataOutAvailable >= dataInLength else { return kCCBufferTooSmall }
+    if dataInLength > 0,
+        lt_fast_aes_cbc(op == CCOperation(kCCDecrypt) ? 1 : 0, key, keyLength, iv, dataIn, dataInLength, dataOut) == 0
+    {
+        dataOutMoved?.pointee = dataInLength
+        return kCCSuccess
+    }
     do {
         let k = SymmetricKey(data: UnsafeRawBufferPointer(start: key, count: keyLength))
         let v = try AES._CBC.IV(ivBytes: UnsafeRawBufferPointer(start: iv, count: 16))

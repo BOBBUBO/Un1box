@@ -88,15 +88,45 @@ struct StepPlan: Sendable {
         ]
     )
 
-    /// `major`: the firmware's iOS major version (the seal boot of 7.x takes several times as long).
+    /// iOS 6's seal boot: after it_prefs, the first-boot data migration runs and it_seal waits for it, then a further
+    /// 60 s for SpringBoard (it_seal.c). n81ap-10B500 on a Ryzen desktop under Linux, 2026-10-20: launchd 9 s, Wi-Fi
+    /// 42 s, it_prefs 68 s, it_seal 192 s, the check boot done at 258 s.
+    static let seal6 = StepPlan(
+        seconds: 258,
+        text: "Starting iOS",
+        milestones: [
+            .init(file: "seal.log", marker: "FTL_Open", at: 4, text: "Opening the flash"),
+            .init(file: "seal.log", marker: "launchd[1] has started", at: 9, text: "Starting iOS"),
+            .init(file: "seal.log", marker: "AirPort: Link Up", at: 42, text: "Starting iOS"),
+            .init(file: "seal.log", marker: "it_prefs:", at: 68, text: "Finishing iOS’s first start"),
+            .init(file: "seal.log", marker: "it_seal:", at: 192, text: "Shutting down"),
+            .init(file: "check.log", marker: "iBoot version", at: 196, text: "Checking the flash"),
+        ]
+    )
+
+    /// iOS 6's keybag boot, same machine: the restore ramdisk opens the flash at 6 s and it_keybag is done at 23 s,
+    /// halted by 49 s. On a new flash the FTL first rebuilds its index, minutes on a phone.
+    static let keybag6 = StepPlan(
+        seconds: 49,
+        text: "Booting the restore ramdisk",
+        milestones: [
+            .init(file: "keybag-", marker: "FTL_Open", at: 6, text: "Opening the flash"),
+            .init(file: "keybag-", marker: "it_keybag:", at: 23, text: "Creating the keybag"),
+        ]
+    )
+
+    /// `major`: the firmware's iOS major version (the seal boot of 6.x and 7.x takes several times as long).
     static func plan(_ name: String, major: Int = 0) -> StepPlan {
         if name == sealStep, major >= 7 { return seal7 }
+        if name == sealStep, major == 6 { return seal6 }
+        if name == "Creating the data-protection keybag", major == 6 { return keybag6 }
         return plans[name] ?? .init(seconds: 10, text: name)
     }
 
     /// 0..<1 at `elapsed` s: the last milestone seen (`seen[i]`, when it was first seen) plus the time since. Time
     /// alone runs on past milestones a release never prints (7.x has no it_prefs line) but never reaches the last one:
-    /// only the boot's own halt and check finish the step.
+    /// only the boot's own halt and check finish the step. On by the clock for 80% of the way to the next milestone,
+    /// then ever more slowly (same slope at the join): a slower host (a phone, 3-5x a Mac) never sees the bar stop.
     func fraction(elapsed: Double, seen: [Double?]) -> Double {
         let reached = seen.lastIndex { $0 != nil }
         let from = reached.map { milestones[$0].at } ?? 0
@@ -104,7 +134,8 @@ struct StepPlan: Sendable {
         let to =
             reached.map { $0 + 1 < milestones.count ? (milestones.last?.at ?? seconds) : seconds }
             ?? (milestones.last?.at ?? seconds)
-        let t = from + min(max(elapsed - since, 0), 0.95 * max(to - from, 0))
+        let x = max(elapsed - since, 0), gap = max(to - from, 0), knee = 0.8 * gap, tail = 0.19 * gap
+        let t = from + (x <= knee || tail <= 0 ? min(x, knee) : knee + tail * (1 - exp(-(x - knee) / tail)))
         return min(0.99, t / seconds)
     }
 }

@@ -16,6 +16,9 @@
 // FIRMWAREKIT_DISK_IMAGE=hdiutil|diskutil overrides the choice (tests, and a host where one misbehaves).
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import Subprocess
 #if canImport(System)
 import System

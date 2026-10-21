@@ -23,6 +23,9 @@ import CryptoKit
 import Crypto
 #endif
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 
 public final class HFSPlusVolume {
     public struct Extent: Sendable, Equatable { public let start: UInt32, count: UInt32 }

@@ -75,6 +75,50 @@ import Testing
         #expect(w.fileCount == 4)
     }
 
+    /// TN1150's case-insensitive order: case folded, ignorables skipped, NUL after everything.
+    @Test func caseFoldedCompare() {
+        func cmp(_ a: String, _ b: String) -> Int { HFSPlusCaseFold.compare(Array(a.utf16), Array(b.utf16)) }
+        #expect(cmp("abc", "ABC") == 0)
+        #expect(cmp("a.txt", "B") < 0 && cmp("B", "c") < 0)
+        #expect(cmp("ÆON", "æon") == 0)
+        #expect(cmp("a\u{200C}b", "ab") == 0)  // zero-width non-joiner is ignorable
+        #expect(cmp("a\u{0}", "az") > 0)  // NUL folds to 0xFFFF
+        #expect(cmp("ab", "abc") < 0)
+    }
+
+    /// An H+ (case-insensitive) volume, as the keybag ramdisk is: the catalog is rebuilt in folded order, and two
+    /// names one folder could not tell apart are refused rather than written.
+    @Test func caseInsensitiveVolume() throws {
+        let dir = try Self.scratch("hfsplus")
+        defer { Self.cleanup(dir) }
+        let image = dir.appendingPathComponent("v.img")
+        try HFSPlusEditor.format(image, size: 16 << 20, name: "V", journaled: false)
+        // format makes HX; relabel it H+ version 4 (an empty catalog is in either order)
+        let fd = open(image.path, O_RDWR)
+        #expect(fd >= 0)
+        var plus: [UInt8] = [0x48, 0x2B, 0x00, 0x04]
+        #expect(pwrite(fd, &plus, 4, 1024) == 4)
+        close(fd)
+
+        let mnt = dir.appendingPathComponent("mnt")
+        var editor = try HFSPlusEditor(image)
+        #expect(!editor.caseSensitive)
+        try editor.extract(to: mnt)
+        for name in ["c", "B", "a.txt"] { try Data(name.utf8).write(to: mnt.appendingPathComponent(name)) }
+        try editor.commit(from: mnt)
+        try VolumeMount.removeTreeForTests(mnt)
+        let v = try HFSPlusVolume(image)
+        // the catalog's own leaf order (paths() sorts by path)
+        #expect(try v.catalog().filter { $0.parent == HFSPlusVolume.rootID }.map(\.name) == ["a.txt", "B", "c"])
+        #expect(try String(decoding: v.contents(v.record(at: "B")), as: UTF8.self) == "B")
+
+        editor = try HFSPlusEditor(image)
+        try editor.extract(to: mnt)
+        try Data().write(to: mnt.appendingPathComponent("b"))
+        #expect(throws: FirmwareError.self) { try editor.commit(from: mnt) }
+        try VolumeMount.removeTreeForTests(mnt)
+    }
+
     @Test func growKeepsTheFilesAndFreesTheNewBlocks() throws {
         let dir = try Self.scratch("grow")
         defer { Self.cleanup(dir) }
@@ -146,8 +190,25 @@ extension VolumeMount {
     }
 }
 
-/// Developer hooks for checking images by hand: FK_DEV_HFS_GROW=<image>:<bytes> grows one in place.
+/// Developer hooks for checking images by hand: FK_DEV_HFS_GROW=<image>:<bytes> grows one in place;
+/// FK_DEV_HFS_LIST=<image>:<out.json> writes its listing (owner, mode, flags, size, sha256, link per path);
+/// FK_DEV_HFS_EXTRACT=<image>:<folder> extracts it.
 @Suite struct HFSPlusEditorDevHooks {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["FK_DEV_HFS_EXTRACT"] != nil))
+    func extract() throws {
+        let spec = ProcessInfo.processInfo.environment["FK_DEV_HFS_EXTRACT"]!.split(separator: ":")
+        try HFSPlusEditor(URL(fileURLWithPath: String(spec[0]))).extract(to: URL(fileURLWithPath: String(spec[1])))
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["FK_DEV_HFS_LIST"] != nil))
+    func list() throws {
+        let spec = ProcessInfo.processInfo.environment["FK_DEV_HFS_LIST"]!.split(separator: ":")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(try HFSPlusVolume(URL(fileURLWithPath: String(spec[0]))).listing())
+            .write(to: URL(fileURLWithPath: String(spec[1])))
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["FK_DEV_HFS_GROW"] != nil))
     func grow() throws {
         let spec = ProcessInfo.processInfo.environment["FK_DEV_HFS_GROW"]!.split(separator: ":")

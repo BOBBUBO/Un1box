@@ -12,6 +12,9 @@
 // UID-derived, and iBoot unwraps the NOR's SHSH with a UID-derived key).
 
 import Foundation
+#if canImport(Android)
+import Android
+#endif
 import HostRuntime
 
 enum N72Keybag {
