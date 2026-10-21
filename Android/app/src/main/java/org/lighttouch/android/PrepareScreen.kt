@@ -71,12 +71,13 @@ private val versionOrder = Comparator<CatalogFirmware> { a, b ->
 }
 
 /**
- * What preparing a firmware costs on a recent phone (Poco F3). The iPod touch 2G on iOS 3 only writes files; later
- * systems also boot iOS twice during preparation (the data-protection keybag, then iOS's first-start setup).
+ * What preparing a firmware costs on a recent phone (Poco F3). The iPod touch 2G only writes files (iOS 4 adds a
+ * 12 s keybag boot); later systems also boot iOS twice (the data-protection keybag, then iOS's first-start setup):
+ * iPod touch 4G 6.1.6 took 195 s.
  */
 private data class PreparationCost(val time: String, val space: String)
 private fun preparationCost(firmware: CatalogFirmware?) =
-    if (firmware?.board == "n72ap") PreparationCost("about a minute", "1.5 GB") else PreparationCost("about 10 minutes", "5 GB")
+    if (firmware?.board == "n72ap") PreparationCost("about a minute", "1.5 GB") else PreparationCost("3 to 5 minutes", "5 GB")
 
 /**
  * Builds a device on this phone from a stock IPSW: pick the device, then the iOS version, then get
