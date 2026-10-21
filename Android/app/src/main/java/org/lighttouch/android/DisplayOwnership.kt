@@ -47,7 +47,11 @@ internal object DisplayInputAdmission {
     const val GENERATION_RETIRED = "Display input generation retired"
     const val PAUSED = "Display input is paused"
     const val VIEWPORT_CANCELLED = "Display input outside guest viewport; gesture cancelled"
-    fun isCancellation(value: String) = value == GENERATION_RETIRED || value == PAUSED || value == VIEWPORT_CANCELLED
+    /** Touching before iOS is running or has drawn its first frame: nothing to show the user. */
+    const val NO_SESSION = "No active guest session; touch was not admitted"
+    const val NO_FRAME = "No active guest frame; gesture cancelled"
+    fun isCancellation(value: String) = value == GENERATION_RETIRED || value == PAUSED || value == VIEWPORT_CANCELLED ||
+        value == NO_SESSION || value == NO_FRAME
 }
 
 /** Bounded worker-owned cancellation facts; this never stores/clears fatal errors.

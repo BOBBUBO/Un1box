@@ -100,7 +100,8 @@ internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolea
             showProgress -> onClose()
             state.step == PrepareStep.FILES -> state.step = PrepareStep.VERSION
             state.step == PrepareStep.VERSION -> state.step = PrepareStep.DEVICE
-            else -> onClose()
+            // Backed all the way out: the next Prepare from an IPSW starts at the device list, not this choice.
+            else -> { state.firmwareId = ""; onClose() }
         }
     }
     BackHandler { back() }

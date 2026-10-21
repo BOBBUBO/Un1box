@@ -8,10 +8,12 @@ class DisplayInputCancellationTest {
         assertTrue(DisplayInputAdmission.isCancellation(DisplayInputAdmission.VIEWPORT_CANCELLED))
         assertTrue(DisplayInputAdmission.isCancellation(DisplayInputAdmission.PAUSED))
         assertTrue(DisplayInputAdmission.isCancellation(DisplayInputAdmission.GENERATION_RETIRED))
+        assertTrue(DisplayInputAdmission.isCancellation(DisplayInputAdmission.NO_SESSION))
+        assertTrue(DisplayInputAdmission.isCancellation(DisplayInputAdmission.NO_FRAME))
         for (failure in listOf("", "Touch left guest viewport; gesture cancelled",
                 "Invalid touch coordinates or viewport; gesture cancelled",
                 "${DisplayInputAdmission.VIEWPORT_CANCELLED}; input release failed: native rejected",
-                "No active guest frame; gesture cancelled", "Native engine failed")) {
+                "${DisplayInputAdmission.NO_FRAME}; input release failed: native rejected", "Native engine failed")) {
             assertFalse(failure, DisplayInputAdmission.isCancellation(failure))
         }
     }

@@ -645,6 +645,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun closePreparation() {
         if (busy || preparationActive()) return
         preparationOpen = false
+        // Backed out of the device list: forget the last choice across restarts too.
+        if (prep.firmwareId.isEmpty()) getSharedPreferences("preparation-imports", MODE_PRIVATE).edit().remove("firmwareId").apply()
         releaseFirmware()
     }
     /** Ends the preparation worker's process; while a binding remains Android would restart it. */
