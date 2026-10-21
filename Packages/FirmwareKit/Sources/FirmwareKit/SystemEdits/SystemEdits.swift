@@ -524,7 +524,9 @@ public enum SystemEdits {
         // 2.x installs in the Lockdown-launched mobile_installation_proxy, before installd existed.
         let services = m.appendingPathComponent("System/Library/Lockdown/Services.plist")
         try rewritePlist(services) { root in
-            guard let service = root["com.apple.mobile.installation_proxy"] as? NSMutableDictionary,
+            // dict(): off Apple platforms a nested dictionary reads back as a Swift value, never an NSMutableDictionary.
+            guard root["com.apple.mobile.installation_proxy"] != nil,
+                case let service = dict(root, "com.apple.mobile.installation_proxy"),
                 let arguments = service["ProgramArguments"] as? [String],
                 arguments.first == "/usr/libexec/mobile_installation_proxy"
             else {
