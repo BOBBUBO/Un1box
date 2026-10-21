@@ -91,8 +91,8 @@ devices (**New from selected** on desktop).
 ### Newer guest tools
 
 Since v0.0.6, each [LightTouch release](https://github.com/blake-lucas/LightTouch/releases) attaches
-its own `armv6.itpack` for the iPod touch 2G, newer than the upstream app's; games draw faster with
-it. (The iPod touch 4G's `armv7.itpack` is not attached until it has been tested.) Since v0.0.7 the
+its own `armv6.itpack` (the iPod touch 1G and 2G and the original iPhone), newer than the upstream app's;
+games draw faster with it. Since v0.0.9 it also attaches `armv7.itpack`, for every other device. Since v0.0.7 the
 Android app carries these guest tools and gives them to each new device itself; when an update of the app carries newer ones, an existing device gets them the next time it starts. Elsewhere, use the
 attached file in place of the upstream one when you set up a device, or give it to an existing
 device, which keeps its apps and data: on Android stop the device and tap **Settings › Update guest

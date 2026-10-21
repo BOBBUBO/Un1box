@@ -4,7 +4,7 @@ LightTouch runs classic iPhone OS and iOS in an emulator on **Android, Linux, Wi
 
 The desktop ports share one device library and setup UI. Android has its own touch UI. A prepared iOS system can back several saved devices, each with its own storage.
 
-[Download the latest pre-release](https://github.com/blake-lucas/LightTouch/releases) (v0.0.8). These are early builds: what works differs by platform, as listed below.
+[Download the latest pre-release](https://github.com/blake-lucas/LightTouch/releases) (v0.0.9). These are early builds: what works differs by platform, as listed below.
 
 ## Current platforms
 
@@ -20,7 +20,11 @@ The desktop ports share one device library and setup UI. Android has its own tou
 | Device | iOS | Status |
 | --- | --- | --- |
 | iPod touch 2G | 3.1.3 | **Tested**: the main target, fastest. Games such as Flight Control and Jetpack Joyride run at or near 60 fps on recent phones. |
-| iPod touch 4G | 6.1.6 | **Tested, slow**: starts and runs on Linux and Android; slower than the 2G. |
+| iPod touch 2G | 4.2.1 | **Tested** |
+| iPod touch 3G | 4.2.1 | **Tested** |
+| iPod touch 4G | 6.1.6 | **Tested, slow**: slower than the 2G. |
+| iPhone 3GS | 5.1.1 | **Tested, slow** |
+| iPhone 4 | 4.2.1, 4.3.5 | **Tested, slow** |
 | Others in the [firmware catalog](Portable/firmware/firmware-catalog.json) | iPhone OS 1 to iOS 7 | Can be prepared and tried; not yet checked on LightTouch. [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) records what has been run. |
 
 ## Getting started
