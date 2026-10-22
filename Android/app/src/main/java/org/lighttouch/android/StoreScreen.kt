@@ -219,7 +219,12 @@ internal class StoreModel(private val context: Context, private val muxSocket: (
             when (e.optString("phase")) {
                 "upload" -> report(InstallJob(name, "Copying to device", e.optInt("percent") / 100f))
                 "mutation" -> report(InstallJob(name, "Installing"))
-                "install" -> report(InstallJob(name, "Installing · " + e.optString("status", ""),
+                // iOS's own steps are internal names; unpacking, most of a large app's time, shows
+                // how much has landed (the service follows the guest's free space).
+                "install" -> report(if (e.optLong("unpacked_total") > 0)
+                    InstallJob(name, "Unpacking · " + byteSize(e.optLong("unpacked")) + " of " + byteSize(e.optLong("unpacked_total")),
+                        e.optLong("unpacked").toFloat() / e.optLong("unpacked_total"))
+                else InstallJob(name, if (e.optString("status") == "ExtractingPackage") "Unpacking" else "Installing",
                     if (e.has("percent") && !e.isNull("percent")) e.optInt("percent") / 100f else null))
             }
         }

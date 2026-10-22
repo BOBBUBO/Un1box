@@ -23,6 +23,25 @@ P = C.c_void_p
 PP = C.POINTER(P)
 CALLBACK = C.CFUNCTYPE(None, P, P, P)
 
+INSTALL_IDLE_S = 90         # no status and no unpacking progress for this long: give up
+INSTALL_ABSOLUTE_S = 600    # plus the unpacked size at UNPACK_FLOOR_BPS
+UNPACK_FLOOR_BPS = 256 << 10
+SPACE_POLL_S = 2
+# One AFC write per chunk, each a request the guest answers before the next: at 64 KiB the
+# iPod touch 2G spent ~20 ms of every write waiting, and Asphalt 5's 281 MB took 137 s to
+# send on a desktop (73 s at 1 MiB; 4 MiB is no faster).
+UPLOAD_CHUNK = 1 << 20
+
+
+def unpacked_size(path):
+    """The IPA's files once unpacked (its zip directory), or None if it cannot be read."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return sum(info.file_size for info in archive.infolist())
+    except (OSError, zipfile.BadZipFile):
+        return None
+
 
 class Mobile:
     def __init__(self, library, plist_library):
@@ -176,12 +195,7 @@ class Mobile:
         handle = C.c_uint64()
         opened = False
         try:
-            free = P()
-            self.check(self.lib.afc_get_device_info_key(afc, b"FSFreeBytes", C.byref(free)), "query free space")
-            try:
-                available = int(C.string_at(free))
-            finally:
-                self.libc.free(free)
+            available = self._free_bytes(afc)
             total = Path(path).stat().st_size
             needed = total * 2 + (16 << 20)
             if available < needed:
@@ -193,7 +207,7 @@ class Mobile:
             sent = 0
             with open(path, "rb") as reader:
                 while True:
-                    chunk = reader.read(65536)
+                    chunk = reader.read(UPLOAD_CHUNK)
                     if not chunk:
                         break
                     offset = 0
@@ -210,7 +224,7 @@ class Mobile:
             opened = False
             client = self.service("com.apple.mobile.installation_proxy", "instproxy")
             try:
-                self._install(client, remote, emit)
+                self._install(client, remote, emit, afc, unpacked_size(path))
             finally:
                 # Join the callback updater before releasing its Python callback,
                 # then use a fresh service for browse (the old updater may still
@@ -240,9 +254,17 @@ class Mobile:
             self.lib.afc_remove_path(afc, remote)
             self.lib.afc_client_free(afc)
 
-    def _install(self, client, remote, emit):
+    def _free_bytes(self, afc):
+        free = P()
+        self.check(self.lib.afc_get_device_info_key(afc, b"FSFreeBytes", C.byref(free)), "query free space")
+        try:
+            return int(C.string_at(free))
+        finally:
+            self.libc.free(free)
+
+    def _install(self, client, remote, emit, afc, unpacked_total):
         terminal = threading.Event()
-        outcome = {"error": None, "last": time.monotonic()}
+        outcome = {"error": None, "last": time.monotonic(), "status": None}
 
         @CALLBACK
         def callback(command, status, context):
@@ -255,8 +277,9 @@ class Mobile:
                 elif reply.get("Status") == "Complete":
                     terminal.set()
                 else:
-                    emit({"phase": "install", "status": reply.get("Status", "Installing"),
-                          "percent": reply.get("PercentComplete")})
+                    outcome["status"] = reply.get("Status", "Installing")
+                    outcome["percent"] = reply.get("PercentComplete")
+                    emit({"phase": "install", "status": outcome["status"], "percent": outcome["percent"]})
             except BaseException as error:
                 outcome["error"] = "Invalid install callback: " + str(error)
                 terminal.set()
@@ -266,10 +289,27 @@ class Mobile:
         try:
             emit({"phase": "mutation", "status": "Installing; wait for completion before stopping iOS"})
             self.check(self.lib.instproxy_install(client, remote, options, callback, None), "submit install")
-            deadline = time.monotonic() + 600
+            # iOS reports nothing while it unpacks the app, which takes minutes for a large one
+            # on a phone. The guest's free space falls as the files land: that is the progress,
+            # and any change counts as activity. The overall limit grows with the app.
+            deadline = time.monotonic() + INSTALL_ABSOLUTE_S + (unpacked_total or 0) / UNPACK_FLOOR_BPS
+            free_start = self._free_bytes(afc)
+            free_last, next_poll = free_start, time.monotonic() + SPACE_POLL_S
             while not terminal.wait(.2):
                 now = time.monotonic()
-                if now >= deadline or now - outcome["last"] > 90:
+                if now >= next_poll:
+                    next_poll = now + SPACE_POLL_S
+                    try:
+                        free = self._free_bytes(afc)
+                    except Exception:
+                        free = free_last
+                    if free != free_last:
+                        free_last, outcome["last"] = free, now
+                        if outcome["status"] == "ExtractingPackage" and unpacked_total:
+                            emit({"phase": "install", "status": "ExtractingPackage", "percent": outcome["percent"],
+                                  "unpacked": min(max(free_start - free, 0), unpacked_total),
+                                  "unpacked_total": unpacked_total})
+                if now >= deadline or now - outcome["last"] > INSTALL_IDLE_S:
                     # Freeing the client can join a blocked library thread. Retire this
                     # dedicated process instead, never free callback state under it.
                     emit({"error": "Install timed out; guest result is unconfirmed. Inspect before retrying."})

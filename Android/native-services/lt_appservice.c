@@ -58,9 +58,11 @@
 #define CLIENT_LABEL "LightTouchAndroid"
 #define CONNECT_WINDOW_MS 20000
 #define CONNECT_RETRY_MS 500
-#define UPLOAD_CHUNK 65536
-#define INSTALL_ABSOLUTE_S 600
-#define INSTALL_IDLE_S 90
+#define UPLOAD_CHUNK (1u << 20)         /* one AFC write each, answered before the next: see mobile.py */
+#define INSTALL_ABSOLUTE_S 600       /* plus the unpacked size at UNPACK_FLOOR_BPS */
+#define INSTALL_IDLE_S 90           /* no status and no unpacking progress for this long */
+#define UNPACK_FLOOR_BPS (256u << 10)
+#define SPACE_POLL_MS 2000
 #define STAGING_DIR "PublicStaging"
 
 /* ---------- JSON output ---------- */
@@ -589,12 +591,88 @@ static int action_list(struct session *s)
 
 /* ---------- install ---------- */
 
+static uint16_t le16(const unsigned char *p) { return (uint16_t)(p[0] | p[1] << 8); }
+static uint32_t le32(const unsigned char *p) { return (uint32_t)le16(p) | (uint32_t)le16(p + 2) << 16; }
+static uint64_t le64(const unsigned char *p) { return (uint64_t)le32(p) | (uint64_t)le32(p + 4) << 32; }
+
+/* The IPA's files once unpacked, from its zip central directory (zip64 too); 0 if unreadable. */
+static uint64_t unpacked_size(int fd, uint64_t file_size)
+{
+	unsigned char tail[65557];
+	size_t want = file_size < sizeof tail ? (size_t)file_size : sizeof tail;
+	if (want < 22 || pread(fd, tail, want, (off_t)(file_size - want)) != (ssize_t)want)
+		return 0;
+	ssize_t e = (ssize_t)want - 22;
+	while (e >= 0 && le32(tail + e) != 0x06054b50)
+		e--;
+	if (e < 0)
+		return 0;
+	uint64_t entries = le16(tail + e + 10), cd_size = le32(tail + e + 12), cd_off = le32(tail + e + 16);
+	if ((entries == 0xffff || cd_size == 0xffffffffu || cd_off == 0xffffffffu) && e >= 20 &&
+	    le32(tail + e - 20) == 0x07064b50) {
+		unsigned char z[56];
+		if (pread(fd, z, sizeof z, (off_t)le64(tail + e - 20 + 8)) != (ssize_t)sizeof z || le32(z) != 0x06064b50)
+			return 0;
+		entries = le64(z + 32);
+		cd_size = le64(z + 40);
+		cd_off = le64(z + 48);
+	}
+	if (cd_size > (64u << 20) || cd_off + cd_size > file_size)
+		return 0;
+	unsigned char *cd = malloc(cd_size ? cd_size : 1);
+	if (!cd || pread(fd, cd, cd_size, (off_t)cd_off) != (ssize_t)cd_size) {
+		free(cd);
+		return 0;
+	}
+	uint64_t total = 0, pos = 0;
+	for (uint64_t i = 0; i < entries && pos + 46 <= cd_size && le32(cd + pos) == 0x02014b50; i++) {
+		uint64_t size = le32(cd + pos + 24);
+		uint32_t name = le16(cd + pos + 28), extra = le16(cd + pos + 30), comment = le16(cd + pos + 32);
+		if (pos + 46 + name + extra > cd_size)
+			break;
+		if (size == 0xffffffffu) {      /* zip64 extra field: the uncompressed size comes first */
+			for (uint32_t x = 0; x + 4 <= extra;) {
+				const unsigned char *f = cd + pos + 46 + name + x;
+				uint32_t flen = le16(f + 2);
+				if (le16(f) == 1 && flen >= 8 && x + 4 + flen <= extra) {
+					size = le64(f + 4);
+					break;
+				}
+				x += 4 + flen;
+			}
+		}
+		total += size;
+		pos += 46 + name + extra + comment;
+	}
+	free(cd);
+	return total;
+}
+
+static int free_bytes(afc_client_t afc, uint64_t *out)
+{
+	char *text = NULL, *end = NULL;
+	if (afc_get_device_info_key(afc, "FSFreeBytes", &text) != AFC_E_SUCCESS || !text) {
+		free(text);
+		return -1;
+	}
+	errno = 0;
+	unsigned long long v = strtoull(text, &end, 10);
+	int bad = errno || end == text;
+	free(text);
+	if (bad)
+		return -1;
+	*out = v;
+	return 0;
+}
+
 struct install_state {
 	pthread_mutex_t lock;
 	pthread_cond_t cond;
 	int terminal;
 	char *error;
 	int64_t last_ms;
+	int extracting;         /* the last status was ExtractingPackage */
+	int64_t percent;        /* its PercentComplete, -1 if none */
 };
 
 static void install_callback(plist_t command, plist_t status, void *user_data)
@@ -633,6 +711,10 @@ static void install_callback(plist_t command, plist_t status, void *user_data)
 			else
 				buf_puts(&b, ",\"percent\":null}");
 			emit(&b);
+			pthread_mutex_lock(&st->lock);
+			st->extracting = state && strcmp(state, "ExtractingPackage") == 0;
+			st->percent = have_percent ? (int64_t)percent : -1;
+			pthread_mutex_unlock(&st->lock);
 		}
 	}
 	free(state);
@@ -651,7 +733,7 @@ static void install_callback(plist_t command, plist_t status, void *user_data)
 /* Submit and wait. Returns 0 on Complete; emits its own error otherwise.
  * The watchdog retires the process instead of freeing callback state under a
  * possibly blocked library thread (as Desktop's mobile.py does). */
-static int run_install(instproxy_client_t client, const char *remote)
+static int run_install(instproxy_client_t client, const char *remote, afc_client_t afc, uint64_t unpacked_total)
 {
 	static struct install_state st; /* outlives any updater thread */
 	pthread_mutex_init(&st.lock, NULL);
@@ -663,6 +745,15 @@ static int run_install(instproxy_client_t client, const char *remote)
 	st.terminal = 0;
 	st.error = NULL;
 	st.last_ms = now_ms();
+	st.extracting = 0;
+	st.percent = -1;
+	/* iOS reports nothing while it unpacks the app, which takes minutes for a large one on a
+	 * phone. The guest's free space falls as the files land: that is the progress, and any
+	 * change counts as activity. The overall limit grows with the app. */
+	uint64_t free_start = 0, free_last = 0;
+	int have_space = free_bytes(afc, &free_start) == 0;
+	free_last = free_start;
+	int64_t next_poll = now_ms() + SPACE_POLL_MS;
 
 	struct buf b = {0};
 	buf_puts(&b, "{\"phase\":\"mutation\",\"status\":\"Installing; wait for completion before stopping iOS\"}");
@@ -675,7 +766,8 @@ static int run_install(instproxy_client_t client, const char *remote)
 		emit_error("submit install failed (device error %d). Try again after iOS finishes starting.", (int)err);
 		return -1;
 	}
-	int64_t deadline = now_ms() + (int64_t)INSTALL_ABSOLUTE_S * 1000;
+	int64_t deadline = now_ms() + (int64_t)INSTALL_ABSOLUTE_S * 1000 +
+	                   (int64_t)(unpacked_total / UNPACK_FLOOR_BPS) * 1000;
 	pthread_mutex_lock(&st.lock);
 	while (!st.terminal) {
 		struct timespec ts;
@@ -689,6 +781,34 @@ static int run_install(instproxy_client_t client, const char *remote)
 		if (st.terminal)
 			break;
 		int64_t now = now_ms();
+		if (have_space && now >= next_poll) {
+			next_poll = now + SPACE_POLL_MS;
+			int extracting = st.extracting;
+			int64_t percent = st.percent;
+			pthread_mutex_unlock(&st.lock);
+			uint64_t free_now = free_last;
+			if (free_bytes(afc, &free_now) == 0 && free_now != free_last) {
+				free_last = free_now;
+				if (extracting && unpacked_total) {
+					uint64_t done = free_start > free_now ? free_start - free_now : 0;
+					struct buf b = {0};
+					buf_puts(&b, "{\"phase\":\"install\",\"status\":\"ExtractingPackage\",\"percent\":");
+					if (percent >= 0)
+						buf_printf(&b, "%" PRId64, percent);
+					else
+						buf_puts(&b, "null");
+					buf_printf(&b, ",\"unpacked\":%" PRIu64 ",\"unpacked_total\":%" PRIu64 "}",
+					           done < unpacked_total ? done : unpacked_total, unpacked_total);
+					emit(&b);
+				}
+				pthread_mutex_lock(&st.lock);
+				st.last_ms = now;
+			} else {
+				pthread_mutex_lock(&st.lock);
+			}
+			if (st.terminal)
+				break;
+		}
 		if (now >= deadline || now - st.last_ms > (int64_t)INSTALL_IDLE_S * 1000) {
 			pthread_mutex_unlock(&st.lock);
 			emit_error("Install timed out; guest result is unconfirmed. Inspect before retrying.");
@@ -831,7 +951,7 @@ static int action_install(struct session *s, const char *ipa, const char *bundle
 	client = instproxy_open(s);
 	if (!client)
 		goto out;
-	int installed = run_install(client, remote);
+	int installed = run_install(client, remote, afc, unpacked_size(fd, total));
 	/* Join the updater thread before anything else; browse on a fresh client
 	 * (the old updater may still own its command when Complete wakes us). */
 	instproxy_client_free(client);
