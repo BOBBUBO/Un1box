@@ -265,6 +265,14 @@ that is nine tables instead of one (2.6% of the main loop on the desktop), conte
 QEMU also sizes a TLB only when it is emptied, so a bank that keeps coming back stayed at its first
 size and thrashed until it was flushed once on return over 70% full.
 
+**More disabled launchd jobs** (iPod touch 4G 6.1.6, 2026-10-22; the recipe's `quiet_services` already disables 14, among
+them iMessage, iCloud, push and OTA). A guest tool printing each process's CPU time (`proc_pidinfo`) showed the daemons use
+under 1% of a core during Jetpack or Doodle Jump (backboardd ~30%, the game ~22%, mediaserverd ~13%) and the whole userland
+1.5% on the awake home screen. Disabling 27 more jobs (iTunes Store, accounts, Apple ID, Game Center, geod, social, search,
+powerlog and others), interleaved on the desktop: Jetpack's vCPU 59.9/58.6 → 59.1/59.4% busy at 29.9 fps either way, Doodle
+Jump 57.2/59.1 → 55.7/56.3/56.3% at 59.7–60.0 fps, idle 5.8/5.4 → 6.0/5.3/5.3%. Only boot moved: guest CPU to the home
+screen −8% (~2.6 s, spread ~2 s). Not built as an option.
+
 No gain, so not kept: skipping the jump-cache clear on a single-page TLB flush (`tb_jmp_cache_clear_page`;
 Poco, Flight Control 48.3 → 47.3 fps), a 64K-entry TB jump cache (slower than 4K in play), a lockless timer counter,
 LTO for the Android engine, and the vCPU alone on the prime core. Unpinned, the vCPU spends only ~29%

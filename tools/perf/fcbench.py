@@ -38,6 +38,7 @@ GAMES = {
     # icon; "Don't ask again" on the rate prompt, which is also on PLAY! when there is no prompt; PLAY!, held
     # for a second (the menu misses a plain tap)
     "n81-flightcontrol": [(.62, .31), 35, (.233, .6), 4, (.158, .616, 1000), 8],
+    "n81-realracing": [(.39, .31), 60],                    # Real Racing's attract demo (a race replay)
     "n81-epiccitadel": [(.62, .14), 150],                  # Epic Citadel's flythrough, after its green loading screen
     "n81-asphalt5-intro": [(.86, .31), 12],                # Asphalt 5's intro movie (measure ~15 s)
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
