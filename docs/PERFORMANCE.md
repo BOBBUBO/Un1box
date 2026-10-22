@@ -71,6 +71,8 @@ Jetpack Joyride's at 13–21 and Asphalt 5's intro movie at ~4.
 
 | Change | Commit | Before → after |
 | --- | --- | --- |
+| NAND: CDMA moves a run of H2FMI FIFO words in one call instead of an MMIO dispatch per word (`LT_CDMA_BULK=off`) | `bec13dcdbf` | The A4's NAND goes through the IOP's firmware, whose CDMA channels fed the flash controller's FIFO 4 bytes per register access: ~1.5M MMIO dispatches/s on the IOP during file I/O, contending with the vCPU for host time. **Desktop: IOP MMIO 1.5M → 0.25M/s. Poco: Jetpack, two pairs, 20.8/21.4 → 23.4/22.1 fps; Asphalt 5 upload 75 → 58 s (see App installs).** |
+| A sequential run of stores into a code page invalidates to the page end at once (`LT_SMC_STREAM=off`) | `9eeedfb270` | Recycled code pages are zeroed or copied a word at a time, and each word took the not-dirty slow write and a TB lookup: ~30K/s at Jetpack's title. After 8 stores in a row (up or down) the rest of the page is invalidated in one go. **Desktop: code-page slow writes ~30K → ~500/s, their host time 6 → 0.9%.** Poco: neutral within the spread. |
 | Keep the last movie frame across VBLs; convert a movie smaller than the panel at its own size, then scale | `0cdfe20796` | A movie decodes at ~30 fps against a 60 Hz VBL, so every other latch converted and blended the same frame again. **Desktop, Asphalt 5 intro: 23.0 → 31.6 fps (the movie's own rate); VBL tick 9.8 → 4.5 ms.** |
 | Compose a movie frame without the BQL, a table lookup per pixel instead of a divide | `c441e15853` | The video layer was converted (a 64-bit divide per pixel) and blended under the BQL in every VBL: the vCPU waited for the lock 43.6% of wall time. **Desktop: BQL wait 43.6 → 4.0%, movie 15.4 → 23.0 fps.** With the gyro fix, **Poco, Asphalt 5 intro, two pairs: 3.8/4.9 → 16.5/16.1 fps** (median 4 → 20, ceiling 10–12 → 30). Its Done button now responds (the first launch shows a push-notification alert over the movie; OK it first). |
 | Gyro: set the FIFO watermark flag above the watermark, not at it | `b1e30b672a` | With the level at the watermark the L3G4200D model held INT2 up, so CoreMotion (running the gyro during the movie) read FIFO_SRC ~2.8K times/s, each a PMGR clock-gate read-modify-write and a GPIO ack under the BQL. **Desktop: PMGR accesses 50K → 8K/s, movie 11.3 → 15.4 fps.** |
@@ -91,11 +93,34 @@ LT Bench on the desktop, best ns/op before → after these: `syscall` 4212 → 1
 7.8 µs, `gl-sprite` 21.7 → 15.2 µs. `rpc` is ~25× the 2G's because iOS 6's launchd runs a sandbox check
 for each lookup from a sandboxed app: guest work, not emulation.
 
-Jetpack's title is still ~20 fps on the Poco (desktop ~27–28, vCPU-bound with 1.5% BQL wait). Its guest
+Jetpack's title is now ~23–24 fps on the Poco (median 24; it is vsync-quantized, so a vCPU gain shows only
+once a frame drops under 33 ms; desktop ~27–28, vCPU-bound with 1.5% BQL wait). Its guest
 time is ~30% kernel, spread thin; ~10% AudioToolbox speaker protection and its NEON float; 6% the game;
 2% QuartzCore. Speaker protection runs only on the speaker route: with a headset reported plugged in
 (CS42L59 register 0x33 bit 7, read by `AppleCS42L59Mikey`) iOS would skip it, but that changes what the
 guest believes about its hardware, so it is an option to weigh, not a default.
+
+### App installs (2026-10-22)
+
+Asphalt 5 (281 MB IPA, 4510 files, 410 MB unpacked, one 308 MB file). installd reports nothing while it
+unpacks, so the Poco sat on ExtractingPackage for ~10 minutes and the helper's timeout fired first.
+
+| Change | Commit | Before → after |
+| --- | --- | --- |
+| Unpacking progress from the guest's AFC free space every 2 s, against the zip's uncompressed total; any change counts as activity for the 90 s idle limit; the overall limit is 600 s + unpacked size at 256 KiB/s | `2ddb6026` | The desktop window and the Android Store show "Unpacking · X MB of Y MB" with a real bar. |
+| Uploads write 1 MiB per AFC packet instead of 64 KiB | `2ddb6026` | libimobiledevice sends one packet per write and waits for the guest's reply (~20 ms on the 2G, whose AP is ~90% idle during an upload). 4 MiB is no faster. **2G desktop upload 137 → 73 s.** |
+| NAND FIFO runs in one call (engine) | `bec13dcdbf` | See the iPod touch 4G table. |
+
+| Asphalt 5 install | Before | After |
+| --- | --- | --- |
+| iPod touch 4G, Poco | upload 75 s, unpack ~10 min (timed out) | upload 34.5 s, unpack ~165 s, sandbox setup ~30 s: done in 240 s |
+| iPod touch 4G, desktop | upload 50 s, unpack 126 s | upload 31.5 s, unpack 98 s |
+| iPod touch 2G, desktop | upload 137 s | upload 73 s, unpack ~148 s |
+
+The 4G unpacks small files at ~1 MB/s and the large one at ~5.5 MB/s. The 2G's unpack is CPU-bound in
+the guest (AP ~90%, jump-cache misses ~10%). A remaining 4G cost is the IOP round trip per NAND request
+(~0.5 ms desktop, ~1.6 ms Poco): about 7 IRQs per request and the IOP's cache-control MMIO, not wake latency
+(a spinning IOP did not help).
 
 ### Engine (`qemu-ios`, branch `dev/perf`)
 
@@ -214,6 +239,11 @@ the NAND image store (a storage format change for the Mac app's records) and the
 boots unchanged).
 
 ### Measured and rejected
+
+**iPod touch 4G, 2026-10-22.** A 2-way TB jump cache (a miss also probes slot `h ^ 1`): desktop
+jump-cache misses 32.8K → 22.0K/s at Jetpack's title, fps flat (28.1 vs 28.3); Poco Jetpack 24.0/24.1 vs
+23.4/24.0, Doodle Jump 44.6/46.4 vs 47.4/51.7 (lost 2 of 2). The IOP's cache-control registers as a
+subregion without the BQL: Poco Jetpack 23.4/22.1 vs 23.1/22.7 with the BQL, Asphalt 5 unpack 171 vs 162 s.
 
 **Per-address-space TLB banks** (patch kept as `perf/rejected-tlb-banks.patch`): the user TLB index
 set aside per ASID at a context switch and swapped back when that address space runs again (8 banks;

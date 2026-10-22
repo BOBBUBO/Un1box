@@ -49,13 +49,15 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   ~29–30, 1–8 hitches per 60 s). Desktop Jetpack 59. The 1% low (~33 ms frames) is what is left; see
   the hitch leads below.
 - [ ] iPod touch 4G 6.1.6 on the Poco (PERFORMANCE.md, "iPod touch 4G"): Doodle Jump's title 45–49 fps
-  (ceiling 54–60), Asphalt 5's intro movie ~16 of 30, Jetpack's title ~18–21 with ~230 frames over
-  50 ms per 30 s (desktop ~27–28, vCPU-bound). Next: profile Jetpack on the phone, then Flight Control,
+  (ceiling 54–60), Asphalt 5's intro movie ~16 of 30, Jetpack's title ~23–24 (median 24; desktop
+  ~27–28, vCPU-bound). Next: Flight Control,
   Real Racing, the Asphalt 5 race and Epic Citadel (green screen after the Unreal logo). Open option:
   report a headset plugged in (CS42L59 register 0x33 bit 7) so iOS skips speaker protection (~10% of
   the vCPU in games); a product decision, since the guest then routes audio as to headphones.
-- [ ] IPA installs: Asphalt 5 spends ~10 minutes in ExtractingPackage on the Poco and Pixel (both iPods),
-  past the app's timeout. Profile the in-guest extraction and stream its progress to the app.
+- [x] IPA installs (PERFORMANCE.md, "App installs"): unpacking progress from the guest's free space,
+  limits that follow it, 1 MiB AFC writes, NAND FIFO bulk moves. Asphalt 5 on the Poco 4G: timed out
+  after ~10 min → done in 240 s. Left: the 2G's unpack is guest-CPU-bound (~148 s on the desktop); the
+  4G's IOP round trip per NAND request (~1.6 ms on the Poco). Check the Pixel.
 - [x] BQL spin on by default on Android with the 150 µs budget (engine `b5708085da`): +7.6% and
   hitches 30 → 8 on the Poco, then +2.1% for 150 µs (PERFORMANCE.md).
 - [ ] BQL spin follow-ups: interleaved pairs on the Pixel (JellyCar and a 60 fps scene) and one more
@@ -226,10 +228,9 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   thread spins on an empty run loop. Guest tools serial 31 make that wait sleep (gles-public); 29.6–29.7 fps, the
   game's cap (PERFORMANCE.md). Check on the phones.
 
-- [ ] Installing a very large app over the USB bridge (Legacy Store or Install IPA) is very slow:
-  Asphalt 5 spends 5+ minutes extracting inside the guest on the phones, and the same install
-  crashed the guest on Linux. Profile the guest during the install (which guest process and
-  syscalls, engine-side NAND/FMSS writes with `LT_FMSS_PATH`, BQL) for red flags.
+- [ ] Installing a very large app over the USB bridge: profiled and sped up (the IPA installs item
+  above). Still open: the same install once crashed the guest on Linux (not reproduced on the 4G or
+  2G desktop runs of 2026-10-22).
 
 ## Android front end (dev/ui)
 
