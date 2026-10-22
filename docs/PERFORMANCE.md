@@ -127,6 +127,7 @@ unpacks, so the Poco sat on ExtractingPackage for ~10 minutes and the helper's t
 | Unpacking progress from the guest's AFC free space every 2 s, against the zip's uncompressed total; any change counts as activity for the 90 s idle limit; the overall limit is 600 s + unpacked size at 256 KiB/s | `2ddb6026` | The desktop window and the Android Store show "Unpacking · X MB of Y MB" with a real bar. |
 | Uploads write 1 MiB per AFC packet instead of 64 KiB | `2ddb6026` | libimobiledevice sends one packet per write and waits for the guest's reply (~20 ms on the 2G, whose AP is ~90% idle during an upload). 4 MiB is no faster. **2G desktop upload 137 → 73 s.** |
 | NAND FIFO runs in one call (engine) | `bec13dcdbf` | See the iPod touch 4G table. |
+| NAND pages read and programmed with pread/pwrite on the page files instead of the block layer's thread pool (engine, `LT_NAND_DIRECT=off`; not on Windows) | `b4db28d554` | Each page went through a block-layer worker with the IOP waiting: reads 31–42 → 3–4.5 µs, programs 41–45 → 7–17 µs, engine write syscalls ~45K → 7–10K/s. The stop handler fdatasyncs the page files before publishing ownership; a SIGKILL mid-unpack left 0 orphaned pages and recovered. **Infinity Blade II (1.12 GB IPA, 1.34 GB unpacked), desktop: unpack 170 → 101–108 s, install 300 → 215–223 s; GPU host (interleaved): 229–238 → 195–213 s.** |
 
 | Asphalt 5 install | Before | After |
 | --- | --- | --- |
