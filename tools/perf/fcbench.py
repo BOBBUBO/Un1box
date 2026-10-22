@@ -36,6 +36,7 @@ GAMES = {
     "n81-doodlejump": [(.15, .31), 30],                    # Doodle Jump's title
     "n81-jetpack": [(.86, .14), 50],                       # Jetpack Joyride's title
     "n81-flightcontrol": [(.62, .31), 20, (.153, .629), 6],  # icon, PLAY!
+    "n81-asphalt5-intro": [(.86, .31), 12],                # Asphalt 5's intro movie (measure ~15 s)
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
 }
 apk = sys.argv[1]; secs = sys.argv[2] if len(sys.argv) > 2 else "30"
