@@ -36,7 +36,8 @@ class Bridge:
         env = dict(os.environ, USBMUXD_QEMU_ADDR=str(self.qemu), LD_LIBRARY_PATH=str(ROOT / "usr/lib"))
         (self.dir / "pair").mkdir(mode=0o700)
         self.child = subprocess.Popen([str(ROOT / "usr/bin/usbmuxd-qemu"), "-f", "-S", str(self.mux), "-C",
-                                       str(self.dir / "pair"), "-P", str(self.dir / "daemon.pid")],
+                                       str(self.dir / "pair"), "-P", str(self.dir / "daemon.pid")]
+                                      + os.environ.get("LT_USBMUXD_ARGS", "").split(),  # e.g. "-v -v"
                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=env)
         deadline = time.monotonic() + 5
         while not (self.mux.exists() and self.qemu.exists()):
