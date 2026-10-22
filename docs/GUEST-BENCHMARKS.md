@@ -128,3 +128,7 @@ What it has shown so far:
   (four BSD syscalls and two scheduler switches against two Mach traps with a direct handoff).
 - Keeping the user TLB per address space (rejected, PERFORMANCE.md) cut `rpc-64p`'s refill cost
   ~10× on the desktop, but cost Flight Control 3% on the Poco.
+- On iOS 6 (iPod touch 4G) every syscall and IRQ from user mode switches to the kernel's own address
+  space and back, so `syscall` started at ~4.5× the 2G's on the same desktop; it is ~1.9× after the
+  n81 work in PERFORMANCE.md. `rpc` is ~25× the 2G's because launchd sandbox-checks each lookup:
+  compare it only between iOS 6 builds.

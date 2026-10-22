@@ -62,6 +62,41 @@ a direct measure of the work it removes (time per call, per frame) alongside the
 | Keep engine threads on fast cores | `3509e0db` | Android parked the bursty vCPU thread on little cores. Engine threads now get affinity to CPUs with ≥ 50% of the maximum `cpu_capacity`. Standalone boot: Pixel 57–74 s → 19–20 s; Poco 55 s → 36–40 s. |
 | Cheaper presenter scaling | `3509e0db` | The Android presenter's per-pixel nearest-neighbour upscale was rewritten to copy runs per source pixel and duplicate rows. |
 
+### iPod touch 4G, iOS 6.1.6 (engine `dev/perf`, 2026-10-22)
+
+Guest `n81ap-10B500` on the Poco F3 (`fcbench.py APK 30 n81-doodlejump`, `n81-jetpack`,
+`n81-asphalt5-intro`), interleaved against the build before each step; desktop numbers are the headless
+Linux frontend on the Ryzen 7 3700X VM. Before this work the Poco ran Doodle Jump's title at 25–35 fps,
+Jetpack Joyride's at 13–21 and Asphalt 5's intro movie at ~4.
+
+| Change | Commit | Before → after |
+| --- | --- | --- |
+| Keep the last movie frame across VBLs; convert a movie smaller than the panel at its own size, then scale | `0cdfe20796` | A movie decodes at ~30 fps against a 60 Hz VBL, so every other latch converted and blended the same frame again. **Desktop, Asphalt 5 intro: 23.0 → 31.6 fps (the movie's own rate); VBL tick 9.8 → 4.5 ms.** |
+| Compose a movie frame without the BQL, a table lookup per pixel instead of a divide | `c441e15853` | The video layer was converted (a 64-bit divide per pixel) and blended under the BQL in every VBL: the vCPU waited for the lock 43.6% of wall time. **Desktop: BQL wait 43.6 → 4.0%, movie 15.4 → 23.0 fps.** With the gyro fix, **Poco, Asphalt 5 intro, two pairs: 3.8/4.9 → 16.5/16.1 fps** (median 4 → 20, ceiling 10–12 → 30). Its Done button now responds (the first launch shows a push-notification alert over the movie; OK it first). |
+| Gyro: set the FIFO watermark flag above the watermark, not at it | `b1e30b672a` | With the level at the watermark the L3G4200D model held INT2 up, so CoreMotion (running the gyro during the movie) read FIFO_SRC ~2.8K times/s, each a PMGR clock-gate read-modify-write and a GPIO ack under the BQL. **Desktop: PMGR accesses 50K → 8K/s, movie 11.3 → 15.4 fps.** |
+| Scaler: rotate RGB frames in 32×32 blocks from index tables, without the BQL | `7c94d7c243` | CoreAnimation turns each landscape frame 960×640 → 640×960 through the scaler, which converted it a pixel at a time, strided, under the lock. Desktop `scaler_write` 4.1 → 3.4% of wall. Measured with the next row. |
+| softfloat: keep exact zeros (x × 0, x − x) and NaN/Inf operands in default-NaN mode on the hardfloat path | `c9fa361f20` | AudioToolbox's speaker protection (`AUSpeakerProtectionKernelT<float>::Process`) feeds NaN/Inf through ~1.75M float ops/s, and each fell to the slow software path. Same results as before on 39 936 differential cases and `fp-test -l 2 -r all`. **Desktop, Jetpack: `soft_f32_*` 3.0 → 0.16% of the vCPU.** With the scaler and the rows below, **Poco, Doodle Jump, two pairs: 35.5/40.9 → 49.3/44.8 fps (ceiling 44–46 → 54–60); Jetpack 13.1/13.8 → 17.6/21.5.** |
+| Arm each VBL a period after the last one, not after the tick's work (`LT_VBL_DEADLINE=off`) | `00af4441d0` | The tick's own work (milliseconds) was added to every 16.7 ms period, so the panel ran at ~50 Hz and capped games at 48 fps (the 2G's LCD already re-armed from its deadline). **Desktop, Doodle Jump: 48.1 → 55.1 fps.** |
+| No hflags rebuild for a mode switch within an EL on boards without EL2/EL3 | `123b6da3c2` | iOS 6's exception vectors switch modes several times per syscall. **Desktop LT Bench `syscall` 2040 → 1725 ns.** |
+| PMU: no EL-change hook work while PMCR.E is clear and there is no EL2 | `4bbcdff605` | Two hook calls per exception entry and return that count nothing. **`syscall` 2550 → 2040 ns.** |
+| Keep the user TLB across an ASID switch until user code runs under another ASID (`LT_EL0_TLB_DEFER=off`) | `3178e8cc16` | iOS 6 separates the kernel's address space: every syscall and IRQ from user mode loads the kernel's TTBR0 with CONTEXTIDR 0 and restores both on return. Each write flushed the user TLB, which the kernel does not use (except LDRT/STRT, which now sync it first). The flush is now done when hflags are rebuilt for EL0 under another ASID, or by a TLBIASID naming the ASID it holds. **`syscall` 3900 → 2550 ns.** |
+| Test a pending interrupt against the CPU's masks before taking the BQL (`LT_MASKED_IRQ_FAST=off`) | `c830044470` | With a device line up and IRQs masked, every TB exit took the BQL only to find nothing to deliver. Desktop: interrupt-site BQL takes 11.8K → 1.2K/s. |
+| A display refresh with the latched frame skips the live compose | `44ef6d0a4f` | Desktop vCPU BQL wait 5.2 → 2.6% of wall. With the five rows above, **Poco, Doodle Jump: 32.7 → 39.8 fps** (one pair; a second landed on the Camera). |
+| No `CF_PARALLEL` for CPUs the board marks `tcg_unshared` (`LT_TCG_PARALLEL=on` restores it) | `dc8e9d5526` | The A4 and S5L8920 boards have two vCPUs (the application processor and the IOP), so every TB was translated for parallel execution: barriers became host fences, exclusives cmpxchg, and the per-site branch cache (`6c789b3e83`) was off. The cores share no code or atomics. **Desktop, Doodle Jump: TB lookups 1.67M → 0.40M/s.** With the two rows below, **Poco, Doodle Jump, two pairs: 33.4/24.9 → 42.8/39.1 fps, hitches 67–74 → 5–7 per 30 s.** |
+| Compose the latched frame without the BQL | `a4547e958a` | Every swap the VBL tick read both UI layers (~5 MiB at 640×960), compared and blended them under the lock; the 2G's LCD had the same problem (`d7c4927685`). |
+| Guest GL calls without the BQL on the A4, S5L8920 and iPod 1G boards | `1424d3ccb3` | `76ace3a65b` covered only the 2G. On the 4G the vCPU waited 6.6% of wall time at that site (55 µs mean, ~1.2K calls/s at Doodle Jump's title). |
+
+LT Bench on the desktop, best ns/op before → after these: `syscall` 4212 → 1746, `time` 1708 → 907,
+`thread-switch` 53.0 → 36.6 µs, `thread-switch-64p` 87.0 → 38.4 µs, `rpc` 194.6 → 139.9 µs, `mmap` 13.2 →
+7.8 µs, `gl-sprite` 21.7 → 15.2 µs. `rpc` is ~25× the 2G's because iOS 6's launchd runs a sandbox check
+for each lookup from a sandboxed app: guest work, not emulation.
+
+Jetpack's title is still ~20 fps on the Poco (desktop ~27–28, vCPU-bound with 1.5% BQL wait). Its guest
+time is ~30% kernel, spread thin; ~10% AudioToolbox speaker protection and its NEON float; 6% the game;
+2% QuartzCore. Speaker protection runs only on the speaker route: with a headset reported plugged in
+(CS42L59 register 0x33 bit 7, read by `AppleCS42L59Mikey`) iOS would skip it, but that changes what the
+guest believes about its hardware, so it is an option to weigh, not a default.
+
 ### Engine (`qemu-ios`, branch `dev/perf`)
 
 | Change | Commit | Effect |

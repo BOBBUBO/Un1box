@@ -13,7 +13,7 @@ tested only the iPad on 3.2, 3.2.2 and 4.2.1 and the iPod touch 2G on 2.2, 2.2.1
 | --- | --- | --- | --- |
 | iPod touch 2G (n72ap) | 3.1.3 (7E18) | upstream's tested pick, fastest on phones | Tested, recommended |
 | iPod touch 2G | 4.2.1 (8C148) | its last iOS; apps that need iOS 4 | Tested |
-| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested, slow |
+| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested; light games ~45–50 fps on a Poco F3, heavy ones ~20 |
 | iPhone 4 (n90ap) | 6.1.3 (10B329) | its last iOS 6 (6.1.6 shipped only for the 3GS and iPod touch 4G); wide app range | not run off the Mac |
 
 Later: the iPhone 4 on 4.2.1/4.3.5 and the 3GS on 5.1.1 (Tested, slow), the iPod touch 3G 4.2.1 (Tested), the
@@ -48,6 +48,14 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   hitches per 60 s); 57.5 with a 50 µs spin and 58.4 with the 150 µs budget, now the Android default (median 58–60, 1% low
   ~29–30, 1–8 hitches per 60 s). Desktop Jetpack 59. The 1% low (~33 ms frames) is what is left; see
   the hitch leads below.
+- [ ] iPod touch 4G 6.1.6 on the Poco (PERFORMANCE.md, "iPod touch 4G"): Doodle Jump's title 45–49 fps
+  (ceiling 54–60), Asphalt 5's intro movie ~16 of 30, Jetpack's title ~18–21 with ~230 frames over
+  50 ms per 30 s (desktop ~27–28, vCPU-bound). Next: profile Jetpack on the phone, then Flight Control,
+  Real Racing, the Asphalt 5 race and Epic Citadel (green screen after the Unreal logo). Open option:
+  report a headset plugged in (CS42L59 register 0x33 bit 7) so iOS skips speaker protection (~10% of
+  the vCPU in games); a product decision, since the guest then routes audio as to headphones.
+- [ ] IPA installs: Asphalt 5 spends ~10 minutes in ExtractingPackage on the Poco and Pixel (both iPods),
+  past the app's timeout. Profile the in-guest extraction and stream its progress to the app.
 - [x] BQL spin on by default on Android with the 150 µs budget (engine `b5708085da`): +7.6% and
   hitches 30 → 8 on the Poco, then +2.1% for 150 µs (PERFORMANCE.md).
 - [ ] BQL spin follow-ups: interleaved pairs on the Pixel (JellyCar and a 60 fps scene) and one more
