@@ -15,7 +15,7 @@ import os, subprocess, sys, time
 D = os.path.dirname(os.path.abspath(__file__))
 exec(open(os.path.join(D, "inappfps.py")).read().split("ap = argparse")[0])
 GAMES = {
-    # (tap x, y), (swipe x0, y0, x1, y1) or seconds to wait
+    # (tap x, y), (hold x, y, ms), (swipe x0, y0, x1, y1) or seconds to wait
     "flightcontrol": [(.397, .127), 18, (.153, .629), 4],  # icon, PLAY! (Poco layout)
     "doodlejump": [(.143, .127), 22],                      # main menu (Pixel layout)
     "jellycar": [(.397, .127), 20, (.294, .497), 8],       # icon, dismiss the push prompt (Pixel layout)
@@ -35,8 +35,9 @@ GAMES = {
     # Real Racing, Flight Control, Asphalt 5 on the Poco's record.
     "n81-doodlejump": [(.15, .31), 30],                    # Doodle Jump's title
     "n81-jetpack": [(.86, .14), 50],                       # Jetpack Joyride's title
-    # icon; "Don't ask again" on the rate prompt, which is also on PLAY! when there is no prompt; PLAY!
-    "n81-flightcontrol": [(.62, .31), 35, (.233, .6), 4, (.158, .616), 8],
+    # icon; "Don't ask again" on the rate prompt, which is also on PLAY! when there is no prompt; PLAY!, held
+    # for a second (the menu misses a plain tap)
+    "n81-flightcontrol": [(.62, .31), 35, (.233, .6), 4, (.158, .616, 1000), 8],
     "n81-epiccitadel": [(.62, .14), 150],                  # Epic Citadel's flythrough, after its green loading screen
     "n81-asphalt5-intro": [(.86, .31), 12],                # Asphalt 5's intro movie (measure ~15 s)
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
@@ -85,6 +86,7 @@ for n, step in enumerate(steps):
             with open(os.path.join(os.environ["FC_STEPS"], f"step{n:02d}.png"), "wb") as f:
                 f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True, check=True).stdout)
         if len(step) == 4: sh("input", "swipe", *gpt(rect, *step[:2]), *gpt(rect, *step[2:]), "300")
+        elif len(step) == 3: sh("input", "swipe", *gpt(rect, *step[:2]), *gpt(rect, *step[:2]), str(step[2]))
         else: sh("input", "tap", *gpt(rect, *step))
     else: time.sleep(step)
 def save_shot():
