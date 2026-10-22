@@ -164,7 +164,9 @@ class EngineService : Service() {
                     android.system.Os.setenv(key.trim(), value.trim(), true)
                 }
             }
-            error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId) else Native.start(libraryRoot, recordId)
+            // The Settings switch (AppSettings.headphones); the engine applies it only on boards that model the jack.
+            val headphones = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("headphones", true)
+            error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({

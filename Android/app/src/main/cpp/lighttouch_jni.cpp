@@ -617,7 +617,7 @@ JNI(remove) jstring JNICALL Java_org_lighttouch_android_Native_remove(JNIEnv *en
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_remove(library,record.value,&error);
     return string(env,result(status,error));
 }
-static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirty) {
+static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirty,bool headphones) {
     bool qmp_requested=false;
     bool touch_trace_requested=false;
     {
@@ -680,6 +680,7 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     engine.engine_library="libqemu-arm.so";engine.device=prepared_device;engine.boot=lt_boot_config LT_INIT(lt_boot_config);
     engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;
     engine.boot.guest_package_path=selected.guest_package_path;engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
+    engine.boot.headphones=headphones && (prepared_board.capabilities&LT_BOARD_HEADPHONES);
     if(status==LT_OK)status=lt_runtime_create(&engine,&prepared_runtime,&error);
     if(status==LT_OK)status=lt_runtime_set_frame_listener(prepared_runtime,frame_published,nullptr,&error);
 #ifdef LT_ANDROID_DEBUG
@@ -721,12 +722,12 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     return string(env,diagnostic);
 }
 
-JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,jobject,jstring root,jstring id) {
+JNI(start) jstring JNICALL Java_org_lighttouch_android_Native_start(JNIEnv *env,jobject,jstring root,jstring id,jboolean headphones) {
     // Ordinary startup must not silently admit an interrupted writable state.
-    return start_runtime(env,root,id,false);
+    return start_runtime(env,root,id,false,headphones);
 }
-JNI(recoverStart) jstring JNICALL Java_org_lighttouch_android_Native_recoverStart(JNIEnv *env,jobject,jstring root,jstring id) {
-    return start_runtime(env,root,id,true);
+JNI(recoverStart) jstring JNICALL Java_org_lighttouch_android_Native_recoverStart(JNIEnv *env,jobject,jstring root,jstring id,jboolean headphones) {
+    return start_runtime(env,root,id,true,headphones);
 }
 
 JNI(status) jobjectArray JNICALL Java_org_lighttouch_android_Native_status(JNIEnv *env,jobject) {

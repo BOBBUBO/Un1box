@@ -317,6 +317,10 @@ int main() {
     for (int i = 0; i < argc; i++)
         assert(std::string(argv[i]) != "-m");
     assert(fs::exists(root / "n81state/work/guest-offer/bin/tool"));
+    assert(args.find("headphones=") == std::string::npos);
+    n81boot.headphones = 1;
+    assert(lt_device_boot_argv(d, &n81boot, &argc, &argv, &e) == LT_OK);
+    assert(std::string(argv[2]).find(",headphones=on") != std::string::npos);
     lt_device_close(d);
 
     // The other boards boot too (Light Touch for Mac's BootRecipe): an iPhone 4 from kboot with its modem and the
