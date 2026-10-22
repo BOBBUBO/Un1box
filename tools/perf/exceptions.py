@@ -4,6 +4,10 @@
 Host dispatch times exclude guest handlers, earlier BQL waits and log output.
 SVC r12 values are raw guest registers. Mach message counters count iOS 3 trap
 attempts, not delivered messages. No per-process attribution is available.
+Kernel episodes run from an exception taken in user mode to the return to user
+mode, in the vCPU thread's CPU time (idle WFI and host preemption excluded); a
+blocking call's episode includes the thread switch and whatever kernel work runs
+before user code does again.
 """
 import argparse
 import json
@@ -23,7 +27,8 @@ def snapshots(path):
         if parts[0] == "snapshot":
             current = {"now": int(fields["now-ns"]),
                        "elapsed": int(fields["elapsed-ns"]),
-                       "exceptions": {}, "svc": {}, "aborts": {}, "mach": {}}
+                       "exceptions": {}, "svc": {}, "aborts": {}, "mach": {},
+                       "episodes": {}, "cpu": None}
         elif current is not None:
             if parts[0] == "exception":
                 current["exceptions"][fields["id"]] = {
@@ -34,6 +39,11 @@ def snapshots(path):
                 current["aborts"][fields["status"]] = int(fields["n"])
             elif parts[0] == "mach-msg":
                 current["mach"] = {k: int(v) for k, v in fields.items()}
+            elif parts[0] == "thread-cpu-ns":
+                current["cpu"] = int(parts[1])
+            elif parts[0] == "kernel-episode":
+                current["episodes"][f"{parts[1]} {parts[2]}"] = (
+                    int(fields["n"]), int(fields["cpu-ns"]))
             elif parts[0] == "end" and int(fields["now-ns"]) == current["now"]:
                 result.append(current)
                 current = None
@@ -115,6 +125,23 @@ def main():
         print(key + ":")
         for name, row in sorted(report[key].items(), key=lambda kv: -kv[1]["n"])[:30]:
             print(f"  {name:18} {row['n']:9d} {row['per_second']:9.1f}/s")
+    if a["cpu"] is not None and b["cpu"] is not None:
+        cpu = delta(b["cpu"], a["cpu"])
+        report["vcpu_busy"] = cpu / 1e9 / seconds
+        report["kernel_episodes"] = {}
+        for name, (n1, ns1) in b["episodes"].items():
+            n0, ns0 = a["episodes"].get(name, (0, 0))
+            if n1 - n0:
+                report["kernel_episodes"][name] = {
+                    "n": n1 - n0, "per_second": (n1 - n0) / seconds,
+                    "mean_us": (ns1 - ns0) / (n1 - n0) / 1e3, "share": (ns1 - ns0) / cpu}
+        total = sum(r["share"] for r in report["kernel_episodes"].values())
+        print(f"vCPU thread busy {100 * report['vcpu_busy']:.1f}%; kernel episodes "
+              f"{100 * total:.1f}% of it:")
+        for name, row in sorted(report["kernel_episodes"].items(),
+                                key=lambda kv: -kv[1]["share"])[:20]:
+            print(f"  {name:18} {100 * row['share']:6.2f}% {row['per_second']:9.1f}/s "
+                  f"{row['mean_us']:8.1f} us")
     if args.json:
         args.json.write_text(json.dumps(report, indent=2) + "\n")
 
