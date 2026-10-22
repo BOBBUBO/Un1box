@@ -71,6 +71,7 @@ Jetpack Joyride's at 13–21 and Asphalt 5's intro movie at ~4.
 
 | Change | Commit | Before → after |
 | --- | --- | --- |
+| Scaler: NV12 → NV12 (a movie frame turned upright) from index tables, not two 64-bit divides a pixel | `83a50a5c4d` | **Desktop, Epic Citadel's loading movie: `scaler_write` 8.3% of the vCPU → under 1%.** Poco, Asphalt 5 intro: neutral (15.9/15.3 → 15.5/14.0 fps); arm64's divide is cheap. |
 | NAND: CDMA moves a run of H2FMI FIFO words in one call instead of an MMIO dispatch per word (`LT_CDMA_BULK=off`) | `bec13dcdbf` | The A4's NAND goes through the IOP's firmware, whose CDMA channels fed the flash controller's FIFO 4 bytes per register access: ~1.5M MMIO dispatches/s on the IOP during file I/O, contending with the vCPU for host time. **Desktop: IOP MMIO 1.5M → 0.25M/s. Poco: Jetpack, two pairs, 20.8/21.4 → 23.4/22.1 fps; Asphalt 5 upload 75 → 58 s (see App installs).** |
 | A sequential run of stores into a code page invalidates to the page end at once (`LT_SMC_STREAM=off`) | `9eeedfb270` | Recycled code pages are zeroed or copied a word at a time, and each word took the not-dirty slow write and a TB lookup: ~30K/s at Jetpack's title. After 8 stores in a row (up or down) the rest of the page is invalidated in one go. **Desktop: code-page slow writes ~30K → ~500/s, their host time 6 → 0.9%.** Poco: neutral within the spread. |
 | Keep the last movie frame across VBLs; convert a movie smaller than the panel at its own size, then scale | `0cdfe20796` | A movie decodes at ~30 fps against a 60 Hz VBL, so every other latch converted and blended the same frame again. **Desktop, Asphalt 5 intro: 23.0 → 31.6 fps (the movie's own rate); VBL tick 9.8 → 4.5 ms.** |
@@ -121,6 +122,14 @@ The 4G unpacks small files at ~1 MB/s and the large one at ~5.5 MB/s. The 2G's u
 the guest (AP ~90%, jump-cache misses ~10%). A remaining 4G cost is the IOP round trip per NAND request
 (~0.5 ms desktop, ~1.6 ms Poco): about 7 IRQs per request and the IOP's cache-control MMIO, not wake latency
 (a spinning IOP did not help).
+
+### Fixes found while measuring the iPod touch 4G (2026-10-22)
+
+| Fix | Commit | What it was |
+| --- | --- | --- |
+| A4 NAND overlay ownership reaches the `.dirty` file at once (mapped shared on POSIX) | `b704f259fa` | Ownership was written only at a clean stop, so a killed engine left pages first written that session reading the base again: the Poco's 4G record then panicked every boot (`yaFTL.blockArray[oldBlock].validPagesDNo`), which looked like games hanging (Flight Control's menu, Jetpack's splash). Desktop, Asphalt 5 install killed mid-unpack: orphaned overlay pages 140814 → 0; the next boot runs games (before: stuck at the lock screen). Unpack rate unchanged (4.17 → 4.11 MB/s; a write per page instead cost 14%). |
+| Native GLES path: packed depth/stencil texels are 4 bytes | `d3768ae49c` | Epic Citadel's 960×640 `GL_DEPTH_STENCIL_OES` upload was copied at 1 byte a texel and Adreno read past the copy: the engine died after the logo (the "green screen"). It now runs, ~6–8 fps on the Poco. |
+| PVRTC uploads to cube-map faces | `a51635216a` | Epic Citadel's environment map was refused (six faces). |
 
 ### Engine (`qemu-ios`, branch `dev/perf`)
 

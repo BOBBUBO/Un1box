@@ -50,8 +50,9 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   the hitch leads below.
 - [ ] iPod touch 4G 6.1.6 on the Poco (PERFORMANCE.md, "iPod touch 4G"): Doodle Jump's title 45–49 fps
   (ceiling 54–60), Asphalt 5's intro movie ~16 of 30, Jetpack's title ~23–24 (median 24; desktop
-  ~27–28, vCPU-bound). Next: Flight Control,
-  Real Racing, the Asphalt 5 race and Epic Citadel (green screen after the Unreal logo). Open option:
+  ~27–28, vCPU-bound), Epic Citadel ~6–8 (runs since `d3768ae49c`; vCPU-bound). Next: Flight Control
+  (desktop 54–58; on the Poco its PLAY! button ignores `adb input` taps that UIKit alerts take: find out
+  why before measuring), Real Racing (desktop attract demo 35–45), the Asphalt 5 race. Open option:
   report a headset plugged in (CS42L59 register 0x33 bit 7) so iOS skips speaker protection (~10% of
   the vCPU in games); a product decision, since the guest then routes audio as to headphones.
 - [x] IPA installs (PERFORMANCE.md, "App installs"): unpacking progress from the guest's free space,
@@ -229,8 +230,8 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   game's cap (PERFORMANCE.md). Check on the phones.
 
 - [ ] Installing a very large app over the USB bridge: profiled and sped up (the IPA installs item
-  above). Still open: the same install once crashed the guest on Linux (not reproduced on the 4G or
-  2G desktop runs of 2026-10-22).
+  above). The guest "crash" was likely a killed engine's NAND overlay (fixed in `b704f259fa`); not
+  reproduced on the 4G or 2G desktop runs of 2026-10-22.
 
 ## Android front end (dev/ui)
 
