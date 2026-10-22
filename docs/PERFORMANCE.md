@@ -88,6 +88,7 @@ Jetpack Joyride's at 13–21 and Asphalt 5's intro movie at ~4.
 | No `CF_PARALLEL` for CPUs the board marks `tcg_unshared` (`LT_TCG_PARALLEL=on` restores it) | `dc8e9d5526` | The A4 and S5L8920 boards have two vCPUs (the application processor and the IOP), so every TB was translated for parallel execution: barriers became host fences, exclusives cmpxchg, and the per-site branch cache (`6c789b3e83`) was off. The cores share no code or atomics. **Desktop, Doodle Jump: TB lookups 1.67M → 0.40M/s.** With the two rows below, **Poco, Doodle Jump, two pairs: 33.4/24.9 → 42.8/39.1 fps, hitches 67–74 → 5–7 per 30 s.** |
 | Compose the latched frame without the BQL | `a4547e958a` | Every swap the VBL tick read both UI layers (~5 MiB at 640×960), compared and blended them under the lock; the 2G's LCD had the same problem (`d7c4927685`). |
 | Guest GL calls without the BQL on the A4, S5L8920 and iPod 1G boards | `1424d3ccb3` | `76ace3a65b` covered only the 2G. On the 4G the vCPU waited 6.6% of wall time at that site (55 µs mean, ~1.2K calls/s at Doodle Jump's title). |
+| Neon float add, subtract, multiply and multiply-accumulate on host vectors when the result is exact (`LT_NEON_HOST_FLOAT=off`) | `2a16bb0665` | The Neon helpers ran softfloat per lane (speaker protection and games' matrix code issue them all the time). The vector path is taken only where it gives softfloat's bits: round to nearest, inexact already raised, operands and results normal or zero, NaNs handled as default NaN, the multiply rounded before the add. D-register operands are built a lane at a time: an 8-byte copy into a 16-byte vector stalled its load and made the first version slower than softfloat. **Desktop, Jetpack's title: float helpers 12.1 → 8.9% of the vCPU.** |
 
 LT Bench on the desktop, best ns/op before → after these: `syscall` 4212 → 1746, `time` 1708 → 907,
 `thread-switch` 53.0 → 36.6 µs, `thread-switch-64p` 87.0 → 38.4 µs, `rpc` 194.6 → 139.9 µs, `mmap` 13.2 →
@@ -100,6 +101,15 @@ time is ~30% kernel, spread thin; ~10% AudioToolbox speaker protection and its N
 2% QuartzCore. Speaker protection runs only on the speaker route: with a headset reported plugged in
 (CS42L59 register 0x33 bit 7, read by `AppleCS42L59Mikey`) iOS would skip it, but that changes what the
 guest believes about its hardware, so it is an option to weigh, not a default.
+
+Doodle Jump on the desktop (60 fps at ~57% vCPU busy; the Poco needs ~20% less work per frame for 60): the game
+23% of a core, backboardd 21%, mediaserverd 10% (`it_ps`). Kernel episodes are 41% of the busy time. The guest idles
+~8.8K times/s, each entry re-arming the PMGR decrementer; it reads the timebase ~46–64K times/s (three MMIO reads per
+`mach_absolute_time`). Each frame's `kern_SwapEnd` (io_connect_method selector 5 from backboardd, ~520 µs) is mostly
+IOMobileFramebuffer building an IODMACommand over the whole surface: `getPhysicalSegment` ~560 times a frame, Apple's
+code that a real 4G runs too. The present copy of the GL frame into the guest surface is 3.3% of the vCPU. Setting
+codec reg 0x33 bit 7 alone does not change the route: the driver powers the speaker path down and starts headset-type
+detection, then gives up waiting for the codec's interrupt, which the model does not raise.
 
 ### App installs (2026-10-22)
 
@@ -264,6 +274,11 @@ dirty-tracking reset (`tlb_reset_dirty`) walks every TLB entry under the TLB loc
 that is nine tables instead of one (2.6% of the main loop on the desktop), contending with the vCPU.
 QEMU also sizes a TLB only when it is emptied, so a bank that keeps coming back stayed at its first
 size and thrashed until it was flushed once on return over 70% full.
+
+**Two more 4G experiments, 2026-10-22.** The scaler's conversion on a worker thread instead of the vCPU (patch kept
+as `perf/n81/rejected-scaler-worker.patch`): Poco neutral. `CA_DISABLE_DETACHED=1` in backboardd's environment, to see
+whether CoreAnimation's detached (direct scan-out) layers cost more than they save: Jetpack's vCPU 59% → 89% busy, so
+the detached path is already the cheap one.
 
 **More disabled launchd jobs** (iPod touch 4G 6.1.6, 2026-10-22; the recipe's `quiet_services` already disables 14, among
 them iMessage, iCloud, push and OTA). A guest tool printing each process's CPU time (`proc_pidinfo`) showed the daemons use
