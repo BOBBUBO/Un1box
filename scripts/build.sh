@@ -36,6 +36,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${JAVA_HOME:=/usr/lib/jvm/java-17-openjdk-amd64}"
 : "${LT_MAC:=}"                                                                   # user@host of the Mac
 : "${LT_DEBUGGABLE:=true}"                       # false: a non-debuggable APK (release; GrapheneOS AOT)
+: "${LT_PROFILEABLE:=false}"                     # true: simpleperf may attach from adb shell (perf builds)
 : "${LT_MAC_DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"
 : "${LT_MAC_IPAD_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk}"         # expanded on the Mac
 : "${LT_MAC_ARMV6_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.1.3.sdk}"       # expanded on the Mac
@@ -159,7 +160,7 @@ build_android() {
         -PangleArm64Notices="$angle/notices" \
         -PangleArm64ManifestSha256=3abde58ea5d9863453b12e3d7f67eff7c96ee989fbcfa4c00a16859cfd694945 \
         -PangleArm64NoticesSha256=63d2221b0fab9bff7788dc0c4e9a94c74079b3ab5ed3c09bd3ef72c909d1f924 \
-        -Pdebuggable="$LT_DEBUGGABLE" "${guest[@]}" "${lint[@]}" :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
+        -Pdebuggable="$LT_DEBUGGABLE" -Pprofileable="$LT_PROFILEABLE" "${guest[@]}" "${lint[@]}" :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
         { grep -A12 "What went wrong" "$OBJ/android-gradle.out" >&2 || tail -30 "$OBJ/android-gradle.out" >&2; exit 1; }
     cp "$OBJ/android-gradle/app/outputs/apk/debug/app-debug.apk" "$OUT/android/LightTouch-debug.apk"
     echo "$OUT/android/LightTouch-debug.apk"
