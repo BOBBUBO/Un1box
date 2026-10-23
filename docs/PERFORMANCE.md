@@ -96,7 +96,8 @@ Jetpack Joyride's at 13–21 and Asphalt 5's intro movie at ~4.
 | PMGR timebase ticks without `muldiv64`'s 128-bit divide (both A4 and S5L8920) | `5bac54ee8a`, `ad6f571d54` | ~46–64K timebase reads/s at Doodle Jump, each paying `__divti3`; 24 MHz is 3/125 ticks per ns. Within noise on its own. |
 | Neon float add, subtract, multiply and multiply-accumulate on host vectors when the result is exact (`LT_NEON_HOST_FLOAT=off`) | `2a16bb0665` | The Neon helpers ran softfloat per lane (speaker protection and games' matrix code issue them all the time). The vector path is taken only where it gives softfloat's bits: round to nearest, inexact already raised, operands and results normal or zero, NaNs handled as default NaN, the multiply rounded before the add. D-register operands are built a lane at a time: an 8-byte copy into a 16-byte vector stalled its load and made the first version slower than softfloat. **Desktop, Jetpack's title: float helpers 12.1 → 8.9% of the vCPU.** |
 | One host clock sample per timebase read: the TICKS_HI read right after TICKS_LO answers from LO's sample | `3f36d251bf` | The kernel reads HI, LO, HI; with LO's due-timer check that was four host clock reads a timestamp, ~20K timestamps/s in Jetpack. A clock read costs ~200 ns on the Poco (`clock_gettime`; the raw counter ~160 ns), and `__kernel_clock_gettime` was 2.5% of its vCPU. Desktop Jetpack vCPU 63–64 → 62.3% (one run). |
-| Scaler work buffers kept between transfers | `81376f17aa` | CoreAnimation turns every frame of a landscape game (Jetpack: 960×640 → 640×960) through the scaler, which allocated two 2.4 MiB buffers per transfer; on Android each was a fresh mapping (`munmap` 1.4% of the Poco's vCPU, plus page faults). Poco Jetpack vCPU busy 91.3/91.7/90.4 → 88.8/91.1/91.4% (with the row above; near noise). |
+| Scaler work buffers kept between transfers | `81376f17aa` | CoreAnimation turns every frame of a landscape game (Jetpack: 960×640 → 640×960) through the scaler, which allocated two 2.4 MiB buffers per transfer; on Android each was a fresh mapping (`munmap` 1.4% of the Poco's vCPU, plus page faults). With the row above, **Poco Jetpack 28.0/27.3/27.6 → 29.3/29.7/29.1 fps** (3 pairs; its cap at this cadence is 30). |
+| A scaler transfer's pixel work on a worker thread, the done interrupt waiting for it too (`LT_SCALER_ASYNC=off`) | `602fa5c393` | The rotate ran on the vCPU inside the start write. Desktop Jetpack vCPU busy 61.8 → 56.9%; **Poco 29.4/28.9/28.9 → 29.8/30.6/29.7 fps at 92.1/90.3/91.2 → 88.5/89.5/89.0% busy** (3 pairs). |
 
 LT Bench on the desktop, best ns/op before → after these: `syscall` 4212 → 1746, `time` 1708 → 907,
 `thread-switch` 53.0 → 36.6 µs, `thread-switch-64p` 87.0 → 38.4 µs, `rpc` 194.6 → 139.9 µs, `mmap` 13.2 →
@@ -285,10 +286,9 @@ QEMU also sizes a TLB only when it is emptied, so a bank that keeps coming back 
 size and thrashed until it was flushed once on return over 70% full.
 
 **Two more 4G experiments, 2026-10-22.** The scaler's conversion on a worker thread instead of the vCPU (patch kept
-as `perf/n81/rejected-scaler-worker.patch`): Poco neutral. Re-tested 2026-10-23 by vCPU busy as well as fps (Jetpack runs at a
-30 fps cadence, so fps alone hides savings): desktop busy 61.8 → 56.9%, but Poco 29.3 → 28.1 fps at ~1 point more busy (3
-pairs); backboardd waits for the transfer's end, and a big core rotates slower than the modelled 3 ms. Rotating in place from
-mapped guest RAM (no copies) was slower on both: the column reads miss the cache, where the copy streams. Rebuilding
+as `perf/n81/rejected-scaler-worker.patch`): Poco neutral. Re-tested 2026-10-23 and kept (row above): Jetpack runs at a 30 fps
+cadence, so vCPU busy shows what fps hides. Rotating in place from mapped guest RAM (no copies) was slower on the desktop:
+the column reads miss the cache, where the copy streams. Rebuilding
 `hflags` on exception entry and return is ~0.7% of Jetpack's vCPU on the 4G (the ~10% was the 2G), so not cached. `CA_DISABLE_DETACHED=1` in backboardd's environment, to see
 whether CoreAnimation's detached (direct scan-out) layers cost more than they save: Jetpack's vCPU 59% → 89% busy, so
 the detached path is already the cheap one.
