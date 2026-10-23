@@ -284,6 +284,8 @@ subregion without the BQL: Poco Jetpack 23.4/22.1 vs 23.1/22.7 with the BQL, Asp
 
 **Next-TB lookup from generated code after CP15 c2/c7/c8/c13 writes** (2026-10-23, `LT_CP_NOCHAIN`, patch `perf/n81/rejected-cp-nochain.patch`): these writes end the TB, and instead of returning to the main loop the next TB was looked up from generated code. Slower: LT Bench `syscall` 1463 → 1889 ns and `time` 892 → 1085 ns; desktop Jetpack vCPU 49.6/49.7 → 50.4/50.9%. The site cache misses after a context change, and its helper path costs more than the main loop's.
 
+**Timer notification only for an earlier deadline** (2026-10-23, `LT_TIMER_NOTIFY_EARLIER`, patch `perf/n81/rejected-timer-notify-earlier.patch`): `timer_mod` wakes the main loop (a bottom half and an eventfd write, 0.75% of the Poco's vCPU in Jetpack play) whenever the timer ends up first, even when its deadline moved later. Skipping those: desktop neutral, Poco Jetpack play 29.1/29.1/29.3 → 28.9/28.4/29.1 fps.
+
 **Per-address-space TLB banks, first attempt** (2026-10-18; redone and kept 2026-10-23, row above; patch kept as `perf/rejected-tlb-banks.patch`): the user TLB index
 set aside per ASID at a context switch and swapped back when that address space runs again (8 banks;
 every invalidation also applied to the inactive banks). On the desktop it cut user TLB fills per
