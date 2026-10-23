@@ -35,6 +35,9 @@ GAMES = {
     # Real Racing, Flight Control, Asphalt 5 on the Poco's record.
     "n81-doodlejump": [(.15, .31), 30],                    # Doodle Jump's title
     "n81-jetpack": [(.86, .14), 50],                       # Jetpack Joyride's title
+    # a run: "touch anywhere to play", then "fly" holds and releases the screen through the measurement
+    # (a run lasts ~20 s on the desktop; measure ~15)
+    "n81-jetpack-play": [(.86, .14), 50, (.5, .5), 3, "fly"],
     # icon; "Don't ask again" on the rate prompt, which is also on PLAY! when there is no prompt; PLAY!, held
     # for a second (the menu misses a plain tap)
     "n81-flightcontrol": [(.62, .31), 35, (.233, .6), 4, (.158, .616, 1000), 8],
@@ -80,8 +83,13 @@ for _ in range(4):
     sh("input", "swipe", *gpt(rect, .9, .5), *gpt(rect, .15, .5), "300"); time.sleep(3)
     if sum(abs(a - b) for a, b in zip(before, icons())) / len(before) > 4: break
     print("page swipe dropped, again", flush=True)
+flyer = None
 for n, step in enumerate(steps):
-    if isinstance(step, tuple):
+    if step == "fly":  # hold 0.35 s, let go, until killed after the measurement (by PID)
+        rect = guest_rect(); x, y = gpt(rect, .7, .5)
+        flyer = subprocess.run(["adb", "shell", f"sh -c 'while true; do input swipe {x} {y} {x} {y} 350; done' "
+                                "> /dev/null 2>&1 & echo $!"], capture_output=True, text=True, check=True).stdout.strip()
+    elif isinstance(step, tuple):
         rect = guest_rect()
         if os.environ.get("FC_STEPS"):  # the screen each tap lands on, to check a long preset
             with open(os.path.join(os.environ["FC_STEPS"], f"step{n:02d}.png"), "wb") as f:
@@ -96,6 +104,8 @@ def save_shot():
             f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True, check=True).stdout)
 if float(secs) == 0:
     save_shot()
+    if flyer:
+        subprocess.run(["adb", "shell", f"kill {flyer}"])
     sys.exit(0)
 frames = None
 if os.environ.get("FC_FRAMES"):  # matplotlib may live only in the system python
@@ -106,3 +116,5 @@ if os.environ.get("FC_FRAMES"):  # matplotlib may live only in the system python
 subprocess.run([sys.executable, os.path.join(D, "gamefps.py"), secs] + (["--series"] if os.environ.get("FC_SERIES") else []))
 if frames: frames.wait()
 save_shot()
+if flyer:
+    subprocess.run(["adb", "shell", f"kill {flyer}"])
