@@ -104,6 +104,7 @@ Jetpack Joyride's at 13–21 and Asphalt 5's intro movie at ~4.
 | GL requests trust the thread's record of its current EGL context (`LT_EGL_CURRENT_CHECK=on` asks EGL again) | `a1d63b3284` | `CGLSetCurrentContext` asked `eglGetCurrentContext` on every guest GL request; only it binds contexts on the host. Profile share on the Poco 2.7% of Jetpack's vCPU. **Poco Jetpack busy 84.8/86.2/84.6 → 82.1/85.7/84.8%; Flight Control 57.7/57.0/57.3 → 57.5/57.4/57.3 fps.** |
 | No hflags rebuild after CP15 c2/c7/c8/c13 writes (`LT_CP_HFLAGS_SKIP=off`) | `7f34ed45ba` | No A32 TB flag reads the translation-table registers, cache/TLB maintenance or the process and thread IDs, which iOS writes on every context switch; the TB still ends. Profile share ~1%. **Poco Jetpack busy 84.3/83.6/85.7 → 79.2/83.7/81.3%; Flight Control 56.8/56.8/57.6 → 57.5/57.3/57.5 fps.** |
 | Return address stack (`LT_RAS=off`) | `7765a1ac09` | ~95% of the indirect-branch site cache's misses were returns. Calls push their TB's slot on a 32-entry ring; a return pops it and jumps straight to the cached host code when key and state signature match. Desktop Jetpack: TB lookups 610K → 190K/s, 31.1/31.0 → 32.9/32.1 fps at 50.7/51.9 → 50.1/50.8% vCPU. What is left is mostly the same target under a renewed context: iOS issues ~34 TLBIALL/s, each emptying every jump cache and site cache (a 2-entry slot did not help). **Poco Jetpack busy 84.8/86.4/85.4 → 86.7/83.0/82.6%; Flight Control 57.2/57.6/55.5 → 57.2/56.8/57.8 fps** (noise-level there). |
+| A32 coprocessor accesses carry their register info as a constant (`LT_CP_RI_CONST=off`) | `d21f6af351` | Generated code looked the register up in a hash table on every access (and again in the access check), 0.6–0.8% of the Poco's vCPU in Jetpack. Desktop Jetpack vCPU 50.4 → 49.8% (one pair). **Poco Jetpack busy 83.6/85.0/84.3 → 84.5/86.3/84.9%; Flight Control 57.6/57.3/57.4 → 57.3/57.4/59.6 fps** (no measurable change; kept, the lookup it drops shows in the profile). |
 
 LT Bench on the desktop, best ns/op before → after these: `syscall` 4212 → 1746, `time` 1708 → 907,
 `thread-switch` 53.0 → 36.6 µs, `thread-switch-64p` 87.0 → 38.4 µs, `rpc` 194.6 → 139.9 µs, `mmap` 13.2 →
@@ -279,6 +280,8 @@ boots unchanged).
 jump-cache misses 32.8K → 22.0K/s at Jetpack's title, fps flat (28.1 vs 28.3); Poco Jetpack 24.0/24.1 vs
 23.4/24.0, Doodle Jump 44.6/46.4 vs 47.4/51.7 (lost 2 of 2). The IOP's cache-control registers as a
 subregion without the BQL: Poco Jetpack 23.4/22.1 vs 23.1/22.7 with the BQL, Asphalt 5 unpack 171 vs 162 s.
+
+**Next-TB lookup from generated code after CP15 c2/c7/c8/c13 writes** (2026-10-23, `LT_CP_NOCHAIN`, patch `perf/n81/rejected-cp-nochain.patch`): these writes end the TB, and instead of returning to the main loop the next TB was looked up from generated code. Slower: LT Bench `syscall` 1463 → 1889 ns and `time` 892 → 1085 ns; desktop Jetpack vCPU 49.6/49.7 → 50.4/50.9%. The site cache misses after a context change, and its helper path costs more than the main loop's.
 
 **Per-address-space TLB banks, first attempt** (2026-10-18; redone and kept 2026-10-23, row above; patch kept as `perf/rejected-tlb-banks.patch`): the user TLB index
 set aside per ASID at a context switch and swapped back when that address space runs again (8 banks;
