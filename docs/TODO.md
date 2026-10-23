@@ -233,6 +233,9 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   above). The guest "crash" was likely a killed engine's NAND overlay (fixed in `b704f259fa`); not
   reproduced on the 4G or 2G desktop runs of 2026-10-22.
 
+- [ ] Doodle Jump on the iPod touch 3G (5.1.1) plays at double speed: physics run twice as fast as they should.
+  An accuracy bug (timer, display-link or vsync rate), not a performance one.
+
 ## Android front end (dev/ui)
 
 - [ ] Save & Stop: keep the guest's state across app close and phone reboot. The engine has
