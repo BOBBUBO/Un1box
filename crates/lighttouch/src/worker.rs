@@ -110,21 +110,34 @@ fn run(args: WorkerArgs, events: &Sender<Event>, commands: Receiver<Command>) ->
     eprintln!("session: {} ({} {}), recover={}", record.name, record.board, record.build, args.recover);
 
     // Admission: verify the device's files (fast when the digest cache is warm).
-    let mut last_report = Instant::now() - Duration::from_secs(1);
-    let device = Device::open(&library, &record.id, args.recover, &mut |done, total| {
-        if last_report.elapsed() >= Duration::from_millis(100) || done == total {
-            last_report = Instant::now();
-            let _ = events.send(Event::Admission { done, total });
+    // A previous session of this device may still be finishing its shutdown (its window closed moments ago):
+    // wait for it briefly rather than failing.
+    let busy_until = Instant::now() + Duration::from_secs(15);
+    let device = loop {
+        let mut last_report = Instant::now() - Duration::from_secs(1);
+        let opened = Device::open(&library, &record.id, args.recover, &mut |done, total| {
+            if last_report.elapsed() >= Duration::from_millis(100) || done == total {
+                last_report = Instant::now();
+                let _ = events.send(Event::Admission { done, total });
+            }
+            true
+        });
+        match opened {
+            Err(e) if e.is(sys::LT_BUSY) && Instant::now() < busy_until => {
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Err(e) if e.is(sys::LT_BUSY) => {
+                return Err("This device is still in use by another LightTouch session. Stop it there, or wait \
+                            for it to finish shutting down."
+                    .into());
+            }
+            Err(e) if e.is(sys::LT_DIRTY) => {
+                return Err("This device wasn't shut down cleanly. Recover it to start it again.".into());
+            }
+            Err(e) => return Err(format!("Couldn't open the device: {e}")),
+            Ok(device) => break device,
         }
-        true
-    })
-    .map_err(|e| {
-        if e.is(sys::LT_DIRTY) {
-            "This device wasn't shut down cleanly. Recover it to start it again.".to_string()
-        } else {
-            format!("Couldn't open the device: {e}")
-        }
-    })?;
+    };
     drop(library);
 
     let board = runtime::board_info(&args.engine, &record.board).map_err(|e| format!("engine: {e}"))?;
@@ -226,6 +239,7 @@ fn run(args: WorkerArgs, events: &Sender<Event>, commands: Receiver<Command>) ->
     let mut last_status: Option<(StatusEvent, Instant)> = None;
     let mut reported_input = 0u64;
     let mut pending_guest: Option<u64> = None;
+    let mut ui_gone = false;
     let grace = Duration::from_millis(sys::LT_SHUTDOWN_GRACE_MS as u64);
     let outcome = loop {
         // Commands.
@@ -233,7 +247,13 @@ fn run(args: WorkerArgs, events: &Sender<Event>, commands: Receiver<Command>) ->
             let command = match commands.try_recv() {
                 Ok(command) => command,
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => Command::Stop,
+                // The UI went away: stop, once, and carry on polling so the shutdown completes.
+                Err(TryRecvError::Disconnected) if ui_gone => break,
+                Err(TryRecvError::Disconnected) => {
+                    ui_gone = true;
+                    eprintln!("the app closed; shutting down");
+                    Command::Stop
+                }
             };
             let name = command_name(&command);
             let result = match command {

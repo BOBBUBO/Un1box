@@ -63,8 +63,7 @@ fn top_bar(app: &mut App, ui: &mut Ui) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let has_device = app.model.current().is_some();
                 if widgets::icon_button_sized(ui, &p, icons::BAG, "Legacy Store", 40.0, has_device).clicked() {
-                    app.model.notice =
-                        Some(("The Legacy Store is coming to this build soon".into(), std::time::Instant::now()));
+                    app.page = super::Page::Store;
                 }
             });
         });

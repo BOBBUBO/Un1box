@@ -34,6 +34,7 @@ pub const WAVEFORM: &str = "\u{E802}";
 pub const CPU: &str = "\u{E610}";
 pub const PACKAGE: &str = "\u{E390}";
 pub const CHECK_CIRCLE: &str = "\u{E184}";
+pub const CIRCLE: &str = "\u{E18A}";
 pub const CLOCK: &str = "\u{E19A}";
 pub const MONITOR: &str = "\u{E32E}";
 pub const KEYBOARD: &str = "\u{E2D8}";

@@ -4,6 +4,7 @@
 pub mod prepare;
 pub mod session;
 pub mod settings;
+pub mod store;
 pub mod task;
 
 use lighttouch_catalog::catalog::{default_device_name, device_subtitle, model_name};
@@ -121,6 +122,8 @@ pub struct Model {
     pub notice: Option<(String, Instant)>,
     /// A problem to show until dismissed.
     pub error: Option<String>,
+    /// Legacy Store and app installs for the current device.
+    pub store: store::Store,
     library: Option<Library>,
     task: Option<(Activity, Task<Finished>)>,
     finished: Option<Finished>,
@@ -130,7 +133,9 @@ pub struct Model {
 impl Model {
     pub fn new(dirs: DataDirs, resources: Resources, waker: Waker) -> Self {
         let settings = Settings::load(&dirs.settings());
+        let store = store::Store::new(dirs.cache().join("store"), waker.clone());
         let mut model = Self {
+            store,
             dirs,
             resources,
             settings,
@@ -189,6 +194,10 @@ impl Model {
                 self.refresh();
             }
         }
+        let current = self.current().map(|d| (d.id.clone(), d.board.clone(), d.build.clone()));
+        let socket = self.session.as_ref().filter(|s| s.phase.active()).and_then(|s| s.usb_socket.clone());
+        self.store.follow(current.as_ref().map(|(i, b, v)| (i.as_str(), b.as_str(), v.as_str())), socket.as_deref());
+        self.store.tick();
         if self.notice.as_ref().is_some_and(|(_, at)| at.elapsed() > Duration::from_secs(4)) {
             self.notice = None;
         }
@@ -331,6 +340,10 @@ impl Model {
     }
 
     pub fn stop(&mut self) {
+        if self.store.mutating() {
+            self.notify("An app is being installed; stop the device once it finishes.");
+            return;
+        }
         if let Some(session) = &mut self.session {
             session.stop();
         }

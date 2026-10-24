@@ -10,6 +10,7 @@ mod prepare;
 mod settings;
 mod setup;
 mod sidebar;
+mod store;
 pub mod theme;
 mod widgets;
 
@@ -28,6 +29,7 @@ pub enum Page {
     Setup(setup::Step),
     /// Prepare from an IPSW (its step lives in `App::prepare`).
     Prepare,
+    Store,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +67,7 @@ pub fn run() -> eframe::Result {
         options,
         Box::new(|cc| {
             theme::install_fonts(&cc.egui_ctx);
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             let ctx = cc.egui_ctx.clone();
             let waker: lighttouch_model::Waker = Arc::new(move || ctx.request_repaint());
             let model = Model::new(DataDirs::new(data_root()), Resources::locate(), waker);
@@ -333,6 +336,7 @@ impl eframe::App for App {
                     Page::Settings => settings::show(self, ui),
                     Page::Setup(step) => setup::show(self, ui, step),
                     Page::Prepare => prepare::show(self, ui),
+                    Page::Store => store::show(self, ui),
                 }
             });
         }
