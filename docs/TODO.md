@@ -236,6 +236,11 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 - [ ] Doodle Jump on the iPod touch 3G (5.1.1) plays at double speed: physics run twice as fast as they should.
   An accuracy bug (timer, display-link or vsync rate), not a performance one.
 
+- [ ] iPod touch 4G (6.1.6) on the Pixel 10: in gyro driving games (Real Racing with Gyroscope on), "down"
+  re-centres every so often, so steering stops matching how the phone is held. The gyro does not cut out.
+  Doodle Jump's accelerometer tilt is not affected, so suspect the gyro feed (L3G4200D) disagreeing with the
+  accelerometer in a way that makes iOS's motion fusion re-level, or gaps in host sensor delivery.
+
 ## Android front end (dev/ui)
 
 - [ ] Save & Stop: keep the guest's state across app close and phone reboot. The engine has
