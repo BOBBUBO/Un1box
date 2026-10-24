@@ -68,6 +68,9 @@ interface GuestHost {
     /** True while the engine copies a presented frame on a worker (its default). */
     val presentAsync: Boolean
     fun usePresentAsync(on: Boolean)
+    /** True while the frame block models a transfer's full hardware span (its default). */
+    val faithfulScaler: Boolean
+    fun useFaithfulScaler(on: Boolean)
     fun pickGuestTools()
     fun openLicenses()
     fun openPreparation()

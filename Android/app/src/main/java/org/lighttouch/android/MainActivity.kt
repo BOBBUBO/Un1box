@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         private set
     /** True while the engine copies a presented frame on a worker (its default). */
     override var presentAsync by mutableStateOf(true)
+    override var faithfulScaler by mutableStateOf(true)
         private set
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
@@ -283,6 +284,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         window.isNavigationBarContrastEnforced = false; window.isStatusBarContrastEnforced = false
         preferSixtyHertz(guestInFront = false)
         presentAsync = !(File(filesDir, "debug-env").let { f -> f.exists() && f.readLines().any { it.trim() == "LT_PRESENT_ASYNC=off" } })
+        faithfulScaler = !(File(filesDir, "debug-env").let { f -> f.exists() && f.readLines().any { it.trim() == "LT_SCALER_TIME_NS=0" } })
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
@@ -420,16 +422,23 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         preparationOpen = true; bindFirmware()
     }
     override fun pickGuestTools() { pickGuestToolsFile.launch(arrayOf("application/octet-stream", "*/*")) }
-    override fun usePresentAsync(on: Boolean) {
-        // The engine reads its environment when a session starts, so the choice is one line in
-        // files/debug-env, the same channel an adb user writes; other lines are left alone.
+    /** One LT_ key in files/debug-env: the engine reads its environment when a session starts. */
+    private fun setDebugEnv(key: String, value: String?) {
         runCatching {
             val file = File(filesDir, "debug-env")
-            val kept = if (file.exists()) file.readLines().filter { it.isNotBlank() && !it.startsWith("LT_PRESENT_ASYNC=") } else emptyList()
-            val lines = kept + if (on) emptyList() else listOf("LT_PRESENT_ASYNC=off")
+            val kept = if (file.exists()) file.readLines().filter { it.isNotBlank() && !it.startsWith("$key=") } else emptyList()
+            val lines = kept + if (value == null) emptyList() else listOf("$key=$value")
             if (lines.isEmpty()) file.delete() else file.writeText(lines.joinToString("\n") + "\n")
         }
+    }
+    override fun usePresentAsync(on: Boolean) {
+        // The choice is one line in files/debug-env, the same channel an adb user writes.
+        setDebugEnv("LT_PRESENT_ASYNC", if (on) null else "off")
         presentAsync = on
+    }
+    override fun useFaithfulScaler(on: Boolean) {
+        setDebugEnv("LT_SCALER_TIME_NS", if (on) null else "0")
+        faithfulScaler = on
     }
     override fun applySettings() {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
