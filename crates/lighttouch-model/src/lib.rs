@@ -1,6 +1,7 @@
 //! Everything the LightTouch app does, without any UI toolkit: the device list, adding devices, running one,
 //! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
+pub mod prepare;
 pub mod session;
 pub mod settings;
 pub mod task;
@@ -90,12 +91,15 @@ pub struct AddRequest {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Activity {
     AddingDevice,
+    /// Preparing a device from an IPSW (the firmware id).
+    Preparing(String),
 }
 
 /// A finished background operation, for the UI to react to (e.g. show "ready").
 #[derive(Debug, Clone, PartialEq)]
 pub enum Finished {
-    DeviceAdded { id: String, name: String, selected: bool },
+    /// `timings`: (stage, seconds) of a preparation, for its "Details".
+    DeviceAdded { id: String, name: String, selected: bool, timings: Vec<(String, f64)> },
     Failed { activity: Activity, message: String },
 }
 
@@ -402,6 +406,23 @@ impl Model {
         self.task = Some((Activity::AddingDevice, task));
     }
 
+    /// Prepare a device from an IPSW in the background.
+    pub fn prepare(&mut self, request: prepare::PrepareRequest) {
+        if self.task.is_some() {
+            return;
+        }
+        let context = prepare::PrepareContext {
+            dirs: self.dirs.clone(),
+            resources: self.resources.clone(),
+            devices: self.devices.clone(),
+            select: !self.session_active(),
+            waker: self.waker.clone(),
+        };
+        let activity = Activity::Preparing(request.firmware_id.clone());
+        let task = Task::spawn(self.waker.clone(), move |reporter| prepare::run(context, request, reporter));
+        self.task = Some((activity, task));
+    }
+
     pub fn dismiss_error(&mut self) {
         self.error = None;
     }
@@ -453,7 +474,7 @@ fn add_device_work(
     if select {
         let _ = library.select(&record.id);
     }
-    Ok(Finished::DeviceAdded { id: record.id, name, selected: select })
+    Ok(Finished::DeviceAdded { id: record.id, name, selected: select, timings: Vec::new() })
 }
 
 fn sha256_with_progress(path: &Path, reporter: &Reporter) -> Result<String, String> {

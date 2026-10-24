@@ -3,6 +3,7 @@
 //! ```text
 //! lighttouch list
 //! lighttouch import <.itbase | folder> [--sha256 HEX] [--name NAME] [--rom FILE] [--package FILE]
+//! lighttouch prepare <firmware id> [--ipsw FILE] [--rom FILE] [--name NAME]
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE]
 //! ```
 //!
@@ -18,7 +19,7 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
 pub fn handles(command: &str) -> bool {
-    matches!(command, "list" | "import" | "run")
+    matches!(command, "list" | "import" | "run" | "prepare")
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -27,6 +28,7 @@ pub fn main(args: &[String]) -> i32 {
         "list" => list(&dirs),
         "import" => import(&dirs, &args[1..]),
         "run" => run(&dirs, &args[1..]),
+        "prepare" => prepare(dirs, &args[1..]),
         _ => unreachable!(),
     };
     match result {
@@ -215,4 +217,44 @@ fn save_frame(frames: &FrameReader, path: &PathBuf) -> Result<(), String> {
     std::fs::write(path, out).map_err(|e| e.to_string())?;
     eprintln!("saved {}x{} frame to {}", meta.width, meta.height, path.display());
     Ok(())
+}
+
+/// Prepare a device from an IPSW through the app's own pipeline, printing its progress.
+fn prepare(dirs: DataDirs, args: &[String]) -> Result<(), String> {
+    use lighttouch_model::prepare::{IpswSource, PrepareRequest};
+    let firmware_id = args.first().ok_or("prepare needs a firmware id, e.g. n72ap-7E18")?.clone();
+    let request = PrepareRequest {
+        firmware_id,
+        ipsw: option(args, "--ipsw").map(|p| IpswSource::File(PathBuf::from(p))).unwrap_or(IpswSource::Download),
+        bootrom: option(args, "--rom").map(PathBuf::from),
+        name: option(args, "--name"),
+    };
+    let mut model = lighttouch_model::Model::new(dirs, Resources::locate(), std::sync::Arc::new(|| {}));
+    lighttouch_model::prepare::availability(&model.resources)?;
+    model.prepare(request);
+    let mut last = String::new();
+    loop {
+        model.tick();
+        if let Some(finished) = model.take_finished() {
+            match finished {
+                lighttouch_model::Finished::DeviceAdded { name, id, timings, .. } => {
+                    for (stage, seconds) in timings {
+                        eprintln!("  {stage:<44} {seconds:7.1} s");
+                    }
+                    println!("added {name} ({id})");
+                    return Ok(());
+                }
+                lighttouch_model::Finished::Failed { message, .. } => return Err(message),
+            }
+        }
+        if let Some((_, progress)) = model.busy() {
+            let percent = progress.fraction().map(|f| format!(" {:.0}%", f * 100.0)).unwrap_or_default();
+            let line = format!("{}{percent}", progress.phase);
+            if line != last {
+                eprintln!("{line}");
+                last = line;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
 }
