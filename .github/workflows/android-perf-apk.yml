@@ -125,7 +125,7 @@ jobs:
       - name: Install host tools, NDK 28.2 and CMake 3.22.1
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ninja-build pkg-config
+          sudo apt-get install -y -qq ninja-build pkg-config python3-venv perl autoconf automake libtool
           python3 -m venv meson
           meson/bin/pip install --quiet --disable-pip-version-check meson==1.10.0 packaging==24.0
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
