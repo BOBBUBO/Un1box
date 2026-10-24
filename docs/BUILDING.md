@@ -59,7 +59,7 @@ tools/perf/pgo-collect.sh build/android/LightTouch-debug.apk engine-arm64.profda
 `pgo-collect.sh` runs each `tools/perf/fcbench.py` preset once and has the engine write its counters for a
 window of gameplay (`LT_PGO_RESET`, `LT_PGO_DUMP`; the default is 150 to 250 s after start). Functions
 changed since the profile was taken are compiled without it, so refresh the profile after large engine
-changes. Configure options must match those of the instrumented build.
+changes. Configure options must match those of the instrumented build. The raw profile of each game stays in `OUT.d`, so a game can be weighted when merging (`llvm-profdata merge -weighted-input=3,jetpack.profraw ...`); the shipped profile weights Jetpack Joyride 3×.
 
 ## Inputs that are not in this repository
 
