@@ -53,6 +53,8 @@ pub struct App {
     paused_for_hidden: bool,
     /// A Home press that releases itself (waking the screen).
     pulse_release: Option<Instant>,
+    /// The window was closed with iOS running: close once it has shut down.
+    close_after_stop: bool,
 }
 
 pub fn run() -> eframe::Result {
@@ -91,6 +93,7 @@ impl App {
             prepare: prepare::PrepareState::default(),
             paused_for_hidden: false,
             pulse_release: None,
+            close_after_stop: false,
         }
     }
 
@@ -112,6 +115,25 @@ impl App {
     pub fn pulse_home(&mut self) {
         self.guest.set_button(&mut self.model, device_frame::HOME, true);
         self.pulse_release = Some(Instant::now() + Duration::from_millis(100));
+    }
+
+    /// Closing the window shuts iOS down first (like holding the power button), then closes.
+    fn handle_close(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested()) && self.model.session_active() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if !self.close_after_stop {
+                self.model.stop();
+                // Stop refuses while an app install is changing the guest; then the window stays.
+                self.close_after_stop = self.model.session.as_ref().is_some_and(|s| s.stopping());
+                if self.close_after_stop {
+                    let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
+                    self.model.notice = Some((format!("Shutting down {name}, then closing…"), Instant::now()));
+                }
+            }
+        }
+        if self.close_after_stop && !self.model.session_active() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     fn background_work(&mut self, ctx: &egui::Context) {
@@ -321,6 +343,7 @@ impl eframe::App for App {
         // Before the frame's root Ui exists, so it picks up a changed theme.
         self.apply_theme(ctx);
         self.background_work(ctx);
+        self.handle_close(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

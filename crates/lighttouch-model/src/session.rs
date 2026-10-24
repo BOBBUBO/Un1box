@@ -288,6 +288,11 @@ impl Session {
     }
 
     /// Ask iOS to shut down cleanly.
+    /// Whether a shutdown has been asked for.
+    pub fn stopping(&self) -> bool {
+        self.stop_requested.is_some()
+    }
+
     pub fn stop(&mut self) {
         if self.phase.active() && self.stop_requested.is_none() {
             self.stop_requested = Some(Instant::now());
