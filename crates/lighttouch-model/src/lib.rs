@@ -195,8 +195,19 @@ impl Model {
             }
         }
         let current = self.current().map(|d| (d.id.clone(), d.board.clone(), d.build.clone()));
-        let socket = self.session.as_ref().filter(|s| s.phase.active()).and_then(|s| s.usb_socket.clone());
-        self.store.follow(current.as_ref().map(|(i, b, v)| (i.as_str(), b.as_str(), v.as_str())), socket.as_deref());
+        let live = self.session.as_ref().filter(|s| s.phase.active());
+        let socket = live.and_then(|s| s.usb_socket.clone());
+        let usb_problem = live.and_then(|s| {
+            s.usb_error.clone().or_else(|| {
+                (!self.resources.usbmuxd().is_file())
+                    .then(|| "App installs aren't included in this build (its USB bridge is missing).".to_string())
+            })
+        });
+        self.store.follow(
+            current.as_ref().map(|(i, b, v)| (i.as_str(), b.as_str(), v.as_str())),
+            socket.as_deref(),
+            usb_problem.as_deref(),
+        );
         self.store.tick();
         if self.notice.as_ref().is_some_and(|(_, at)| at.elapsed() > Duration::from_secs(4)) {
             self.notice = None;

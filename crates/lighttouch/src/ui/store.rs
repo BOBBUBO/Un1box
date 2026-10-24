@@ -51,7 +51,7 @@ fn header(app: &mut App, ui: &mut Ui) {
             ui.label(widgets::muted(&p, subtitle));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let connected = app.model.store.guest_connected();
+            let connected = app.model.store.guest_ready();
             let more = widgets::icon_button(ui, &p, icons::MORE, "More");
             egui::Popup::menu(&more).show(|ui| {
                 ui.set_min_width(200.0);
@@ -143,11 +143,11 @@ fn status_cards(app: &mut App, ui: &mut Ui) {
         });
         ui.add_space(12.0);
     }
-    if !app.model.store.guest_connected() {
-        let text = if app.model.session_active() {
-            "Waiting for the device to finish starting before apps can be installed."
-        } else {
-            "You can browse now. Start the device to install apps."
+    if !app.model.store.guest_ready() {
+        let text = match (&app.model.store.usb_problem, app.model.session_active()) {
+            (Some(problem), true) => problem.clone(),
+            (None, true) => "Apps can be installed once iOS has finished starting.".to_string(),
+            (_, false) => "You can browse now. Start the device to install apps.".to_string(),
         };
         ui.horizontal(|ui| {
             ui.label(widgets::icon_text(icons::INFO, 16.0).color(p.on_surface_variant));
@@ -325,7 +325,7 @@ fn details(app: &mut App, ui: &mut Ui) {
     });
     ui.add_space(14.0);
     let store = &app.model.store;
-    let ready = store.candidate.is_some() && store.guest_connected() && !store.installing();
+    let ready = store.candidate.is_some() && store.guest_ready() && !store.installing();
     ui.horizontal(|ui| {
         if widgets::primary_enabled(ui, &p, if installed.is_some() { "Reinstall" } else { "Install" }, ready).clicked()
         {

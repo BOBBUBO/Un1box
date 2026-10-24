@@ -22,9 +22,19 @@ pub fn main(args: &[String]) -> i32 {
             return 64;
         }
     };
+    // The USB bridge listens before the engine starts (the engine dials it when the guest brings USB up), and its
+    // address goes into the environment before this process has other threads.
+    let usb = parsed.usb.as_ref().map(|usb| {
+        let bridge = lighttouch_services::bridge::Bridge::start(&usb.daemon, &usb.pairing, &usb.log);
+        if let Ok(bridge) = &bridge {
+            // SAFETY: single-threaded so far.
+            unsafe { std::env::set_var("IT_USB_TCP", &bridge.guest_socket) };
+        }
+        bridge
+    });
     let events = spawn_event_writer();
     let commands = spawn_command_reader();
-    match run(parsed, &events, commands) {
+    match run(parsed, &events, commands, usb) {
         Ok(outcome) => {
             let _ = events.send(Event::Exit { clean: outcome.clean, dirty: outcome.dirty, message: outcome.message });
             drop(events);
@@ -104,7 +114,12 @@ unsafe extern "C" fn frame_listener(opaque: *mut std::ffi::c_void, _sequence: u6
     signal.ready.notify_one();
 }
 
-fn run(args: WorkerArgs, events: &Sender<Event>, commands: Receiver<Command>) -> Result<Outcome, String> {
+fn run(
+    args: WorkerArgs,
+    events: &Sender<Event>,
+    commands: Receiver<Command>,
+    usb: Option<lighttouch_services::Result<lighttouch_services::bridge::Bridge>>,
+) -> Result<Outcome, String> {
     let library = Library::open(&args.library).map_err(|e| format!("open the device library: {e}"))?;
     let record = library.record(&args.record).map_err(|e| e.to_string())?;
     eprintln!("session: {} ({} {}), recover={}", record.name, record.board, record.build, args.recover);
@@ -151,22 +166,18 @@ fn run(args: WorkerArgs, events: &Sender<Event>, commands: Receiver<Command>) ->
         audio: args.audio,
         headphones,
     };
-    // The USB bridge listens before the engine starts: the engine dials it when the guest brings USB up.
-    let _bridge = args.usb.as_ref().and_then(|usb| {
-        match lighttouch_services::bridge::Bridge::start(&usb.daemon, &usb.pairing, &usb.log) {
-            Ok(bridge) => {
-                // SAFETY: no other thread reads the environment yet.
-                unsafe { std::env::set_var("IT_USB_TCP", &bridge.guest_socket) };
-                let _ = events.send(Event::Usb { socket: Some(bridge.mux_socket.clone()), error: None });
-                Some(bridge)
-            }
-            Err(e) => {
-                eprintln!("usb: {e}");
-                let _ = events.send(Event::Usb { socket: None, error: Some(e.to_string()) });
-                None
-            }
+    let _bridge = match usb {
+        Some(Ok(bridge)) => {
+            let _ = events.send(Event::Usb { socket: Some(bridge.mux_socket.clone()), error: None });
+            Some(bridge)
         }
-    });
+        Some(Err(e)) => {
+            eprintln!("usb: {e}");
+            let _ = events.send(Event::Usb { socket: None, error: Some(e.to_string()) });
+            None
+        }
+        None => None,
+    };
     let runtime = Arc::new(Runtime::create(device, &options).map_err(|e| format!("Couldn't start the engine: {e}"))?);
 
     let mut writer = FrameWriter::open(&args.frames).map_err(|e| format!("frame memory: {e}"))?;

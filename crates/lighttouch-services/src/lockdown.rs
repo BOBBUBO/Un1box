@@ -82,10 +82,14 @@ fn tls(io: Box<dyn Io>, record: &PairRecord, ios_major: u32) -> Result<SslStream
     builder.set_verify(SslVerifyMode::NONE);
     builder.set_security_level(0);
     builder.set_min_proto_version(Some(SslVersion::TLS1))?;
-    if ios_major < 5 {
+    // Before iOS 10, lockdownd's TLS fails on newer versions and ECDHE key exchange (iOS 5.1.1 closes the
+    // connection); TLS 1.0 with RSA key exchange works on every version LightTouch runs.
+    if ios_major < 10 {
         builder.set_max_proto_version(Some(SslVersion::TLS1))?;
+        builder.set_cipher_list("ALL:!aNULL:!eNULL:!kECDHE:@SECLEVEL=0")?;
+    } else {
+        builder.set_cipher_list("ALL:!aNULL:!eNULL:@SECLEVEL=0")?;
     }
-    builder.set_cipher_list("ALL:!aNULL:!eNULL:@SECLEVEL=0")?;
     // Old iOS predates the renegotiation extension (RFC 5746); OpenSSL 3 refuses such servers unless allowed
     // (SSL_OP_LEGACY_SERVER_CONNECT, which the crate doesn't name).
     builder.set_options(openssl::ssl::SslOptions::from_bits_retain(0x4));

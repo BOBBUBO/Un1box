@@ -85,6 +85,8 @@ pub struct Store {
     pub installed: HashMap<String, String>,
     pub job: Option<InstallJob>,
     pub crash: Option<String>,
+    /// Why the running device has no USB link for installs.
+    pub usb_problem: Option<String>,
     icons: HashMap<String, Icon>,
     guest_socket: Option<PathBuf>,
     cancel: Arc<AtomicBool>,
@@ -135,6 +137,7 @@ impl Store {
             installed: HashMap::new(),
             job: None,
             crash: None,
+            usb_problem: None,
             icons: HashMap::new(),
             guest_socket: None,
             cancel: Arc::new(AtomicBool::new(false)),
@@ -159,13 +162,15 @@ impl Store {
         self.job.as_ref().is_some_and(|j| j.active() && j.mutating)
     }
 
-    /// Whether app installs can reach a guest right now.
-    pub fn guest_connected(&self) -> bool {
-        self.guest_socket.is_some()
+    /// Whether app installs can reach the guest: it has attached over USB and answered.
+    pub fn guest_ready(&self) -> bool {
+        self.guest_socket.is_some() && self.confirmed
     }
 
-    /// Follow the current device (`record`, with its board and build) and its running guest's usbmux socket.
-    pub fn follow(&mut self, record: Option<(&str, &str, &str)>, socket: Option<&Path>) {
+    /// Follow the current device (`record`, with its board and build), its running guest's usbmux socket, and why
+    /// there is no USB link when there can't be one (`usb_problem`).
+    pub fn follow(&mut self, record: Option<(&str, &str, &str)>, socket: Option<&Path>, usb_problem: Option<&str>) {
+        self.usb_problem = usb_problem.map(str::to_string);
         let (id, board, build) = record.unwrap_or(("", "", ""));
         if id != self.record {
             self.record = id.to_string();
