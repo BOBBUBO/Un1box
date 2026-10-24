@@ -37,6 +37,9 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${LT_MAC:=}"                                                                   # user@host of the Mac
 : "${LT_DEBUGGABLE:=true}"                       # false: a non-debuggable APK (release; GrapheneOS AOT)
 : "${LT_PROFILEABLE:=false}"                     # true: simpleperf may attach from adb shell (perf builds)
+: "${LT_ENGINE_PGO:=$LT_INPUTS/backend/pgo/engine-arm64.profdata}"   # Android engine PGO profile; off: none
+# LT_ENGINE_CFLAGS / LT_ENGINE_LDFLAGS: added to the engine's configure (e.g. -fprofile-generate for a PGO
+# profile run); with LT_ENGINE_VARIANT=NAME the Android engine builds in its own android-engine-arm64-NAME.
 : "${LT_MAC_DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"
 : "${LT_MAC_IPAD_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk}"         # expanded on the Mac
 : "${LT_MAC_ARMV6_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.1.3.sdk}"       # expanded on the Mac
@@ -66,7 +69,8 @@ configure_engine() {
         ${PCLIBDIR:+"PKG_CONFIG_LIBDIR=$PCLIBDIR"} "$QEMU_IOS/configure" --target-list=arm-softmmu --without-default-features --without-default-devices \
         --with-devices-arm=portable --enable-tcg --enable-pixman --enable-gcrypt --python=/usr/bin/python3 \
         --disable-docs --disable-tools --disable-werror --disable-pie --audio-drv-list= \
-        "--extra-cflags=-fPIC -DQEMU_IOS_PORTABLE_CRYPTO" "--extra-ldflags=-L$deps/lib" "$@" \
+        "--extra-cflags=-fPIC -DQEMU_IOS_PORTABLE_CRYPTO${LT_ENGINE_CFLAGS:+ $LT_ENGINE_CFLAGS}" \
+        "--extra-ldflags=-L$deps/lib${LT_ENGINE_LDFLAGS:+ $LT_ENGINE_LDFLAGS}" "$@" \
         > "$dir/configure.out" 2>&1) || { tail -20 "$dir/configure.out" >&2; exit 1; }
 }
 # Link qemu-system-arm keeping its response file, then turn it into libqemu-arm.so.
@@ -102,11 +106,25 @@ build_linux() {
 
 build_android_engine() {
     log "android-engine (arm64-v8a)"
-    local deps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" dir="$OBJ/android-engine-arm64"
+    local deps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" dir="$OBJ/android-engine-arm64${LT_ENGINE_VARIANT:+-$LT_ENGINE_VARIANT}"
     need "$deps" "Android engine dependency prefix"
     need "$LT_ENGINE_KIT/notices" "engine notice bundle"
     need "$NDK_BIN" "Android NDK $ANDROID_NDK_VERSION"
     PCLIBDIR="$LT_INPUTS/backend/crypto/arm64-v8a/prefix/lib/pkgconfig:$deps/lib/pkgconfig"
+    # Profile-guided optimization from a gameplay profile (docs/BUILDING.md, "Engine profile"): clang lays the
+    # engine's hot paths out together. A different profile (or none) reconfigures the engine.
+    local pgo="" stamp="none"
+    if [ "$LT_ENGINE_PGO" != off ] && [ -f "$LT_ENGINE_PGO" ] && [ -z "$LT_ENGINE_VARIANT" ]; then
+        pgo="-fprofile-use=$LT_ENGINE_PGO -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin"
+        stamp=$(sha256sum "$LT_ENGINE_PGO" | cut -c1-16)
+    fi
+    if [ -f "$dir/build.ninja" ] && [ "$(cat "$dir/pgo-profile" 2>/dev/null || echo none)" != "$stamp" ]; then
+        log "engine profile changed ($stamp): reconfiguring"
+        rm -rf "$dir"
+    fi
+    mkdir -p "$dir"; echo "$stamp" > "$dir/pgo-profile"
+    LT_ENGINE_CFLAGS="${LT_ENGINE_CFLAGS:+$LT_ENGINE_CFLAGS }$pgo" \
+    LT_ENGINE_LDFLAGS="${LT_ENGINE_LDFLAGS:+$LT_ENGINE_LDFLAGS }${pgo:+${pgo%% *} -Wl,-z,keep-text-section-prefix}" \
     configure_engine "$dir" "$deps" "$PCLIBDIR" \
         --cross-prefix= --host-cc=/usr/bin/cc --cpu=aarch64 \
         --cc="$NDK_BIN/aarch64-linux-android29-clang" --cxx="$NDK_BIN/aarch64-linux-android29-clang++" \
