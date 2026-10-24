@@ -31,7 +31,7 @@ impl std::fmt::Display for DownloadError {
 
 impl std::error::Error for DownloadError {}
 
-fn agent(read_timeout: Duration) -> ureq::Agent {
+pub(crate) fn agent(read_timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         .user_agent(USER_AGENT)
         .timeout_connect(Some(Duration::from_secs(15)))

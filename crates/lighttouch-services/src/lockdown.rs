@@ -120,15 +120,13 @@ pub struct Lockdown {
     record: Option<PairRecord>,
     /// The guest's iOS version.
     pub version: (u32, u32, u32),
-    timeout: Duration,
 }
 
 impl Lockdown {
     /// Connect and check that lockdownd answers. No session yet: only public values can be read.
     pub fn connect(mux: &Mux, device: &MuxDevice, timeout: Duration) -> Result<Self> {
         let conn = Conn::Plain(mux.connect(device, PORT, timeout)?);
-        let mut lockdown =
-            Self { conn, mux: mux.clone(), device: device.clone(), record: None, version: (0, 0, 0), timeout };
+        let mut lockdown = Self { conn, mux: mux.clone(), device: device.clone(), record: None, version: (0, 0, 0) };
         let reply = lockdown.request("QueryType", Dictionary::new())?;
         if string(&reply, "Type").as_deref() != Some("com.apple.mobile.lockdown") {
             return Err(Error("the guest's lockdown service didn't identify itself".into()));
@@ -207,14 +205,14 @@ impl Lockdown {
     }
 
     /// Start a service and connect to it (inside TLS if it asks for that).
-    pub fn service(&mut self, name: &str) -> Result<Conn> {
+    pub fn service(&mut self, name: &str, timeout: Duration) -> Result<Conn> {
         let reply = self.request("StartService", Dictionary::from_iter([("Service", Value::from(name))]))?;
         let port = reply
             .get("Port")
             .and_then(|v| v.as_unsigned_integer())
             .filter(|p| *p > 0 && *p <= u16::MAX as u64)
             .ok_or_else(|| Error(format!("the guest didn't start {name}")))? as u16;
-        let conn = Conn::Plain(self.mux.connect(&self.device, port, self.timeout)?);
+        let conn = Conn::Plain(self.mux.connect(&self.device, port, timeout)?);
         if reply.get("EnableServiceSSL").and_then(|v| v.as_boolean()).unwrap_or(false) {
             let record = self.record.as_ref().ok_or("a secure service needs a session")?;
             return conn.into_tls(record, self.version.0);

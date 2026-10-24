@@ -14,7 +14,7 @@ use lighttouch_core::library::{ImportSource, Library, sha256_file};
 use lighttouch_core::paths::{DataDirs, Resources, data_root};
 use lighttouch_core::protocol::{Command, Event, WorkerArgs};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
@@ -104,7 +104,13 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
         None => Vec::new(),
     };
     let frames = FrameReader::create(&segment_name()).map_err(|e| format!("frame memory: {e}"))?;
-    let services = args.iter().any(|a| a == "--services");
+    let action = match (option(args, "--install"), option(args, "--store")) {
+        (Some(path), _) => Some(ServiceAction::Install(PathBuf::from(path))),
+        (_, Some(query)) => Some(ServiceAction::Store(query)),
+        _ => args.iter().any(|a| a == "--services").then_some(ServiceAction::Report),
+    };
+    let services = action.is_some();
+    let action = action.unwrap_or(ServiceAction::Report);
     let usb = if services { lighttouch_model::usb_args(dirs, &Resources::locate(), &record) } else { None };
     if services && usb.is_none() {
         return Err("--services needs usbmuxd-qemu (LIGHTTOUCH_USBMUXD)".into());
@@ -170,7 +176,8 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             }
             Ok(Event::Usb { socket: Some(socket), .. }) => {
                 eprintln!("[{:6.1}] usb bridge at {}", started.elapsed().as_secs_f64(), socket.display());
-                std::thread::spawn(move || probe_services(socket, started));
+                let (action, scratch) = (action.clone(), dirs.cache().join("services"));
+                std::thread::spawn(move || probe_services(socket, started, action, scratch));
             }
             Ok(Event::Exit { clean, dirty, message }) => {
                 eprintln!("[{:6.1}] exit clean={clean} dirty={dirty} {message}", started.elapsed().as_secs_f64());
@@ -269,41 +276,131 @@ fn prepare(dirs: DataDirs, args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Wait for the guest to attach over USB, then open a lockdown session and report what it says.
-fn probe_services(socket: PathBuf, started: Instant) {
-    use lighttouch_services::lockdown::Lockdown;
-    use lighttouch_services::usbmux::Mux;
+/// What `run` does over the USB link once it is up.
+#[derive(Clone)]
+enum ServiceAction {
+    Report,
+    Install(PathBuf),
+    Store(String),
+}
+
+/// Once the USB link is up: connect to the guest, report it, its apps and its newest crash report, then install a
+/// local IPA or the first Legacy Store result for a query.
+fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scratch: PathBuf) {
+    use lighttouch_catalog::{ipa, store};
+    use lighttouch_services::apps::{Guest, InstallProgress};
     let at = || started.elapsed().as_secs_f64();
-    let mux = Mux::new(socket);
-    let device = loop {
-        match mux.devices() {
-            Ok(list) if !list.is_empty() => break list[0].clone(),
-            Ok(_) => {}
-            Err(e) => eprintln!("[{:6.1}] services: {e}", at()),
-        }
+    let say = |text: String| eprintln!("[{:6.1}] services: {text}", at());
+    // Wait for the guest to attach (it boots first), then for its session.
+    let mux = lighttouch_services::usbmux::Mux::new(&socket);
+    while mux.devices().map(|l| l.is_empty()).unwrap_or(true) {
         if at() > 180.0 {
-            eprintln!("[{:6.1}] services: the guest never attached", at());
-            return;
+            return say("the guest never attached".into());
         }
-        std::thread::sleep(Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    say("attached".into());
+    let mut guest = match Guest::connect(&socket, Duration::from_secs(60)) {
+        Ok(guest) => guest,
+        Err(e) => return say(e.to_string()),
     };
-    eprintln!("[{:6.1}] services: attached {} (id {})", at(), device.udid, device.id);
-    for _ in 0..20 {
-        match Lockdown::session(&mux, &device, Duration::from_secs(15)) {
-            Ok(mut lockdown) => {
-                let mut value = |key: &str| lockdown.string_value(key).unwrap_or_else(|e| format!("<{e}>"));
-                eprintln!(
-                    "[{:6.1}] services: session up: {} iOS {} ({}), \"{}\"",
-                    at(),
-                    value("ProductType"),
-                    value("ProductVersion"),
-                    value("BuildVersion"),
-                    value("DeviceName")
-                );
-                return;
+    let target = match guest.target() {
+        Ok(t) => t,
+        Err(e) => return say(format!("target: {e}")),
+    };
+    say(format!("{} iOS {} {} family {}", target.product_type, target.ios, target.arch, target.family));
+    match guest.installed() {
+        Ok(apps) => {
+            say(format!("{} user apps", apps.len()));
+            for app in apps {
+                eprintln!("    {} {:?} {:?}", app.bundle_id, app.name, app.short_version.or(app.version));
             }
-            Err(e) => eprintln!("[{:6.1}] services: {e}", at()),
         }
-        std::thread::sleep(Duration::from_secs(3));
+        Err(e) => say(format!("apps: {e}")),
+    }
+    match guest.last_crash() {
+        Ok(Some((name, text))) => say(format!("newest crash {name} ({} bytes)", text.len())),
+        Ok(None) => say("no crash reports".into()),
+        Err(e) => say(format!("crash reports: {e}")),
+    }
+    std::fs::create_dir_all(&scratch).ok();
+    let (source, downloaded) = match action {
+        ServiceAction::Report => return,
+        ServiceAction::Install(path) => (path, None),
+        ServiceAction::Store(query) => {
+            let apps = match store::search(&query, &target) {
+                Ok(apps) => apps,
+                Err(e) => return say(format!("store: {e}")),
+            };
+            say(format!("store: {} results for {query:?}", apps.len()));
+            let Some(app) = apps.into_iter().find(|a| a.incompatibility().is_none()) else {
+                return say("store: nothing compatible".into());
+            };
+            say(format!(
+                "store: {} {} ({}), {:?} bytes",
+                app.name,
+                app.version.clone().unwrap_or_default(),
+                app.ipa_id,
+                app.size
+            ));
+            match store::versions(&app, &target) {
+                Ok(copies) => say(format!(
+                    "store: {} versions run here, newest {:?}",
+                    copies.len(),
+                    copies.first().map(|c| &c.version)
+                )),
+                Err(e) => say(format!("store: versions: {e}")),
+            }
+            let mut last = 0;
+            match store::download(&app, &target, &scratch, &mut |done, total| {
+                let percent = total.map(|t| done * 100 / t.max(1)).unwrap_or(0);
+                if percent / 25 != last / 25 {
+                    say(format!("downloading {percent}%"));
+                }
+                last = percent;
+                true
+            }) {
+                Ok(path) => {
+                    let dir = path.parent().map(Path::to_path_buf);
+                    (path, dir)
+                }
+                Err(e) => return say(format!("store: download: {e}")),
+            }
+        }
+    };
+    let copy = scratch.join("install.ipa");
+    let result = ipa::prepare(&source, &copy, &target).map_err(|e| e.to_string()).and_then(|info| {
+        say(format!(
+            "checked {} {} ({:?}), {} bytes unpacked",
+            info.name, info.bundle_id, info.short_version, info.unpacked
+        ));
+        let mut last = String::new();
+        guest
+            .install(&copy, &info.bundle_id, Some(info.unpacked), &mut |p| {
+                let line = match p {
+                    InstallProgress::Uploading { sent, total } => {
+                        format!("uploading {}%", sent * 100 / total.max(1) / 25 * 25)
+                    }
+                    InstallProgress::Submitted => "submitted".into(),
+                    InstallProgress::Installing { status, percent } => format!("{status} {percent:?}"),
+                    InstallProgress::Unpacking { done, total } => {
+                        format!("unpacking {}%", done * 100 / total.max(1) / 25 * 25)
+                    }
+                };
+                if line != last {
+                    say(line.clone());
+                    last = line;
+                }
+                true
+            })
+            .map_err(|e| e.to_string())
+    });
+    let _ = std::fs::remove_file(&copy);
+    if let Some(dir) = downloaded {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    match result {
+        Ok(app) => say(format!("installed {app:?}")),
+        Err(e) => say(format!("install failed: {e}")),
     }
 }

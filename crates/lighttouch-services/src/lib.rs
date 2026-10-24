@@ -3,7 +3,10 @@
 //! The engine dials the QEMU-only usbmuxd (`bridge`), which serves usbmux clients on a private socket. Over a
 //! usbmux connection (`usbmux`) this crate speaks lockdown (`lockdown`, with the TLS session old iOS needs), and the
 //! services lockdown starts: AFC (`afc`) and the installation proxy (`instproxy`).
+pub mod afc;
+pub mod apps;
 pub mod bridge;
+pub mod instproxy;
 pub mod lockdown;
 pub mod usbmux;
 
