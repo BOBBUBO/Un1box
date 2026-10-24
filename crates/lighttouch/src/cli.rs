@@ -1,0 +1,272 @@
+//! Developer commands, mainly for headless tests:
+//!
+//! ```text
+//! lighttouch list
+//! lighttouch import <.itbase | folder> [--sha256 HEX] [--name NAME] [--rom FILE] [--package FILE]
+//! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE]
+//! ```
+//!
+//! `run` starts a worker like the app does, prints its events, takes an optional screenshot of the last frame, then
+//! shuts iOS down cleanly. A script line is `<seconds> <command json>`, e.g. `40 {"cmd":"button","button":0,"down":true}`.
+use lighttouch_core::frames::{FrameReader, segment_name};
+use lighttouch_core::library::{ImportSource, Library, sha256_file};
+use lighttouch_core::paths::{DataDirs, Resources, data_root};
+use lighttouch_core::protocol::{Command, Event, WorkerArgs};
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, Stdio};
+use std::time::{Duration, Instant};
+
+pub fn handles(command: &str) -> bool {
+    matches!(command, "list" | "import" | "run")
+}
+
+pub fn main(args: &[String]) -> i32 {
+    let dirs = DataDirs::new(data_root());
+    let result = match args[0].as_str() {
+        "list" => list(&dirs),
+        "import" => import(&dirs, &args[1..]),
+        "run" => run(&dirs, &args[1..]),
+        _ => unreachable!(),
+    };
+    match result {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    }
+}
+
+fn option(args: &[String], name: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
+fn list(dirs: &DataDirs) -> Result<(), String> {
+    let library = Library::open(&dirs.library()).map_err(|e| e.to_string())?;
+    for r in library.records().map_err(|e| e.to_string())? {
+        println!(
+            "{}{} {:<28} {} {}{}{}",
+            if r.selected { "*" } else { " " },
+            r.id,
+            r.name,
+            r.board,
+            r.build,
+            if r.dirty { " (needs recovery)" } else { "" },
+            if r.guest_package_path.is_some() {
+                ""
+            } else {
+                " (no guest tools)"
+            }
+        );
+    }
+    Ok(())
+}
+
+fn import(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
+    let path = PathBuf::from(args.first().ok_or("import needs a path")?);
+    let sha256 = match option(args, "--sha256") {
+        Some(sha) => Some(sha),
+        None if path.is_file() => {
+            eprintln!("hashing {}", path.display());
+            Some(sha256_file(&path).map_err(|e| e.to_string())?)
+        }
+        None => None,
+    };
+    let source = ImportSource {
+        path,
+        sha256,
+        name: option(args, "--name"),
+        bootrom: option(args, "--rom").map(PathBuf::from),
+        guest_package: option(args, "--package").map(PathBuf::from),
+    };
+    let library = Library::open(&dirs.library()).map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let mut last = String::new();
+    let record = library
+        .import(&source, &mut |phase, done, total| {
+            let line = format!(
+                "{phase} {}%",
+                if total > 0 { done * 100 / total } else { 0 }
+            );
+            if line != last {
+                eprintln!("{line}");
+                last = line;
+            }
+            true
+        })
+        .map_err(|e| e.to_string())?;
+    println!(
+        "added {} ({}) in {:.1} s",
+        record.name,
+        record.id,
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
+fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
+    let record = args.first().ok_or("run needs a record id")?.clone();
+    let seconds: f64 = option(args, "--seconds")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120.0);
+    let shot = option(args, "--shot").map(PathBuf::from);
+    let script = match option(args, "--script") {
+        Some(path) => {
+            parse_script(&std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?)?
+        }
+        None => Vec::new(),
+    };
+    let frames = FrameReader::create(&segment_name()).map_err(|e| format!("frame memory: {e}"))?;
+    let worker_args = WorkerArgs {
+        library: dirs.library(),
+        record,
+        engine: Resources::locate().engine(),
+        frames: frames.name().to_string(),
+        recover: args.iter().any(|a| a == "--recover"),
+        audio: !args.iter().any(|a| a == "--no-audio"),
+        headphones: true,
+    };
+    let mut child = spawn_worker(&worker_args)?;
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<Event>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(event) = Event::parse(&line) {
+                if tx.send(event).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    let started = Instant::now();
+    let mut stop_sent = false;
+    let mut script = script.into_iter().peekable();
+    let mut frame_count = 0u64;
+    let mut last_frame_log = Instant::now();
+    let mut last_status_log = Instant::now();
+    loop {
+        while let Some((at, _)) = script.peek() {
+            if started.elapsed().as_secs_f64() < *at {
+                break;
+            }
+            let (_, command) = script.next().unwrap();
+            send(&mut stdin, &command);
+        }
+        if !stop_sent && started.elapsed().as_secs_f64() >= seconds {
+            if let Some(path) = &shot {
+                save_frame(&frames, path)?;
+            }
+            eprintln!(
+                "[{:6.1}] requesting shutdown",
+                started.elapsed().as_secs_f64()
+            );
+            send(&mut stdin, &Command::Stop);
+            stop_sent = true;
+        }
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(Event::Frame { .. }) => {
+                frame_count += 1;
+                if last_frame_log.elapsed() >= Duration::from_secs(10) {
+                    eprintln!(
+                        "[{:6.1}] {frame_count} frames",
+                        started.elapsed().as_secs_f64()
+                    );
+                    last_frame_log = Instant::now();
+                }
+            }
+            Ok(Event::Status(status)) => {
+                if last_status_log.elapsed() >= Duration::from_secs(10) {
+                    eprintln!(
+                        "[{:6.1}] status {:?}",
+                        started.elapsed().as_secs_f64(),
+                        status
+                    );
+                    last_status_log = Instant::now();
+                }
+            }
+            Ok(Event::Exit {
+                clean,
+                dirty,
+                message,
+            }) => {
+                eprintln!(
+                    "[{:6.1}] exit clean={clean} dirty={dirty} {message}",
+                    started.elapsed().as_secs_f64()
+                );
+                break;
+            }
+            Ok(event) => eprintln!(
+                "[{:6.1}] {}",
+                started.elapsed().as_secs_f64(),
+                event.to_line().trim_end()
+            ),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    let status = child.wait().map_err(|e| e.to_string())?;
+    eprintln!("worker exited with {status}; {frame_count} frames");
+    Ok(())
+}
+
+pub fn spawn_worker(args: &WorkerArgs) -> Result<Child, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    std::process::Command::new(exe)
+        .arg("worker")
+        .arg(serde_json::to_string(args).unwrap())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("start the session process: {e}"))
+}
+
+fn send(stdin: &mut ChildStdin, command: &Command) {
+    let _ = stdin.write_all(command.to_line().as_bytes());
+    let _ = stdin.flush();
+}
+
+fn parse_script(text: &str) -> Result<Vec<(f64, Command)>, String> {
+    let mut lines = Vec::new();
+    for line in text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+    {
+        let (at, json) = line
+            .split_once(' ')
+            .ok_or_else(|| format!("bad script line: {line}"))?;
+        let at: f64 = at.parse().map_err(|_| format!("bad time: {line}"))?;
+        let command: Command = serde_json::from_str(json).map_err(|e| format!("{e}: {line}"))?;
+        lines.push((at, command));
+    }
+    Ok(lines)
+}
+
+/// Write the newest frame as a binary PPM.
+fn save_frame(frames: &FrameReader, path: &PathBuf) -> Result<(), String> {
+    let mut pixels = Vec::new();
+    let meta = frames.read(0, &mut pixels).ok_or("no frame to save")?;
+    let mut out = format!("P6\n{} {}\n255\n", meta.width, meta.height).into_bytes();
+    for row in pixels
+        .chunks(meta.stride as usize)
+        .take(meta.height as usize)
+    {
+        for px in row[..meta.width as usize * 4].chunks_exact(4) {
+            out.extend_from_slice(&[px[2], px[1], px[0]]);
+        }
+    }
+    std::fs::write(path, out).map_err(|e| e.to_string())?;
+    eprintln!(
+        "saved {}x{} frame to {}",
+        meta.width,
+        meta.height,
+        path.display()
+    );
+    Ok(())
+}

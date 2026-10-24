@@ -1,0 +1,14 @@
+[package]
+name = "lighttouch-sys"
+description = "Raw bindings to the shared LightTouch C++ core (Portable/), compiled from source"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "lighttouch_portable"
+build = "build.rs"
+
+[dependencies]
+libz-sys = { version = "1", default-features = false, features = ["static", "libc"] }
+
+[build-dependencies]
+cc = "1"

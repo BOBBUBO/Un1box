@@ -1,0 +1,15 @@
+[package]
+name = "lighttouch"
+description = "LightTouch for Linux, Windows and macOS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lighttouch"
+path = "src/main.rs"
+
+[dependencies]
+lighttouch-core = { path = "../lighttouch-core" }
+cpal = "0.18"
+serde_json = "1"

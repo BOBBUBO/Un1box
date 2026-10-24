@@ -23,3 +23,6 @@ docs/*
 !docs/COMPATIBILITY.md
 scripts/build.env
 *.profraw
+
+# Rust desktop app
+/target/

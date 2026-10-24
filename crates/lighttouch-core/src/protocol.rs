@@ -1,0 +1,147 @@
+//! The worker protocol: one JSON object per line. Commands go to the worker's stdin, events come from its stdout,
+//! and its stderr is the session log. Frames travel separately through shared memory (`frames`).
+use crate::runtime::{BoardInfo, Contact, State};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// How the UI starts a worker: `lighttouch worker <json WorkerArgs>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerArgs {
+    pub library: PathBuf,
+    pub record: String,
+    pub engine: PathBuf,
+    /// Shared-memory segment the UI created for frames.
+    pub frames: String,
+    /// Cold boot state that was not shut down cleanly.
+    #[serde(default)]
+    pub recover: bool,
+    #[serde(default = "yes")]
+    pub audio: bool,
+    #[serde(default)]
+    pub headphones: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+pub enum Command {
+    /// One touch batch; the worker stamps it on arrival.
+    Touch {
+        contacts: Vec<Contact>,
+    },
+    /// 0 Home, 1 Power, 2 Volume up, 3 Volume down.
+    Button {
+        button: u32,
+        down: bool,
+    },
+    Pause {
+        paused: bool,
+    },
+    /// Shut iOS down cleanly.
+    Stop,
+    /// Release every held contact and button (focus loss, resize).
+    CancelInput,
+    Motion {
+        acceleration: Option<[f64; 3]>,
+        gyro: Option<[f64; 3]>,
+    },
+    /// Write the current frame as a BMP.
+    Screenshot {
+        path: PathBuf,
+    },
+    /// A typed guest-agent request (see `lighttouch_sys::LT_GUEST_*`).
+    Guest {
+        operation: u32,
+        argument: String,
+        timeout_ms: u32,
+    },
+    /// Start (with a path) or stop (without) an engine profile recording.
+    Profile {
+        path: Option<PathBuf>,
+    },
+    /// Mute or unmute host audio output without pausing the guest.
+    Mute {
+        muted: bool,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Event {
+    /// Verifying the device's files before boot: bytes hashed so far and in total.
+    Admission {
+        done: u64,
+        total: u64,
+    },
+    Board {
+        info: BoardInfo,
+    },
+    /// The engine started.
+    Started,
+    Status(StatusEvent),
+    /// A new frame is in shared memory.
+    Frame {
+        sequence: u64,
+    },
+    /// A command failed; the session continues.
+    Error {
+        command: String,
+        message: String,
+    },
+    /// The newest touch batch was rejected and every contact released.
+    InputRejected {
+        message: String,
+    },
+    GuestResult {
+        request_id: u64,
+        state: u32,
+        status: i32,
+        output: String,
+    },
+    Screenshot {
+        path: PathBuf,
+    },
+    /// The worker is about to exit. `clean` means iOS confirmed shutdown and the state is clean.
+    Exit {
+        clean: bool,
+        dirty: bool,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct StatusEvent {
+    pub state: State,
+    pub dirty: bool,
+    pub frames: u64,
+    pub engine_ready: bool,
+    pub display_sleeping: bool,
+    pub shutdown_phase: u32,
+    pub guest_shutdown_confirmed: bool,
+    pub storage_failed: bool,
+    /// Process CPU time of the worker, for the performance overlay.
+    pub cpu_ns: u64,
+}
+
+impl Command {
+    pub fn to_line(&self) -> String {
+        let mut line = serde_json::to_string(self).expect("commands serialize");
+        line.push('\n');
+        line
+    }
+}
+
+impl Event {
+    pub fn to_line(&self) -> String {
+        let mut line = serde_json::to_string(self).expect("events serialize");
+        line.push('\n');
+        line
+    }
+
+    pub fn parse(line: &str) -> Option<Self> {
+        serde_json::from_str(line).ok()
+    }
+}
