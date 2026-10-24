@@ -4,7 +4,8 @@
 # prefixes are mounted read-only at /build/{deps-full,crypto,mobile-private-runtime-ui15}, where they
 # were built: their pkg-config files name those paths.
 set -eu
-export LC_ALL=C.UTF-8 MAKEFLAGS=-j4 CMAKE_BUILD_PARALLEL_LEVEL=4
+LT_JOBS=${LT_JOBS:-4}
+export LC_ALL=C.UTF-8 MAKEFLAGS=-j$LT_JOBS CMAKE_BUILD_PARALLEL_LEVEL=$LT_JOBS
 git config --global --add safe.directory '*'
 Q=$QEMU_SOURCE
 [ "$(git -C "$Q" rev-parse HEAD)" = "$EXPECTED_QEMU_REV" ]
@@ -23,7 +24,7 @@ LDFLAGS=-ldl python3 /build/qemu-source/contrib/portable/build-engine.py /build/
 echo "=== FRONTEND"
 cmake -S /src/app/Linux -B /build/frontend -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIGHTTOUCH_QEMU_SOURCE=/build/qemu-source \
     -DLIGHTTOUCH_BUILD_TESTS=ON -DCMAKE_CXX_FLAGS=-DSDL_PIXELFORMAT_BGRX32=SDL_PIXELFORMAT_RGB888
-cmake --build /build/frontend --parallel 4
+cmake --build /build/frontend --parallel "$LT_JOBS"
 echo "=== CTEST"
 ctest --test-dir /build/frontend --output-on-failure
 echo "=== COLLECT"
