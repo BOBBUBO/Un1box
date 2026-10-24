@@ -197,6 +197,10 @@ jobs:
           fi
           cp ci/debug.keystore "$HOME/.android/debug.keystore"
           keytool -list -keystore ci/debug.keystore -storepass android | tail -3
+          SIGNER="$(keytool -list -v -keystore ci/debug.keystore -storepass android -alias androiddebugkey | sed -n 's/.*SHA256: //p' | tr -d ':' | tr 'A-Z' 'a-z')"
+          [ -n "$SIGNER" ] || { echo '::error::the keystore has no androiddebugkey'; exit 1; }
+          echo "LT_SIGNER_SHA256=$SIGNER" >> "$GITHUB_ENV"
+          echo "keystore signer: $SIGNER"
 
       # Configures the whole Gradle build (plugins, dependency verification, the
       # Compose compiler) before the two-hour engine build, so a resolution
@@ -350,6 +354,20 @@ jobs:
             -Pdebuggable="${{ inputs.debuggable }}" \
             :app:assembleDebug
 
+      # AGP signs a debug build with whatever it finds (or makes) at
+      # ~/.android/debug.keystore, which is not the cached key: a run would then
+      # hand out an APK that cannot update the one before it. Sign with this
+      # workflow's keystore instead, and the check step requires the digest.
+      - name: Sign the APK with the workflow's keystore
+        working-directory: Android
+        run: |
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          "$APKSIGNER" sign --ks "$GITHUB_WORKSPACE/ci/debug.keystore" \
+            --ks-pass pass:android --key-pass pass:android --ks-key-alias androiddebugkey \
+            --in "$APK" --out app-debug-signed.apk
+          mv app-debug-signed.apk "$APK"
+
       - name: Check the APK and write provenance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -359,6 +377,12 @@ jobs:
           cp Android/app/build/outputs/apk/debug/app-debug.apk "$APK"
           ls -la "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
+          SIGNED="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" | sed -n 's/.*SHA-256 digest: //p' | head -1)"
+          [ "$SIGNED" = "$LT_SIGNER_SHA256" ] || {
+            echo "::error::the APK carries signer $SIGNED, not this workflow's keystore ($LT_SIGNER_SHA256): a phone could not update its previous install"
+            exit 1
+          }
+          echo "- signer: $SIGNED (the workflow's keystore, so an install updates in place)"
           # check-apk.py targets uncompressed packaging; this APK extracts its
           # libraries so firmwarekit can run out of nativeLibraryDir.
           python3 Android/scripts/check-apk.py "$APK" ||
