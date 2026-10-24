@@ -90,9 +90,9 @@ for _ in range(4):
     print("page swipe dropped, again", flush=True)
 flyer = None
 for n, step in enumerate(steps):
-    if step == "fly":  # hold 0.35 s, let go, until killed after the measurement (by PID)
+    if step == "fly":  # hold 0.25 s, let go 0.5 s (back-to-back holds flew into the ceiling), until killed
         rect = guest_rect(); x, y = gpt(rect, .7, .5)
-        flyer = subprocess.run(["adb", "shell", f"sh -c 'while true; do input swipe {x} {y} {x} {y} 350; done' "
+        flyer = subprocess.run(["adb", "shell", f"sh -c 'while true; do input swipe {x} {y} {x} {y} 250; sleep 0.5; done' "
                                 "> /dev/null 2>&1 & echo $!"], capture_output=True, text=True, check=True).stdout.strip()
     elif isinstance(step, tuple):
         rect = guest_rect()
