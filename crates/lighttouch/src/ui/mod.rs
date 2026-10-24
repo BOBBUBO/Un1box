@@ -142,9 +142,12 @@ impl App {
                     }
                 }
                 Finished::Failed { activity: lighttouch_model::Activity::Preparing(_), message } => {
+                    // Shown on the Prepare page; elsewhere also as a banner, without leaving the page.
+                    if self.page != Page::Prepare {
+                        self.model.error = Some(message.clone());
+                    }
                     self.prepare.error = Some(message);
                     self.prepare.step = prepare::Step::Progress;
-                    self.page = Page::Prepare;
                 }
                 Finished::Failed { message, .. } => {
                     if matches!(self.page, Page::Setup(setup::Step::Creating)) {

@@ -59,6 +59,10 @@ pub struct Session {
     pub last_error: Option<String>,
     pub log_path: PathBuf,
     pub started_at: Instant,
+    /// The guest's usbmux socket for app services, once the USB link is up.
+    pub usb_socket: Option<PathBuf>,
+    /// Why the USB link isn't available.
+    pub usb_error: Option<String>,
     child: Child,
     stdin: Option<ChildStdin>,
     events: Receiver<Event>,
@@ -80,6 +84,7 @@ pub struct StartOptions {
     pub muted: bool,
     pub log_dir: PathBuf,
     pub extra_env: Vec<(String, String)>,
+    pub usb: Option<lighttouch_core::protocol::UsbArgs>,
 }
 
 impl Session {
@@ -99,6 +104,7 @@ impl Session {
             recover: options.recover,
             audio: options.audio,
             headphones: options.headphones,
+            usb: options.usb.clone(),
         };
         std::fs::create_dir_all(&options.log_dir).ok();
         prune_logs(&options.log_dir, 10);
@@ -151,6 +157,8 @@ impl Session {
             last_error: None,
             log_path,
             started_at: Instant::now(),
+            usb_socket: None,
+            usb_error: None,
             child,
             stdin,
             events: rx,
@@ -203,6 +211,10 @@ impl Session {
             Event::Admission { done, total } => self.phase = Phase::Verifying { done, total },
             Event::Board { info } => self.board = Some(info),
             Event::Started => self.phase = Phase::Starting,
+            Event::Usb { socket, error } => {
+                self.usb_socket = socket;
+                self.usb_error = error;
+            }
             Event::Status(status) => {
                 self.stats.cpu(status.cpu_ns);
                 self.status = Some(status);

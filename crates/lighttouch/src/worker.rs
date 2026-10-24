@@ -138,6 +138,22 @@ fn run(args: WorkerArgs, events: &Sender<Event>, commands: Receiver<Command>) ->
         audio: args.audio,
         headphones,
     };
+    // The USB bridge listens before the engine starts: the engine dials it when the guest brings USB up.
+    let _bridge = args.usb.as_ref().and_then(|usb| {
+        match lighttouch_services::bridge::Bridge::start(&usb.daemon, &usb.pairing, &usb.log) {
+            Ok(bridge) => {
+                // SAFETY: no other thread reads the environment yet.
+                unsafe { std::env::set_var("IT_USB_TCP", &bridge.guest_socket) };
+                let _ = events.send(Event::Usb { socket: Some(bridge.mux_socket.clone()), error: None });
+                Some(bridge)
+            }
+            Err(e) => {
+                eprintln!("usb: {e}");
+                let _ = events.send(Event::Usb { socket: None, error: Some(e.to_string()) });
+                None
+            }
+        }
+    });
     let runtime = Arc::new(Runtime::create(device, &options).map_err(|e| format!("Couldn't start the engine: {e}"))?);
 
     let mut writer = FrameWriter::open(&args.frames).map_err(|e| format!("frame memory: {e}"))?;

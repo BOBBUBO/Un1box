@@ -104,8 +104,14 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
         None => Vec::new(),
     };
     let frames = FrameReader::create(&segment_name()).map_err(|e| format!("frame memory: {e}"))?;
+    let services = args.iter().any(|a| a == "--services");
+    let usb = if services { lighttouch_model::usb_args(dirs, &Resources::locate(), &record) } else { None };
+    if services && usb.is_none() {
+        return Err("--services needs usbmuxd-qemu (LIGHTTOUCH_USBMUXD)".into());
+    }
     let worker_args = WorkerArgs {
         library: dirs.library(),
+        usb,
         record,
         engine: Resources::locate().engine(),
         frames: frames.name().to_string(),
@@ -161,6 +167,10 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
                     eprintln!("[{:6.1}] status {:?}", started.elapsed().as_secs_f64(), status);
                     last_status_log = Instant::now();
                 }
+            }
+            Ok(Event::Usb { socket: Some(socket), .. }) => {
+                eprintln!("[{:6.1}] usb bridge at {}", started.elapsed().as_secs_f64(), socket.display());
+                std::thread::spawn(move || probe_services(socket, started));
             }
             Ok(Event::Exit { clean, dirty, message }) => {
                 eprintln!("[{:6.1}] exit clean={clean} dirty={dirty} {message}", started.elapsed().as_secs_f64());
@@ -256,5 +266,44 @@ fn prepare(dirs: DataDirs, args: &[String]) -> Result<(), String> {
             }
         }
         std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// Wait for the guest to attach over USB, then open a lockdown session and report what it says.
+fn probe_services(socket: PathBuf, started: Instant) {
+    use lighttouch_services::lockdown::Lockdown;
+    use lighttouch_services::usbmux::Mux;
+    let at = || started.elapsed().as_secs_f64();
+    let mux = Mux::new(socket);
+    let device = loop {
+        match mux.devices() {
+            Ok(list) if !list.is_empty() => break list[0].clone(),
+            Ok(_) => {}
+            Err(e) => eprintln!("[{:6.1}] services: {e}", at()),
+        }
+        if at() > 180.0 {
+            eprintln!("[{:6.1}] services: the guest never attached", at());
+            return;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    };
+    eprintln!("[{:6.1}] services: attached {} (id {})", at(), device.udid, device.id);
+    for _ in 0..20 {
+        match Lockdown::session(&mux, &device, Duration::from_secs(15)) {
+            Ok(mut lockdown) => {
+                let mut value = |key: &str| lockdown.string_value(key).unwrap_or_else(|e| format!("<{e}>"));
+                eprintln!(
+                    "[{:6.1}] services: session up: {} iOS {} ({}), \"{}\"",
+                    at(),
+                    value("ProductType"),
+                    value("ProductVersion"),
+                    value("BuildVersion"),
+                    value("DeviceName")
+                );
+                return;
+            }
+            Err(e) => eprintln!("[{:6.1}] services: {e}", at()),
+        }
+        std::thread::sleep(Duration::from_secs(3));
     }
 }

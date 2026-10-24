@@ -318,6 +318,7 @@ impl Model {
             muted: self.settings.muted,
             log_dir: self.dirs.logs(),
             extra_env: Vec::new(),
+            usb: usb_args(&self.dirs, &self.resources, &device.id),
         };
         match Session::start(options, self.waker.clone()) {
             Ok(session) => {
@@ -523,4 +524,14 @@ fn chrono_like_stamp() -> String {
     let mo = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if mo <= 2 { 1 } else { 0 };
     format!("{y:04}-{mo:02}-{d:02} at {h:02}.{m:02}.{s:02}")
+}
+
+/// The USB link for a session of `record`, when this build has the bridge.
+pub fn usb_args(dirs: &DataDirs, resources: &Resources, record: &str) -> Option<lighttouch_core::protocol::UsbArgs> {
+    let daemon = resources.usbmuxd();
+    daemon.is_file().then(|| lighttouch_core::protocol::UsbArgs {
+        daemon,
+        pairing: dirs.pairing(record),
+        log: dirs.logs().join(format!("usbmuxd-{}.log", &record[..8.min(record.len())])),
+    })
 }

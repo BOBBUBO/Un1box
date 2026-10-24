@@ -19,6 +19,18 @@ pub struct WorkerArgs {
     pub audio: bool,
     #[serde(default)]
     pub headphones: bool,
+    /// The guest's USB link for app services; `None` boots without a cable.
+    #[serde(default)]
+    pub usb: Option<UsbArgs>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsbArgs {
+    /// The QEMU-only usbmuxd.
+    pub daemon: PathBuf,
+    /// This device record's pairing folder.
+    pub pairing: PathBuf,
+    pub log: PathBuf,
 }
 
 fn yes() -> bool {
@@ -81,6 +93,11 @@ pub enum Event {
     },
     /// The engine started.
     Started,
+    /// The guest USB link: the usbmux socket app services connect to, or why there is none.
+    Usb {
+        socket: Option<PathBuf>,
+        error: Option<String>,
+    },
     Status(StatusEvent),
     /// A new frame is in shared memory.
     Frame {
