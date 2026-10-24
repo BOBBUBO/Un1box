@@ -130,6 +130,7 @@ jobs:
           # Names the APK after what the engine was built with, so several experiments
           # can sit in the same release without being mistaken for each other.
           case "$LT_ENGINE_CFLAGS $LT_ENGINE_CONFIGURE_ARGS" in
+            *profile-generate*) tag="-pgo-collect" ;;
             *profile*) tag="-pgo" ;;
             *b_lto*|*flto*) tag="-lto" ;;
             "") tag="" ;;
