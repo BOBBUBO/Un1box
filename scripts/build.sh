@@ -114,7 +114,7 @@ build_android_engine() {
     # Profile-guided optimization from a gameplay profile (docs/BUILDING.md, "Engine profile"): clang lays the
     # engine's hot paths out together. A different profile (or none) reconfigures the engine.
     local pgo="" stamp="none"
-    if [ "$LT_ENGINE_PGO" != off ] && [ -f "$LT_ENGINE_PGO" ] && [ -z "$LT_ENGINE_VARIANT" ]; then
+    if [ "$LT_ENGINE_PGO" != off ] && [ -f "$LT_ENGINE_PGO" ] && [ -z "${LT_ENGINE_VARIANT:-}" ]; then
         pgo="-fprofile-use=$LT_ENGINE_PGO -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin"
         stamp=$(sha256sum "$LT_ENGINE_PGO" | cut -c1-16)
     fi
