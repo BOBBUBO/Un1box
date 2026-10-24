@@ -27,6 +27,11 @@ GAMES = {
     # lands a screen early ends on QUICK RACE's random track: check with FC_STEPS.
     "asphalt5": [(.857, .313), 10, (.294, .497), 12, (.5, .5), 1.5, (.92, .06), 20, (.5, .5), 8,
                  (.925, .916), 5, (.112, .523), 5, (.112, .523), 50, (.5, .5), 15],
+    # Pixel n81 (iPod touch 4G 6.1.6) Home page 2: Doodle Jump, Epic Citadel / Infinity Blade, IB2, Jetpack, Real Racing
+    "px81-jetpack": [(.62, .31), 50],                     # Jetpack Joyride's animated title (a run left mid-way reopens PAUSED)
+    "px81-jetpack-play": [(.62, .31), 50, (.06, .51), 3, (.5, .5), 3, "fly"],  # RETRY first: Jetpack reopens a run left mid-way as PAUSED
+    "px81-epiccitadel": [(.86, .14), 150],
+    "px81-realracing": [(.86, .31), 60],
     "ltbench-pixel": [(.9, .5, .15, .5), 3, (.857, .505), 30],  # LT Bench, Home page 3 (Pixel layout): one pass
     "ltbench": [(.143, .497), 40],                        # LT Bench, one pass (Poco layout)
     "doodlejump-poco": [(.143, .127), 22],                 # Doodle Jump main menu (Poco layout)
@@ -96,7 +101,7 @@ for n, step in enumerate(steps):
                 f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True, check=True).stdout)
         if len(step) == 4: sh("input", "swipe", *gpt(rect, *step[:2]), *gpt(rect, *step[2:]), "300")
         elif len(step) == 3: sh("input", "swipe", *gpt(rect, *step[:2]), *gpt(rect, *step[:2]), str(step[2]))
-        else: sh("input", "tap", *gpt(rect, *step))
+        else: sh("input", "swipe", *gpt(rect, *step), *gpt(rect, *step), "150")  # a plain tap can be too short for the Pixel
     else: time.sleep(step)
 def save_shot():
     if os.environ.get("FC_SHOT"):

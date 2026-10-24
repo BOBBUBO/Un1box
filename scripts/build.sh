@@ -85,13 +85,17 @@ link_engine() {
 
 build_linux_engine() {
     log "linux-engine"
-    local deps="$LT_INPUTS/backend/deps-linux/prefix"
+    local deps="$LT_INPUTS/backend/deps-linux/prefix" dir="$OBJ/linux-engine${LT_ENGINE_VARIANT:+-$LT_ENGINE_VARIANT}"
     need "$deps" "Linux engine dependency prefix"
-    configure_engine "$OBJ/linux-engine" "$deps" \
+    configure_engine "$dir" "$deps" \
         "$LT_INPUTS/backend/crypto/linux/prefix/lib/pkgconfig:$deps/lib/pkgconfig"
-    link_engine "$OBJ/linux-engine"
+    link_engine "$dir"
+    if [ -n "${LT_ENGINE_VARIANT:-}" ]; then   # a variant stays in its build directory (LT_ENGINE= for runs)
+        echo "$dir/libqemu-arm.so"
+        return
+    fi
     mkdir -p "$OUT/linux"
-    cp "$OBJ/linux-engine/libqemu-arm.so" "$OUT/linux/"
+    cp "$dir/libqemu-arm.so" "$OUT/linux/"
     echo "$OUT/linux/libqemu-arm.so"
 }
 
