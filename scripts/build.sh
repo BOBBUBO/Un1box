@@ -39,7 +39,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${LT_PROFILEABLE:=false}"                     # true: simpleperf may attach from adb shell (perf builds)
 : "${LT_ENGINE_PGO:=$LT_INPUTS/backend/pgo/engine-arm64.profdata}"   # Android engine PGO profile; off: none
 # LT_ENGINE_CFLAGS / LT_ENGINE_LDFLAGS: added to the engine's configure (e.g. -fprofile-generate for a PGO
-# profile run); with LT_ENGINE_VARIANT=NAME the Android engine builds in its own android-engine-arm64-NAME.
+# profile run, which then skips LT_ENGINE_PGO); with LT_ENGINE_VARIANT=NAME the Android engine builds in its own
+# android-engine-arm64-NAME.
 : "${LT_MAC_DEVELOPER_DIR:=/Applications/Xcode.app/Contents/Developer}"
 : "${LT_MAC_IPAD_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk}"         # expanded on the Mac
 : "${LT_MAC_ARMV6_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.1.3.sdk}"       # expanded on the Mac
@@ -114,7 +115,7 @@ build_android_engine() {
     # Profile-guided optimization from a gameplay profile (docs/BUILDING.md, "Engine profile"): clang lays the
     # engine's hot paths out together. A different profile (or none) reconfigures the engine.
     local pgo="" stamp="none"
-    if [ "$LT_ENGINE_PGO" != off ] && [ -f "$LT_ENGINE_PGO" ] && [ -z "${LT_ENGINE_VARIANT:-}" ]; then
+    if [ "$LT_ENGINE_PGO" != off ] && [ -f "$LT_ENGINE_PGO" ] && [[ "${LT_ENGINE_CFLAGS:-}" != *-fprofile-generate* ]]; then
         pgo="-fprofile-use=$LT_ENGINE_PGO -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date -Wno-backend-plugin"
         stamp=$(sha256sum "$LT_ENGINE_PGO" | cut -c1-16)
     fi
