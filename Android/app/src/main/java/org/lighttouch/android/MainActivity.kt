@@ -63,6 +63,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         private set
     override var profileNotice by mutableStateOf("")
         private set
+    override var pgoNotice by mutableStateOf("")
+        private set
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
     private var muxSocket by mutableStateOf("")
@@ -392,6 +394,22 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun openDevices() { refreshDevices(); devicesOpen = true }
     override fun addDevice() { setup.reset(firstRun = false); overlay = Screen.SETUP }
     override fun openLicenses() { licensesOpen = true }
+
+    /** Hand out the profile an instrumented engine wrote, for a reviewer's -fprofile-use build. */
+    override fun savePgoProfile() {
+        val profile = pgoProfiles(filesDir).firstOrNull()
+        if (profile == null) {
+            pgoNotice = "No profile yet: only an instrumented engine writes one; play for a few minutes first"
+            return
+        }
+        pgoNotice = "Saving ${profile.name}…"
+        Thread({
+            try {
+                writePgoProfile(applicationContext, profile)
+                handler.post { pgoNotice = "Saved ${profile.name} to Download/LightTouch" }
+            } catch (e: Exception) { handler.post { pgoNotice = "Could not save: ${e.message ?: "unknown error"}" } }
+        }, "pgo-profile").start()
+    }
     override fun openPreparation() {
         if (!preparationActive() && prep.preparation?.getString("state") != "complete")
             prep.step = if (prep.firmware != null && prep.ipswReady) PrepareStep.FILES else PrepareStep.DEVICE

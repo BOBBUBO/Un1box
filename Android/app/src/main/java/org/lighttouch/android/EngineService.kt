@@ -164,6 +164,14 @@ class EngineService : Service() {
                     android.system.Os.setenv(key.trim(), value.trim(), true)
                 }
             }
+            // A profile-instrumented engine (a CI PGO pass) records one window of execution and writes it
+            // where the app can hand it out; a normal engine ignores these names entirely. 45 s in, so the
+            // setup and the first load are out of the way, ten minutes long, which covers a play session.
+            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                android.system.Os.setenv("LT_PGO_FILE", File(filesDir, "pgo.profraw").absolutePath, true)
+                android.system.Os.setenv("LT_PGO_RESET", "45", true)
+                android.system.Os.setenv("LT_PGO_DUMP", "645", true)
+            }
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId) else Native.start(libraryRoot, recordId)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()

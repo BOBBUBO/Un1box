@@ -42,6 +42,8 @@ interface GuestHost {
     val profileAutomatic: Boolean
     val profileBusy: Boolean
     val profileNotice: String
+    /** A profile an instrumented engine wrote, in Download/LightTouch once saved. */
+    val pgoNotice: String
     val storeInstalling: Boolean
     /** The engine can save this guest's state (Save & Stop); false until supported on this host. */
     val canSaveState: Boolean
@@ -62,6 +64,7 @@ interface GuestHost {
     fun deleteDevice(id: String)
     fun addDevice()
     fun toggleProfile()
+    fun savePgoProfile()
     fun pickGuestTools()
     fun openLicenses()
     fun openPreparation()

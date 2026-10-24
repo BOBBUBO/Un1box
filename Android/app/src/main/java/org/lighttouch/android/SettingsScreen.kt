@@ -70,6 +70,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         enabled = !host.profileBusy && (host.running || host.profileRecording), tag = "profile_capture") { host.toggleProfile() }
                     if (host.selected != null && !host.active) ActionRow(LtIcons.History, "Recover retained state",
                         "Start ${host.selected?.name} from its saved data after an unclean shutdown, keeping diagnostics", enabled = !host.busy, tag = "recover_guest") { host.recover(); onBack() }
+                    ActionRow(LtIcons.Save, "Save PGO profile",
+                        host.pgoNotice.ifEmpty { "Copy an instrumented engine's profile to Download/LightTouch, for a -fprofile-use build" }, tag = "pgo_save") { host.savePgoProfile() }
                 }
                 Group("Device") {
                     ActionRow(LtIcons.Puzzle, "Update guest tools", host.selected?.let { "Install a newer .itpack into ${it.name}; it applies at the next start" } ?: "Select a device first",
