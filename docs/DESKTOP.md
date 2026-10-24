@@ -27,6 +27,7 @@ cargo build
 LIGHTTOUCH_ENGINE=/path/to/libqemu-arm.so LIGHTTOUCH_GUEST_TOOLS=/path/to/guest-tools target/debug/lighttouch
 target/debug/lighttouch import n72ap-7E18.itbase --rom bootrom.bin --package armv6.itpack
 target/debug/lighttouch run <record id> --seconds 60 --shot frame.ppm   # headless session
+LIGHTTOUCH_FIRMWAREKIT=/path/to/firmwarekit target/debug/lighttouch prepare n72ap-7E18 [--ipsw FILE]
 ```
 
 `LIGHTTOUCH_DATA` overrides the data folder (default `~/.local/share/LightTouch`, `%LOCALAPPDATA%\LightTouch\App`,
@@ -39,8 +40,8 @@ target/debug/lighttouch run <record id> --seconds 60 --shot frame.ppm   # headle
 | Device library, add from `.itbase`/folder, rename, delete | Done (Linux) |
 | Start, stop, recover, pause, mute, screenshot, frames, touch, buttons, keys | Done (Linux, checked under Xvfb) |
 | Theme, device frame, overlay (FPS/basic/full), full screen, settings | Done; frame inspector to do |
-| Prepare from an IPSW (catalog, download, firmwarekit sidecar, adoption) | Next |
-| Legacy Store, specific versions, IPA install (Rust usbmux client, lockdown, AFC, instproxy) | To do |
+| Prepare from an IPSW (catalog, download, firmwarekit sidecar, adoption) | Done (Linux): n72ap-7E18 downloaded and prepared in 62 s, boots; firmwarekit needs a static Swift stdlib to ship |
+| Legacy Store, specific versions, IPA install (Rust usbmux client, lockdown, AFC, instproxy) | Next |
 | macOS: Portable portability layer, engine dylib exports | To do |
 | Windows: Portable portability layer, engine DLL | To do |
 | Packaging (`cargo xtask dist`: AppImage, zip, .app) | To do |

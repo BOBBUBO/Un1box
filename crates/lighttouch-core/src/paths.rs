@@ -168,3 +168,13 @@ pub fn engine_file_name() -> &'static str {
 pub fn exe_name(name: &str) -> String {
     if cfg!(windows) { format!("{name}.exe") } else { name.to_string() }
 }
+
+/// This program, for starting worker processes. On Linux `/proc/self/exe` keeps working after the file on disk
+/// is replaced (an update, or a rebuild while running).
+pub fn worker_exe() -> Result<PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    if Path::new("/proc/self/exe").exists() {
+        return Ok(PathBuf::from("/proc/self/exe"));
+    }
+    std::env::current_exe().map_err(|e| e.to_string())
+}

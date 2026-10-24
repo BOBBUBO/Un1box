@@ -6,6 +6,7 @@ mod guest;
 mod home;
 pub mod icons;
 mod overlay;
+mod prepare;
 mod settings;
 mod setup;
 mod sidebar;
@@ -25,6 +26,8 @@ pub enum Page {
     Device,
     Settings,
     Setup(setup::Step),
+    /// Prepare from an IPSW (its step lives in `App::prepare`).
+    Prepare,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +46,7 @@ pub struct App {
     pub palette: Palette,
     applied: Option<(Theme, bool)>,
     pub setup: setup::SetupState,
+    pub prepare: prepare::PrepareState,
     /// When the window was minimized with the guest running (to resume on return).
     paused_for_hidden: bool,
     /// A Home press that releases itself (waking the screen).
@@ -81,6 +85,7 @@ impl App {
             palette: theme::DARK,
             applied: None,
             setup: setup::SetupState::default(),
+            prepare: prepare::PrepareState::default(),
             paused_for_hidden: false,
             pulse_release: None,
         }
@@ -126,11 +131,20 @@ impl App {
         }
         if let Some(finished) = self.model.take_finished() {
             match finished {
-                Finished::DeviceAdded { name, .. } => {
-                    if matches!(self.page, Page::Setup(_)) {
+                Finished::DeviceAdded { name, timings, .. } => {
+                    if matches!(self.page, Page::Setup(_) | Page::Prepare) {
                         self.setup.added = Some(name);
+                        self.setup.timings = timings;
                         self.page = Page::Setup(setup::Step::Done);
+                        self.prepare = prepare::PrepareState::default();
+                    } else {
+                        self.model.notice = Some((format!("{name} is ready"), Instant::now()));
                     }
+                }
+                Finished::Failed { activity: lighttouch_model::Activity::Preparing(_), message } => {
+                    self.prepare.error = Some(message);
+                    self.prepare.step = prepare::Step::Progress;
+                    self.page = Page::Prepare;
                 }
                 Finished::Failed { message, .. } => {
                     if matches!(self.page, Page::Setup(setup::Step::Creating)) {
@@ -315,6 +329,7 @@ impl eframe::App for App {
                     Page::Device => home::show(self, ui),
                     Page::Settings => settings::show(self, ui),
                     Page::Setup(step) => setup::show(self, ui, step),
+                    Page::Prepare => prepare::show(self, ui),
                 }
             });
         }

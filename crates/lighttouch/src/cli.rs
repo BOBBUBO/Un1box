@@ -177,7 +177,7 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
 }
 
 pub fn spawn_worker(args: &WorkerArgs) -> Result<Child, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = lighttouch_core::paths::worker_exe()?;
     std::process::Command::new(exe)
         .arg("worker")
         .arg(serde_json::to_string(args).unwrap())

@@ -107,7 +107,7 @@ impl Session {
             .log_dir
             .join(format!("session-{stamp}-{}.log", &options.record_id[..8.min(options.record_id.len())]));
         let log = std::fs::File::create(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe = lighttouch_core::paths::worker_exe()?;
         let mut command = std::process::Command::new(exe);
         command
             .arg("worker")

@@ -99,8 +99,16 @@ pub enum Activity {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Finished {
     /// `timings`: (stage, seconds) of a preparation, for its "Details".
-    DeviceAdded { id: String, name: String, selected: bool, timings: Vec<(String, f64)> },
-    Failed { activity: Activity, message: String },
+    DeviceAdded {
+        id: String,
+        name: String,
+        selected: bool,
+        timings: Vec<(String, f64)>,
+    },
+    Failed {
+        activity: Activity,
+        message: String,
+    },
 }
 
 pub struct Model {

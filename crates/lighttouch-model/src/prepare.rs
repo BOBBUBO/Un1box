@@ -3,7 +3,7 @@
 //! device. Lean on purpose: no backups or retries; if it fails the user prepares again.
 use crate::task::Reporter;
 use crate::{Finished, Waker};
-use lighttouch_catalog::catalog::{Catalog, CATALOG_JSON, default_device_name};
+use lighttouch_catalog::catalog::{CATALOG_JSON, Catalog, default_device_name};
 use lighttouch_catalog::download::{self, DownloadError};
 use lighttouch_catalog::{Bootrom, GuestTools};
 use lighttouch_core::library::{ImportSource, Library};
@@ -82,7 +82,9 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
             download::verify_ipsw(&firmware, path, &mut cancel_check).map_err(describe)?;
             (path.clone(), false)
         }
-        IpswSource::Download => (download::download_ipsw(&firmware, &ctx.dirs.downloads(), &mut cancel_check).map_err(describe)?, true),
+        IpswSource::Download => {
+            (download::download_ipsw(&firmware, &ctx.dirs.downloads(), &mut cancel_check).map_err(describe)?, true)
+        }
     };
     timings.push(("Getting the IPSW".into(), started.elapsed().as_secs_f64()));
 
@@ -99,7 +101,8 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
                     let dir = ctx.dirs.root.join("bootroms");
                     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                     let target = dir.join(rom.label());
-                    rom.fetch(&target).map_err(|e| format!("Couldn't download the boot ROM ({e}). Choose the file instead."))?;
+                    rom.fetch(&target)
+                        .map_err(|e| format!("Couldn't download the boot ROM ({e}). Choose the file instead."))?;
                     target
                 }
             },
@@ -117,7 +120,17 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     let catalog_file = ctx.dirs.cache().join("firmware-catalog.json");
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     std::fs::write(&catalog_file, CATALOG_JSON).map_err(|e| e.to_string())?;
-    let result = run_firmwarekit(&ctx, &firmware.id, &ipsw, bootrom.as_deref(), &out, &cache, &catalog_file, reporter, &mut timings);
+    let result = run_firmwarekit(
+        &ctx,
+        &firmware.id,
+        &ipsw,
+        bootrom.as_deref(),
+        &out,
+        &cache,
+        &catalog_file,
+        reporter,
+        &mut timings,
+    );
     let _ = std::fs::remove_dir_all(&cache);
     if let Err(e) = result {
         remove_tree(&out);
@@ -147,7 +160,11 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     };
     let record = library
         .adopt_prepared(&source, &mut |phase, done, total| {
-            reporter.report(if phase == "verifying" { "Checking the new device" } else { "Adding the device" }, done, total)
+            reporter.report(
+                if phase == "verifying" { "Checking the new device" } else { "Adding the device" },
+                done,
+                total,
+            )
         })
         .map_err(|e| {
             remove_tree(&out);

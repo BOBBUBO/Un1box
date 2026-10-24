@@ -79,10 +79,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
             ui.add_space(6.0);
-            let add = add_row(ui, &p, !active && !busy);
+            // While a device is being added, this goes back to its progress.
+            let add = add_row(ui, &p, !active || busy);
             if add.clicked() {
-                app.setup = setup::SetupState::default();
-                app.page = Page::Setup(setup::Step::Files);
+                app.page = match app.model.busy() {
+                    Some((lighttouch_model::Activity::Preparing(_), _)) => Page::Prepare,
+                    Some((lighttouch_model::Activity::AddingDevice, _)) => Page::Setup(setup::Step::Creating),
+                    None => {
+                        app.setup = setup::SetupState::default();
+                        Page::Setup(setup::Step::Files)
+                    }
+                };
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {

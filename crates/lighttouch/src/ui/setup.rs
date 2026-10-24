@@ -22,6 +22,8 @@ pub struct SetupState {
     pub found: Option<String>,
     pub error: Option<String>,
     pub added: Option<String>,
+    /// (stage, seconds) of the preparation that made it, for "Details".
+    pub timings: Vec<(String, f64)>,
 }
 
 fn centered(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui)) {
@@ -83,8 +85,10 @@ pub fn show(app: &mut App, ui: &mut Ui, step: Step) {
             )
             .clicked()
             {
-                app.model.notice =
-                    Some(("Preparing from an IPSW is coming to this build next".into(), std::time::Instant::now()));
+                if app.prepare.step == super::prepare::Step::Progress && app.model.busy().is_none() {
+                    app.prepare = Default::default();
+                }
+                app.page = Page::Prepare;
             }
             ui.add_space(22.0);
             ui.label(RichText::new("Or add a prepared device image").font(theme::title()));
@@ -121,6 +125,19 @@ pub fn show(app: &mut App, ui: &mut Ui, step: Step) {
             ui.label(RichText::new(format!("{name} is ready")).font(theme::headline()));
             ui.add_space(6.0);
             ui.label(widgets::muted(&p, "The first start takes longer while iOS sets itself up."));
+            if !app.setup.timings.is_empty() {
+                ui.add_space(12.0);
+                egui::CollapsingHeader::new(widgets::muted(&p, "Details")).id_salt("prepare-details").show(ui, |ui| {
+                    ui.spacing_mut().interact_size.y = 20.0;
+                    egui::Grid::new("timings").num_columns(2).spacing([28.0, 2.0]).show(ui, |ui| {
+                        for (stage, secs) in &app.setup.timings {
+                            ui.label(widgets::muted(&p, stage.as_str()));
+                            ui.label(format!("{secs:.1} s"));
+                            ui.end_row();
+                        }
+                    });
+                });
+            }
             ui.add_space(22.0);
             ui.horizontal(|ui| {
                 let can_start = !app.model.session_active();
