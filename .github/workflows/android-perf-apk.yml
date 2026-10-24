@@ -254,10 +254,17 @@ jobs:
 
       - name: Build the engine dependencies
         run: |
-          python3 qemu-ios/contrib/portable/build-deps.py ci/deps \
-            --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT" --meson "$MESON"
-          python3 qemu-ios/contrib/portable/build-crypto-deps.py ci/crypto \
-            --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT"
+          deps() {
+            python3 qemu-ios/contrib/portable/build-deps.py ci/deps \
+              --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT" --meson "$MESON"
+            python3 qemu-ios/contrib/portable/build-crypto-deps.py ci/crypto \
+              --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT"
+          }
+          # The pinned trees are cached, and a restored tree whose recipe no longer
+          # matches is refused rather than silently reused: the recipe records the
+          # workspace path, so renaming the repository is enough to stale it.
+          # Retry once from an empty tree.
+          deps || { rm -rf ci/deps ci/crypto; deps; }
 
       - name: Build the engine
         run: |
