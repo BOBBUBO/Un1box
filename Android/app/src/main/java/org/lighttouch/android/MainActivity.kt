@@ -65,6 +65,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         private set
     override var pgoNotice by mutableStateOf("")
         private set
+    /** True while the engine copies a presented frame on a worker (its default). */
+    override var presentAsync by mutableStateOf(true)
+        private set
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
     private var muxSocket by mutableStateOf("")
@@ -279,6 +282,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         @Suppress("DEPRECATION") run { window.statusBarColor = android.graphics.Color.TRANSPARENT; window.navigationBarColor = android.graphics.Color.TRANSPARENT }
         window.isNavigationBarContrastEnforced = false; window.isStatusBarContrastEnforced = false
         preferSixtyHertz(guestInFront = false)
+        presentAsync = !(File(filesDir, "debug-env").let { f -> f.exists() && f.readLines().any { it.trim() == "LT_PRESENT_ASYNC=off" } })
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
@@ -416,6 +420,17 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         preparationOpen = true; bindFirmware()
     }
     override fun pickGuestTools() { pickGuestToolsFile.launch(arrayOf("application/octet-stream", "*/*")) }
+    override fun setPresentAsync(on: Boolean) {
+        // The engine reads its environment when a session starts, so the choice is one line in
+        // files/debug-env, the same channel an adb user writes; other lines are left alone.
+        runCatching {
+            val file = File(filesDir, "debug-env")
+            val kept = if (file.exists()) file.readLines().filter { it.isNotBlank() && !it.startsWith("LT_PRESENT_ASYNC=") } else emptyList()
+            val lines = kept + if (on) emptyList() else listOf("LT_PRESENT_ASYNC=off")
+            if (lines.isEmpty()) file.delete() else file.writeText(lines.joinToString("\n") + "\n")
+        }
+        presentAsync = on
+    }
     override fun applySettings() {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
         val worker = engine ?: return
