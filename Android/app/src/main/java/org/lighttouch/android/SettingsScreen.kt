@@ -65,7 +65,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 Group("Diagnostics") {
                     SwitchRow(LtIcons.Timeline, "Inspect button", "A button that pauses iOS and opens the frame inspector, to pick apart a hitch you just saw", s.hitchButton, "hitch_toggle") { s.hitchButton = it }
                     SwitchRow(LtIcons.Chip, "Detailed frame timing", "Records each frame's guest CPU, GL and lock time so the overlay and inspector can explain slow frames. Costs about 6% speed while on.", s.detailedTiming, "detailed_timing") { s.detailedTiming = it; host.applySettings() }
-                    SwitchRow(LtIcons.Speed, "Present on a worker", "The frame copy into the guest's surface runs on a worker thread. Off copies it on the CPU instead, which can be steadier when the guest is waiting most of its frame anyway. Applies at the next guest start.", host.presentAsync, "present_async") { host.setPresentAsync(it) }
+                    SwitchRow(LtIcons.Speed, "Present on a worker", "The frame copy into the guest's surface runs on a worker thread. Off copies it on the CPU instead, which can be steadier when the guest is waiting most of its frame anyway. Applies at the next guest start.", host.presentAsync, "present_async") { host.usePresentAsync(it) }
                     if (!s.detailedTiming) ActionRow(LtIcons.Save, if (host.profileRecording) "Stop profile recording" else "Record a profile",
                         if (host.profileRecording) host.profileNotice.ifEmpty { "Recording…" } else "Capture engine timing for the app on screen, for tools/perf/profile.py",
                         enabled = !host.profileBusy && (host.running || host.profileRecording), tag = "profile_capture") { host.toggleProfile() }

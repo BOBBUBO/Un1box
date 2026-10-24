@@ -420,7 +420,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         preparationOpen = true; bindFirmware()
     }
     override fun pickGuestTools() { pickGuestToolsFile.launch(arrayOf("application/octet-stream", "*/*")) }
-    override fun setPresentAsync(on: Boolean) {
+    override fun usePresentAsync(on: Boolean) {
         // The engine reads its environment when a session starts, so the choice is one line in
         // files/debug-env, the same channel an adb user writes; other lines are left alone.
         runCatching {

@@ -67,7 +67,7 @@ interface GuestHost {
     fun savePgoProfile()
     /** True while the engine copies a presented frame on a worker (its default). */
     val presentAsync: Boolean
-    fun setPresentAsync(on: Boolean)
+    fun usePresentAsync(on: Boolean)
     fun pickGuestTools()
     fun openLicenses()
     fun openPreparation()
