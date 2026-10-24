@@ -7,14 +7,16 @@
 #     scripts/build.sh android
 # Each PRESET (fcbench.py's, e.g. n81-jetpack-play) runs once on the phone (ANDROID_SERIAL); the engine zeroes
 # its counters RESET seconds after it starts (default 150, past boot and the game's load) and writes them at
-# DUMP (default RESET+100), so the profile is gameplay. The raw profiles are merged into OUT.
+# DUMP (default RESET+100), so the profile is gameplay. The raw profiles are merged into OUT and kept beside
+# it as OUT.d/PRESET.profraw, so they can be merged again with weights (llvm-profdata merge -weighted-input).
 set -eu
 APK=$1; OUT=$2; shift 2
 NDK_BIN=${NDK_BIN:-$(ls -d "$HOME"/Android/Sdk/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin | tail -1)}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PKG=org.lighttouch.android
 DIR=/data/user/0/$PKG/files
-TMP=$(mktemp -d)
+TMP=$OUT.d
+mkdir -p "$TMP"
 raws=()
 for spec in "$@"; do
     IFS=: read -r preset reset dump <<< "$spec"
@@ -34,4 +36,3 @@ done
 [ ${#raws[@]} -gt 0 ] || { echo "no profiles" >&2; exit 1; }
 "$NDK_BIN/llvm-profdata" merge -o "$OUT" "${raws[@]}"
 ls -la "$OUT"
-rm -rf "$TMP"
