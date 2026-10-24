@@ -26,11 +26,7 @@ pub fn main(args: &[String]) -> i32 {
     let commands = spawn_command_reader();
     match run(parsed, &events, commands) {
         Ok(outcome) => {
-            let _ = events.send(Event::Exit {
-                clean: outcome.clean,
-                dirty: outcome.dirty,
-                message: outcome.message,
-            });
+            let _ = events.send(Event::Exit { clean: outcome.clean, dirty: outcome.dirty, message: outcome.message });
             drop(events);
             // Give the writer a moment to flush the exit event.
             thread::sleep(Duration::from_millis(50));
@@ -38,11 +34,7 @@ pub fn main(args: &[String]) -> i32 {
         }
         Err(message) => {
             eprintln!("session failed: {message}");
-            let _ = events.send(Event::Exit {
-                clean: false,
-                dirty: true,
-                message,
-            });
+            let _ = events.send(Event::Exit { clean: false, dirty: true, message });
             drop(events);
             thread::sleep(Duration::from_millis(50));
             2
@@ -64,11 +56,7 @@ fn spawn_event_writer() -> Sender<Event> {
             let stdout = std::io::stdout();
             let mut out = stdout.lock();
             for event in rx {
-                if out
-                    .write_all(event.to_line().as_bytes())
-                    .and_then(|_| out.flush())
-                    .is_err()
-                {
+                if out.write_all(event.to_line().as_bytes()).and_then(|_| out.flush()).is_err() {
                     break;
                 }
             }
@@ -116,18 +104,10 @@ unsafe extern "C" fn frame_listener(opaque: *mut std::ffi::c_void, _sequence: u6
     signal.ready.notify_one();
 }
 
-fn run(
-    args: WorkerArgs,
-    events: &Sender<Event>,
-    commands: Receiver<Command>,
-) -> Result<Outcome, String> {
-    let library =
-        Library::open(&args.library).map_err(|e| format!("open the device library: {e}"))?;
+fn run(args: WorkerArgs, events: &Sender<Event>, commands: Receiver<Command>) -> Result<Outcome, String> {
+    let library = Library::open(&args.library).map_err(|e| format!("open the device library: {e}"))?;
     let record = library.record(&args.record).map_err(|e| e.to_string())?;
-    eprintln!(
-        "session: {} ({} {}), recover={}",
-        record.name, record.board, record.build, args.recover
-    );
+    eprintln!("session: {} ({} {}), recover={}", record.name, record.board, record.build, args.recover);
 
     // Admission: verify the device's files (fast when the digest cache is warm).
     let mut last_report = Instant::now() - Duration::from_secs(1);
@@ -147,11 +127,8 @@ fn run(
     })?;
     drop(library);
 
-    let board =
-        runtime::board_info(&args.engine, &record.board).map_err(|e| format!("engine: {e}"))?;
-    let _ = events.send(Event::Board {
-        info: board.clone(),
-    });
+    let board = runtime::board_info(&args.engine, &record.board).map_err(|e| format!("engine: {e}"))?;
+    let _ = events.send(Event::Board { info: board.clone() });
     let headphones = args.headphones && board.has(runtime::BoardInfo::HEADPHONES);
     let options = BootOptions {
         engine: args.engine.clone(),
@@ -161,25 +138,15 @@ fn run(
         audio: args.audio,
         headphones,
     };
-    let runtime = Arc::new(
-        Runtime::create(device, &options).map_err(|e| format!("Couldn't start the engine: {e}"))?,
-    );
+    let runtime = Arc::new(Runtime::create(device, &options).map_err(|e| format!("Couldn't start the engine: {e}"))?);
 
     let mut writer = FrameWriter::open(&args.frames).map_err(|e| format!("frame memory: {e}"))?;
-    let signal = Arc::new(FrameSignal {
-        pending: Mutex::new(false),
-        ready: Condvar::new(),
-    });
+    let signal = Arc::new(FrameSignal { pending: Mutex::new(false), ready: Condvar::new() });
     let frames_done = Arc::new(AtomicBool::new(false));
     unsafe { runtime.set_frame_listener(Some(frame_listener), Arc::as_ptr(&signal) as *mut _) }
         .map_err(|e| e.to_string())?;
     let frame_thread = {
-        let (runtime, signal, done, events) = (
-            runtime.clone(),
-            signal.clone(),
-            frames_done.clone(),
-            events.clone(),
-        );
+        let (runtime, signal, done, events) = (runtime.clone(), signal.clone(), frames_done.clone(), events.clone());
         thread::Builder::new()
             .name("frames".into())
             .spawn(move || {
@@ -188,11 +155,7 @@ fn run(
                     {
                         let mut pending = signal.pending.lock().unwrap();
                         if !*pending {
-                            pending = signal
-                                .ready
-                                .wait_timeout(pending, Duration::from_millis(100))
-                                .unwrap()
-                                .0;
+                            pending = signal.ready.wait_timeout(pending, Duration::from_millis(100)).unwrap().0;
                         }
                         if !*pending {
                             continue;
@@ -238,11 +201,10 @@ fn run(
         None
     };
 
-    runtime
-        .start()
-        .map_err(|e| format!("Couldn't start iOS: {e}"))?;
+    runtime.start().map_err(|e| format!("Couldn't start iOS: {e}"))?;
     let _ = events.send(Event::Started);
 
+    let trace_input = std::env::var_os("LIGHTTOUCH_TRACE_INPUT").is_some();
     let mut pcm = vec![0i16; 4096 * 2];
     let mut stopping_since: Option<Instant> = None;
     let mut last_status: Option<(StatusEvent, Instant)> = None;
@@ -259,8 +221,18 @@ fn run(
             };
             let name = command_name(&command);
             let result = match command {
-                Command::Touch { contacts } => runtime.touch(monotonic_ns(), &contacts),
-                Command::Button { button, down } => runtime.button(button, down),
+                Command::Touch { contacts } => {
+                    if trace_input {
+                        eprintln!("touch {contacts:?}");
+                    }
+                    runtime.touch(monotonic_ns(), &contacts)
+                }
+                Command::Button { button, down } => {
+                    if trace_input {
+                        eprintln!("button {button} {}", if down { "down" } else { "up" });
+                    }
+                    runtime.button(button, down)
+                }
                 Command::Pause { paused } => {
                     if let Some(a) = &audio {
                         a.clear();
@@ -276,19 +248,13 @@ fn run(
                     }
                 }
                 Command::CancelInput => runtime.cancel_input(),
-                Command::Motion { acceleration, gyro } => {
-                    runtime.motion(monotonic_ns(), acceleration, gyro)
-                }
+                Command::Motion { acceleration, gyro } => runtime.motion(monotonic_ns(), acceleration, gyro),
                 Command::Screenshot { path } => runtime.screenshot_bmp(&path).map(|_| {
                     let _ = events.send(Event::Screenshot { path });
                 }),
-                Command::Guest {
-                    operation,
-                    argument,
-                    timeout_ms,
-                } => runtime
-                    .guest_request(operation, &argument, timeout_ms)
-                    .map(|id| pending_guest = Some(id)),
+                Command::Guest { operation, argument, timeout_ms } => {
+                    runtime.guest_request(operation, &argument, timeout_ms).map(|id| pending_guest = Some(id))
+                }
                 Command::Profile { path } => runtime.profile(path.as_deref()),
                 Command::Mute { muted } => {
                     if let Some(a) = &audio {
@@ -298,10 +264,7 @@ fn run(
                 }
             };
             if let Err(e) = result {
-                let _ = events.send(Event::Error {
-                    command: name.into(),
-                    message: e.to_string(),
-                });
+                let _ = events.send(Event::Error { command: name.into(), message: e.to_string() });
             }
         }
 
@@ -312,9 +275,7 @@ fn run(
                 if state == 3 {
                     let _ = runtime.cancel_input();
                     let _ = events.send(Event::InputRejected {
-                        message: format!(
-                            "touch rejected by the engine ({result}); all contacts released"
-                        ),
+                        message: format!("touch rejected by the engine ({result}); all contacts released"),
                     });
                 }
             }
@@ -334,10 +295,7 @@ fn run(
                 }
                 Err(e) => {
                     pending_guest = None;
-                    let _ = events.send(Event::Error {
-                        command: "guest".into(),
-                        message: e.to_string(),
-                    });
+                    let _ = events.send(Event::Error { command: "guest".into(), message: e.to_string() });
                 }
             }
         }
@@ -386,10 +344,7 @@ fn run(
                     message: if status.storage_failed {
                         "iOS stopped unexpectedly: a storage write failed".into()
                     } else {
-                        format!(
-                            "iOS stopped unexpectedly (engine exit {})",
-                            status.engine_exit
-                        )
+                        format!("iOS stopped unexpectedly (engine exit {})", status.engine_exit)
                     },
                 };
             }
@@ -440,10 +395,7 @@ fn run(
         }
         Err(_) => eprintln!("runtime still referenced at exit"),
     }
-    eprintln!(
-        "session ended: clean={} dirty={} {}",
-        outcome.clean, outcome.dirty, outcome.message
-    );
+    eprintln!("session ended: clean={} dirty={} {}", outcome.clean, outcome.dirty, outcome.message);
     Ok(outcome)
 }
 

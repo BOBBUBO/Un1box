@@ -1,0 +1,13 @@
+[package]
+name = "lighttouch-model"
+description = "The app's state and behaviour, independent of any UI toolkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lighttouch-catalog = { path = "../lighttouch-catalog" }
+lighttouch-core = { path = "../lighttouch-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

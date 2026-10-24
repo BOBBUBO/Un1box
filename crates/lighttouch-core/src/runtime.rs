@@ -36,10 +36,7 @@ pub fn board_info(engine: &Path, board: &str) -> Result<BoardInfo> {
     let (engine, board) = (cpath(engine)?, cstring(board)?);
     let mut info = sys::lt_board_info::new();
     let mut error = sys::lt_error::new();
-    check(
-        unsafe { sys::lt_engine_board(engine.as_ptr(), board.as_ptr(), &mut info, &mut error) },
-        &error,
-    )?;
+    check(unsafe { sys::lt_engine_board(engine.as_ptr(), board.as_ptr(), &mut info, &mut error) }, &error)?;
     Ok(BoardInfo {
         machine: chars(&info.machine),
         board: chars(&info.board),
@@ -93,10 +90,7 @@ impl Device {
     pub fn board(&self) -> Result<String> {
         let mut info = sys::lt_device_info::new();
         let mut error = sys::lt_error::new();
-        check(
-            unsafe { sys::lt_device_describe(self.raw, &mut info, &mut error) },
-            &error,
-        )?;
+        check(unsafe { sys::lt_device_describe(self.raw, &mut info, &mut error) }, &error)?;
         Ok(chars(&info.board))
     }
 }
@@ -224,21 +218,12 @@ impl Runtime {
         config.boot.headphones = options.headphones as u32;
         let mut raw = std::ptr::null_mut();
         let mut error = sys::lt_error::new();
-        check(
-            unsafe { sys::lt_runtime_create(&config, &mut raw, &mut error) },
-            &error,
-        )?;
+        check(unsafe { sys::lt_runtime_create(&config, &mut raw, &mut error) }, &error)?;
         // The core copies every path it keeps, so the CStrings may drop here.
-        Ok(Self {
-            raw,
-            _device: device,
-        })
+        Ok(Self { raw, _device: device })
     }
 
-    fn call(
-        &self,
-        f: impl FnOnce(*mut sys::lt_runtime, &mut sys::lt_error) -> sys::lt_status,
-    ) -> Result<()> {
+    fn call(&self, f: impl FnOnce(*mut sys::lt_runtime, &mut sys::lt_error) -> sys::lt_status) -> Result<()> {
         let mut error = sys::lt_error::new();
         let status = f(self.raw, &mut error);
         check(status, &error)
@@ -314,20 +299,14 @@ impl Runtime {
     ///
     /// # Safety
     /// `opaque` must stay valid until the listener is cleared.
-    pub unsafe fn set_frame_listener(
-        &self,
-        listener: sys::lt_frame_listener,
-        opaque: *mut c_void,
-    ) -> Result<()> {
+    pub unsafe fn set_frame_listener(&self, listener: sys::lt_frame_listener, opaque: *mut c_void) -> Result<()> {
         self.call(|r, e| unsafe { sys::lt_runtime_set_frame_listener(r, listener, opaque, e) })
     }
 
     pub fn screenshot_bmp(&self, path: &Path) -> Result<()> {
         let path = cpath(path)?;
         let mut info = sys::lt_frame_info::new();
-        self.call(|r, e| unsafe {
-            sys::lt_runtime_write_screenshot(r, path.as_ptr(), &mut info, e)
-        })
+        self.call(|r, e| unsafe { sys::lt_runtime_write_screenshot(r, path.as_ptr(), &mut info, e) })
     }
 
     pub fn touch(&self, timestamp_ns: u64, contacts: &[Contact]) -> Result<()> {
@@ -360,12 +339,7 @@ impl Runtime {
         self.call(|r, e| unsafe { sys::lt_runtime_button(r, button, down as u32, e) })
     }
 
-    pub fn motion(
-        &self,
-        timestamp_ns: u64,
-        acceleration: Option<[f64; 3]>,
-        gyro: Option<[f64; 3]>,
-    ) -> Result<()> {
+    pub fn motion(&self, timestamp_ns: u64, acceleration: Option<[f64; 3]>, gyro: Option<[f64; 3]>) -> Result<()> {
         let mut m = sys::lt_motion::new();
         m.timestamp_ns = timestamp_ns;
         if let Some(a) = acceleration {
@@ -384,15 +358,7 @@ impl Runtime {
         let mut info = sys::lt_pcm_info::new();
         let mut error = sys::lt_error::new();
         let capacity = (samples.len() / 2) as u32;
-        let status = unsafe {
-            sys::lt_runtime_pcm(
-                self.raw,
-                samples.as_mut_ptr(),
-                capacity,
-                &mut info,
-                &mut error,
-            )
-        };
+        let status = unsafe { sys::lt_runtime_pcm(self.raw, samples.as_mut_ptr(), capacity, &mut info, &mut error) };
         if status == sys::LT_AGAIN {
             return Ok(0);
         }
@@ -451,15 +417,8 @@ impl Drop for Runtime {
         // stays dirty. Destroying would block or fail, so only detach the listener and leave the rest to teardown.
         if !self.raw.is_null() {
             let mut error = sys::lt_error::new();
-            unsafe {
-                sys::lt_runtime_set_frame_listener(self.raw, None, std::ptr::null_mut(), &mut error)
-            };
-            std::mem::forget(std::mem::replace(
-                &mut self._device,
-                Device {
-                    raw: std::ptr::null_mut(),
-                },
-            ));
+            unsafe { sys::lt_runtime_set_frame_listener(self.raw, None, std::ptr::null_mut(), &mut error) };
+            std::mem::forget(std::mem::replace(&mut self._device, Device { raw: std::ptr::null_mut() }));
         }
     }
 }
@@ -476,7 +435,6 @@ pub fn map_contact(
     rotation: u32,
 ) -> Option<(f64, f64)> {
     let (mut x, mut y) = (0.0, 0.0);
-    let status =
-        unsafe { sys::lt_map_contact(px, py, left, top, width, height, rotation, &mut x, &mut y) };
+    let status = unsafe { sys::lt_map_contact(px, py, left, top, width, height, rotation, &mut x, &mut y) };
     (status == sys::LT_OK).then_some((x, y))
 }

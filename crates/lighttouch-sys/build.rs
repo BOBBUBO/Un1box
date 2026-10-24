@@ -9,19 +9,13 @@ fn main() {
     let engine_include = match env::var_os("LIGHTTOUCH_QEMU_SOURCE") {
         Some(source) => {
             let source = PathBuf::from(source);
-            vec![
-                source.join("contrib/ios-app"),
-                source.join("contrib/macos-app"),
-            ]
+            vec![source.join("contrib/ios-app"), source.join("contrib/macos-app")]
         }
         None => vec![manifest.join("engine-include")],
     };
     println!("cargo:rerun-if-env-changed=LIGHTTOUCH_QEMU_SOURCE");
     println!("cargo:rerun-if-changed={}", portable.join("src").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        portable.join("include").display()
-    );
+    println!("cargo:rerun-if-changed={}", portable.join("include").display());
     println!("cargo:rerun-if-changed=engine-include");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
@@ -38,26 +32,14 @@ fn main() {
     if let Some(zlib) = env::var_os("DEP_Z_INCLUDE") {
         build.include(zlib);
     }
-    for source in [
-        "Storage.cpp",
-        "Runtime.cpp",
-        "GuestPackage.cpp",
-        "Library.cpp",
-        "Screenshot.cpp",
-    ] {
+    for source in ["Storage.cpp", "Runtime.cpp", "GuestPackage.cpp", "Library.cpp", "Screenshot.cpp"] {
         build.file(portable.join("src").join(source));
     }
     if target_os == "windows" {
-        build
-            .define("WIN32_LEAN_AND_MEAN", None)
-            .define("NOMINMAX", None)
-            .define("_FILE_OFFSET_BITS", "64");
+        build.define("WIN32_LEAN_AND_MEAN", None).define("NOMINMAX", None).define("_FILE_OFFSET_BITS", "64");
     }
     build.compile("lighttouch_portable");
-    cc::Build::new()
-        .file(manifest.join("src/layout.c"))
-        .include(portable.join("include"))
-        .compile("lighttouch_layout");
+    cc::Build::new().file(manifest.join("src/layout.c")).include(portable.join("include")).compile("lighttouch_layout");
 
     match target_os.as_str() {
         "linux" | "android" => println!("cargo:rustc-link-lib=dl"),

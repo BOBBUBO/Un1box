@@ -1,0 +1,205 @@
+//! The device list on the left: every saved device, the running one marked, and "Add a device".
+use super::{App, Dialog, Page, icons, setup, theme, widgets};
+use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Frame, Margin, RichText, Sense, vec2};
+use lighttouch_model::session::Phase;
+
+pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    let p = app.palette;
+    egui::Panel::left("devices")
+        .resizable(false)
+        .exact_size(268.0)
+        .frame(Frame::new().fill(p.container_low).inner_margin(Margin { left: 14, right: 14, top: 18, bottom: 14 }))
+        .show(ui, |ui| {
+            // Brand.
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+                ui.painter().rect_filled(rect, CornerRadius::same(10), p.primary);
+                ui.painter().text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    icons::PHONE,
+                    FontId::new(20.0, theme::icons_fill()),
+                    p.on_primary,
+                );
+                ui.add_space(4.0);
+                ui.label(RichText::new("LightTouch").size(18.0).family(theme::semibold()));
+            });
+            ui.add_space(18.0);
+            ui.label(RichText::new("DEVICES").font(theme::label()).color(p.on_surface_variant));
+            ui.add_space(4.0);
+
+            let active = app.model.session_active();
+            let busy = app.model.busy().is_some();
+            let running_id = app.model.session.as_ref().map(|s| s.record_id.clone());
+            let running_phase = app.model.session.as_ref().map(|s| s.phase.clone());
+            egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(ui.available_height() - 120.0).show(
+                ui,
+                |ui| {
+                    for device in app.model.devices.clone() {
+                        let running = running_id.as_deref() == Some(device.id.as_str());
+                        let mut subtitle = device.subtitle.clone();
+                        if device.dirty && !running {
+                            subtitle.push_str(" · needs recovery");
+                        }
+                        let dot = if running { running_phase.as_ref().map(phase_color) } else { None };
+                        let response = device_row(ui, &p, &device.name, &subtitle, device.selected, dot);
+                        if response.clicked() && !active && !busy && !device.selected {
+                            app.model.select(&device.id);
+                            app.page = Page::Device;
+                        } else if response.clicked() && device.selected {
+                            app.page = Page::Device;
+                        }
+                        response.context_menu(|ui| {
+                            if ui.button(widgets::icon_label(icons::PENCIL, "Rename…", None)).clicked() {
+                                app.dialog = Some(Dialog::Rename { id: device.id.clone(), name: device.name.clone() });
+                                ui.close();
+                            }
+                            if ui
+                                .add_enabled(
+                                    !running,
+                                    egui::Button::new(widgets::icon_label(icons::TRASH, "Delete…", None)),
+                                )
+                                .clicked()
+                            {
+                                app.dialog = Some(Dialog::Delete { id: device.id.clone(), name: device.name.clone() });
+                                ui.close();
+                            }
+                        });
+                        ui.add_space(2.0);
+                    }
+                },
+            );
+
+            if let Some(session) = &app.model.session {
+                if active {
+                    ui.add_space(6.0);
+                    ui.label(
+                        widgets::muted(&p, format!("Stop {} to switch to or add another.", session.name)).size(12.5),
+                    );
+                }
+            }
+            ui.add_space(6.0);
+            let add = add_row(ui, &p, !active && !busy);
+            if add.clicked() {
+                app.setup = setup::SetupState::default();
+                app.page = Page::Setup(setup::Step::Files);
+            }
+
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                ui.horizontal(|ui| {
+                    let settings_open = app.page == Page::Settings;
+                    if nav_button(ui, &p, icons::GEAR, "Settings", settings_open).clicked() {
+                        app.page = if settings_open { Page::Device } else { Page::Settings };
+                    }
+                });
+            });
+        });
+}
+
+pub fn phase_color(phase: &Phase) -> Color32 {
+    match phase {
+        Phase::Running => theme::ACCENT,
+        Phase::Verifying { .. } | Phase::Starting | Phase::Stopping => theme::WARNING,
+        Phase::Paused => theme::PAUSED,
+        Phase::Ended { clean: false, .. } => theme::DANGER,
+        Phase::Ended { .. } => Color32::GRAY,
+    }
+}
+
+fn device_row(
+    ui: &mut egui::Ui,
+    p: &theme::Palette,
+    name: &str,
+    subtitle: &str,
+    selected: bool,
+    dot: Option<Color32>,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
+    let painter = ui.painter();
+    let fill = if selected {
+        p.container_highest
+    } else if response.hovered() {
+        p.container_high
+    } else {
+        Color32::TRANSPARENT
+    };
+    painter.rect_filled(rect, CornerRadius::same(theme::radius::ROW), fill);
+    let tile = egui::Rect::from_center_size(rect.left_center() + vec2(26.0, 0.0), vec2(34.0, 40.0));
+    painter.rect_filled(tile, CornerRadius::same(9), if selected { p.primary_container } else { p.container_highest });
+    painter.text(
+        tile.center(),
+        Align2::CENTER_CENTER,
+        icons::PHONE,
+        FontId::new(20.0, theme::icons()),
+        if selected { p.on_primary_container } else { p.on_surface_variant },
+    );
+    if let Some(color) = dot {
+        painter.circle_filled(tile.right_bottom() - vec2(3.0, 3.0), 5.5, fill.max_alpha_with(p.container_low));
+        painter.circle_filled(tile.right_bottom() - vec2(3.0, 3.0), 4.0, color);
+    }
+    let left = rect.left() + 54.0;
+    let width = rect.right() - left - 8.0;
+    let name_galley = painter.layout(name.to_string(), FontId::new(14.5, theme::medium()), p.on_surface, width);
+    let sub_galley = painter.layout(
+        subtitle.to_string(),
+        FontId::new(12.0, egui::FontFamily::Proportional),
+        p.on_surface_variant,
+        width,
+    );
+    painter.galley(egui::pos2(left, rect.center().y - 17.0), name_galley, p.on_surface);
+    painter.galley(egui::pos2(left, rect.center().y + 2.0), sub_galley, p.on_surface_variant);
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+trait MaxAlpha {
+    fn max_alpha_with(self, other: Color32) -> Color32;
+}
+
+impl MaxAlpha for Color32 {
+    /// The row's fill if it has one, else the panel colour (to cut the dot out of the tile).
+    fn max_alpha_with(self, other: Color32) -> Color32 {
+        if self.a() == 0 { other } else { self }
+    }
+}
+
+fn add_row(ui: &mut egui::Ui, p: &theme::Palette, enabled: bool) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), 46.0), if enabled { Sense::click() } else { Sense::hover() });
+    let alpha = if enabled { 1.0 } else { 0.4 };
+    if response.hovered() && enabled {
+        ui.painter().rect_filled(rect, CornerRadius::same(theme::radius::ROW), p.container_high);
+    }
+    let tile = egui::Rect::from_center_size(rect.left_center() + vec2(26.0, 0.0), vec2(34.0, 34.0));
+    ui.painter().rect_stroke(
+        tile,
+        CornerRadius::same(9),
+        egui::Stroke::new(1.2, p.outline.gamma_multiply(alpha)),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        tile.center(),
+        Align2::CENTER_CENTER,
+        icons::PLUS,
+        FontId::new(18.0, theme::icons()),
+        p.primary.gamma_multiply(alpha),
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + 54.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        "Add a device",
+        FontId::new(14.5, theme::medium()),
+        p.primary.gamma_multiply(alpha),
+    );
+    if enabled { response.on_hover_cursor(egui::CursorIcon::PointingHand) } else { response }
+}
+
+fn nav_button(ui: &mut egui::Ui, p: &theme::Palette, icon: &str, label: &str, active: bool) -> egui::Response {
+    let text = widgets::icon_label(icon, label, Some(if active { p.primary } else { p.on_surface_variant }));
+    ui.add(
+        egui::Button::new(text)
+            .fill(if active { p.container_highest } else { Color32::TRANSPARENT })
+            .corner_radius(CornerRadius::same(12))
+            .min_size(vec2(0.0, 36.0)),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
+}

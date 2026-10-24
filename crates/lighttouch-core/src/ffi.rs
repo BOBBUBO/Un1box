@@ -13,10 +13,7 @@ pub struct Error {
 
 impl Error {
     pub fn new(status: sys::lt_status, message: impl Into<String>) -> Self {
-        Self {
-            status,
-            message: message.into(),
-        }
+        Self { status, message: message.into() }
     }
     pub fn invalid(message: impl Into<String>) -> Self {
         Self::new(sys::LT_INVALID, message)
@@ -28,11 +25,7 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.message.is_empty() {
-            write!(f, "{}", status_name(self.status))
-        } else {
-            f.write_str(&self.message)
-        }
+        if self.message.is_empty() { write!(f, "{}", status_name(self.status)) } else { f.write_str(&self.message) }
     }
 }
 
@@ -57,19 +50,11 @@ pub fn status_name(status: sys::lt_status) -> &'static str {
 
 /// Turn a status and the error the core filled in into a `Result`.
 pub(crate) fn check(status: sys::lt_status, error: &sys::lt_error) -> Result<()> {
-    if status == sys::LT_OK {
-        Ok(())
-    } else {
-        Err(Error::new(status, chars(&error.message)))
-    }
+    if status == sys::LT_OK { Ok(()) } else { Err(Error::new(status, chars(&error.message))) }
 }
 
 pub(crate) fn chars(value: &[c_char]) -> String {
-    let bytes: Vec<u8> = value
-        .iter()
-        .take_while(|&&c| c != 0)
-        .map(|&c| c as u8)
-        .collect();
+    let bytes: Vec<u8> = value.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
@@ -78,9 +63,7 @@ pub(crate) fn cstring(value: &str) -> Result<CString> {
 }
 
 pub(crate) fn cpath(path: &Path) -> Result<CString> {
-    let text = path
-        .to_str()
-        .ok_or_else(|| Error::invalid(format!("path is not UTF-8: {}", path.display())))?;
+    let text = path.to_str().ok_or_else(|| Error::invalid(format!("path is not UTF-8: {}", path.display())))?;
     cstring(text)
 }
 
@@ -93,11 +76,5 @@ pub(crate) fn ptr(value: &Option<CString>) -> *const c_char {
 }
 
 pub(crate) fn cstr_lossy(value: *const c_char) -> String {
-    if value.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(value) }
-            .to_string_lossy()
-            .into_owned()
-    }
+    if value.is_null() { String::new() } else { unsafe { CStr::from_ptr(value) }.to_string_lossy().into_owned() }
 }

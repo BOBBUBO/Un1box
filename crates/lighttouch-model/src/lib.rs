@@ -1,0 +1,497 @@
+//! Everything the LightTouch app does, without any UI toolkit: the device list, adding devices, running one,
+//! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
+//! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
+pub mod session;
+pub mod settings;
+pub mod task;
+
+use lighttouch_catalog::catalog::{default_device_name, device_subtitle, model_name};
+use lighttouch_catalog::{Bootrom, GuestTools};
+use lighttouch_core::library::{ImportSource, Library, Record};
+use lighttouch_core::paths::{DataDirs, Resources};
+use session::{Phase, Session, StartOptions};
+use settings::Settings;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use task::{Progress, Reporter, Task};
+
+/// Ask the frontend to redraw (called from background threads).
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
+/// A saved device as the UI shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Device {
+    pub id: String,
+    pub name: String,
+    pub board: String,
+    pub build: String,
+    /// "iPod touch 2G", or the board when the catalog does not know it.
+    pub model: String,
+    /// "iPod touch 2G · iOS 3.1.3".
+    pub subtitle: String,
+    pub selected: bool,
+    /// Not shut down cleanly last time: starting it means recovering.
+    pub dirty: bool,
+    /// The boot ROM it needs is missing.
+    pub missing_bootrom: bool,
+    pub has_guest_tools: bool,
+    pub record: Record,
+}
+
+impl Device {
+    fn from_record(record: Record) -> Self {
+        let needs_rom = Bootrom::for_board(&record.board).is_some();
+        Self {
+            id: record.id.clone(),
+            name: record.name.clone(),
+            board: record.board.clone(),
+            build: record.build.clone(),
+            model: model_name(&record.board, &record.build).map(str::to_string).unwrap_or_else(|| record.board.clone()),
+            subtitle: device_subtitle(&record.board, &record.build),
+            selected: record.selected,
+            dirty: record.dirty,
+            missing_bootrom: needs_rom && record.bootrom_path.is_none(),
+            has_guest_tools: record.guest_package_path.is_some(),
+            record,
+        }
+    }
+}
+
+/// What a folder holds, for "Choose a folder".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FoundAssets {
+    pub system: Option<PathBuf>,
+    pub bootrom: Option<PathBuf>,
+}
+
+impl FoundAssets {
+    pub fn describe(&self, folder: &Path) -> String {
+        let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match (&self.system, &self.bootrom) {
+            (Some(_), Some(_)) => format!("Found an iOS system and a boot file in {name}"),
+            (Some(_), None) => format!("Found an iOS system in {name}"),
+            (None, Some(_)) => format!("Found a boot file in {name}"),
+            (None, None) => format!("Nothing LightTouch can use in {name}"),
+        }
+    }
+}
+
+/// A device to add from files the user has.
+#[derive(Debug, Clone, Default)]
+pub struct AddRequest {
+    /// An `.itbase`, a packed folder (`index.json` + `files/`) or a prepared folder (`device.lock.json`).
+    pub system: PathBuf,
+    pub bootrom: Option<PathBuf>,
+    pub name: Option<String>,
+}
+
+/// What the current background operation is.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Activity {
+    AddingDevice,
+}
+
+/// A finished background operation, for the UI to react to (e.g. show "ready").
+#[derive(Debug, Clone, PartialEq)]
+pub enum Finished {
+    DeviceAdded { id: String, name: String, selected: bool },
+    Failed { activity: Activity, message: String },
+}
+
+pub struct Model {
+    pub dirs: DataDirs,
+    pub resources: Resources,
+    pub settings: Settings,
+    pub devices: Vec<Device>,
+    pub session: Option<Session>,
+    /// A message to show briefly ("Renamed to …").
+    pub notice: Option<(String, Instant)>,
+    /// A problem to show until dismissed.
+    pub error: Option<String>,
+    library: Option<Library>,
+    task: Option<(Activity, Task<Finished>)>,
+    finished: Option<Finished>,
+    waker: Waker,
+}
+
+impl Model {
+    pub fn new(dirs: DataDirs, resources: Resources, waker: Waker) -> Self {
+        let settings = Settings::load(&dirs.settings());
+        let mut model = Self {
+            dirs,
+            resources,
+            settings,
+            devices: Vec::new(),
+            session: None,
+            notice: None,
+            error: None,
+            library: None,
+            task: None,
+            finished: None,
+            waker,
+        };
+        match Library::open(&model.dirs.library()) {
+            Ok(library) => model.library = Some(library),
+            Err(e) => model.error = Some(format!("Couldn't open your devices: {e}")),
+        }
+        model.refresh();
+        model
+    }
+
+    pub fn waker(&self) -> Waker {
+        self.waker.clone()
+    }
+
+    /// Apply background results. Call once per frame.
+    pub fn tick(&mut self) {
+        let mut ended = false;
+        if let Some(session) = &mut self.session {
+            session.poll();
+            session.kill_if_overdue();
+            if let Some(error) = session.last_error.take() {
+                self.notice = Some((error, Instant::now()));
+            }
+            if let Phase::Ended { clean, message, .. } = &session.phase {
+                if !*clean && !message.is_empty() {
+                    self.error = Some(message.clone());
+                }
+                ended = true;
+            }
+        }
+        if ended {
+            // Keep the ended session around only long enough to report; the record's dirty flag shows the rest.
+            self.session = None;
+            self.refresh();
+        }
+        if let Some((activity, task)) = &mut self.task {
+            if let Some(result) = task.take_result() {
+                let activity = activity.clone();
+                self.task = None;
+                let finished = result.unwrap_or_else(|message| Finished::Failed { activity, message });
+                if let Finished::DeviceAdded { name, selected: false, .. } = &finished {
+                    self.notice =
+                        Some((format!("Added {name}; stop the running device to switch to it"), Instant::now()));
+                }
+                self.finished = Some(finished);
+                self.refresh();
+            }
+        }
+        if self.notice.as_ref().is_some_and(|(_, at)| at.elapsed() > Duration::from_secs(4)) {
+            self.notice = None;
+        }
+    }
+
+    /// The last finished background operation, once.
+    pub fn take_finished(&mut self) -> Option<Finished> {
+        self.finished.take()
+    }
+
+    pub fn refresh(&mut self) {
+        if let Some(library) = &self.library {
+            match library.records() {
+                Ok(records) => self.devices = records.into_iter().map(Device::from_record).collect(),
+                Err(e) => self.error = Some(format!("Couldn't read your devices: {e}")),
+            }
+        }
+    }
+
+    pub fn selected(&self) -> Option<&Device> {
+        self.devices.iter().find(|d| d.selected)
+    }
+
+    /// The device the session runs, else the selected one.
+    pub fn current(&self) -> Option<&Device> {
+        match &self.session {
+            Some(s) => self.devices.iter().find(|d| d.id == s.record_id),
+            None => self.selected(),
+        }
+    }
+
+    pub fn session_active(&self) -> bool {
+        self.session.as_ref().is_some_and(|s| s.phase.active())
+    }
+
+    pub fn busy(&self) -> Option<(&Activity, Progress)> {
+        self.task.as_ref().map(|(a, t)| (a, t.progress()))
+    }
+
+    pub fn cancel_task(&mut self) {
+        if let Some((_, task)) = &self.task {
+            task.cancel();
+        }
+    }
+
+    fn notify(&mut self, text: impl Into<String>) {
+        self.notice = Some((text.into(), Instant::now()));
+    }
+
+    fn library(&self) -> Result<&Library, String> {
+        self.library.as_ref().ok_or_else(|| "The device library is unavailable".to_string())
+    }
+
+    pub fn select(&mut self, id: &str) {
+        if self.session_active() {
+            return;
+        }
+        let result = self.library().and_then(|l| l.select(id).map_err(|e| e.to_string()));
+        match result {
+            Ok(()) => self.refresh(),
+            Err(e) => self.error = Some(e),
+        }
+    }
+
+    pub fn rename(&mut self, id: &str, name: &str) {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let result = self.library().and_then(|l| l.rename(id, &name).map_err(|e| e.to_string()));
+        match result {
+            Ok(()) => {
+                if let Some(session) = &mut self.session {
+                    if session.record_id == id {
+                        session.name = name.clone();
+                    }
+                }
+                self.notify(format!("Renamed to {name}"));
+                self.refresh();
+            }
+            Err(e) => self.error = Some(format!("Couldn't rename it: {e}")),
+        }
+    }
+
+    pub fn remove(&mut self, id: &str) {
+        if self.session.as_ref().is_some_and(|s| s.record_id == id) {
+            return;
+        }
+        let result = self.library().and_then(|l| l.remove(id).map_err(|e| e.to_string()));
+        match result {
+            Ok(()) => {
+                let _ = std::fs::remove_dir_all(self.dirs.pairing(id));
+                self.notify("Device deleted");
+                self.refresh();
+            }
+            Err(e) => self.error = Some(format!("Couldn't delete it: {e}")),
+        }
+    }
+
+    /// Start the selected device. `recover` cold-boots state that was not shut down cleanly.
+    pub fn start(&mut self, recover: bool) {
+        if self.session_active() {
+            return;
+        }
+        let Some(device) = self.selected().cloned() else {
+            self.error = Some("Select a device first".into());
+            return;
+        };
+        // Hand over newer bundled guest tools; iOS installs them during this boot.
+        let tools = GuestTools::new(self.resources.guest_tools());
+        if let Some(pack) = tools.newer_than(device.record.guest_package_path.as_deref(), &device.board, &device.build)
+        {
+            if let Ok(library) = self.library() {
+                if let Err(e) = library.set_guest_package(&device.id, &pack) {
+                    eprintln!("guest tools update for {}: {e}", device.id);
+                }
+            }
+        }
+        let options = StartOptions {
+            library: self.dirs.library(),
+            record_id: device.id.clone(),
+            name: device.name.clone(),
+            engine: self.resources.engine(),
+            recover: recover || device.dirty,
+            audio: true,
+            headphones: self.settings.headphones,
+            muted: self.settings.muted,
+            log_dir: self.dirs.logs(),
+            extra_env: Vec::new(),
+        };
+        match Session::start(options, self.waker.clone()) {
+            Ok(session) => {
+                self.error = None;
+                self.session = Some(session);
+            }
+            Err(e) => self.error = Some(e),
+        }
+        self.refresh();
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(session) = &mut self.session {
+            session.stop();
+        }
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        if let Some(session) = &mut self.session {
+            session.set_paused(paused);
+        }
+    }
+
+    pub fn set_muted(&mut self, muted: bool) {
+        self.settings.muted = muted;
+        self.save_settings();
+        if let Some(session) = &mut self.session {
+            session.set_muted(muted);
+        }
+    }
+
+    pub fn save_settings(&mut self) {
+        if let Err(e) = self.settings.save(&self.dirs.settings()) {
+            self.error = Some(format!("Couldn't save settings: {e}"));
+        }
+    }
+
+    /// Save the current guest screen into the Pictures folder.
+    pub fn screenshot(&mut self) {
+        let dir = self.dirs.screenshots();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.error = Some(format!("Couldn't save the screenshot: {e}"));
+            return;
+        }
+        let stamp = chrono_like_stamp();
+        let path = dir.join(format!("LightTouch {stamp}.bmp"));
+        if let Some(session) = &mut self.session {
+            session.screenshot(&path);
+            self.notify(format!("Screenshot saved to {}", dir.display()));
+        }
+    }
+
+    /// Look in a folder (and one level down) for a prepared system and a boot ROM.
+    pub fn scan_folder(folder: &Path) -> FoundAssets {
+        let mut found = FoundAssets::default();
+        let mut folders = vec![folder.to_path_buf()];
+        if let Ok(entries) = std::fs::read_dir(folder) {
+            folders.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+        }
+        for dir in &folders {
+            if found.system.is_none() {
+                if dir.join("index.json").is_file() && dir.join("files").is_dir()
+                    || dir.join("device.lock.json").is_file()
+                {
+                    found.system = Some(dir.clone());
+                }
+            }
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if found.system.is_none() && path.is_file() && name.ends_with(".itbase") {
+                    found.system = Some(path.clone());
+                }
+                if found.bootrom.is_none() && path.is_file() && name.starts_with("bootrom") {
+                    found.bootrom = Some(path);
+                }
+            }
+        }
+        found
+    }
+
+    /// Add a device from files the user has, in the background.
+    pub fn add_device(&mut self, request: AddRequest) {
+        if self.task.is_some() {
+            return;
+        }
+        let library_root = self.dirs.library();
+        let tools = GuestTools::new(self.resources.guest_tools());
+        let select = !self.session_active();
+        let taken: Vec<String> = self.devices.iter().map(|d| d.name.clone()).collect();
+        let task = Task::spawn(self.waker.clone(), move |reporter| {
+            add_device_work(&library_root, &tools, request, select, &taken, reporter)
+        });
+        self.task = Some((Activity::AddingDevice, task));
+    }
+
+    pub fn dismiss_error(&mut self) {
+        self.error = None;
+    }
+}
+
+fn add_device_work(
+    library_root: &Path,
+    tools: &GuestTools,
+    request: AddRequest,
+    select: bool,
+    taken: &[String],
+    reporter: &Reporter,
+) -> Result<Finished, String> {
+    let library = Library::open(library_root).map_err(|e| e.to_string())?;
+    let sha256 = if request.system.is_file() { Some(sha256_with_progress(&request.system, reporter)?) } else { None };
+    let source = ImportSource {
+        path: request.system.clone(),
+        sha256,
+        name: None,
+        bootrom: request.bootrom.clone(),
+        guest_package: None,
+    };
+    let record = library
+        .import(&source, &mut |phase, done, total| {
+            let text = match phase {
+                "hashing" => "Checking the files",
+                "extracting" => "Copying the system",
+                "packing" => "Packing the flash",
+                "verifying" => "Verifying",
+                other => other,
+            };
+            reporter.report(text, done, total)
+        })
+        .map_err(|e| {
+            if reporter.cancelled() { "Cancelled".to_string() } else { format!("Couldn't add the device: {e}") }
+        })?;
+    reporter.report("Finishing", 0, 0);
+    // From here the record exists; later failures keep it.
+    if let Some(pack) = tools.for_device(&record.board, &record.build) {
+        if let Err(e) = library.set_guest_package(&record.id, &pack) {
+            eprintln!("guest tools for the new device: {e}");
+        }
+    }
+    let name = match request.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => name.to_string(),
+        None => default_device_name(&record.board, &record.build, taken.iter().map(String::as_str)),
+    };
+    let _ = library.rename(&record.id, &name);
+    if select {
+        let _ = library.select(&record.id);
+    }
+    Ok(Finished::DeviceAdded { id: record.id, name, selected: select })
+}
+
+fn sha256_with_progress(path: &Path, reporter: &Reporter) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let total = path.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 4 << 20];
+    let mut done = 0u64;
+    loop {
+        let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+        done += n as u64;
+        if !reporter.report("Checking the file", done, total) {
+            return Err("Cancelled".into());
+        }
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// "2026-10-24 at 21.05.33" in local-ish time without a date library: UTC is fine for file names.
+fn chrono_like_stamp() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let (days, rem) = (secs / 86400, secs % 86400);
+    let (h, m, s) = (rem / 3600, rem % 3600 / 60, rem % 60);
+    // Civil date from days since 1970 (Howard Hinnant's algorithm).
+    let z = days as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if mo <= 2 { 1 } else { 0 };
+    format!("{y:04}-{mo:02}-{d:02} at {h:02}.{m:02}.{s:02}")
+}

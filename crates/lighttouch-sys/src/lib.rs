@@ -59,10 +59,7 @@ macro_rules! abi_struct {
     };
 }
 
-abi_struct!(lt_error {
-    code: i32,
-    message: [c_char; 512]
-});
+abi_struct!(lt_error { code: i32, message: [c_char; 512] });
 
 #[repr(C)]
 pub struct lt_device {
@@ -78,8 +75,7 @@ pub struct lt_library {
 }
 
 pub type lt_progress_fn = Option<unsafe extern "C" fn(*mut c_void, u64, u64) -> c_int>;
-pub type lt_import_phase_fn =
-    Option<unsafe extern "C" fn(*mut c_void, *const c_char, u64, u64) -> c_int>;
+pub type lt_import_phase_fn = Option<unsafe extern "C" fn(*mut c_void, *const c_char, u64, u64) -> c_int>;
 pub type lt_frame_listener = Option<unsafe extern "C" fn(*mut c_void, u64)>;
 
 abi_struct!(lt_library_config { root_path: *const c_char });
@@ -194,27 +190,11 @@ pub struct lt_contact {
 }
 impl lt_contact {
     pub fn new(id: u32, phase: u32, x: f64, y: f64) -> Self {
-        Self {
-            size: std::mem::size_of::<Self>() as u32,
-            version: LT_ABI_VERSION,
-            id,
-            phase,
-            x,
-            y,
-        }
+        Self { size: std::mem::size_of::<Self>() as u32, version: LT_ABI_VERSION, id, phase, x, y }
     }
 }
-abi_struct!(lt_touch_batch {
-    timestamp_ns: u64,
-    count: u32,
-    reserved: u32,
-    contacts: [lt_contact; LT_MAX_CONTACTS],
-});
-abi_struct!(lt_input_status {
-    request_id: u64,
-    state: u32,
-    engine_result: i32
-});
+abi_struct!(lt_touch_batch { timestamp_ns: u64, count: u32, reserved: u32, contacts: [lt_contact; LT_MAX_CONTACTS] });
+abi_struct!(lt_input_status { request_id: u64, state: u32, engine_result: i32 });
 abi_struct!(lt_motion {
     timestamp_ns: u64,
     kinds: u32,
@@ -249,38 +229,22 @@ unsafe extern "C" {
         error: *mut lt_error,
     ) -> lt_status;
     pub fn lt_library_close(library: *mut lt_library);
-    pub fn lt_library_count(
-        library: *mut lt_library,
-        count: *mut u32,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_library_count(library: *mut lt_library, count: *mut u32, error: *mut lt_error) -> lt_status;
     pub fn lt_library_record_at(
         library: *mut lt_library,
         index: u32,
         info: *mut lt_record_info,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_library_select(
-        library: *mut lt_library,
-        record_id: *const c_char,
-        error: *mut lt_error,
-    ) -> lt_status;
-    pub fn lt_library_selected(
-        library: *mut lt_library,
-        info: *mut lt_record_info,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_library_select(library: *mut lt_library, record_id: *const c_char, error: *mut lt_error) -> lt_status;
+    pub fn lt_library_selected(library: *mut lt_library, info: *mut lt_record_info, error: *mut lt_error) -> lt_status;
     pub fn lt_library_rename(
         library: *mut lt_library,
         record_id: *const c_char,
         display_name: *const c_char,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_library_remove(
-        library: *mut lt_library,
-        record_id: *const c_char,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_library_remove(library: *mut lt_library, record_id: *const c_char, error: *mut lt_error) -> lt_status;
     pub fn lt_library_import_observed(
         library: *mut lt_library,
         config: *const lt_library_import_config,
@@ -320,8 +284,7 @@ unsafe extern "C" {
         device: *mut *mut lt_device,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_sha256_file(path: *const c_char, hex: *mut c_char, error: *mut lt_error)
-    -> lt_status;
+    pub fn lt_sha256_file(path: *const c_char, hex: *mut c_char, error: *mut lt_error) -> lt_status;
 
     pub fn lt_engine_board(
         engine_library: *const c_char,
@@ -329,11 +292,7 @@ unsafe extern "C" {
         info: *mut lt_board_info,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_device_describe(
-        device: *mut lt_device,
-        info: *mut lt_device_info,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_device_describe(device: *mut lt_device, info: *mut lt_device_info, error: *mut lt_error) -> lt_status;
     pub fn lt_device_close(device: *mut lt_device);
 
     pub fn lt_runtime_create(
@@ -342,11 +301,8 @@ unsafe extern "C" {
         error: *mut lt_error,
     ) -> lt_status;
     pub fn lt_runtime_start(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
-    pub fn lt_runtime_poll(
-        runtime: *mut lt_runtime,
-        status: *mut lt_runtime_status,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_runtime_poll(runtime: *mut lt_runtime, status: *mut lt_runtime_status, error: *mut lt_error)
+    -> lt_status;
     pub fn lt_runtime_diagnose(
         runtime: *mut lt_runtime,
         diagnostics: *mut lt_runtime_diagnostics,
@@ -357,23 +313,10 @@ unsafe extern "C" {
         stats: *mut lt_runtime_io_stats,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_runtime_profile(
-        runtime: *mut lt_runtime,
-        path: *const c_char,
-        error: *mut lt_error,
-    ) -> lt_status;
-    pub fn lt_runtime_profile_status(
-        runtime: *mut lt_runtime,
-        status: *mut i32,
-        error: *mut lt_error,
-    ) -> lt_status;
-    pub fn lt_runtime_pause(
-        runtime: *mut lt_runtime,
-        paused: u32,
-        error: *mut lt_error,
-    ) -> lt_status;
-    pub fn lt_runtime_request_shutdown(runtime: *mut lt_runtime, error: *mut lt_error)
-    -> lt_status;
+    pub fn lt_runtime_profile(runtime: *mut lt_runtime, path: *const c_char, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_profile_status(runtime: *mut lt_runtime, status: *mut i32, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_pause(runtime: *mut lt_runtime, paused: u32, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_request_shutdown(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_destroy(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_copy_frame(
         runtime: *mut lt_runtime,
@@ -401,28 +344,15 @@ unsafe extern "C" {
         info: *mut lt_frame_info,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_runtime_touch(
-        runtime: *mut lt_runtime,
-        batch: *const lt_touch_batch,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_runtime_touch(runtime: *mut lt_runtime, batch: *const lt_touch_batch, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_input_status(
         runtime: *mut lt_runtime,
         status: *mut lt_input_status,
         error: *mut lt_error,
     ) -> lt_status;
     pub fn lt_runtime_cancel_input(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
-    pub fn lt_runtime_button(
-        runtime: *mut lt_runtime,
-        button: u32,
-        down: u32,
-        error: *mut lt_error,
-    ) -> lt_status;
-    pub fn lt_runtime_motion(
-        runtime: *mut lt_runtime,
-        motion: *const lt_motion,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_runtime_button(runtime: *mut lt_runtime, button: u32, down: u32, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_motion(runtime: *mut lt_runtime, motion: *const lt_motion, error: *mut lt_error) -> lt_status;
     pub fn lt_map_contact(
         px: f64,
         py: f64,
@@ -441,11 +371,7 @@ unsafe extern "C" {
         info: *mut lt_pcm_info,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_runtime_guest_status(
-        runtime: *mut lt_runtime,
-        status: *mut u32,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_runtime_guest_status(runtime: *mut lt_runtime, status: *mut u32, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_guest_request(
         runtime: *mut lt_runtime,
         request: *const lt_guest_request,
@@ -458,11 +384,7 @@ unsafe extern "C" {
         result: *mut lt_guest_result,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_runtime_guest_cancel(
-        runtime: *mut lt_runtime,
-        request_id: u64,
-        error: *mut lt_error,
-    ) -> lt_status;
+    pub fn lt_runtime_guest_cancel(runtime: *mut lt_runtime, request_id: u64, error: *mut lt_error) -> lt_status;
 }
 
 #[cfg(test)]

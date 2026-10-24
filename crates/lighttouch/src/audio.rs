@@ -22,12 +22,8 @@ pub struct Output {
 impl Output {
     pub fn open() -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("no audio output device")?;
-        let config = device
-            .default_output_config()
-            .map_err(|e| format!("audio device configuration: {e}"))?;
+        let device = host.default_output_device().ok_or("no audio output device")?;
+        let config = device.default_output_config().map_err(|e| format!("audio device configuration: {e}"))?;
         let channels = config.channels() as usize;
         let rate = config.sample_rate();
         let shared = Arc::new(Shared {
@@ -66,18 +62,9 @@ impl Output {
             other => return Err(format!("unsupported audio sample format {other:?}")),
         }
         .map_err(|e| format!("open audio output: {e}"))?;
-        stream
-            .play()
-            .map_err(|e| format!("start audio output: {e}"))?;
-        eprintln!(
-            "audio: {} Hz, {channels} channels, {:?}",
-            rate,
-            config.sample_format()
-        );
-        Ok(Self {
-            shared,
-            _stream: stream,
-        })
+        stream.play().map_err(|e| format!("start audio output: {e}"))?;
+        eprintln!("audio: {} Hz, {channels} channels, {:?}", rate, config.sample_format());
+        Ok(Self { shared, _stream: stream })
     }
 
     /// Queue interleaved stereo samples.
@@ -110,12 +97,7 @@ struct Resampler {
 
 impl Resampler {
     fn new(from: u32, to: u32) -> Self {
-        Self {
-            step: from as f64 / to as f64,
-            position: 1.0,
-            previous: [0.0; 2],
-            current: [0.0; 2],
-        }
+        Self { step: from as f64 / to as f64, position: 1.0, previous: [0.0; 2], current: [0.0; 2] }
     }
 
     fn next(&mut self, queue: &mut VecDeque<[i16; 2]>) -> [f32; 2] {

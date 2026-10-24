@@ -68,10 +68,7 @@ impl FrameReader {
             (*header).version = VERSION;
             (*header).capacity = CAPACITY as u64;
         }
-        Ok(Self {
-            map,
-            name: name.to_string(),
-        })
+        Ok(Self { map, name: name.to_string() })
     }
 
     pub fn name(&self) -> &str {
@@ -135,10 +132,7 @@ impl FrameWriter {
         let header = map.header();
         let ok = unsafe { (*header).magic == MAGIC && (*header).version == VERSION };
         if !ok {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "frame segment has the wrong format",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "frame segment has the wrong format"));
         }
         Ok(Self { map })
     }
@@ -199,11 +193,7 @@ impl Mapping {
 
     fn map(name: &str, len: usize, create: bool) -> io::Result<Self> {
         let cname = std::ffi::CString::new(name).map_err(|_| io::ErrorKind::InvalidInput)?;
-        let flags = if create {
-            libc::O_CREAT | libc::O_EXCL | libc::O_RDWR
-        } else {
-            libc::O_RDWR
-        };
+        let flags = if create { libc::O_CREAT | libc::O_EXCL | libc::O_RDWR } else { libc::O_RDWR };
         let fd = unsafe { libc::shm_open(cname.as_ptr(), flags, 0o600 as libc::mode_t) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
@@ -213,22 +203,12 @@ impl Mapping {
                 return Err(io::Error::last_os_error());
             }
             let base = unsafe {
-                libc::mmap(
-                    std::ptr::null_mut(),
-                    len,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_SHARED,
-                    fd,
-                    0,
-                )
+                libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0)
             };
             if base == libc::MAP_FAILED {
                 return Err(io::Error::last_os_error());
             }
-            Ok(Self {
-                base: base as *mut u8,
-                len,
-            })
+            Ok(Self { base: base as *mut u8, len })
         })();
         unsafe { libc::close(fd) };
         if result.is_err() && create {
@@ -258,9 +238,7 @@ impl Mapping {
     }
 
     fn create(name: &str, len: usize) -> io::Result<Self> {
-        use windows_sys::Win32::Foundation::{
-            ERROR_ALREADY_EXISTS, GetLastError, INVALID_HANDLE_VALUE,
-        };
+        use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, INVALID_HANDLE_VALUE};
         use windows_sys::Win32::System::Memory::{CreateFileMappingW, PAGE_READWRITE};
         let wide = Self::wide(name);
         let handle = unsafe {
@@ -301,11 +279,7 @@ impl Mapping {
             unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
             return Err(error);
         }
-        Ok(Self {
-            base: view.Value as *mut u8,
-            len,
-            handle,
-        })
+        Ok(Self { base: view.Value as *mut u8, len, handle })
     }
 
     fn unlink(_name: &str) {
@@ -318,9 +292,7 @@ impl Drop for Mapping {
     fn drop(&mut self) {
         use windows_sys::Win32::System::Memory::{MEMORY_MAPPED_VIEW_ADDRESS, UnmapViewOfFile};
         unsafe {
-            UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
-                Value: self.base as *mut _,
-            });
+            UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS { Value: self.base as *mut _ });
             windows_sys::Win32::Foundation::CloseHandle(self.handle);
         }
         let _ = self.len;
@@ -340,14 +312,7 @@ mod tests {
         assert!(reader.read(0, &mut pixels).is_none());
         writer.publish(|buffer| {
             buffer[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-            Some(FrameMeta {
-                width: 2,
-                height: 1,
-                stride: 8,
-                sequence: 7,
-                timestamp_ns: 5,
-                published_ns: 0,
-            })
+            Some(FrameMeta { width: 2, height: 1, stride: 8, sequence: 7, timestamp_ns: 5, published_ns: 0 })
         });
         let meta = reader.read(0, &mut pixels).unwrap();
         assert_eq!((meta.width, meta.height, meta.sequence), (2, 1, 7));

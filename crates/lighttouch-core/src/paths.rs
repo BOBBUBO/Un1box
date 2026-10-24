@@ -21,26 +21,18 @@ pub fn data_root() -> PathBuf {
     }
     #[cfg(windows)]
     {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(home)
-            .join("LightTouch")
-            .join("App")
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(home).join("LightTouch").join("App")
     }
 }
 
 #[cfg(not(windows))]
 fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(windows)]
 fn home() -> PathBuf {
-    std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Folders inside the data root.
@@ -87,15 +79,11 @@ fn pictures_dir() -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         // Honour xdg-user-dirs when it is configured.
-        let config = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".config"));
+        let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config"));
         if let Ok(text) = std::fs::read_to_string(config.join("user-dirs.dirs")) {
             for line in text.lines() {
                 if let Some(value) = line.strip_prefix("XDG_PICTURES_DIR=") {
-                    let value = value
-                        .trim_matches('"')
-                        .replace("$HOME", &home().to_string_lossy());
+                    let value = value.trim_matches('"').replace("$HOME", &home().to_string_lossy());
                     return PathBuf::from(value);
                 }
             }
@@ -120,20 +108,14 @@ pub struct Resources {
 impl Resources {
     pub fn locate() -> Self {
         if let Some(dir) = std::env::var_os("LIGHTTOUCH_RESOURCES") {
-            return Self {
-                dir: PathBuf::from(dir),
-            };
+            return Self { dir: PathBuf::from(dir) };
         }
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.canonicalize().ok())
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from("."));
-        let candidates = [
-            exe_dir.join("resources"),
-            exe_dir.join("../Resources"),
-            exe_dir.join("../lib/lighttouch"),
-        ];
+        let candidates = [exe_dir.join("resources"), exe_dir.join("../Resources"), exe_dir.join("../lib/lighttouch")];
         let dir = candidates
             .iter()
             .find(|dir| dir.join(engine_file_name()).is_file())
@@ -145,16 +127,12 @@ impl Resources {
 
     /// The engine library. `LIGHTTOUCH_ENGINE` overrides it.
     pub fn engine(&self) -> PathBuf {
-        std::env::var_os("LIGHTTOUCH_ENGINE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.dir.join(engine_file_name()))
+        std::env::var_os("LIGHTTOUCH_ENGINE").map(PathBuf::from).unwrap_or_else(|| self.dir.join(engine_file_name()))
     }
 
     /// `armv6.itpack` / `armv7.itpack` and the preparer's guest helpers.
     pub fn guest_tools(&self) -> PathBuf {
-        std::env::var_os("LIGHTTOUCH_GUEST_TOOLS")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.dir.join("guest-tools"))
+        std::env::var_os("LIGHTTOUCH_GUEST_TOOLS").map(PathBuf::from).unwrap_or_else(|| self.dir.join("guest-tools"))
     }
 
     pub fn firmwarekit(&self) -> PathBuf {
@@ -181,9 +159,5 @@ pub fn engine_file_name() -> &'static str {
 }
 
 pub fn exe_name(name: &str) -> String {
-    if cfg!(windows) {
-        format!("{name}.exe")
-    } else {
-        name.to_string()
-    }
+    if cfg!(windows) { format!("{name}.exe") } else { name.to_string() }
 }
