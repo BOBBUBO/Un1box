@@ -33,7 +33,7 @@ patch -p1 < "$qemu/contrib/ffmpeg/h264-cavlc-pcm-offset.patch"
   --disable-everything --disable-autodetect --disable-programs --disable-doc --disable-x86asm \
   --disable-avdevice --disable-avformat --disable-avfilter --disable-swscale --disable-swresample \
   --enable-decoder=aac,mp3,alac,h264 --enable-shared --disable-static
-make -j2
+make -j"${LT_JOBS:-$(nproc)}"
 make DESTDIR="$sysroot" install
 mkdir "$out/engine"
 cd "$out/engine"
@@ -45,6 +45,6 @@ cd "$out/engine"
   --disable-werror --disable-pie --disable-containers --audio-drv-list=sdl \
   --extra-cflags="-I$sysroot/mingw64/include" --extra-ldflags="-L$sysroot/mingw64/lib" \
   -Dcpp_std=gnu++17
-ninja -j2 -d keeprsp qemu-system-arm.exe
+ninja -j"${LT_JOBS:-$(nproc)}" -d keeprsp qemu-system-arm.exe
 x86_64-w64-mingw32-objdump -p qemu-system-arm.exe > "$out/PE-IMPORTS.txt"
 sha256sum qemu-system-arm.exe > "$out/ENGINE-SHA256.txt"
