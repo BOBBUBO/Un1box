@@ -46,6 +46,10 @@ on:
         description: Extra engine compiler flags (a PGO pass builds here, e.g. -fprofile-generate)
         required: false
         default: ""
+      engine_configure_args:
+        description: Extra configure options for the engine build (e.g. "-Db_lto=true"); empty for the default
+        required: false
+        default: ""
       pgo_profile:
         description: PGO profile to build against, as "release-tag/asset-name" of a .profraw or .profdata
         required: false
@@ -104,8 +108,8 @@ jobs:
       ENGINE_REF: ${{ inputs.engine_ref }}
       MESON: ${{ github.workspace }}/meson/bin/meson
       LT_ENGINE_CFLAGS: ${{ inputs.engine_cflags }}
+      LT_ENGINE_CONFIGURE_ARGS: ${{ inputs.engine_configure_args }}
       PGO_PROFILE: ${{ inputs.pgo_profile }}
-      MODE_TAG: ${{ inputs.engine_cflags != '' && '-pgo' || '' }}
 
     steps:
       - name: Check out this fork
@@ -121,7 +125,18 @@ jobs:
 
       - name: Record the engine revision
         id: engine
-        run: echo "sha=$(git -C qemu-ios rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "sha=$(git -C qemu-ios rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # Names the APK after what the engine was built with, so several experiments
+          # can sit in the same release without being mistaken for each other.
+          case "$LT_ENGINE_CFLAGS $LT_ENGINE_CONFIGURE_ARGS" in
+            *profile*) tag="-pgo" ;;
+            *b_lto*|*flto*) tag="-lto" ;;
+            "") tag="" ;;
+            *) tag="-tuned" ;;
+          esac
+          echo "MODE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "APK is named ci/LightTouch-<engine>${tag}-arm64-debug.apk"
 
       - name: JDK 17
         uses: actions/setup-java@v4
