@@ -20,6 +20,7 @@ ap.add_argument("trace"); ap.add_argument("perfscript")
 ap.add_argument("--kernel"); ap.add_argument("--cache", required=True)
 ap.add_argument("--top", type=int, default=12); ap.add_argument("--bucket", action="append", default=[])
 ap.add_argument("--buckets", type=int, default=14)
+ap.add_argument("--threads", action="store_true", help="split kernel-only threads by thread pointer")
 ap.add_argument("--kernmap", help="perf/n81/kernmap: name kernel code by its categories and best-guess names")
 o = ap.parse_args()
 
@@ -28,7 +29,12 @@ gt = {}
 exec(open(os.path.join(D, "gtrace.py")).read().split("ap = argparse.ArgumentParser()")[0], gt)
 ev, names = gt["load"](o.trace)
 model = gt["Model"](ev, names)
-spans = [(s, e, model.proc(th) if kind != "idle" else "idle", kind, label) for s, e, th, kind, label in model.slices()]
+def owner(th, kind):
+    p = model.proc(th) if kind != "idle" else "idle"
+    return f"{p}@{th:08x}" if o.threads and p == "kernel" and th is not None else p
+
+
+spans = [(s, e, owner(th, kind), kind, label) for s, e, th, kind, label in model.slices()]
 spans.sort()
 starts = [s[0] for s in spans]
 t_lo, t_hi = ev[0][0], ev[-1][0]

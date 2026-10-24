@@ -44,7 +44,10 @@ BQL waits/holds for the longest frames. `--top 30` increases the number of detai
 - `engine.log`: up to 8 MiB of engine diagnostics produced during the capture.
 - `events.tsv`: engine frame publications, cumulative vCPU wall/CPU time and BQL waits, GL call
   count/total/max duration per publication interval, and individual GL calls/BQL waits/holds of
-  at least 0.5 ms. GL timing covers the host bridge, context selection and driver call.
+  at least 0.5 ms. GL timing covers the host bridge, context selection and driver call. Each frame
+  record also carries the vCPU's time waiting for a host core, the core it last ran on and that
+  core's clock, so a slow or throttled core can be told apart from preemption. `engine-start.log`
+  says whether hardware memory tagging is on for the vCPU (`[vcpu] memory tagging:`).
 - `presentation.tsv`: Android post completion timestamps and separate durations for control mutex
   waits, frame copy, native-window buffer acquisition, scaling, frame pacing, posting and commit.
 
