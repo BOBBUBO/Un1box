@@ -22,6 +22,12 @@ public:
     void framePublished() {
         if(failed_)return;
         if(!session_ && !open())return;
+        // The GL worker ("gles-gl") starts with the guest's first GL call, after the session.
+        if(!has_gl_ && set_threads_ && ++frames_%120==0) {
+            size_t n=tids_.size();
+            findVcpus();
+            if(tids_.size()>n){set_threads_(session_,tids_.data(),tids_.size());last_=-1;}
+        }
         int64_t cpu=vcpuCpuNs();
         if(cpu<0)return;
         if(last_>=0 && cpu>last_)report_(session_,cpu-last_);
@@ -32,6 +38,7 @@ private:
     using GetManager=Manager *(*)();
     using Create=Session *(*)(Manager *,const int32_t *,size_t,int64_t);
     using Report=int (*)(Session *,int64_t);
+    using SetThreads=int (*)(Session *,const int32_t *,size_t);
     static constexpr int64_t kTargetNs=16666667;
 
     bool open() {
@@ -43,6 +50,7 @@ private:
             auto manager=android?reinterpret_cast<GetManager>(dlsym(android,"APerformanceHint_getManager")):nullptr;
             create_=android?reinterpret_cast<Create>(dlsym(android,"APerformanceHint_createSession")):nullptr;
             report_=android?reinterpret_cast<Report>(dlsym(android,"APerformanceHint_reportActualWorkDuration")):nullptr;
+            set_threads_=android?reinterpret_cast<SetThreads>(dlsym(android,"APerformanceHint_setThreads")):nullptr;
             manager_=manager?manager():nullptr;
             if(!manager_ || !create_ || !report_){failed_=true;return false;}
         }
@@ -53,6 +61,7 @@ private:
         return session_!=nullptr;
     }
     void findVcpus() {
+        tids_.clear();
         DIR *tasks=opendir("/proc/self/task");
         if(!tasks)return;
         while(dirent *task=readdir(tasks)) {
@@ -61,6 +70,7 @@ private:
             if(FILE *f=fopen(path,"re")){if(!fgets(name,sizeof name,f))name[0]=0;fclose(f);}
             size_t n=strcspn(name,"\n");name[n]=0;
             if(!strncmp(name,"CPU ",4) && n>4 && !strcmp(name+n-4,"/TCG"))tids_.push_back(atoi(task->d_name));
+            if(!strcmp(name,"gles-gl")){tids_.push_back(atoi(task->d_name));has_gl_=true;}
         }
         closedir(tasks);
     }
@@ -78,6 +88,9 @@ private:
     Manager *manager_=nullptr;
     Create create_=nullptr;
     Report report_=nullptr;
+    SetThreads set_threads_=nullptr;
+    unsigned frames_=0;
+    bool has_gl_=false;
     Session *session_=nullptr;
     std::vector<int32_t> tids_;
     int64_t last_=-1;
