@@ -32,6 +32,7 @@ GAMES = {
     "px81-jetpack-play": [(.62, .31), 50, (.06, .51), 3, (.5, .5), 3, "fly"],  # RETRY first: Jetpack reopens a run left mid-way as PAUSED
     "px81-epiccitadel": [(.86, .14), 150],
     "px81-realracing": [(.86, .31), 60],
+    "px81-realracing-race": [(.86, .31), 60, (.45, .23), 16, (.58, .47), 10, (.45, .18), 7, (.45, .13), 7, (.51, .5), 30],  # Quick Race
     "ltbench-pixel": [(.9, .5, .15, .5), 3, (.857, .505), 30],  # LT Bench, Home page 3 (Pixel layout): one pass
     "ltbench": [(.143, .497), 40],                        # LT Bench, one pass (Poco layout)
     "doodlejump-poco": [(.143, .127), 22],                 # Doodle Jump main menu (Poco layout)
@@ -46,7 +47,8 @@ GAMES = {
     # icon; "Don't ask again" on the rate prompt, which is also on PLAY! when there is no prompt; PLAY!, held
     # for a second (the menu misses a plain tap)
     "n81-flightcontrol": [(.62, .31), 35, (.233, .6), 4, (.158, .616, 1000), 8],
-    "n81-realracing": [(.39, .31), 60],                    # Real Racing's attract demo (a race replay)
+    "n81-realracing": [(.39, .31), 60],
+    "n81-realracing-race": [(.39, .31), 60, (.45, .23), 16, (.58, .47), 10, (.45, .18), 7, (.45, .13), 7, (.51, .5), 30],  # Quick Race                    # Real Racing's attract demo (a race replay)
     "n81-epiccitadel": [(.62, .14), 150],                  # Epic Citadel's flythrough, after its green loading screen
     "n81-asphalt5-intro": [(.86, .31), 12],                # Asphalt 5's intro movie (measure ~15 s)
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
