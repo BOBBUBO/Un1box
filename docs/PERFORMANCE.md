@@ -452,6 +452,18 @@ The manual Start/Stop profile in the Android app (engine `50a08eb2d2`, `ProfileC
 these gaps from real play, but it costs 6–7% of the frame rate while recording. Don't use a recorded
 rate as a baseline.
 
+### Storage (2026-10-25)
+
+LT Bench's `fs-*` tests ([GUEST-BENCHMARKS.md](GUEST-BENCHMARKS.md)) time uncached file I/O inside iOS. Two fixes
+(rows above): the iPod touch 2G's flash writes no longer spin the vCPU (`3b4f4a67c3`, desktop `fs-write`
+381 → 148–198 µs/KiB), and the iPod touch 4G's reads are ~15% faster (`56505fbfdb`). Where a 4G read goes now
+(desktop, `LT_NAND_PROF`'s `iop_us`/`ap_us` and per-thread schedstat): the AP and the IOP hand each request
+back and forth, never both busy, ~2.8 s and ~2.0 s of every 5 s of reading. Host file I/O is ~3 µs a page.
+The IOP's remaining cost is spread over MMIO dispatch and the BQL; the AP's is iOS's kernel itself, flat,
+with its whole-cache clean-by-set/way loops (~8.7K cache ops a call, no-ops under TCG) the largest piece at
+~5%. Further gains need faster translated code in general, not storage changes. Tried and dropped: serving
+the IOP's cache-control registers without the BQL (no change).
+
 ### Guest benchmarks
 
 [LT Bench](GUEST-BENCHMARKS.md) times one guest path at a time inside iOS (best of 5 rounds, ns per
