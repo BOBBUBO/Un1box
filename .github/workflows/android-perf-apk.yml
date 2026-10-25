@@ -360,9 +360,9 @@ jobs:
           # The run's log is not readable everywhere, so a failure reports itself through check-run
           # annotations: one line each, the tail of what went wrong.
           report() {
+            # One annotation, newlines escaped: a step keeps three of them, and the log is the evidence.
             if [ -f "$1" ]; then
-              while IFS= read -r line; do echo "::error title=firmwarekit build::${line}"; done < <(grep -E 'error:|fatal error|undefined reference|No such file|not found' "$1" | head -n 15)
-              while IFS= read -r line; do echo "::error title=firmwarekit tail::${line}"; done < <(tail -n 15 "$1")
+              echo "::error title=firmwarekit build::$(tail -n 120 "$1" | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')"
             fi
             echo "::warning::firmwarekit was not built from this branch; the APK keeps the released one"
             exit 0
@@ -422,6 +422,11 @@ jobs:
           # The same build scripts/build.sh runs (firmwarekit-android), with the log kept whole: the
           # script pipes swift build through `tail -3`, which is all a failure would leave behind.
           cd "$GITHUB_WORKSPACE/Packages/FirmwareKit"
+          # What the build sees, in one place: a mismatch between these is the likeliest reason a cross-build
+          # stops before it compiles anything.
+          { swift --version; echo "bundle: $BUNDLE"; ls "$BUNDLE"; swift sdk list; ls "$BUNDLE/swift-android" 2>/dev/null; } 2>&1 \
+            | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}' > /tmp/toolchain.dump
+          echo "::warning title=firmwarekit toolchain::$(cat /tmp/toolchain.dump)"
           swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
             --scratch-path .build-android --static-swift-stdlib \
             --pkg-config-path build-support/android-pkgconfig \
