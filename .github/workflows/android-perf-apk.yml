@@ -59,9 +59,9 @@ on:
         required: true
         default: blake-lucas/LightTouch
       base_release_tag:
-        description: Release tag for those inputs
-        required: true
-        default: v0.0.9
+        description: Release tag for those inputs (e.g. v0.0.10, or "latest")
+        required: false
+        default: v0.0.10
       jobs:
         description: Parallel compile jobs (the engine scripts ask for -j2 explicitly)
         required: true
@@ -138,6 +138,190 @@ jobs:
           esac
           echo "MODE_TAG=$tag" >> "$GITHUB_ENV"
           echo "APK is named ci/LightTouch-<engine>${tag}-arm64-debug.apk"
+
+      - name: Extract firmwarekit, USB bridge and guest tools from the published APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_RELEASE_REPO: ${{ inputs.base_release_repository }}
+          BASE_RELEASE_TAG: ${{ inputs.base_release_tag }}
+        run: |
+          python3 - <<'PY'
+          import fnmatch, json, os, pathlib, re, shutil, subprocess, urllib.request, zipfile
+
+          UPSTREAM_REPO = 'blake-lucas/LightTouch'
+          raw_repo = os.environ.get('BASE_RELEASE_REPO', '').strip().strip('"\' ')
+          raw_tag = os.environ.get('BASE_RELEASE_TAG', '').strip().strip('"\' ')
+
+          repo = raw_repo.strip('/') or UPSTREAM_REPO
+          tag = raw_tag
+
+          m_repo = re.match(r'^https?://github\.com/([^/]+/[^/]+?)(?:\.git)?(?:/releases/tag/([^/?#]+))?/?$', repo)
+          if m_repo:
+              repo = m_repo.group(1)
+              if m_repo.group(2) and (not tag or tag.lower() == 'latest'):
+                  tag = m_repo.group(2)
+          m_tag = re.match(r'^https?://github\.com/([^/]+/[^/]+?)/releases/tag/([^/?#]+)/?$', tag)
+          if m_tag:
+              repo = m_tag.group(1)
+              tag = m_tag.group(2)
+
+          def api_json(endpoint: str):
+              proc = subprocess.run(
+                  ['gh', 'api', endpoint],
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+              )
+              if proc.returncode == 0:
+                  return json.loads(proc.stdout)
+              req = urllib.request.Request(
+                  f'https://api.github.com/{endpoint.lstrip("/")}',
+                  headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'un1box-ci'},
+              )
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.loads(resp.read().decode('utf-8'))
+
+          def pick_apk(rel):
+              assets = rel.get('assets') or []
+              for pat in ('*android-arm64*.apk', '*arm64*.apk', '*.apk'):
+                  matches = [a for a in assets if fnmatch.fnmatch(a.get('name', ''), pat)]
+                  if matches:
+                      return matches[0]
+              return None
+
+          def find_in_repo(target_repo: str, target_tag: str):
+              if target_tag and target_tag.lower() != 'latest':
+                  candidates = [target_tag]
+                  candidates.append(target_tag[1:] if target_tag.startswith('v') else f'v{target_tag}')
+                  for cand in candidates:
+                      try:
+                          rel = api_json(f'repos/{target_repo}/releases/tags/{cand}')
+                          if not rel.get('draft'):
+                              return rel, None
+                      except Exception:
+                          pass
+              try:
+                  releases = [r for r in api_json(f'repos/{target_repo}/releases?per_page=100') if not r.get('draft')]
+              except Exception as exc:
+                  return None, f'could not query releases of {target_repo}: {exc}'
+              if not target_tag or target_tag.lower() == 'latest':
+                  for rel in releases:
+                      if not rel.get('tag_name', '').startswith('ci-') and pick_apk(rel):
+                          return rel, releases
+                  for rel in releases:
+                      if pick_apk(rel):
+                          return rel, releases
+                  return None, releases
+              candidates = [target_tag, target_tag[1:] if target_tag.startswith('v') else f'v{target_tag}']
+              lower_map = {r.get('tag_name', '').lower(): r for r in releases}
+              for cand in candidates:
+                  if cand.lower() in lower_map:
+                      return lower_map[cand.lower()], releases
+              return None, releases
+
+          chosen, info = find_in_repo(repo, tag)
+          resolved_repo = repo
+          if chosen is None and repo.lower() != UPSTREAM_REPO.lower() and re.match(r'^v?0\.0\.\d+$', tag):
+              fb_rel, _ = find_in_repo(UPSTREAM_REPO, tag)
+              if fb_rel is not None:
+                  print(f"::warning::Release '{raw_tag}' was not found in '{repo}'; using upstream '{UPSTREAM_REPO}' ({fb_rel['tag_name']}) instead")
+                  chosen = fb_rel
+                  resolved_repo = UPSTREAM_REPO
+
+          if chosen is None:
+              if isinstance(info, list):
+                  avail = ', '.join(r.get('tag_name', '?') for r in info[:15]) or '<none>'
+                  msg = f"Release '{raw_tag}' not found in '{repo}' (available tags: {avail})"
+              else:
+                  msg = f"Release '{raw_tag}' not found in '{repo}' ({info})"
+              print(f'::error::{msg}')
+              raise SystemExit(1)
+
+          resolved_tag = chosen['tag_name']
+          asset = pick_apk(chosen)
+          if asset is None:
+              avail_assets = ', '.join(a.get('name', '?') for a in (chosen.get('assets') or [])) or '<none>'
+              print(f"::error::Release '{resolved_tag}' in '{resolved_repo}' carries no APK asset (assets: {avail_assets})")
+              raise SystemExit(1)
+
+          asset_name = asset['name']
+          download_url = asset['browser_download_url']
+          ci = pathlib.Path('ci')
+          base_dir = ci / 'base'
+          base_dir.mkdir(parents=True, exist_ok=True)
+          apk = base_dir / asset_name
+          print(f'Downloading {asset_name} from {resolved_repo}@{resolved_tag} ...')
+
+          dl = subprocess.run([
+              'gh', 'release', 'download', resolved_tag,
+              '-R', resolved_repo,
+              '--pattern', asset_name,
+              '--dir', str(base_dir), '--clobber',
+          ])
+          if dl.returncode != 0 or not apk.is_file():
+              print('gh release download failed; falling back to direct HTTPS download ...')
+              subprocess.run(
+                  ['curl', '-fL', '--retry', '3', '--retry-delay', '2', '-o', str(apk), download_url],
+                  check=True,
+              )
+
+          wanted_keys = (
+              'assets/guest-tools/armv6.itpack', 'assets/guest-tools/armv7.itpack',
+              'assets/guest-tools/it_seal', 'assets/licenses/firmwarekit/manifest.json',
+              'lib/arm64-v8a/libfirmwarekit.so', 'lib/arm64-v8a/liblighttouch_oneshot.so',
+              'lib/arm64-v8a/libusbmuxd_qemu.so', 'lib/arm64-v8a/liblt_appservice.so',
+          )
+
+          with zipfile.ZipFile(apk) as archive:
+              names = archive.namelist()
+              missing = [key for key in wanted_keys if key not in names]
+              if missing:
+                  raise SystemExit(f'{apk.name} does not carry {missing}')
+
+              def copy_tree(prefix, destination):
+                  destination = pathlib.Path(destination)
+                  for name in names:
+                      if not name.startswith(prefix) or name.endswith('/'):
+                          continue
+                      output = destination / name[len(prefix):]
+                      output.parent.mkdir(parents=True, exist_ok=True)
+                      with archive.open(name) as source, open(output, 'wb') as target:
+                          shutil.copyfileobj(source, target)
+                      mode = archive.getinfo(name).external_attr >> 16
+                      if mode:
+                          os.chmod(output, mode & 0o7777)
+                  return destination
+
+              copy_tree('assets/guest-tools/', ci / 'guest-tools')
+              copy_tree('assets/licenses/firmwarekit/', ci / 'firmwarekit/android/licenses')
+              executables = {
+                  'lib/arm64-v8a/libfirmwarekit.so': ci / 'firmwarekit/android/firmwarekit',
+                  'lib/arm64-v8a/liblighttouch_oneshot.so': ci / 'firmwarekit/android/lighttouch-oneshot',
+                  'lib/arm64-v8a/libusbmuxd_qemu.so': ci / 'mobile-services/arm64-v8a/libusbmuxd_qemu.so',
+                  'lib/arm64-v8a/liblt_appservice.so': ci / 'mobile-services/arm64-v8a/liblt_appservice.so',
+              }
+              for name, output in executables.items():
+                  output.parent.mkdir(parents=True, exist_ok=True)
+                  output.write_bytes(archive.read(name))
+                  os.chmod(output, 0o755)
+
+          shutil.rmtree(base_dir, ignore_errors=True)
+
+          for required in (
+              'guest-tools/armv6.itpack', 'guest-tools/armv7.itpack', 'guest-tools/it_seal',
+              'firmwarekit/android/firmwarekit', 'firmwarekit/android/lighttouch-oneshot',
+              'firmwarekit/android/licenses/manifest.json',
+              'mobile-services/arm64-v8a/libusbmuxd_qemu.so',
+              'mobile-services/arm64-v8a/liblt_appservice.so',
+          ):
+              path = ci / required
+              if not path.is_file():
+                  raise SystemExit(f'missing extracted input: {path}')
+
+          env_path = os.environ.get('GITHUB_ENV')
+          if env_path:
+              with open(env_path, 'a', encoding='utf-8') as env_file:
+                  env_file.write(f'BASE_RELEASE_RESOLVED={resolved_repo} {resolved_tag} ({asset_name})\n')
+          print(f'extracted firmwarekit, USB bridge and guest tools from {resolved_repo}@{resolved_tag} ({asset_name})')
+          PY
 
       - name: JDK 17
         uses: actions/setup-java@v4
@@ -292,72 +476,6 @@ jobs:
           ls -la ci/engine/arm64-v8a
           file ci/engine/arm64-v8a/libqemu-arm.so
 
-      - name: Extract firmwarekit, USB bridge and guest tools from the published APK
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p ci/base
-          gh release download "${{ inputs.base_release_tag }}" \
-            -R "${{ inputs.base_release_repository }}" \
-            --pattern "LightTouch-*-android-arm64.apk" --dir ci/base --clobber
-          ls -la ci/base
-          python3 - <<'PY'
-          import os, pathlib, shutil, zipfile
-
-          apk = next(pathlib.Path('ci/base').glob('LightTouch-*-android-arm64.apk'))
-          ci = pathlib.Path('ci')
-          wanted_keys = (
-              'assets/guest-tools/armv6.itpack', 'assets/guest-tools/armv7.itpack',
-              'assets/guest-tools/it_seal', 'assets/licenses/firmwarekit/manifest.json',
-              'lib/arm64-v8a/libfirmwarekit.so', 'lib/arm64-v8a/liblighttouch_oneshot.so',
-              'lib/arm64-v8a/libusbmuxd_qemu.so', 'lib/arm64-v8a/liblt_appservice.so',
-          )
-
-          with zipfile.ZipFile(apk) as archive:
-              names = archive.namelist()
-              missing = [key for key in wanted_keys if key not in names]
-              if missing:
-                  raise SystemExit(f'{apk.name} does not carry {missing}')
-
-              def copy_tree(prefix, destination):
-                  destination = pathlib.Path(destination)
-                  for name in names:
-                      if not name.startswith(prefix) or name.endswith('/'):
-                          continue
-                      output = destination / name[len(prefix):]
-                      output.parent.mkdir(parents=True, exist_ok=True)
-                      with archive.open(name) as source, open(output, 'wb') as target:
-                          shutil.copyfileobj(source, target)
-                      mode = archive.getinfo(name).external_attr >> 16
-                      if mode:
-                          os.chmod(output, mode & 0o7777)
-                  return destination
-
-              copy_tree('assets/guest-tools/', ci / 'guest-tools')
-              copy_tree('assets/licenses/firmwarekit/', ci / 'firmwarekit/android/licenses')
-              executables = {
-                  'lib/arm64-v8a/libfirmwarekit.so': ci / 'firmwarekit/android/firmwarekit',
-                  'lib/arm64-v8a/liblighttouch_oneshot.so': ci / 'firmwarekit/android/lighttouch-oneshot',
-                  'lib/arm64-v8a/libusbmuxd_qemu.so': ci / 'mobile-services/arm64-v8a/libusbmuxd_qemu.so',
-                  'lib/arm64-v8a/liblt_appservice.so': ci / 'mobile-services/arm64-v8a/liblt_appservice.so',
-              }
-              for name, output in executables.items():
-                  output.parent.mkdir(parents=True, exist_ok=True)
-                  output.write_bytes(archive.read(name))
-                  os.chmod(output, 0o755)
-
-          for required in (
-              'guest-tools/armv6.itpack', 'guest-tools/armv7.itpack', 'guest-tools/it_seal',
-              'firmwarekit/android/firmwarekit', 'firmwarekit/android/lighttouch-oneshot',
-              'firmwarekit/android/licenses/manifest.json',
-              'mobile-services/arm64-v8a/libusbmuxd_qemu.so',
-          ):
-              path = ci / required
-              if not path.is_file():
-                  raise SystemExit(f'missing extracted input: {path}')
-          print('extracted firmwarekit, USB bridge and guest tools')
-          PY
-
       - name: Build the APK
         working-directory: Android
         run: |
@@ -422,7 +540,7 @@ jobs:
             if [ -n "$PGO_PROFILE" ]; then
               echo "- PGO profile: $PGO_PROFILE merged as $(cat ci/pgo/merged.sha256)"
             fi
-            echo "- reused from ${{ inputs.base_release_repository }} ${{ inputs.base_release_tag }}: firmwarekit, lighttouch-oneshot, USB bridge, guest tools"
+            echo "- reused from ${BASE_RELEASE_RESOLVED:-${{ inputs.base_release_repository }} ${{ inputs.base_release_tag }}}: firmwarekit, lighttouch-oneshot, USB bridge, guest tools"
             echo "- debuggable: ${{ inputs.debuggable }}; signed with this workflow's own keystore"
             echo
             echo "## Engine commits in $ENGINE_REF that are not in main"
