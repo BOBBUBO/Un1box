@@ -40,3 +40,38 @@ pub fn process_cpu_ns() -> u64 {
     let ticks = |t: FILETIME| ((t.dwHighDateTime as u64) << 32) | t.dwLowDateTime as u64;
     (ticks(kernel) + ticks(user)) * 100
 }
+
+/// This process's resident memory (working set on Windows); 0 where it can't tell.
+#[cfg(target_os = "linux")]
+pub fn process_resident_bytes() -> u64 {
+    let pages = std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|s| s.split_whitespace().nth(1).and_then(|p| p.parse::<u64>().ok()))
+        .unwrap_or(0);
+    pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(0) as u64
+}
+
+#[cfg(target_os = "macos")]
+pub fn process_resident_bytes() -> u64 {
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as i32;
+    let got = unsafe {
+        libc::proc_pidinfo(libc::getpid(), libc::PROC_PIDTASKINFO, 0, &mut info as *mut _ as *mut libc::c_void, size)
+    };
+    if got == size { info.pti_resident_size } else { 0 }
+}
+
+#[cfg(windows)]
+pub fn process_resident_bytes() -> u64 {
+    use windows_sys::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    let ok = unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
+    if ok == 0 { 0 } else { counters.WorkingSetSize as u64 }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub fn process_resident_bytes() -> u64 {
+    0
+}

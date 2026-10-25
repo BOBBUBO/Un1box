@@ -144,6 +144,9 @@ pub struct StatusEvent {
     pub storage_failed: bool,
     /// Process CPU time of the worker, for the performance overlay.
     pub cpu_ns: u64,
+    /// The worker's resident memory, for the performance overlay.
+    #[serde(default)]
+    pub resident_bytes: u64,
 }
 
 impl Command {

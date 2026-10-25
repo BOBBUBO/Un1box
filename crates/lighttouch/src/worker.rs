@@ -430,6 +430,7 @@ fn run(
             guest_shutdown_confirmed: status.guest_shutdown_confirmed,
             storage_failed: status.storage_failed,
             cpu_ns: process_cpu_ns(),
+            resident_bytes: lighttouch_core::process_resident_bytes(),
         };
         let changed = last_status.as_ref().is_none_or(|(previous, at)| {
             previous.state != event.state

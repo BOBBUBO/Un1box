@@ -82,6 +82,9 @@ pub struct Session {
     frontmost_asked: Option<Instant>,
     /// The app in front as the guest tools last named it (bundle id, name).
     pub frontmost: Option<(String, String)>,
+    /// The overlay's detailed rows from the running capture, refreshed about once a second.
+    pub live_timing: Option<crate::inspector::LiveTiming>,
+    live_read: Option<Instant>,
     /// A profile recorded on request (Settings > Diagnostics): its folder and when it started.
     pub recording: Option<(PathBuf, Instant)>,
     last_motion: Option<Instant>,
@@ -186,6 +189,8 @@ impl Session {
             pause_requested: false,
             tilt: Default::default(),
             recording: None,
+            live_timing: None,
+            live_read: None,
             frontmost_asked: None,
             frontmost: None,
             last_motion: None,
@@ -429,6 +434,18 @@ impl Session {
                 self.profile(None);
                 self.capture = None;
             }
+        }
+        match &self.capture {
+            Some((dir, _)) if self.live_read.is_none_or(|t| t.elapsed() > Duration::from_secs(1)) => {
+                self.live_read = Some(Instant::now());
+                let now = lighttouch_core::monotonic_ns();
+                // Frames from the last 20 s only, so the rows clear once the guest stops drawing.
+                let from = now.saturating_sub(20_000_000_000);
+                let detail = crate::inspector::load_detail_tail(&dir.join("events.tsv"), from, 1 << 20);
+                self.live_timing = crate::inspector::LiveTiming::of(&detail.breakdown, 2_000_000_000);
+            }
+            Some(_) => {}
+            None => self.live_timing = None,
         }
         if wanted && running && self.capture.is_none() && self.recording.is_none() {
             let dir = root.join(format!("{:020}", lighttouch_core::monotonic_ns()));

@@ -85,6 +85,38 @@ pub struct Snapshot {
     pub detail: Option<Detail>,
 }
 
+/// The performance overlay's detailed rows, as on Android: the newest couple of seconds of the live capture. The
+/// engine writes captures through a 64 KB buffer, so what's on disk trails the guest by a few seconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiveTiming {
+    pub gl_ms_per_frame: f32,
+    pub bql_ms_per_frame: f32,
+    /// Guest code running, of wall time.
+    pub run_percent: f32,
+    /// The vCPU thread on a host core, of wall time; None where the engine can't measure it (macOS).
+    pub vcpu_percent: Option<f32>,
+}
+
+impl LiveTiming {
+    /// From the breakdowns ending in the `window_ns` before the newest one; None without any.
+    pub fn of(breakdown: &[Breakdown], window_ns: u64) -> Option<Self> {
+        let newest = breakdown.iter().map(|b| b.end_ns).max()?;
+        let recent: Vec<&Breakdown> = breakdown.iter().filter(|b| b.end_ns + window_ns >= newest).collect();
+        let wall: f32 = recent.iter().map(|b| b.interval_ms).sum();
+        if recent.is_empty() || wall <= 0.0 {
+            return None;
+        }
+        let n = recent.len() as f32;
+        let sum = |f: fn(&Breakdown) -> f32| recent.iter().map(|b| f(b)).sum::<f32>();
+        Some(Self {
+            gl_ms_per_frame: sum(|b| b.gl_ms) / n,
+            bql_ms_per_frame: sum(|b| b.bql_ms) / n,
+            run_percent: sum(|b| b.run_ms) / wall * 100.0,
+            vcpu_percent: Some(sum(|b| b.vcpu_cpu_ms)).filter(|ms| *ms > 0.0).map(|ms| ms / wall * 100.0),
+        })
+    }
+}
+
 /// Where one frame interval went, from detailed timing (deltas of the engine's F records, ms).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Breakdown {
@@ -162,11 +194,16 @@ impl Detail {
 /// inspector does. F records: `F ns ? run outside bql-outside bql-inside vcpu-cpu ? gl gl-present main-cpu`; G names a
 /// GL slot; S a GL call (start end slot); W/H a lock wait/hold (start end file line); C a main loop callback.
 pub fn load_detail(path: &Path, from_ns: u64) -> Detail {
+    load_detail_tail(path, from_ns, 24 << 20)
+}
+
+/// `load_detail` over only the last `tail` bytes of the capture.
+pub fn load_detail_tail(path: &Path, from_ns: u64, tail: u64) -> Detail {
     use std::io::{BufRead, Read, Seek, SeekFrom};
     let mut detail = Detail::default();
     let Ok(mut file) = std::fs::File::open(path) else { return detail };
     let length = file.metadata().map_or(0, |m| m.len());
-    let start = length.saturating_sub(24 << 20);
+    let start = length.saturating_sub(tail);
     if file.seek(SeekFrom::Start(start)).is_err() {
         return detail;
     }

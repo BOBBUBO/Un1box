@@ -9,6 +9,6 @@ pub mod paths;
 pub mod protocol;
 pub mod runtime;
 
-pub use clock::{monotonic_ns, process_cpu_ns};
+pub use clock::{monotonic_ns, process_cpu_ns, process_resident_bytes};
 pub use ffi::{Error, Result, status_name};
 pub use lighttouch_sys as sys;

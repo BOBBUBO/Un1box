@@ -42,16 +42,53 @@ pub fn show(ui: &Ui, model: &Model, screen: Rect, scale: f32) {
                 (format!("{:.0}", summary.low_1_percent), Color32::WHITE, mono(12.0)),
                 (format!("  max {:.0} ms", summary.worst_ms), theme::LABEL, mono(11.0)),
             ]);
+            // As on Android: the guest's vCPU and GL, lock and run time per frame come from detailed timing.
+            let live = session.live_timing;
             rows.push(vec![
                 ("CPU  ".into(), theme::CPU, bold(11.0)),
-                (format!("{:.0}%", stats.cpu_percent), Color32::WHITE, mono(12.0)),
-                ("  engine, one core = 100%".into(), theme::LABEL, mono(10.0)),
+                ("guest ".into(), theme::LABEL, mono(10.0)),
+                (
+                    live.and_then(|l| l.vcpu_percent).map_or("–".into(), |p| format!("{p:.0}%")),
+                    Color32::WHITE,
+                    mono(12.0),
+                ),
             ]);
             rows.push(vec![
-                ("PRES ".into(), theme::GPU, bold(11.0)),
+                ("     ".into(), theme::CPU, bold(11.0)),
+                ("engine ".into(), theme::LABEL, mono(10.0)),
+                (format!("{:.0}%", stats.cpu_percent), Color32::WHITE, mono(12.0)),
+            ]);
+            if let Some(l) = live {
+                rows.push(vec![
+                    ("GPU  ".into(), theme::GPU, bold(11.0)),
+                    ("GL ".into(), theme::LABEL, mono(10.0)),
+                    (format!("{:.1} ms/frame", l.gl_ms_per_frame), Color32::WHITE, mono(12.0)),
+                ]);
+                rows.push(vec![
+                    ("LOCK ".into(), theme::GPU, bold(11.0)),
+                    ("BQL ".into(), theme::LABEL, mono(10.0)),
+                    (format!("{:.1} ms/frame", l.bql_ms_per_frame), Color32::WHITE, mono(12.0)),
+                ]);
+                rows.push(vec![
+                    ("RUN  ".into(), theme::CPU, bold(11.0)),
+                    ("vCPU ".into(), theme::LABEL, mono(10.0)),
+                    (format!("{:.0}% of wall", l.run_percent), Color32::WHITE, mono(12.0)),
+                ]);
+            } else {
+                let why = if !model.settings.detailed_timing { "detailed timing off" } else { "waiting for frames…" };
+                rows.push(vec![("GPU  ".into(), theme::GPU, bold(11.0)), (why.into(), theme::LABEL, mono(10.0))]);
+            }
+            rows.push(vec![
+                ("PRES ".into(), theme::LABEL, bold(11.0)),
                 (format!("{:.1} ms", stats.latency_ms), Color32::WHITE, mono(12.0)),
                 ("  latency".into(), theme::LABEL, mono(10.0)),
             ]);
+            if let Some(bytes) = session.status.as_ref().map(|s| s.resident_bytes).filter(|b| *b > 0) {
+                rows.push(vec![
+                    ("MEM  ".into(), theme::MEM, bold(11.0)),
+                    (format!("{:.0} MiB", bytes as f64 / (1u64 << 20) as f64), Color32::WHITE, mono(12.0)),
+                ]);
+            }
         }
         OverlayLevel::Off => {}
     }
