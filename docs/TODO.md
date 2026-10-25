@@ -73,9 +73,15 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 - [ ] Presenter and vsync threads at `THREAD_PRIORITY_DISPLAY` (`display_priority.h`,
   `LT_PRESENT_PRIO=off` for A/B). Unmeasured: take the 1% low and the hitch count rather than the mean,
   on both phones, and check that the presenter preempting the vCPU costs the guest nothing.
-- [ ] Confirm the two open engine leads (both default off, PERFORMANCE.md): the indirect miss-helper
-  cache (`LT_IBTC_L2=on`, +2.2% in 3 of 3 pairs) and the inlined TB lookup hit (`LT_TB_LOOKUP_INLINE=on`,
-  ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin (now the Android default).
+- [ ] Confirm the two engine fast paths, now on by default on Android (PERFORMANCE.md, patch
+  `ci/engine-patches/0003-engine-tcg-fast-paths.patch`; `LT_IBTC_L2=off` and `LT_TB_LOOKUP_INLINE=off`
+  are the A/B arms): the indirect miss-helper cache (+2.2% in 3 of 3 pairs) and the inlined TB lookup
+  hit (ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin (now the
+  Android default) and in a game on the iPod touch 4G, which is the vCPU-bound case they should help most.
+- [ ] Transparent huge pages for guest RAM (patch `ci/engine-patches/0003-engine-tcg-fast-paths.patch`,
+  `LT_RAM_HUGEPAGE=off` for A/B): unmeasured, and a no-op where the kernel has no THP. Take a 3D scene
+  (Asphalt 5's race, Epic Citadel) as well as Jetpack, since the guess is host dTLB pressure on guest
+  data; also check the engine's RSS and that nothing stalls while khugepaged collapses the 128 MiB.
 - [ ] Assassin's Creed: Altair's Chronicles holds ~19–20 fps on the Pixel 10, which may be the game's
   own cap (as Asphalt 5's 25 is). The overlay shows the guest CPU at 50–60% while the engine reports
   95–100%: find where the engine time goes that the guest does not account for (frame inspector
