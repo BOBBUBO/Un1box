@@ -333,7 +333,13 @@ fn run(
                     if trace_input {
                         eprintln!("touch {contacts:?}");
                     }
-                    runtime.touch(monotonic_ns(), &contacts)
+                    let result = runtime.touch(monotonic_ns(), &contacts);
+                    if trace_input {
+                        // This batch's own result: the status poll below only sees the newest batch.
+                        std::thread::sleep(Duration::from_millis(20));
+                        eprintln!("touch result {result:?} {:?}", runtime.input_status());
+                    }
+                    result
                 }
                 Command::Button { button, down } => {
                     if trace_input {
@@ -371,8 +377,12 @@ fn run(
                     Ok(())
                 }
             };
+            // Motion samples are a stream, as on Android: one the engine turns away (not ready yet, paused) is just
+            // dropped.
             if let Err(e) = result {
-                let _ = events.send(Event::Error { command: name.into(), message: e.to_string() });
+                if name != "motion" {
+                    let _ = events.send(Event::Error { command: name.into(), message: e.to_string() });
+                }
             }
         }
 

@@ -6,6 +6,7 @@ use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle, TextureOptio
 use lighttouch_core::runtime::Contact;
 use lighttouch_model::Model;
 use lighttouch_model::settings::Scaling;
+use lighttouch_model::tilt::TiltKeys;
 use std::collections::HashMap;
 
 const DOWN: u32 = 0;
@@ -173,7 +174,24 @@ impl GuestView {
     }
 
     fn keyboard_input(&mut self, ui: &Ui, model: &mut Model) {
-        if ui.ctx().egui_wants_keyboard_input() {
+        let typing = ui.ctx().egui_wants_keyboard_input();
+        let key = |key| !typing && ui.input(|i| i.key_down(key) && i.modifiers.is_none());
+        if model.settings.tilt {
+            let keys = TiltKeys {
+                left: key(egui::Key::ArrowLeft),
+                right: key(egui::Key::ArrowRight),
+                up: key(egui::Key::ArrowUp),
+                down: key(egui::Key::ArrowDown),
+            };
+            if let Some(session) = &mut model.session {
+                session.tilt(keys);
+                // Leaning and settling back need steps between guest frames too.
+                if keys != TiltKeys::default() || session.tilting() {
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
+        if typing {
             return;
         }
         let keys = [
@@ -183,8 +201,8 @@ impl GuestView {
             (egui::Key::Equals, device_frame::VOLUME_UP),
             (egui::Key::Minus, device_frame::VOLUME_DOWN),
         ];
-        for (key, button) in keys {
-            let down = ui.input(|i| i.key_down(key) && i.modifiers.is_none());
+        for (k, button) in keys {
+            let down = key(k);
             let held = self.held.contains(&button);
             if down != held {
                 self.set_button(model, button, down);

@@ -76,6 +76,8 @@ pub struct Session {
     capture: Option<(PathBuf, Instant)>,
     /// A pause was asked for (the worker confirms it with its next status).
     pause_requested: bool,
+    tilt: crate::tilt::Tilt,
+    last_motion: Option<Instant>,
     stop_requested: Option<Instant>,
 }
 
@@ -175,6 +177,8 @@ impl Session {
             timeline: Default::default(),
             capture: None,
             pause_requested: false,
+            tilt: Default::default(),
+            last_motion: None,
             stop_requested: None,
         };
         if options.muted {
@@ -284,6 +288,28 @@ impl Session {
         if matches!(self.phase, Phase::Running | Phase::Starting) {
             self.send(&Command::Button { button, down });
         }
+    }
+
+    /// Lean the device from the keyboard (tilt.rs). Called each frame while tilt controls are on: samples go out at
+    /// up to 100 Hz while the guest runs, on boards with an accelerometer.
+    pub fn tilt(&mut self, keys: crate::tilt::TiltKeys) {
+        let Some(board) = &self.board else { return };
+        if !matches!(self.phase, Phase::Running) || !board.has(BoardInfo::ACCELEROMETER) {
+            return;
+        }
+        let gyro = board.has(BoardInfo::GYRO);
+        let now = Instant::now();
+        if self.last_motion.is_some_and(|t| now.duration_since(t) < Duration::from_millis(10)) {
+            return;
+        }
+        self.last_motion = Some(now);
+        let (acceleration, angular_velocity) = self.tilt.step(keys, now);
+        self.send(&Command::Motion { acceleration: Some(acceleration), gyro: gyro.then_some(angular_velocity) });
+    }
+
+    /// Still leaning from the keyboard, or settling back.
+    pub fn tilting(&self) -> bool {
+        !self.tilt.at_rest()
     }
 
     pub fn cancel_input(&mut self) {

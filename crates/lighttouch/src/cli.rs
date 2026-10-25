@@ -94,9 +94,18 @@ fn import(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
     // The name the app would give it ("iPod touch 2G 3.1.3"), unless one was asked for.
     let mut name = record.name.clone();
     if source.name.is_none() {
-        let others: Vec<String> =
-            library.records().map_err(|e| e.to_string())?.into_iter().filter(|r| r.id != record.id).map(|r| r.name).collect();
-        name = lighttouch_catalog::catalog::default_device_name(&record.board, &record.build, others.iter().map(String::as_str));
+        let others: Vec<String> = library
+            .records()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|r| r.id != record.id)
+            .map(|r| r.name)
+            .collect();
+        name = lighttouch_catalog::catalog::default_device_name(
+            &record.board,
+            &record.build,
+            others.iter().map(String::as_str),
+        );
         library.rename(&record.id, &name).map_err(|e| e.to_string())?;
     }
     println!("added {name} ({}) in {:.1} s", record.id, started.elapsed().as_secs_f64());
@@ -168,7 +177,10 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             send(&mut stdin, &Command::Stop);
             stop_sent = true;
         }
-        match rx.recv_timeout(Duration::from_millis(100)) {
+        // Wake for the next script line on time: lines sent in a burst reach the engine closer together than a
+        // person's input would.
+        let next = script.peek().map_or(0.1, |(at, _)| (at - started.elapsed().as_secs_f64()).clamp(0.001, 0.1));
+        match rx.recv_timeout(Duration::from_secs_f64(next)) {
             Ok(Event::Frame { .. }) => {
                 frame_count += 1;
                 if last_frame_log.elapsed() >= Duration::from_secs(10) {
@@ -226,6 +238,8 @@ fn parse_script(text: &str) -> Result<Vec<(f64, Command)>, String> {
         let command: Command = serde_json::from_str(json).map_err(|e| format!("{e}: {line}"))?;
         lines.push((at, command));
     }
+    // In time order, whatever order they were written in (a stable sort keeps same-time lines as written).
+    lines.sort_by(|a, b| a.0.total_cmp(&b.0));
     Ok(lines)
 }
 
@@ -327,7 +341,12 @@ fn probe_services(socket: PathBuf, started: Instant, action: ServiceAction, scra
         Err(e) => say(format!("apps: {e}")),
     }
     match guest.last_crash() {
-        Ok(Some((name, text))) => say(format!("newest crash {name} ({} bytes)", text.len())),
+        Ok(Some((name, text))) => {
+            say(format!("newest crash {name} ({} bytes)", text.len()));
+            if std::env::var_os("LIGHTTOUCH_CRASH_TEXT").is_some() {
+                eprintln!("{text}");
+            }
+        }
         Ok(None) => say("no crash reports".into()),
         Err(e) => say(format!("crash reports: {e}")),
     }

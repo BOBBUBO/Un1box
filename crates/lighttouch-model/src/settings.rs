@@ -73,6 +73,8 @@ pub enum Corner {
 #[serde(default)]
 pub struct Settings {
     pub theme: Theme,
+    /// The arrow keys tilt the device (its accelerometer, and gyroscope where it has one).
+    pub tilt: bool,
     /// Tell iOS headphones are plugged in (skips speaker protection; read at start).
     pub headphones: bool,
     pub muted: bool,
@@ -95,6 +97,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: Theme::System,
+            tilt: true,
             headphones: true,
             muted: false,
             scaling: Scaling::Smooth,

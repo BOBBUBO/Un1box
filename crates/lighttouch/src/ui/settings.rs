@@ -67,6 +67,20 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 );
             });
 
+            widgets::section(ui, &p, "Controls");
+            widgets::card(ui, &p, |ui| {
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::KEYBOARD,
+                    "Tilt with the arrow keys",
+                    "Leans the device toward the arrow, for games you steer by tilting. H is Home, P Sleep/Wake, + and - the volume.",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.tilt);
+                    },
+                );
+            });
+
             widgets::section(ui, &p, "Audio");
             widgets::card(ui, &p, |ui| {
                 widgets::setting_row(

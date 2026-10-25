@@ -8,6 +8,7 @@ pub mod session;
 pub mod settings;
 pub mod store;
 pub mod task;
+pub mod tilt;
 
 use lighttouch_catalog::catalog::{default_device_name, device_subtitle, model_name};
 use lighttouch_catalog::{Bootrom, GuestTools};
