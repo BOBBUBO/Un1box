@@ -489,10 +489,17 @@ jobs:
             ls -la "$BUNDLE/swift-android/ndk-sysroot" 2>/dev/null | head -5; } 2>&1 \
             | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}' > /tmp/toolchain.dump
           echo "::warning title=firmwarekit toolchain::$(cat /tmp/toolchain.dump)"
+          # The Swift runtime in the SDK calls libc++ symbols (__hash_memory) that the NDK's
+          # libc++ provides and the linker was not reaching: name the chosen NDK's libraries
+          # explicitly, after the Swift runtime, so the archive resolves what is left.
+          NDK_LIB="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
           swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
             --scratch-path .build-android --static-swift-stdlib \
             --pkg-config-path build-support/android-pkgconfig \
+            -Xlinker -L"$NDK_LIB" -Xlinker -lc++_static -Xlinker -lc++abi \
             -Xlinker -lssl -Xlinker -lcrypto >/tmp/firmwarekit.log 2>&1 || report /tmp/firmwarekit.log
+          echo "c++ libs the link named: $(grep -o -- '-lc++[a-z_]*' /tmp/firmwarekit.log | sort -u | tr '\n' ' ')" \
+            >> /tmp/linknote.txt
           PRODUCT=".build-android/out/Products/Release-android-aarch64/firmwarekit"
           [ -f "$PRODUCT" ] || report /tmp/firmwarekit.log
           TOOLS="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
