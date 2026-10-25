@@ -94,7 +94,10 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
      before the visible gap, and compare with ordinary intervals.
   2. Audio: the AAC decoder runs before 48 of 87 gaps over 30 ms, and its converter's 2-mod-4 output
      batches take ~420 µs a call through ARM1176 alignment traps (25 µs aligned). Join exact converter
-     batches to the recurring misses. Keep the traps and iOS's handler (architectural).
+     batches to the recurring misses. Android now performs a misaligned LDM/STM instead of faulting
+     (patch `ci/engine-patches/0004-engine-ldm-unaligned.patch`, `IT_LDM_UNALIGNED=off` for A/B): check
+     that the trap count falls to zero, that the converter call time follows it, that the 30 ms gaps
+     drop, and that the sound is unchanged in a game with music — then either keep it or revert it.
   3. Logging: the two longest gaps in one capture follow ~26 ms of launchd + syslogd work. Find which
      stderr or IPC request it serves before changing logging again (the tally experiments were rejected).
   4. Bluetooth: a 166 ms gap with 84 ms of BTServer work, and a 10 s BTServer timeout and relaunch at
