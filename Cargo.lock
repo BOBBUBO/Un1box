@@ -1660,6 +1660,7 @@ dependencies = [
 name = "lighttouch-model"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "lighttouch-catalog",
  "lighttouch-core",
  "lighttouch-services",

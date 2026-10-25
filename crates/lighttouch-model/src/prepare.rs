@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum IpswSource {
     /// Download it (ipsw.me, the catalog's links, the Internet Archive).
     Download,
@@ -21,7 +21,7 @@ pub enum IpswSource {
     File(PathBuf),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrepareRequest {
     pub firmware_id: String,
     pub ipsw: IpswSource,
@@ -52,6 +52,68 @@ pub fn known_bootrom(dirs: &DataDirs, devices: &[crate::Device], rom: Bootrom) -
         .find(|p| rom.matches_file(p))
 }
 
+const NOTE: &str = "pending.json";
+
+/// The request a preparation keeps in `prepared/pending.json` while it runs, the file locked. Ending normally
+/// (done, failed or cancelled) removes it; finding it unlocked at the next start means LightTouch closed mid-way.
+struct PendingNote {
+    path: PathBuf,
+    file: Option<std::fs::File>,
+}
+
+impl PendingNote {
+    fn write(dirs: &DataDirs, request: &PrepareRequest) -> Option<Self> {
+        use std::io::Write;
+        let path = dirs.prepared().join(NOTE);
+        std::fs::create_dir_all(dirs.prepared()).ok()?;
+        let mut file = std::fs::File::create(&path).ok()?;
+        file.try_lock().ok()?;
+        file.write_all(&serde_json::to_vec(request).ok()?).ok()?;
+        Some(Self { path, file: Some(file) })
+    }
+}
+
+impl Drop for PendingNote {
+    fn drop(&mut self) {
+        drop(self.file.take()); // closed first: Windows won't delete an open file
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// At startup: the request of a preparation LightTouch closed during, if any, after clearing what it left (its
+/// half-built job folders and firmwarekit's cache). Nothing is touched while another LightTouch still prepares.
+pub fn recover_interrupted(dirs: &DataDirs) -> Option<PrepareRequest> {
+    use std::io::Read;
+    let jobs = dirs.prepared();
+    let mut request = None;
+    if let Ok(mut file) = std::fs::File::options().read(true).write(true).open(jobs.join(NOTE)) {
+        if file.try_lock().is_err() {
+            return None;
+        }
+        let mut text = String::new();
+        let _ = file.read_to_string(&mut text);
+        request = serde_json::from_str(&text).ok();
+        drop(file);
+        let _ = std::fs::remove_file(jobs.join(NOTE));
+    }
+    // Nothing adopts a job folder later, so any left over is from a run that never finished.
+    let leftovers: Vec<PathBuf> = std::fs::read_dir(&jobs)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("job-"))
+        .map(|e| e.path())
+        .collect();
+    let cache = dirs.cache().join("firmwarekit");
+    if !leftovers.is_empty() || cache.exists() {
+        std::thread::spawn(move || {
+            leftovers.iter().for_each(|job| remove_tree(job));
+            let _ = std::fs::remove_dir_all(cache);
+        });
+    }
+    request
+}
+
 pub(crate) struct PrepareContext {
     pub dirs: DataDirs,
     pub resources: Resources,
@@ -64,6 +126,7 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     let catalog = Catalog::get();
     let firmware = catalog.find(&request.firmware_id).ok_or("That iOS version isn't in the catalog")?.clone();
     availability(&ctx.resources)?;
+    let _note = PendingNote::write(&ctx.dirs, &request);
     let started = Instant::now();
     let mut timings: Vec<(String, f64)> = Vec::new();
 
@@ -90,7 +153,8 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     let sibling = match firmware.recipe.as_ref().and_then(|r| r.keybag_ramdisk_from.as_deref()) {
         None => None,
         Some(from) => {
-            let sib = catalog.find(from).ok_or_else(|| format!("{from} (its keybag ramdisk) isn't in the catalog"))?.clone();
+            let sib =
+                catalog.find(from).ok_or_else(|| format!("{from} (its keybag ramdisk) isn't in the catalog"))?.clone();
             let mut sibling_check = |phase: &str, done: u64, total: u64| -> bool {
                 let text = match phase {
                     "Downloading" => format!("Downloading iOS {} for its restore ramdisk", sib.version),
@@ -264,7 +328,17 @@ fn run_firmwarekit(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
+    // It ends with LightTouch (and its one-shot helper with it, on stdin closing): the next start clears up.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        command.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
     let mut child = command.spawn().map_err(|e| format!("Couldn't start firmwarekit: {e}"))?;
+    lighttouch_core::job::bind_to_this_process(&child);
     let stdout = child.stdout.take().unwrap();
 
     // Follow the event lines; cancellation kills the tool (it cleans up its children).

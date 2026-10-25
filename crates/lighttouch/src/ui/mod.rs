@@ -52,6 +52,8 @@ pub enum Dialog {
     },
     /// What the headphones setting changes (from Settings).
     Headphones,
+    /// The window was closed while a device is being prepared or added.
+    CloseWhileBusy,
 }
 
 pub struct App {
@@ -72,6 +74,8 @@ pub struct App {
     pulse_release: Option<Instant>,
     /// The window was closed with iOS running: close once it has shut down.
     close_after_stop: bool,
+    /// Closing was confirmed during a preparation or import: close once it has cancelled.
+    close_after_task: bool,
     dev_shot: Option<devshot::DevShot>,
 }
 
@@ -101,12 +105,19 @@ pub fn run() -> eframe::Result {
 }
 
 impl App {
-    pub fn new(model: Model) -> Self {
-        let page = devshot::start_page().unwrap_or(if model.devices.is_empty() {
+    pub fn new(mut model: Model) -> Self {
+        let mut page = devshot::start_page().unwrap_or(if model.devices.is_empty() {
             Page::Setup(setup::Step::Welcome)
         } else {
             Page::Device
         });
+        // As on Android: a preparation LightTouch closed during comes back ready to run again.
+        let mut prepare = prepare::PrepareState::default();
+        if let Some(request) = model.interrupted.take() {
+            if prepare.resume(request) {
+                page = Page::Prepare;
+            }
+        }
         Self {
             model,
             guest: guest::GuestView::default(),
@@ -116,12 +127,13 @@ impl App {
             palette: theme::DARK,
             applied: None,
             setup: setup::SetupState::default(),
-            prepare: prepare::PrepareState::default(),
+            prepare,
             licenses: licenses::LicenseState::default(),
             inspector: None,
             paused_for_hidden: false,
             pulse_release: None,
             close_after_stop: false,
+            close_after_task: false,
             dev_shot: devshot::DevShot::from_env(),
         }
     }
@@ -146,9 +158,26 @@ impl App {
         self.pulse_release = Some(Instant::now() + Duration::from_millis(100));
     }
 
-    /// Closing the window shuts iOS down first (like holding the power button), then closes.
+    /// Closing the window asks first while a device is being prepared or added (closing cancels it), and shuts iOS
+    /// down first (like holding the power button), then closes.
     fn handle_close(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.viewport().close_requested()) && self.model.session_active() {
+        let requested = ctx.input(|i| i.viewport().close_requested());
+        if self.close_after_task {
+            if self.model.busy().is_none() {
+                self.close_after_task = false;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            if requested {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            }
+            return;
+        }
+        if requested && self.model.busy().is_some() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.dialog = Some(Dialog::CloseWhileBusy);
+            return;
+        }
+        if requested && self.model.session_active() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             if !self.close_after_stop {
                 self.model.stop();
@@ -311,6 +340,44 @@ impl App {
                     ui.add_space(16.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if widgets::text_button(ui, &p, "OK").clicked() {
+                            close = true;
+                        }
+                    });
+                }
+                Dialog::CloseWhileBusy => {
+                    let preparing = match self.model.busy() {
+                        Some((lighttouch_model::Activity::Preparing(id), _)) => Some(
+                            lighttouch_catalog::catalog::Catalog::get()
+                                .find(id)
+                                .map(|f| format!("{} · iOS {}", f.device_name(), f.label()))
+                                .unwrap_or_else(|| id.clone()),
+                        ),
+                        Some(_) => None,
+                        None => {
+                            close = true;
+                            None
+                        }
+                    };
+                    ui.label(widgets::icon_text(icons::WARNING, 26.0).color(theme::WARNING));
+                    ui.add_space(6.0);
+                    let (title, body) = match &preparing {
+                        Some(what) => (
+                            format!("Still preparing {what}"),
+                            "Closing LightTouch stops it. You can prepare it again later, and a download picks up where it left off.",
+                        ),
+                        None => ("Still adding a device".to_string(), "Closing LightTouch stops it; you can add it again later."),
+                    };
+                    ui.label(RichText::new(title).font(theme::title()));
+                    ui.add_space(4.0);
+                    ui.label(widgets::muted(&p, body));
+                    ui.add_space(16.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if widgets::danger(ui, "Stop and close").clicked() {
+                            self.model.cancel_task();
+                            self.close_after_task = true;
+                            close = true;
+                        }
+                        if widgets::text_button(ui, &p, "Keep going").clicked() {
                             close = true;
                         }
                     });

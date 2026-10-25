@@ -31,6 +31,25 @@ pub struct PrepareState {
     pub started: Option<Instant>,
 }
 
+impl PrepareState {
+    /// Set up to run `request` again (one LightTouch closed during): its choices, at the IPSW step, saying why.
+    pub fn resume(&mut self, request: PrepareRequest) -> bool {
+        let Some(firmware) = Catalog::get().find(&request.firmware_id) else { return false };
+        self.product = Some(firmware.product_type.clone());
+        self.firmware = Some(firmware.id.clone());
+        self.ipsw_file = match request.ipsw {
+            IpswSource::File(path) if path.is_file() => Some(path),
+            _ => None,
+        };
+        self.bootrom = request.bootrom.filter(|p| p.is_file());
+        self.name = request.name.unwrap_or_default();
+        let download = if self.ipsw_file.is_none() { "; its download picks up where it left off" } else { "" };
+        self.error = Some(format!("LightTouch closed before this preparation finished. Prepare it again{download}."));
+        self.step = Step::Files;
+        true
+    }
+}
+
 fn support_color(p: &theme::Palette, support: Support) -> Color32 {
     match support {
         Support::Tested => p.primary,

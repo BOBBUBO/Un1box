@@ -132,6 +132,8 @@ pub struct Model {
     finished: Option<Finished>,
     /// Screenshots being written: the folder, and whether it worked.
     screenshots: (std::sync::mpsc::Sender<Result<PathBuf, String>>, std::sync::mpsc::Receiver<Result<PathBuf, String>>),
+    /// A preparation LightTouch closed during, to offer again (taken by the UI).
+    pub interrupted: Option<prepare::PrepareRequest>,
     waker: Waker,
 }
 
@@ -152,8 +154,10 @@ impl Model {
             task: None,
             finished: None,
             screenshots: std::sync::mpsc::channel(),
+            interrupted: None,
             waker,
         };
+        model.interrupted = prepare::recover_interrupted(&model.dirs);
         match Library::open(&model.dirs.library()) {
             Ok(library) => model.library = Some(library),
             Err(e) => model.error = Some(format!("Couldn't open your devices: {e}")),
