@@ -20,6 +20,7 @@
 //!   firmwarekit build-n45-nor --ipsw FILE --identity JSON --out FILE [--board B] [--boot-args S]
 //!   firmwarekit seed-data --system IMG [--var-root P] [--language TAG] [--keyboards A,B] [--skip-setup]
 //!                         [--region LL] [--now SECS] [--jailbreak DIR]   the data-volume seeds on an image
+//!   firmwarekit kboot --decrypted DIR --identity JSON --out FILE [--ramdisk FILE] [--boot-args S] [--sandbox-patch]
 use lighttouch_firmware::entry::Entry;
 use lighttouch_firmware::hfs::{Editor, Volume};
 use lighttouch_firmware::ipsw::Ipsw;
@@ -416,6 +417,16 @@ fn seed_data(args: &[String]) -> Result<(), String> {
     ed.commit().map_err(e)
 }
 
+fn kboot(args: &[String]) -> Result<(), String> {
+    use lighttouch_firmware::{identity::UnitIdentity, kboot};
+    let dec = PathBuf::from(required(args, "--decrypted")?);
+    let identity = UnitIdentity::load(&PathBuf::from(required(args, "--identity")?)).map_err(|e| e.to_string())?;
+    let boot_args = option(args, "--boot-args").unwrap_or_else(|| kboot::DEFAULT_BOOT_ARGS.into());
+    let ramdisk = option(args, "--ramdisk").map(PathBuf::from);
+    let out = required(args, "--out")?;
+    kboot::write(&dec, &PathBuf::from(&out), &identity, &boot_args, ramdisk.as_deref(), None).map_err(|e| e.to_string())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("oneshot") {
@@ -440,6 +451,7 @@ fn main() -> ExitCode {
         Some("build-n72-nor") => build_n72_nor(&args[1..]),
         Some("build-n45-nor") => build_n45_nor(&args[1..]),
         Some("seed-data") => seed_data(&args[1..]),
+        Some("kboot") => kboot(&args[1..]),
         _ => {
             eprintln!("usage: firmwarekit decrypt --catalog FILE --id ID --ipsw FILE --out DIR [--no-rootfs]");
             return ExitCode::from(64);
