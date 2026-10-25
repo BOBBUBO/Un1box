@@ -1,5 +1,8 @@
 #include "lighttouch.h"
 #include <jni.h>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 #include <android/native_window_jni.h>
 #include <android/bitmap.h>
 #include <algorithm>
@@ -282,6 +285,23 @@ lt_status open_library(const char *root,lt_error *error) {
 }
 using WindowSnapshot = PresentationWindow<ANativeWindow, ANativeWindow_acquire, ANativeWindow_release>;
 using WindowPost = PresentationPost<ANativeWindow, ANativeWindow_unlockAndPost>;
+// The guest's frame is BGRA in memory and the window wants RGBA with an opaque alpha. On arm64 four
+// pixels are one table lookup (vqtbl1q_u8); a 960x640 frame is 614K pixels on this thread.
+// After Un1box's 978bbefe (KlugKlugTG/Un1box).
+void convert_row_rgba(uint32_t *dst,const uint8_t *src,int width) {
+    int x=0;
+#if defined(__aarch64__)
+    static const uint8_t swap[16]={2,1,0,3,6,5,4,7,10,9,8,11,14,13,12,15};
+    const uint8x16_t table=vld1q_u8(swap);
+    const uint8x16_t opaque=vreinterpretq_u8_u32(vdupq_n_u32(0xff000000u));
+    for(;x+4<=width;x+=4)
+        vst1q_u8(reinterpret_cast<uint8_t *>(dst+x),vorrq_u8(vqtbl1q_u8(vld1q_u8(src+size_t(x)*4),table),opaque));
+#endif
+    for(;x<width;++x) {
+        const uint8_t *p=src+size_t(x)*4;
+        dst[x]=uint32_t(p[2])|(uint32_t(p[1])<<8)|(uint32_t(p[0])<<16)|0xff000000u;
+    }
+}
 void present() {
     uint64_t configured_generation = 0;
     int configured_scale=-1;
@@ -423,6 +443,10 @@ void present() {
                     columns.resize(size_t(std::max(x1-x0,0)));
                     for(int x=x0;x<x1;++x)
                         columns[x-x0]=std::min(uint32_t((x-view.left)*source.width/view.width),source.width-1)*4;
+                    // Unscaled across (the default Smooth scaling's guest-sized buffer): consecutive
+                    // source pixels, so a row converts in one pass with no column table.
+                    bool across=x1>x0;
+                    for(int x=x0+1;across && x<x1;++x)across=columns[x-x0]==columns[0]+uint32_t(x-x0)*4;
                     const uint32_t *previous=nullptr;
                     uint32_t previous_sy=UINT32_MAX;
                     for(int y=0;y<target.height;++y) {
@@ -439,7 +463,8 @@ void present() {
                         std::fill(row,row+x0,0xff000000u);
                         std::fill(row+x1,row+target.width,0xff000000u);
                         const uint8_t *src=pixels.data()+sy*source.stride;
-                        for(int x=x0;x<x1;++x) {
+                        if(across)convert_row_rgba(row+x0,src+columns[0],x1-x0);
+                        else for(int x=x0;x<x1;++x) {
                             const uint8_t *p=src+columns[x-x0];
                             row[x]=uint32_t(p[2])|(uint32_t(p[1])<<8)|(uint32_t(p[0])<<16)|0xff000000u;
                         }
