@@ -303,6 +303,17 @@ boots unchanged).
 
 ### Measured and rejected
 
+**iPod touch 4G, 2026-10-25 (TLB and jump-cache sizes).** Poco, Epic Citadel's tour, 120 s windows, eight runs
+interleaved ABCDDCBA, vCPU cycles per frame (vCPU time × core clock, so a hot phone's lower clock cancels out) and
+frames ≥60 ms per minute. Default sizing 59.5/58.9 Mcycles, 39/36 slow frames a minute. A 4096-entry floor on every
+softmmu TLB (it halves desktop refills, 32K → 14K/s with 16K entries) 62.0/60.6 and 58.5/34: the bigger tables miss the
+phone's caches more than the refills cost. A 256-entry cap 75.3/74.0 and 175/164. A 4K-entry TB jump cache instead of
+16K 61.4/58.4 and 46/41. Patch: `perf/ec/rejected-tlb-min-max-bits.patch`. Delivering IRQs and FIQs without the BQL when nothing else is
+pending (`perf/ec/rejected-irq-unlocked.patch`; desktop: 373K lock acquisitions → 1): Poco, six runs ABBAAB, on
+59.6/61.9/61.9 vs off 59.5/58.7/61.6 Mcycles a frame. iOS's handler reads the interrupt controller at once, and
+that read waits for the lock instead. Same-engine runs still differ by up to
+~4% across a session, so compare interleaved arms only.
+
 **iPod touch 4G, 2026-10-25.** The IOP's flash page `pread`/`pwrite` without the BQL (`perf/ec/rejected-nand-io-unlocked.patch`
 in the development folder): Poco, Real Racing's attract demo with its scene load, four runs ABBA, vCPU BQL waits 0.37/0.32 s
 with it vs 0.34/0.25 s without in 40 s, the load as long either way. The phone's page cache serves the reads quickly.
@@ -488,10 +499,14 @@ when the phone is hot. What was checked:
   `429e0a3551`). What still stopped the guest was main-loop work holding the BQL: the two rows above
   removed ~60% of the vCPU's lock waits. What is left (~0.65% of the time) is spread over device timers.
 - The tour reads only tens of flash pages per 5 s once running; storage is not what slows it.
-- Still unexplained: a few kernel threads that run in bursts (one took ~10% of the guest for three seconds
-  of the tour). Sampling the guest PC at interrupts cannot say what they do, since interrupts are taken only
-  where the kernel unmasks them (after a context switch, at a timebase read); that needs a sampler that
-  stops the vCPU on a host timer.
+- **The slowest frames are iOS's audio cycle, not the game.** In them the game takes ~20 ms, as in a median
+  frame. The other 30+ ms are iOS's own work. Every ~0.83 s the audio decoder (AMC) finishes a block, the music
+  file's next pages are read and decrypted (a burst of DMA interrupts), and mediaserverd, kernel threads and
+  backboardd run for 20–30 ms. Almost every frame over 45 ms in a 20 s Poco trace falls on one of those cycles.
+  The AMC's register reads are only ~0.2% of the time.
+- **The tail follows guest throughput.** Making the vCPU 26% slower per frame (the rejected TLB cap below) gave
+  4.5× as many ≥60 ms frames, so cycles per frame is what moves the 1% low. Tool: `cyc.py` in the development
+  folder's `perf/ec/scripts` (with `abn.sh`, interleaved arms; `slowframes.py` splits each slow frame by process).
 
 ### Guest benchmarks
 
