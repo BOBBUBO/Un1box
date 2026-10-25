@@ -131,6 +131,7 @@ impl Mux {
         )?;
         match reply.get("Number").and_then(|v| v.as_unsigned_integer()) {
             Some(0) => Ok(io),
+            Some(2) => Err(Error("the guest is no longer connected".into())),
             Some(3) => Err(Error(format!("the guest refused a connection to port {port}"))),
             other => Err(Error(format!("the USB bridge couldn't connect to port {port} ({other:?})"))),
         }

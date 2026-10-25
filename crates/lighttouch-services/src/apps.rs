@@ -78,11 +78,16 @@ impl Guest {
     }
 
     /// Start a service. lockdownd drops a session left idle (as across a long upload); a fresh one recovers it.
+    /// When iOS restarts or its USB link drops, the guest comes back under a new usbmux id: wait for it.
     fn service(&mut self, name: &str, timeout: Duration) -> Result<Conn> {
         let mut last = Error(format!("couldn't start {name}"));
         for attempt in 0..3 {
             if attempt > 0 {
                 std::thread::sleep(Duration::from_millis(500 * attempt));
+                if let Err(e) = self.reattach(Duration::from_secs(30)) {
+                    last = e;
+                    continue;
+                }
                 match Lockdown::session(&self.mux, &self.device, TIMEOUT) {
                     Ok(lockdown) => self.lockdown = lockdown,
                     Err(e) => {
@@ -97,6 +102,22 @@ impl Guest {
             }
         }
         Err(last)
+    }
+
+    /// Look the guest up again by its UDID, waiting up to `window` for it to reattach.
+    fn reattach(&mut self, window: Duration) -> Result<()> {
+        let deadline = Instant::now() + window;
+        loop {
+            let found = self.mux.devices()?.into_iter().find(|d| d.udid == self.device.udid);
+            if let Some(device) = found {
+                self.device = device;
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(Error("The guest disconnected and didn't come back.".into()));
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
     }
 
     pub fn installed(&mut self) -> Result<Vec<InstalledApp>> {
