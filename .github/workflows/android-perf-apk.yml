@@ -520,6 +520,15 @@ jobs:
             --swift-license "$BUNDLE/swift-android/swift-resources/usr/share/swift/LICENSE.txt" \
             --source-reference "https://github.com/$GITHUB_REPOSITORY/tree/$SOURCE_REF" >>/tmp/firmwarekit.log 2>&1 \
             || report /tmp/firmwarekit.log
+          echo "--- binary needs ---" >> /tmp/linknote.txt
+          "$TOOLS/llvm-readelf" -d "$OUT/firmwarekit" 2>/dev/null | grep NEEDED >> /tmp/linknote.txt || true
+          for ndk in "$ANDROID_HOME"/ndk/*; do
+            for lib in "$ndk"/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so; do
+              [ -f "$lib" ] || continue
+              echo "$(basename "$ndk") libc++_shared __hash_memory: $(grep -c __hash_memory "$lib" || true)" >> /tmp/linknote.txt
+            done
+          done
+          echo "::notice title=firmwarekit link::$(sed 's/%/%25/g' /tmp/linknote.txt | awk '{printf "%s%%0A", $0}')"
           ls -la "$OUT"
           echo "dir=$OUT" >> "$GITHUB_OUTPUT"
 

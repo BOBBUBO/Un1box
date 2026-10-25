@@ -6,6 +6,7 @@ import android.os.*
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -153,6 +154,33 @@ class FirmwareService : Service() {
     }
 
     /**
+     * Why a signal ended the child, as far as a probe can tell: the same binary, asked only for its usage, with
+     * the loader's own trace on (LD_DEBUG is bionic's). A binary that cannot start dies in the probe as well,
+     * and the last libraries it loaded say where; one that starts fine points at the command, not the build.
+     */
+    private fun startupProbe(libs: File, signal: Int): String {
+        val out = File(cacheDir, "probe.log")
+        return try {
+            val builder = ProcessBuilder(listOf(File(libs, "libfirmwarekit.so").path, "--help"))
+                .redirectErrorStream(true)
+                .redirectOutput(out)
+            builder.environment().apply {
+                put("LTM_QEMU_DYLIB", File(libs, "libqemu-arm.so").path)
+                put("LD_LIBRARY_PATH", libs.path)
+                put("HOME", filesDir.path); put("TMPDIR", cacheDir.path)
+                put("LD_DEBUG", "libs")
+            }
+            val probe = builder.start()
+            if (!probe.waitFor(20, TimeUnit.SECONDS)) { probe.destroyForcibly(); probe.waitFor() }
+            val tail = out.takeIf { it.isFile }?.readLines()?.filter { it.isNotBlank() }?.takeLast(3)?.joinToString(" · ")
+            "a usage-only probe of the same binary ended ${probe.exitValue()}" +
+                (if (tail.isNullOrBlank()) "" else ", the loader's last words: $tail")
+        } catch (e: Exception) {
+            "the probe could not run (${e.message})"
+        }.let { "signal $signal; $it" }
+    }
+
+    /**
      * One firmwarekit command. Its stdout is a line of JSON per event (begin: each step's expected seconds; step;
      * progress: the step's fraction and what it is doing; error), turned into this worker's stage and a weighted done/total.
      */
@@ -204,7 +232,8 @@ class FirmwareService : Service() {
             val cause = message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" }
             cause + when {
                 !detail.isNullOrBlank() -> " — $detail"
-                exit > 128 -> " — killed by signal ${exit - 128}, and it wrote nothing to its log"
+                // Nothing in the log and a signal: was it this command, or can the binary not start at all?
+                exit > 128 -> " — killed by signal ${exit - 128}; ${startupProbe(libs, exit - 128)}"
                 else -> ""
             }
         }
