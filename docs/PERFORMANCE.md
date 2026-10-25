@@ -303,6 +303,10 @@ boots unchanged).
 
 ### Measured and rejected
 
+**iPod touch 4G, 2026-10-25.** The IOP's flash page `pread`/`pwrite` without the BQL (`perf/ec/rejected-nand-io-unlocked.patch`
+in the development folder): Poco, Real Racing's attract demo with its scene load, four runs ABBA, vCPU BQL waits 0.37/0.32 s
+with it vs 0.34/0.25 s without in 40 s, the load as long either way. The phone's page cache serves the reads quickly.
+
 **iPod touch 4G, 2026-10-22.** A 2-way TB jump cache (a miss also probes slot `h ^ 1`): desktop
 jump-cache misses 32.8K → 22.0K/s at Jetpack's title, fps flat (28.1 vs 28.3); Poco Jetpack 24.0/24.1 vs
 23.4/24.0, Doodle Jump 44.6/46.4 vs 47.4/51.7 (lost 2 of 2). The IOP's cache-control registers as a
