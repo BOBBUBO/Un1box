@@ -11,7 +11,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -309,7 +308,7 @@ internal fun ColumnScope.CategoriesTab(model: StoreModel) {
             }
         }
     } else {
-        SectionHeader(category.name, browser.categoryApps.total.takeIf { it > 0 }?.let { "$it apps" }, browser::back)
+        SectionHeader(category.name, browser.categoryApps.total.takeIf { it > 0 }?.let { "$it apps" })
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for ((sort, title) in CATEGORY_SORTS) FilterChip(browser.categorySort == sort, { browser.pickCategorySort(sort) }, label = { Text(title) })
         }
@@ -338,15 +337,15 @@ internal fun ColumnScope.CollectionsTab(model: StoreModel) {
             }
         }
     } else {
-        SectionHeader(collection.title, collection.subtitle, browser::back)
+        SectionHeader(collection.title, collection.subtitle)
         AppListing(browser.collectionApps, browser, model, { browser.openCollection(collection) })
     }
 }
 
 @Composable
-private fun SectionHeader(title: String, subtitle: String?, onBack: () -> Unit) {
-    Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+private fun SectionHeader(title: String, subtitle: String?) {
+    // Back is the top bar's arrow, which steps out of the category or collection first.
+    Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }

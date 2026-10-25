@@ -262,7 +262,9 @@ internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () ->
     // Drawn over the activity's content (not a Dialog window, which gets no usable insets edge to edge).
     Surface(Modifier.fillMaxSize().testTag("store").semantics { testTagsAsResourceId = true }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            StoreTopBar(model, running, onPickLocal, onBack = if (details != null) model::close else onClose)
+            StoreTopBar(model, running, onPickLocal, onBack = {
+                when { details != null -> model.close(); model.browser.canGoBack -> model.browser.back(); else -> onClose() }
+            })
             Column(Modifier.padding(horizontal = 16.dp)) {
                 model.crash?.let { report ->
                     StoreCard(Modifier.testTag("store_crash_report")) {
@@ -361,6 +363,15 @@ private fun ColumnScope.EmptyResults(filtered: Boolean) {
 /** One app in a list. [rank] is its chart position. Rows from the plain listings have no compatibility verdict until opened. */
 @Composable
 internal fun ResultRow(app: JSONObject, model: StoreModel, rank: Int? = null) {
+    if (app.optBoolean("ghost")) {
+        Row(Modifier.fillMaxWidth().alpha(0.5f).padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text(app.optString("name"), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                Text("Not in the archive", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        return
+    }
     val problem = LegacyStore.incompatibility(app)
     val installedVersion = model.installed[app.optString("bundle_id")]
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { model.open(app) }.padding(horizontal = 8.dp, vertical = 8.dp),

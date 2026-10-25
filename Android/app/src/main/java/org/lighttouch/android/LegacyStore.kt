@@ -306,7 +306,9 @@ object LegacyStore {
         val members = json("/api/v1/collections/" + URLEncoder.encode(slug, "UTF-8"), cached = true).optJSONArray("members")
             ?: throw StoreError("Legacy Store sent an unreadable collection.")
         val apps = (0 until members.length()).mapNotNull { members.optJSONObject(it) }.mapNotNull { member ->
+            // A member the archive has not preserved has only its label, and is listed greyed out.
             member.optJSONObject("app")?.also { app -> member.text("label")?.let { app.put("label", it) } }
+                ?: member.text("label")?.let { JSONObject().put("name", it).put("ghost", true) }
         }
         return StorePage(rows(org.json.JSONArray(apps), "collection"), apps.size, null)
     }
