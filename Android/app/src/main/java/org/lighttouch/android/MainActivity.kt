@@ -63,7 +63,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         private set
     override var profileNotice by mutableStateOf("")
         private set
-        private set
     /** True while the engine copies a presented frame on a worker (its default). */
     override var presentAsync by mutableStateOf(true)
     override var faithfulScaler by mutableStateOf(true)
