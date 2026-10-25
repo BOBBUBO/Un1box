@@ -462,6 +462,17 @@ jobs:
           else
             echo "no setup-android-sdk.sh in the bundle" >>/tmp/ndk-setup.log
           fi
+          # The SDK links against the sysroot sitting in its own bundle, and the setup script
+          # fills that from whichever NDK it found. If that one is not the NDK above, the link
+          # dies on a libc++ symbol only r30 has, however correct $NDK_ROOT is.
+          SYSROOT="$BUNDLE/swift-android/ndk-sysroot"
+          SYS_LIBCXX="$SYSROOT/usr/lib/aarch64-linux-android/libc++_static.a"
+          if [ "$(grep -c __hash_memory "$SYS_LIBCXX" 2>/dev/null || echo 0)" = 0 ]; then
+            echo "bundle sysroot's libc++ is not the chosen NDK's; pointing it at $NDK_ROOT"
+            rm -rf "$SYSROOT"
+            ln -s "$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot" "$SYSROOT"
+          fi
+          echo "sysroot libc++ has __hash_memory: $(grep -c __hash_memory "$SYS_LIBCXX" 2>/dev/null || echo 0)"
           cd "$GITHUB_WORKSPACE"
           # The same build scripts/build.sh runs (firmwarekit-android), with the log kept whole: the
           # script pipes swift build through `tail -3`, which is all a failure would leave behind.
@@ -473,6 +484,8 @@ jobs:
             echo "ndk root: $NDK_ROOT"; echo "ndks: $(ls -1 "$ANDROID_HOME/ndk" | tr '\n' ' ')"
             echo "libc++: $LIBCXX"
             echo "libc++ has __hash_memory: $(grep -c __hash_memory "$LIBCXX" 2>/dev/null || echo 0)"
+            echo "bundle sysroot: $(readlink -f "$BUNDLE/swift-android/ndk-sysroot" 2>/dev/null)"
+            echo "bundle sysroot libc++ has __hash_memory: $(grep -c __hash_memory "$BUNDLE/swift-android/ndk-sysroot/usr/lib/aarch64-linux-android/libc++_static.a" 2>/dev/null || echo 0)"
             ls -la "$BUNDLE/swift-android/ndk-sysroot" 2>/dev/null | head -5; } 2>&1 \
             | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}' > /tmp/toolchain.dump
           echo "::warning title=firmwarekit toolchain::$(cat /tmp/toolchain.dump)"
