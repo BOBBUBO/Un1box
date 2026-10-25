@@ -139,11 +139,19 @@ struct Engine {
         // QEMU registers process-global type/module callbacks at library load. Keep
         // code resident even when a discovery-only handle is released.
 #ifdef _WIN32
-        // Windows keeps a loaded DLL's registrations for the process; its dependencies sit beside it.
+        // Its dependencies sit beside it. Pinned, the RTLD_NODELETE of Windows: QEMU starts its RCU thread at load,
+        // and releasing a discovery-only handle would unmap the code under it.
         std::string load_error;
         library = lt::os::library_open(path, load_error);
         if (!library)
             throw Failure(LT_ENGINE, "engine load failed: " + load_error);
+        HMODULE pinned = nullptr;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                reinterpret_cast<LPCWSTR>(library), &pinned)) {
+            lt::os::library_close(library);
+            library = nullptr;
+            throw Failure(LT_ENGINE, "engine load failed: could not pin " + std::string(path));
+        }
 #else
         int flags = RTLD_NOW | RTLD_GLOBAL;
 #ifdef RTLD_NODELETE

@@ -21,6 +21,12 @@ pub struct Output {
 
 impl Output {
     pub fn open() -> Result<Self, String> {
+        // cpal unwraps some platform errors (Windows without an audio device enumerator): no audio, not no session.
+        std::panic::catch_unwind(Self::open_default)
+            .unwrap_or_else(|_| Err("the audio system failed to start".into()))
+    }
+
+    fn open_default() -> Result<Self, String> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or("no audio output device")?;
         let config = device.default_output_config().map_err(|e| format!("audio device configuration: {e}"))?;

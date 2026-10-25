@@ -64,7 +64,9 @@ pub fn run() -> eframe::Result {
         .with_title("LightTouch")
         .with_app_id("org.lighttouch.LightTouch")
         .with_inner_size([1120.0, 780.0])
-        .with_min_inner_size([760.0, 560.0]);
+        .with_min_inner_size([760.0, 560.0])
+        // Unused, and on Windows winit panics when OLE won't register the drop target.
+        .with_drag_and_drop(false);
     let options = eframe::NativeOptions { viewport, centered: true, ..Default::default() };
     eframe::run_native(
         "LightTouch",
