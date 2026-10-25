@@ -70,6 +70,12 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   an ordinary scene may make none, and then there is nothing to win. Measure in the SGX-era titles that
   pipeline uploads against frames (Real Racing, Asphalt 5, Epic Citadel), interleaved, and check that a
   fence still tests true after it has been finished.
+- [ ] Presenter: the per-frame convert is a table shuffle on AArch64 now (`convert_row_rgba`,
+  four pixels a lookup); before that it was a scalar R/B swap over every pixel, which at the
+  iPod touch 4G's 960x640 is 614K pixels a frame on the thread that also shares cores with the
+  vCPU. Take `present_stage`'s Scale time on the 4G (`F post-complete-ns` profile lines) before and
+  after, and the game frame rate in the same pairs; the arithmetic says ~0.5 ms a frame, which is
+  small unless the frame budget is tight.
 - [ ] Presenter and vsync threads at `THREAD_PRIORITY_DISPLAY` (`display_priority.h`,
   `LT_PRESENT_PRIO=off` for A/B). Unmeasured: take the 1% low and the hitch count rather than the mean,
   on both phones, and check that the presenter preempting the vCPU costs the guest nothing.

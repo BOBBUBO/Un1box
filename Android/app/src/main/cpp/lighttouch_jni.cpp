@@ -1,5 +1,8 @@
 #include "lighttouch.h"
 #include <jni.h>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 #include <android/native_window_jni.h>
 #include <android/bitmap.h>
 #include <algorithm>
@@ -282,6 +285,31 @@ lt_status open_library(const char *root,lt_error *error) {
 }
 using WindowSnapshot = PresentationWindow<ANativeWindow, ANativeWindow_acquire, ANativeWindow_release>;
 using WindowPost = PresentationPost<ANativeWindow, ANativeWindow_unlockAndPost>;
+// The guest's frame bytes are BGRA (p[0] = B, p[1] = G, p[2] = R, p[3] = A) and the window wants
+// RGBA with an opaque alpha. AArch64 swaps R and B four pixels at a time with one table lookup per
+// 16 bytes: 614K pixels a frame at the iPod touch 4G's 960x640, the largest thing this thread does
+// between two presents.
+void convert_row_rgba(uint32_t *dst,const uint8_t *src,int width) {
+#if defined(__aarch64__)
+    static const uint8_t kSwap[16]={2,1,0,3,6,5,4,7,10,9,8,11,14,13,12,15};
+    const uint8x16_t table=vld1q_u8(kSwap);
+    const uint8x16_t opaque=vreinterpretq_u8_u32(vdupq_n_u32(0xff000000u));
+    int x=0;
+    for(;x+4<=width;x+=4) {
+        const uint8x16_t v=vld1q_u8(src+size_t(x)*4);
+        vst1q_u8(reinterpret_cast<uint8_t *>(dst+x),vorrq_u8(vqtbl1q_u8(v,table),opaque));
+    }
+    for(;x<width;++x) {
+        const uint8_t *p=src+size_t(x)*4;
+        dst[x]=uint32_t(p[2])|uint32_t(p[1])<<8|uint32_t(p[0])<<16|0xff000000u;
+    }
+#else
+    for(int x=0;x<width;++x) {
+        const uint8_t *p=src+size_t(x)*4;
+        dst[x]=uint32_t(p[2])|uint32_t(p[1])<<8|uint32_t(p[0])<<16|0xff000000u;
+    }
+#endif
+}
 void present() {
     request_display_priority();
     uint64_t configured_generation = 0;
@@ -417,6 +445,15 @@ void present() {
                     // once, and repeated target rows are copies of it. A
                     // 320x480 guest on a 1080x2400 panel used to cost two
                     // integer divides per target pixel, ~2.6M per frame.
+                    // The window buffer is the guest's own size here whenever the scale is the
+                    // default (guest-sized geometry) or a whole multiple of it: then every row is
+                    // converted straight across, with no mapping and no margins.
+                    if(int(source.width)==target.width && int(source.height)==target.height &&
+                       target.stride==target.width) {
+                        for(int y=0;y<target.height;++y)
+                            convert_row_rgba(static_cast<uint32_t *>(target.bits)+size_t(y)*target.stride,
+                                             pixels.data()+size_t(y)*source.stride,target.width);
+                    } else {
                     static thread_local std::vector<uint32_t> columns;
                     const int x0=std::max(int(view.left),0);
                     int x1=x0;
@@ -445,6 +482,7 @@ void present() {
                             row[x]=uint32_t(p[2])|(uint32_t(p[1])<<8)|(uint32_t(p[0])<<16)|0xff000000u;
                         }
                         previous=row;previous_sy=sy;
+                    }
                     }
                 }
                 scale_end=monotonic_ns();
