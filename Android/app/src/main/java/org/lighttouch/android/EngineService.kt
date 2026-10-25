@@ -169,17 +169,6 @@ class EngineService : Service() {
                     android.system.Os.setenv(key.trim(), value.trim(), true)
                 }
             }
-            // A profile-instrumented engine (a CI PGO pass) keeps its profile current here, where the app
-            // can hand it out; a normal engine ignores these names entirely. Reset 30 s in, so setup and
-            // the first load are out of the way, then rewritten every two minutes: a phone session ends
-            // with the app going away, so there may be no last deadline to wait for.
-            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 &&
-                android.system.Os.getenv("LT_PGO_FILE") == null && android.system.Os.getenv("LT_PGO_DUMP") == null) {
-                android.system.Os.setenv("LT_PGO_FILE", File(filesDir, "pgo.profraw").absolutePath, false)
-                android.system.Os.setenv("LT_PGO_DUMP", "300", false)
-                android.system.Os.setenv("LT_PGO_RESET", "30", false)
-                android.system.Os.setenv("LT_PGO_EVERY", "120", false)
-            }
             // The Settings switch (AppSettings.headphones); the engine applies it only on boards that model the jack.
             val headphones = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("headphones", true)
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)

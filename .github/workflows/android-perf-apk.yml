@@ -20,12 +20,6 @@ name: Android perf APK
 # published APK needs an uninstall first (which erases the app's prepared
 # devices; the APK carries firmwarekit, so they can be prepared again).
 #
-# PGO: a run with engine_cflags=-fprofile-generate produces an instrumented
-# engine whose profile the phone writes at LT_PGO_DUMP seconds (LT_PGO_FILE
-# names the output path); upload that .profraw to a release of this repository
-# and run again with pgo_profile="<release-tag>/<asset-name>" for a
-# -fprofile-use build of the same engine revision.
-#
 # Inputs and caches are pinned by content, not by date: the dependency and
 # engine caches are restored only on an exact key match, because the engine
 # build refuses a cached tree whose recipe changed. If a run fails in the engine
@@ -42,18 +36,6 @@ on:
         description: Engine branch, tag or commit to build
         required: true
         default: perf
-      engine_cflags:
-        description: Extra engine compiler flags (a PGO pass builds here, e.g. -fprofile-generate)
-        required: false
-        default: ""
-      engine_configure_args:
-        description: Extra configure options for the engine build (e.g. "-Db_lto=true"); empty for the default
-        required: false
-        default: ""
-      pgo_profile:
-        description: PGO profile to build against, as "release-tag/asset-name" of a .profraw or .profdata
-        required: false
-        default: ""
       base_release_repository:
         description: Release whose APK supplies firmwarekit, USB bridge and guest tools
         required: true
@@ -107,9 +89,6 @@ jobs:
       ENGINE_REPO: ${{ inputs.engine_repository }}
       ENGINE_REF: ${{ inputs.engine_ref }}
       MESON: ${{ github.workspace }}/meson/bin/meson
-      LT_ENGINE_CFLAGS: ${{ inputs.engine_cflags }}
-      LT_ENGINE_CONFIGURE_ARGS: ${{ inputs.engine_configure_args }}
-      PGO_PROFILE: ${{ inputs.pgo_profile }}
 
     steps:
       - name: Check out this fork
@@ -127,20 +106,7 @@ jobs:
         id: engine
         run: |
           echo "sha=$(git -C qemu-ios rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          # Names the APK after what the engine was built with, so several experiments
-          # can sit in the same release without being mistaken for each other.
-          case "$LT_ENGINE_CFLAGS $LT_ENGINE_CONFIGURE_ARGS" in
-            *profile-generate*) tag="-pgo-collect" ;;
-            *profile*) tag="-pgo" ;;
-            *b_lto*|*flto*) tag="-lto" ;;
-            "") tag="" ;;
-            *) tag="-tuned" ;;
-          esac
-          # Building against a collected profile is the "use" half of the PGO cycle,
-          # whatever else the flags say.
-          if [ -n "$PGO_PROFILE" ] && [ "$tag" != "-pgo-collect" ]; then tag="-pgo"; fi
-          echo "MODE_TAG=$tag" >> "$GITHUB_ENV"
-          echo "APK is named ci/LightTouch-<engine>${tag}-arm64-debug.apk"
+          echo "APK is named ci/LightTouch-<engine>-arm64-debug.apk"
 
       - name: Extract firmwarekit, USB bridge and guest tools from the published APK
         env:
@@ -422,23 +388,6 @@ jobs:
             --dependency-verification=${{ inputs.dependency_verification }} \
             --dry-run :app:assembleDebug
 
-      - name: Fetch and merge a PGO profile
-        if: inputs.pgo_profile != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p ci/pgo
-          TAG="${PGO_PROFILE%%/*}"; ASSET="${PGO_PROFILE#*/}"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --dir ci/pgo --clobber
-          RAW="$(ls ci/pgo/*.profraw ci/pgo/*.profdata 2>/dev/null | head -1)"
-          test -n "$RAW" || { echo "::error::no .profraw or .profdata came out of $PGO_PROFILE"; exit 1; }
-          LLVM_PROFDATA="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-profdata"
-          case "$RAW" in
-            *.profraw) "$LLVM_PROFDATA" merge -o ci/pgo/merged.profdata "$RAW" ;;
-            *) cp "$RAW" ci/pgo/merged.profdata ;;
-          esac
-          sha256sum ci/pgo/merged.profdata | tee ci/pgo/merged.sha256
-
       - name: Build the engine dependencies
         run: |
           deps() {
@@ -455,12 +404,6 @@ jobs:
 
       - name: Build the engine
         run: |
-          FLAGS="$LT_ENGINE_CFLAGS"
-          if [ -n "$PGO_PROFILE" ]; then
-            FLAGS="$FLAGS -fprofile-use=$GITHUB_WORKSPACE/ci/pgo/merged.profdata -fprofile-correction -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date"
-          fi
-          export LT_ENGINE_CFLAGS="$FLAGS"
-          echo "engine compiler flags: '$LT_ENGINE_CFLAGS'"
           engine() {
             python3 qemu-ios/contrib/portable/build-engine.py ci/engine-build \
               --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT" --android-api 29 \
@@ -517,7 +460,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ENGINE_SHORT="$(git -C qemu-ios rev-parse --short HEAD)"
-          APK="ci/LightTouch-${ENGINE_SHORT}${MODE_TAG}-arm64-debug.apk"
+          APK="ci/LightTouch-${ENGINE_SHORT}-arm64-debug.apk"
           cp Android/app/build/outputs/apk/debug/app-debug.apk "$APK"
           ls -la "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
@@ -539,10 +482,6 @@ jobs:
             echo "- application revision: $(git rev-parse HEAD) ($GITHUB_REPOSITORY)"
             echo "- engine revision: $(git -C qemu-ios rev-parse HEAD) ($ENGINE_REPO $ENGINE_REF)"
             echo "- engine build: arm64-v8a, NDK $ANDROID_NDK_VERSION, --android-api 29, $LT_JOBS jobs"
-            echo "- engine compiler flags: ${LT_ENGINE_CFLAGS:-<none>}"
-            if [ -n "$PGO_PROFILE" ]; then
-              echo "- PGO profile: $PGO_PROFILE merged as $(cat ci/pgo/merged.sha256)"
-            fi
             echo "- reused from ${BASE_RELEASE_RESOLVED:-${{ inputs.base_release_repository }} ${{ inputs.base_release_tag }}}: firmwarekit, lighttouch-oneshot, USB bridge, guest tools"
             echo "- debuggable: ${{ inputs.debuggable }}; signed with this workflow's own keystore"
             echo
@@ -564,7 +503,7 @@ jobs:
       - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
-          name: LightTouch-perf-apk-${{ steps.engine.outputs.sha }}${{ inputs.engine_cflags != '' && '-pgo' || '' }}
+          name: LightTouch-perf-apk-${{ steps.engine.outputs.sha }}
           path: |
             ci/LightTouch-*-arm64-debug.apk
             ci/PROVENANCE.txt
