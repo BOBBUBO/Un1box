@@ -22,7 +22,7 @@ The desktop ports share one device library and setup UI. Android has its own tou
 | iPod touch 2G | 3.1.3 | **Tested**: the main target, fastest. Games such as Flight Control and Jetpack Joyride run at or near 60 fps on recent phones. |
 | iPod touch 2G | 4.2.1 | **Tested** |
 | iPod touch 3G | 4.2.1 | **Tested** |
-| iPod touch 4G | 6.1.6 | **Tested**: most games run at or near 60 fps on recent phones (Jetpack Joyride, Doodle Jump, Real Racing). Epic Citadel runs at about 30 fps on a Poco F3. |
+| iPod touch 4G | 6.1.6 | **Tested**: on a Pixel 10, Infinity Blade and Infinity Blade II run at full speed and Epic Citadel at 60 fps. Most other games, such as Jetpack Joyride, Doodle Jump and Real Racing, run at or near 60 fps on recent phones. |
 | iPhone 3GS | 5.1.1 | **Tested, slow** |
 | iPhone 4 | 4.2.1, 4.3.5 | **Tested, slow** |
 | Others in the [firmware catalog](Portable/firmware/firmware-catalog.json) | iPhone OS 1 to iOS 7 | Can be prepared and tried; not yet checked on LightTouch. [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) records what has been run. |
