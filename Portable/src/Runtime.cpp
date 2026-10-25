@@ -15,15 +15,15 @@
 #include <condition_variable>
 #include <cmath>
 #include <deque>
-#include <dlfcn.h>
-#include <fcntl.h>
+#include "Os.hpp"
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <unistd.h>
+#ifndef _WIN32
+#include <dlfcn.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
-#include <sys/stat.h>
+#endif
 #include <time.h>
 #include <limits>
 #include <algorithm>
@@ -56,7 +56,7 @@ static void prefer_fast_cores() {
     for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
         char path[96];
         snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d", cpu);
-        if (access(path, F_OK) != 0)
+        if (!lt::os::exists(path))
             break;
         snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpu_capacity", cpu);
         long value = 0;
@@ -94,7 +94,7 @@ static uint64_t now_ns() {
     return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
 }
 struct Engine {
-    void *library = nullptr;
+    lt::os::Library library = nullptr;
     decltype(&qemu_ios_main) main = nullptr;
     decltype(&qemu_ios_portable_board_at) board_at = nullptr;
     decltype(&qemu_ios_portable_board) board = nullptr;
@@ -130,7 +130,7 @@ struct Engine {
     // Optional: engines before the guest-package hypercalls lack it.
     decltype(&qemu_ios_guest_package_report) package_report = nullptr;
     template <class F> F symbol(const char *n) {
-        auto p = dlsym(library, n);
+        auto p = lt::os::library_symbol(library, n);
         require(p, std::string("engine symbol missing: ") + n, LT_UNSUPPORTED);
         return reinterpret_cast<F>(p);
     }
@@ -138,6 +138,13 @@ struct Engine {
         require(path && *path, "engine library missing");
         // QEMU registers process-global type/module callbacks at library load. Keep
         // code resident even when a discovery-only handle is released.
+#ifdef _WIN32
+        // Windows keeps a loaded DLL's registrations for the process; its dependencies sit beside it.
+        std::string load_error;
+        library = lt::os::library_open(path, load_error);
+        if (!library)
+            throw Failure(LT_ENGINE, "engine load failed: " + load_error);
+#else
         int flags = RTLD_NOW | RTLD_GLOBAL;
 #ifdef RTLD_NODELETE
         flags |= RTLD_NODELETE;
@@ -147,6 +154,7 @@ struct Engine {
             const char *e = dlerror();
             throw Failure(LT_ENGINE, e ? e : "engine load failed");
         }
+#endif
         try {
             auto version = symbol<decltype(&qemu_ios_api_version)>("qemu_ios_api_version");
             require((version() >> 16) == 2, "incompatible qemu_ios API major", LT_UNSUPPORTED);
@@ -181,21 +189,21 @@ struct Engine {
             LOAD(audio_read, qemu_ios_audio_capture_read);
             LOAD(audio_stop, qemu_ios_audio_capture_stop);
 #undef LOAD
-            profile_start = reinterpret_cast<decltype(profile_start)>(dlsym(library, "qemu_ios_profile_start"));
-            profile_stop = reinterpret_cast<decltype(profile_stop)>(dlsym(library, "qemu_ios_profile_stop"));
-            profile_status = reinterpret_cast<decltype(profile_status)>(dlsym(library, "qemu_ios_profile_status"));
-            attach = reinterpret_cast<decltype(attach)>(dlsym(library, "qemu_ios_ui_attach"));
+            profile_start = reinterpret_cast<decltype(profile_start)>(lt::os::library_symbol(library, "qemu_ios_profile_start"));
+            profile_stop = reinterpret_cast<decltype(profile_stop)>(lt::os::library_symbol(library, "qemu_ios_profile_stop"));
+            profile_status = reinterpret_cast<decltype(profile_status)>(lt::os::library_symbol(library, "qemu_ios_profile_status"));
+            attach = reinterpret_cast<decltype(attach)>(lt::os::library_symbol(library, "qemu_ios_ui_attach"));
             package_report =
-                reinterpret_cast<decltype(package_report)>(dlsym(library, "qemu_ios_guest_package_report"));
+                reinterpret_cast<decltype(package_report)>(lt::os::library_symbol(library, "qemu_ios_guest_package_report"));
         } catch (...) {
-            dlclose(library);
+            lt::os::library_close(library);
             library = nullptr;
             throw;
         }
     }
     ~Engine() {
         if (library)
-            dlclose(library);
+            lt::os::library_close(library);
     }
     QemuIosPortableBoard find_board(const std::string &id) {
         for (int index = 0; index < 128; index++) {
@@ -286,18 +294,24 @@ struct lt_runtime {
             publisher.join();
         if (engine && engine->attach)
             engine->attach(nullptr, nullptr);
+#ifdef _WIN32
+        std::free(shared);
+#else
         if (shared)
             munmap(shared, mapping_bytes);
+#endif
         if (frame_fd >= 0)
-            close(frame_fd);
+            lt::os::close(frame_fd);
         if (frame_log)
             fclose(frame_log);
+#ifndef _WIN32
         if (debug_qmp_fd >= 0) {
-            struct stat st {};
-            if (lstat(debug_qmp_path.c_str(), &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == geteuid())
-                unlink(debug_qmp_path.c_str());
-            close(debug_qmp_fd);
+            lt::os::Stat st {};
+            if (lt::os::lstat(debug_qmp_path.c_str(), &st) == 0 && S_ISSOCK(st.st_mode) && st.st_uid == lt::os::euid())
+                lt::os::unlink(debug_qmp_path.c_str());
+            lt::os::close(debug_qmp_fd);
         }
+#endif
     }
     // Without verdicts the guest's loader reverts any package it was not told is good after two
     // boots and refuses it from then on (GuestPackageJudge).
@@ -563,26 +577,32 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         // No memfd: a POSIX shared memory object unlinked at once is as private (names are at most 31 bytes).
         {
             char name[32];
-            snprintf(name, sizeof name, "/ltf-%d-%llx", int(getpid()), (unsigned long long)(lt::now_ns() & 0xffffffffffull));
+            snprintf(name, sizeof name, "/ltf-%d-%llx", lt::os::pid(), (unsigned long long)(lt::now_ns() & 0xffffffffffull));
             runtime->frame_fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
             if (runtime->frame_fd >= 0) {
                 shm_unlink(name);
                 fcntl(runtime->frame_fd, F_SETFD, FD_CLOEXEC);
             }
         }
-#else
+#elif !defined(_WIN32)
         runtime->frame_fd = -1;
         errno = ENOSYS;
 #endif
-        lt::io(runtime->frame_fd >= 0, "private frame memfd");
         runtime->mapping_bytes = sizeof(lt_shared_frame) + LT_FRAME_CAPACITY;
-        lt::io(ftruncate(runtime->frame_fd, off_t(runtime->mapping_bytes)) == 0, "size frame memfd");
+#ifdef _WIN32
+        // Nothing reopens the frame by descriptor here (lt_runtime_frame_fd is unsupported): private memory does.
+        runtime->shared = static_cast<lt_shared_frame *>(std::calloc(1, runtime->mapping_bytes));
+        lt::io(runtime->shared != nullptr, "allocate frame memory");
+#else
+        lt::io(runtime->frame_fd >= 0, "private frame memfd");
+        lt::io(lt::os::ftruncate(runtime->frame_fd, off_t(runtime->mapping_bytes)) == 0, "size frame memfd");
         runtime->shared = static_cast<lt_shared_frame *>(
             mmap(nullptr, runtime->mapping_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, runtime->frame_fd, 0));
         if (runtime->shared == MAP_FAILED) {
             runtime->shared = nullptr;
             throw lt::Failure(LT_IO, "map frame memfd");
         }
+#endif
         runtime->shared->size = sizeof(lt_shared_frame);
         runtime->shared->version = 1;
         runtime->shared->capacity = LT_FRAME_CAPACITY;
@@ -625,18 +645,18 @@ lt_status lt_runtime_debug_qmp_enable(lt_runtime *r, lt_error *e) {
         lt::fs::create_directories(work);
         struct OwnedFd {
             int value;
-            ~OwnedFd() { if (value >= 0) close(value); }
-        } fd{open(work.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)};
+            ~OwnedFd() { if (value >= 0) lt::os::close(value); }
+        } fd{lt::os::open(work.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)};
         lt::io(fd.value >= 0, "open private QMP work directory");
-        struct stat st{};
-        lt::io(fstat(fd.value, &st) == 0, "inspect private QMP directory");
-        lt::require(st.st_uid == geteuid(), "QMP directory owner mismatch");
-        lt::io(fchmod(fd.value, 0700) == 0, "protect private QMP directory");
+        lt::os::Stat st{};
+        lt::io(lt::os::fstat(fd.value, &st) == 0, "inspect private QMP directory");
+        lt::require(st.st_uid == lt::os::euid(), "QMP directory owner mismatch");
+        lt::io(lt::os::fchmod(fd.value, 0700) == 0, "protect private QMP directory");
         std::string name = "qmp-" + std::to_string(getpid()) + ".sock";
         std::string path = (work / name).string();
-        if (lstat(path.c_str(), &st) == 0) {
-            lt::require(S_ISSOCK(st.st_mode) && st.st_uid == geteuid(), "unexpected QMP path occupant");
-            lt::io(unlink(path.c_str()) == 0, "remove stopped QMP socket");
+        if (lt::os::lstat(path.c_str(), &st) == 0) {
+            lt::require(S_ISSOCK(st.st_mode) && st.st_uid == lt::os::euid(), "unexpected QMP path occupant");
+            lt::io(lt::os::unlink(path.c_str()) == 0, "remove stopped QMP socket");
         }
         r->argv.reserve(r->argv.size() + 2);
         r->debug_qmp_path = path;
@@ -664,7 +684,11 @@ lt_status lt_runtime_start(lt_runtime *r, lt_error *e) {
         lt::require(!lt::process_started, "one engine start per process; use fresh worker", LT_BUSY);
         lt::atomic_write(r->device->state / ".dirty", "schema=1\nbase=" + r->device->base_digest + "\n");
         r->device->dirty = true;
+#ifdef _WIN32
+        lt::io(_putenv_s("IT_TVOUT_READY", "1") == 0, "set shared boot environment");
+#else
         lt::io(setenv("IT_TVOUT_READY", "1", 1) == 0, "set shared boot environment");
+#endif
         bool expected = false;
         lt::require(lt::process_started.compare_exchange_strong(expected, true),
                     "one engine start per process; use fresh worker", LT_BUSY);
@@ -855,12 +879,12 @@ lt_status lt_runtime_set_frame_listener(lt_runtime *r, lt_frame_listener listene
 lt_status lt_runtime_frame_fd(lt_runtime *r, int *fd, uint64_t *bytes, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && fd && bytes, "invalid frame FD output");
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
         // A shared memory object can't be reopened read-only by descriptor.
         throw lt::Failure(LT_UNSUPPORTED, "frame FD sharing is not available on this system");
 #endif
         std::string path = "/proc/self/fd/" + std::to_string(r->frame_fd);
-        int copy = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        int copy = lt::os::open(path.c_str(), O_RDONLY | O_CLOEXEC);
         lt::io(copy >= 0, "readonly frame FD");
         *fd = copy;
         *bytes = r->mapping_bytes;

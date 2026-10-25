@@ -12,11 +12,11 @@
 #include <set>
 #include <thread>
 #include <sstream>
-#include <sys/file.h>
+#include "Os.hpp"
+#ifndef _WIN32
 #include <sys/ioctl.h>
-#include <sys/stat.h>
 #include <sys/syscall.h>
-#include <unistd.h>
+#endif
 #include <zlib.h>
 #ifdef __APPLE__
 #include <stdio.h>
@@ -28,22 +28,22 @@ struct Fd {
     explicit Fd(int f) : n(f) {}
     ~Fd() {
         if (n >= 0)
-            close(n);
+            lt::os::close(n);
     }
     Fd(const Fd &) = delete;
 };
 static Fd open_read(const fs::path &p) {
-    int fd = open(p.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = lt::os::open(p.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     io(fd >= 0, "open " + p.string());
-    struct stat st {};
-    io(fstat(fd, &st) == 0, "fstat");
+    lt::os::Stat st {};
+    io(lt::os::fstat(fd, &st) == 0, "fstat");
     require(S_ISREG(st.st_mode), "not a regular file");
     return Fd(fd);
 }
 static void write_all(int fd, const void *p, size_t n) {
     auto *b = static_cast<const char *>(p);
     while (n) {
-        ssize_t k = write(fd, b, n);
+        ssize_t k = lt::os::write(fd, b, n);
         if (k < 0 && errno == EINTR)
             continue;
         io(k > 0, "write");
@@ -54,7 +54,7 @@ static void write_all(int fd, const void *p, size_t n) {
 static void read_all(int fd, void *p, size_t n) {
     auto *b = static_cast<char *>(p);
     while (n) {
-        ssize_t k = read(fd, b, n);
+        ssize_t k = lt::os::read(fd, b, n);
         if (k < 0 && errno == EINTR)
             continue;
         io(k > 0, "truncated input");
@@ -64,8 +64,8 @@ static void read_all(int fd, void *p, size_t n) {
 }
 std::string read_file(const fs::path &p, size_t limit) {
     auto fd = open_read(p);
-    struct stat st {};
-    io(fstat(fd.n, &st) == 0, "fstat");
+    lt::os::Stat st {};
+    io(lt::os::fstat(fd.n, &st) == 0, "fstat");
     require(st.st_size >= 0 && uint64_t(st.st_size) <= limit, "file exceeds bound");
     std::string s(size_t(st.st_size), '\0');
     read_all(fd.n, s.data(), s.size());
@@ -126,13 +126,13 @@ static std::string digest_fd(int fd, AdmissionProgress *progress = nullptr, uint
     std::array<char, 65536> b{};
     uint64_t consumed = 0;
     if (progress) {
-        struct stat st {};
-        io(fstat(fd, &st) == 0, "fstat admission asset");
+        lt::os::Stat st {};
+        io(lt::os::fstat(fd, &st) == 0, "fstat admission asset");
         require(st.st_size >= 0 && uint64_t(st.st_size) == planned_bytes, "admission asset size changed");
         progress->checkpoint();
     }
     for (;;) {
-        ssize_t n = read(fd, b.data(), b.size());
+        ssize_t n = lt::os::read(fd, b.data(), b.size());
         if (n < 0 && errno == EINTR)
             continue;
         io(n >= 0, "hash read");
@@ -156,23 +156,23 @@ std::string digest_file(const fs::path &p) {
     return digest_fd(fd.n);
 }
 void sync_dir(const fs::path &p) {
-    Fd fd(open(p.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+    Fd fd(lt::os::open(p.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
     io(fd.n >= 0, "open directory");
-    io(fsync(fd.n) == 0, "sync directory");
+    io(lt::os::fsync(fd.n) == 0, "sync directory");
 }
 void atomic_write(const fs::path &p, const std::string &s) {
     std::string tmp = (p.parent_path() / ".lt-write-XXXXXX").string();
     std::vector<char> b(tmp.begin(), tmp.end());
     b.push_back(0);
-    Fd fd(mkstemp(b.data()));
+    Fd fd(lt::os::mkstemp(b.data()));
     io(fd.n >= 0, "create metadata");
     try {
         write_all(fd.n, s.data(), s.size());
-        io(fsync(fd.n) == 0, "sync metadata");
-        io(rename(b.data(), p.c_str()) == 0, "publish metadata");
+        io(lt::os::fsync(fd.n) == 0, "sync metadata");
+        io(lt::os::rename(b.data(), p.c_str()) == 0, "publish metadata");
         sync_dir(p.parent_path());
     } catch (...) {
-        unlink(b.data());
+        lt::os::unlink(b.data());
         throw;
     }
 }
@@ -206,8 +206,8 @@ static uint32_t little32(const unsigned char *p) {
 }
 static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, AdmissionProgress &events) {
     auto fd = open_read(path);
-    struct stat st {};
-    io(fstat(fd.n, &st) == 0, "stat packed NAND");
+    lt::os::Stat st {};
+    io(lt::os::fstat(fd.n, &st) == 0, "stat packed NAND");
     require(st.st_size >= 24, "truncated packed NAND header");
     std::array<unsigned char, 24> header{};
     read_all(fd.n, header.data(), header.size());
@@ -251,8 +251,8 @@ static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, 
 // A file keeps the digest it was verified with while it keeps its identity: device, inode, size and
 // modification and change times (every write, rename onto it or chmod moves the change time).
 using DigestCache = std::map<std::string, std::string>;
-static std::string file_identity(const fs::path &path, const struct stat &st) {
-#ifdef __APPLE__
+static std::string file_identity(const fs::path &path, const lt::os::Stat &st) {
+#if defined(__APPLE__) && !defined(_WIN32)
     const struct timespec &mtime = st.st_mtimespec, &ctime = st.st_ctimespec;
 #else
     const struct timespec &mtime = st.st_mtim, &ctime = st.st_ctim;
@@ -366,8 +366,8 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
     std::vector<ListingCheck> listings;
     auto add_asset = [&](const fs::path &path) {
         events.checkpoint();
-        struct stat st {};
-        io(lstat(path.c_str(), &st) == 0, "stat admission asset");
+        lt::os::Stat st {};
+        io(lt::os::lstat(path.c_str(), &st) == 0, "stat admission asset");
         require(S_ISREG(st.st_mode) && st.st_size >= 0, "admission asset must be a regular file");
         assets.emplace(path, uint64_t(st.st_size));
         identities.emplace(path, file_identity(path, st));
@@ -461,8 +461,8 @@ static void validate_base(const fs::path &base, AdmissionProgress *progress = nu
                 auto fd = open_read(asset.first);
                 // Identify the file as opened: a change during hashing moves its change time, so
                 // the next admission reads it again.
-                struct stat st {};
-                io(fstat(fd.n, &st) == 0, "fstat admission asset");
+                lt::os::Stat st {};
+                io(lt::os::fstat(fd.n, &st) == 0, "fstat admission asset");
                 const auto digest = digest_fd(fd.n, &events, asset.second);
                 std::lock_guard<std::mutex> lock(guard);
                 digests.emplace(asset.first, digest);
@@ -537,7 +537,7 @@ struct Stage {
         std::string pattern = (parent / ".lt-import-XXXXXX").string();
         std::vector<char> b(pattern.begin(), pattern.end());
         b.push_back(0);
-        io(mkdtemp(b.data()) != nullptr, "create staging");
+        io(lt::os::mkdtemp(b.data()) != nullptr, "create staging");
         path = b.data();
     }
     Stage(const char *source, const char *dest) {
@@ -555,18 +555,18 @@ struct Stage {
         path = parent / input.filename();
         destination = parent / output.filename();
         require(!fs::exists(fs::symlink_status(destination)), "destination already exists");
-        struct stat st {};
-        io(lstat(parent.c_str(), &st) == 0, "stat import parent");
-        require(S_ISDIR(st.st_mode) && st.st_uid == geteuid() && !(st.st_mode & 0022),
+        lt::os::Stat st {};
+        io(lt::os::lstat(parent.c_str(), &st) == 0, "stat import parent");
+        require(S_ISDIR(st.st_mode) && st.st_uid == lt::os::euid() && !(st.st_mode & 0022),
                 "import parent must be owned with no external writers");
-        io(lstat(path.c_str(), &st) == 0, "stat import stage");
-        require(S_ISDIR(st.st_mode) && st.st_uid == geteuid() && (st.st_mode & 0777) == 0700,
+        io(lt::os::lstat(path.c_str(), &st) == 0, "stat import stage");
+        require(S_ISDIR(st.st_mode) && st.st_uid == lt::os::euid() && (st.st_mode & 0777) == 0700,
                 "import stage must be an owned private 0700 directory");
         // Reject aliases before integrity checking or changing permissions. In
         // particular, chmod must never follow a caller-supplied symlink/hardlink.
         for (const auto &entry : fs::recursive_directory_iterator(path)) {
-            io(lstat(entry.path().c_str(), &st) == 0, "stat import stage entry");
-            require(st.st_uid == geteuid() && !(st.st_mode & 0022) &&
+            io(lt::os::lstat(entry.path().c_str(), &st) == 0, "stat import stage entry");
+            require(st.st_uid == lt::os::euid() && !(st.st_mode & 0022) &&
                         (S_ISDIR(st.st_mode) || (S_ISREG(st.st_mode) && st.st_nlink == 1)),
                     "import stage entry must be owned and unaliased with no external writers");
         }
@@ -579,8 +579,8 @@ struct Stage {
             std::error_code ec;
             for (const auto &e : fs::recursive_directory_iterator(path, ec))
                 if (e.is_directory())
-                    chmod(e.path().c_str(), 0700);
-            chmod(path.c_str(), 0700);
+                    lt::os::chmod(e.path().c_str(), 0700);
+            lt::os::chmod(path.c_str(), 0700);
             fs::remove_all(path, ec);
         }
     }
@@ -598,9 +598,9 @@ struct Stage {
             else {
                 if (flush_existing_files && !bulk_sync) {
                     auto file = open_read(e.path());
-                    io(fsync(file.n) == 0, "sync staged import file");
+                    io(lt::os::fsync(file.n) == 0, "sync staged import file");
                 }
-                io(chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
+                io(lt::os::chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
             }
         }
         for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) {
@@ -608,16 +608,16 @@ struct Stage {
                 observation->checkpoint();
             if (!bulk_sync)
                 sync_dir(*it);
-            io(chmod(it->c_str(), 0500) == 0, "make base directory immutable");
+            io(lt::os::chmod(it->c_str(), 0500) == 0, "make base directory immutable");
         }
         if (!bulk_sync)
             sync_dir(path);
-        io(chmod(path.c_str(), 0500) == 0, "make base immutable");
+        io(lt::os::chmod(path.c_str(), 0500) == 0, "make base immutable");
         if (observation)
             observation->checkpoint();
 #if defined(__linux__) && !defined(__ANDROID__) && defined(SYS_syncfs)
         if (bulk_sync) {
-            Fd stage_fd(open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
+            Fd stage_fd(lt::os::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
             io(stage_fd.n >= 0, "open unpublished import for sync");
             // All staged data, directory entries and final permissions must be
             // durable BEFORE rename publishes the complete base. This flushes
@@ -633,7 +633,7 @@ struct Stage {
                         observation->checkpoint();
                     if (entry.is_regular_file()) {
                         auto file = open_read(entry.path());
-                        io(fsync(file.n) == 0, "sync extracted file fallback");
+                        io(lt::os::fsync(file.n) == 0, "sync extracted file fallback");
                     }
                 }
                 for (auto it = dirs.rbegin(); it != dirs.rend(); ++it)
@@ -649,9 +649,11 @@ struct Stage {
            "publish base");
 #elif defined(__APPLE__)
         io(renamex_np(path.c_str(), destination.c_str(), RENAME_EXCL) == 0, "publish base");
+#elif defined(_WIN32)
+        io(lt::os::rename_noreplace(path.c_str(), destination.c_str()) == 0, "publish base");
 #else
         require(!fs::exists(destination), "destination race");
-        io(rename(path.c_str(), destination.c_str()) == 0, "publish base");
+        io(lt::os::rename(path.c_str(), destination.c_str()) == 0, "publish base");
 #endif
         published = true;
         sync_dir(destination.parent_path());
@@ -664,8 +666,8 @@ static DigestCache lock_digests(const fs::path &base) {
     DigestCache cache;
     Json j = parse(read_file(base / "device.lock.json"));
     auto add = [&](const fs::path &path, const Json &sha) {
-        struct stat st {};
-        if (sha.kind == Json::String && sha.string().size() == 64 && lstat(path.c_str(), &st) == 0 &&
+        lt::os::Stat st {};
+        if (sha.kind == Json::String && sha.string().size() == 64 && lt::os::lstat(path.c_str(), &st) == 0 &&
             S_ISREG(st.st_mode))
             cache[file_identity(path, st)] = sha.string();
     };
@@ -704,12 +706,12 @@ void adopt_base(const fs::path &base, lt_import_phase_fn observer, void *opaque)
         }
         require(e.is_regular_file(), "special base file refused");
         auto file = open_read(e.path());
-        io(fsync(file.n) == 0, "sync adopted base file");
-        io(chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
+        io(lt::os::fsync(file.n) == 0, "sync adopted base file");
+        io(lt::os::chmod(e.path().c_str(), 0400) == 0, "make base file immutable");
     }
     for (auto it = dirs.rbegin(); it != dirs.rend(); ++it) {
         sync_dir(*it);
-        io(chmod(it->c_str(), 0500) == 0, "make base directory immutable");
+        io(lt::os::chmod(it->c_str(), 0500) == 0, "make base directory immutable");
     }
 }
 void seed_admission(const fs::path &base_path, const fs::path &state) {
@@ -721,7 +723,7 @@ void seed_admission(const fs::path &base_path, const fs::path &state) {
 }
 static void sparse_write(int fd, const uint8_t *bytes, size_t size) {
     if (std::all_of(bytes, bytes + size, [](uint8_t value) { return value == 0; }))
-        io(lseek(fd, off_t(size), SEEK_CUR) >= 0, "seek zero archive span");
+        io(lt::os::lseek(fd, off_t(size), SEEK_CUR) >= 0, "seek zero archive span");
     else
         write_all(fd, bytes, size);
 }
@@ -752,41 +754,41 @@ static void progress(const lt_import_config *c, uint64_t written, uint64_t total
 }
 static void clone_sparse(const fs::path &from, const fs::path &to) {
     auto in = open_read(from);
-    struct stat st {};
-    io(fstat(in.n, &st) == 0, "fstat");
+    lt::os::Stat st {};
+    io(lt::os::fstat(in.n, &st) == 0, "fstat");
 #ifdef __APPLE__
     // APFS copies on write; the clone keeps holes. Falls through to copying on other filesystems.
     if (fclonefileat(in.n, AT_FDCWD, to.c_str(), CLONE_NOFOLLOW) == 0) {
-        chmod(to.c_str(), 0600);
+        lt::os::chmod(to.c_str(), 0600);
         return;
     }
 #endif
-    Fd out(open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
+    Fd out(lt::os::open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
     io(out.n >= 0, "create " + to.string());
 #ifdef FICLONE
     if (ioctl(out.n, FICLONE, in.n) == 0)
         return;
 #endif
-    io(ftruncate(out.n, st.st_size) == 0, "size " + to.string());
+    io(lt::os::ftruncate(out.n, st.st_size) == 0, "size " + to.string());
     std::vector<uint8_t> buffer(1 << 20);
     off_t at = 0;
     while (at < st.st_size) {
         off_t end = st.st_size;
 #ifdef SEEK_DATA
-        off_t data = lseek(in.n, at, SEEK_DATA);
+        off_t data = lt::os::lseek(in.n, at, SEEK_DATA);
         if (data < 0)
             break;  // only a hole remains
         at = data;
-        end = lseek(in.n, data, SEEK_HOLE);
+        end = lt::os::lseek(in.n, data, SEEK_HOLE);
         io(end > 0, "seek hole " + from.string());
 #endif
         while (at < end) {
             const size_t want = size_t(std::min<off_t>(off_t(buffer.size()), end - at));
-            ssize_t n = pread(in.n, buffer.data(), want, at);
+            ssize_t n = lt::os::pread(in.n, buffer.data(), want, at);
             io(n > 0, "read " + from.string());
             if (!std::all_of(buffer.begin(), buffer.begin() + n, [](uint8_t v) { return v == 0; })) {
                 for (ssize_t done = 0; done < n;) {
-                    ssize_t k = pwrite(out.n, buffer.data() + done, size_t(n - done), at + done);
+                    ssize_t k = lt::os::pwrite(out.n, buffer.data() + done, size_t(n - done), at + done);
                     io(k > 0, "write " + to.string());
                     done += k;
                 }
@@ -794,7 +796,7 @@ static void clone_sparse(const fs::path &from, const fs::path &to) {
             at += n;
         }
     }
-    io(fsync(out.n) == 0, "sync " + to.string());
+    io(lt::os::fsync(out.n) == 0, "sync " + to.string());
 }
 // Sparse: a prepared folder's NAND chips are mostly holes (an n81ap store is 17.7 GB, ~1.8 GB of data), and a
 // dense copy wrote all of it.
@@ -832,11 +834,11 @@ std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_pro
     d->base = lt::fs::canonical(c->base_path);
     lt::fs::create_directories(c->state_path);
     d->state = lt::fs::canonical(c->state_path);
-    lt::io(chmod(d->state.c_str(), 0700) == 0, "private device state permissions");
+    lt::io(lt::os::chmod(d->state.c_str(), 0700) == 0, "private device state permissions");
     lt::require(!lt::contained(d->base, d->state) && !lt::contained(d->state, d->base), "base/state overlap refused");
-    d->lease = open((d->state / ".lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    d->lease = lt::os::open((d->state / ".lease").c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     lt::io(d->lease >= 0, "open device lease");
-    lt::require(flock(d->lease, LOCK_EX | LOCK_NB) == 0, "device has another writer", LT_BUSY);
+    lt::require(lt::os::lock_exclusive(d->lease) == 0, "device has another writer", LT_BUSY);
     AdmissionProgress events{observer, opaque};
     events.checkpoint();
     // Hashing a whole base (an iPod touch 4G NAND is 17 GB of mostly sparse pages) took over a minute
@@ -887,7 +889,7 @@ std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_pro
         std::error_code ec;
         lt::fs::remove(staged, ec);
         lt::copy_file(d->base / "nor.bin", staged);
-        lt::io(rename(staged.c_str(), (d->state / "nor.bin").c_str()) == 0, "publish writable NOR");
+        lt::io(lt::os::rename(staged.c_str(), (d->state / "nor.bin").c_str()) == 0, "publish writable NOR");
         lt::sync_dir(d->state);
     }
     events.checkpoint();
@@ -930,14 +932,14 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         lt::require(c->source && c->expected_sha256 && strlen(c->expected_sha256) == 64,
                     "archive requires expected SHA256");
         auto input = lt::open_read(c->source);
-        struct stat source_stat {};
-        lt::io(fstat(input.n, &source_stat) == 0 && source_stat.st_size >= 0, "stat archive");
+        lt::os::Stat source_stat {};
+        lt::io(lt::os::fstat(input.n, &source_stat) == 0 && source_stat.st_size >= 0, "stat archive");
         lt::ImportObservation observation{observer, opaque};
         observation.begin("hashing", uint64_t(source_stat.st_size));
         lt::AdmissionProgress hashing{lt::ImportObservation::notify, &observation};
         hashing.total = uint64_t(source_stat.st_size);
         lt::require(lt::digest_fd(input.n, &hashing, hashing.total) == c->expected_sha256, "archive SHA256 mismatch");
-        lt::io(lseek(input.n, 0, SEEK_SET) == 0, "rewind archive");
+        lt::io(lt::os::lseek(input.n, 0, SEEK_SET) == 0, "rewind archive");
         uint8_t h[12];
         lt::read_all(input.n, h, sizeof h);
         lt::require(memcmp(h, "ITPACK01", 8) == 0, "not an ITPACK01 prepared base");
@@ -986,10 +988,10 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         uint32_t records = 0;
         if (pack) {
             packed = std::make_unique<lt::Fd>(
-                open((stage.path / "nand").c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+                lt::os::open((stage.path / "nand").c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
             lt::io(packed->n >= 0, "create packed NAND");
             slots.assign(lt::packed_index_bytes, 0);
-            lt::io(lseek(packed->n, off_t(lt::packed_records_at), SEEK_SET) >= 0, "seek packed NAND records");
+            lt::io(lt::os::lseek(packed->n, off_t(lt::packed_records_at), SEEK_SET) >= 0, "seek packed NAND records");
         }
         observation.begin("extracting", total);
         z_stream z{};
@@ -1016,9 +1018,9 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
                 page_name.clear();
             }
             if (target) {
-                lt::io(ftruncate(target->n, off_t(target_size)) == 0, "size sparse archive entry");
+                lt::io(lt::os::ftruncate(target->n, off_t(target_size)) == 0, "size sparse archive entry");
                 if (!stage.bulk_sync)
-                    lt::io(fsync(target->n) == 0, "sync extracted file");
+                    lt::io(lt::os::fsync(target->n) == 0, "sync extracted file");
                 target.reset();
             }
         };
@@ -1037,14 +1039,14 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
                 auto path = stage.path / entry.at("name").string();
                 lt::fs::create_directories(path.parent_path());
                 target = std::make_unique<lt::Fd>(
-                    open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+                    lt::os::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
                 lt::io(target->n >= 0, "create archive entry");
             }
             return remaining > 0;
         };
         while (status != Z_STREAM_END) {
             if (z.avail_in == 0) {
-                ssize_t n = read(input.n, in.data(), in.size());
+                ssize_t n = lt::os::read(input.n, in.data(), in.size());
                 lt::io(n > 0, "truncated compressed stream");
                 z.next_in = in.data();
                 z.avail_in = uInt(n);
@@ -1072,7 +1074,7 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
         }
         lt::require(z.avail_in == 0, "trailing archive payload");
         char extra;
-        lt::require(read(input.n, &extra, 1) == 0, "trailing archive bytes");
+        lt::require(lt::os::read(input.n, &extra, 1) == 0, "trailing archive bytes");
         lt::require(!advance() && written == total, "payload shorter than index");
         finish_target();
         lt::progress(c, total, total);
@@ -1093,11 +1095,11 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
             for (int field = 0; field < 4; ++field)
                 for (int byte = 0; byte < 4; ++byte)
                     header[8 + field * 4 + byte] = uint8_t(geometry[field] >> (8 * byte));
-            lt::io(pwrite(packed->n, header, sizeof header, 0) == ssize_t(sizeof header), "write packed NAND header");
-            lt::io(pwrite(packed->n, slots.data(), slots.size(), 24) == ssize_t(slots.size()), "write packed NAND index");
-            lt::io(ftruncate(packed->n, off_t(lt::packed_records_at + uint64_t(records) * lt::packed_record)) == 0,
+            lt::io(lt::os::pwrite(packed->n, header, sizeof header, 0) == ssize_t(sizeof header), "write packed NAND header");
+            lt::io(lt::os::pwrite(packed->n, slots.data(), slots.size(), 24) == ssize_t(slots.size()), "write packed NAND index");
+            lt::io(lt::os::ftruncate(packed->n, off_t(lt::packed_records_at + uint64_t(records) * lt::packed_record)) == 0,
                    "size packed NAND");
-            lt::io(fsync(packed->n) == 0, "sync packed NAND");
+            lt::io(lt::os::fsync(packed->n) == 0, "sync packed NAND");
             packed.reset();
             observation.begin("packing");
             lt::Json record;
@@ -1113,7 +1115,7 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
             record.object.emplace("sha256", text(lt::digest_file(stage.path / "nand")));
             record.object.emplace("pages", text(std::to_string(records), lt::Json::Number));
             record.object.emplace("source_listing_sha256", text(source.at("listing_sha256").string()));
-            lt::io(rename((stage.path / "device.lock.json").c_str(), (stage.path / "source-device.lock.json").c_str()) == 0,
+            lt::io(lt::os::rename((stage.path / "device.lock.json").c_str(), (stage.path / "source-device.lock.json").c_str()) == 0,
                    "keep source device lock");
             lock.object.at("outputs").object.at("nand") = record;
             lt::atomic_write(stage.path / "device.lock.json", lt::dump(lock) + "\n");
@@ -1174,9 +1176,9 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
         }
         auto dest = stage / name;
         fs::create_directories(dest.parent_path());
-        outputs.push_back(std::make_unique<Fd>(open(dest.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)));
+        outputs.push_back(std::make_unique<Fd>(lt::os::open(dest.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)));
         io(outputs.back()->n >= 0, "create packed image");
-        io(ftruncate(outputs.back()->n, off_t(size)) == 0, "size packed image");
+        io(lt::os::ftruncate(outputs.back()->n, off_t(size)) == 0, "size packed image");
     }
     observation.total = total;
     auto report = [&](uint64_t bytes) {
@@ -1223,7 +1225,7 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
                 require(hash.finish() == item.sha256, "packed chunk checksum mismatch: " + name + " " + item.number);
                 const int out = outputs[item.image]->n;
                 for (size_t done = 0; done < length;) {
-                    ssize_t n = pwrite(out, raw.data() + done, length - done, off_t(item.at + done));
+                    ssize_t n = lt::os::pwrite(out, raw.data() + done, length - done, off_t(item.at + done));
                     if (n < 0 && errno == EINTR)
                         continue;
                     io(n > 0, "write packed chunk");
@@ -1251,7 +1253,7 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
         std::rethrow_exception(failure);
     if (!staged.bulk_sync)
         for (const auto &out : outputs)
-            io(fsync(out->n) == 0, "sync packed image");
+            io(lt::os::fsync(out->n) == 0, "sync packed image");
 }
 } // namespace lt
 lt_status lt_import_directory(const lt_import_config *c, lt_error *e) {
@@ -1505,5 +1507,5 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
 }
 lt_device::~lt_device() {
     if (lease >= 0)
-        close(lease);
+        lt::os::close(lease);
 }

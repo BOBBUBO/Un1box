@@ -1,7 +1,7 @@
 #include "Internal.hpp"
 #include "GuestPackageJudge.hpp"
 #include <zlib.h>
-#include <unistd.h>
+#include "Os.hpp"
 #include <set>
 #include <algorithm>
 namespace lt {
@@ -135,7 +135,7 @@ std::string guest_offer(lt_device *d, const char *pack) {
     std::string pattern = (d->state / "work/.offer-stage-XXXXXX").string();
     std::vector<char> tmp(pattern.begin(), pattern.end());
     tmp.push_back(0);
-    io(mkdtemp(tmp.data()) != nullptr, "guest offer stage");
+    io(lt::os::mkdtemp(tmp.data()) != nullptr, "guest offer stage");
     fs::path stage = tmp.data();
     try {
         std::string offer = "ltpkg 1\nbuild " + build + "\nserial " + manifest.at("serial").text + " " +

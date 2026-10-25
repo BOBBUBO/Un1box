@@ -36,7 +36,7 @@ fn main() {
         build.file(portable.join("src").join(source));
     }
     if target_os == "windows" {
-        build.define("WIN32_LEAN_AND_MEAN", None).define("NOMINMAX", None).define("_FILE_OFFSET_BITS", "64");
+        build.define("WIN32_LEAN_AND_MEAN", None).define("NOMINMAX", None);
     }
     build.compile("lighttouch_portable");
     cc::Build::new().file(manifest.join("src/layout.c")).include(portable.join("include")).compile("lighttouch_layout");
