@@ -31,7 +31,7 @@ pub fn main(args: &[String]) -> i32 {
         }
         bridge
     });
-    let events = spawn_event_writer();
+    let events = spawn_event_writer(take_stdout());
     let commands = spawn_command_reader();
     match run(parsed, &events, commands, usb) {
         Ok(outcome) => {
@@ -74,13 +74,54 @@ struct Outcome {
     message: String,
 }
 
-fn spawn_event_writer() -> Sender<Event> {
+/// Keep stdout for the protocol and send everything else written there (the engine's `printf`s, which would land
+/// in the middle of events) to stderr, the log. On Windows this also takes the C runtime's stdout off a pipe, where
+/// it is fully buffered and the engine's lines never arrive.
+fn take_stdout() -> std::fs::File {
+    #[cfg(unix)]
+    {
+        use std::os::fd::FromRawFd;
+        // SAFETY: called before the session's threads start; fd 1 and 2 are the standard streams.
+        unsafe {
+            let fd = libc::dup(1);
+            assert!(fd >= 0, "dup stdout");
+            libc::dup2(2, 1);
+            std::fs::File::from_raw_fd(fd)
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle};
+        // msvcrt, which the engine shares: its descriptors, and `stdout` as the second entry of its FILE table.
+        unsafe extern "C" {
+            fn _dup(fd: i32) -> i32;
+            fn _dup2(from: i32, to: i32) -> i32;
+            fn _get_osfhandle(fd: i32) -> isize;
+            fn __iob_func() -> *mut u8;
+            fn setvbuf(file: *mut u8, buffer: *mut u8, mode: i32, size: usize) -> i32;
+        }
+        const FILE_SIZE: usize = 48;
+        const IONBF: i32 = 4;
+        // SAFETY: called before the session's threads start; the duplicate descriptor stays open for the process's
+        // life, so the handle it owns outlives the File.
+        unsafe {
+            let fd = _dup(1);
+            assert!(fd >= 0, "dup stdout");
+            let protocol = std::fs::File::from_raw_handle(_get_osfhandle(fd) as _);
+            _dup2(2, 1);
+            setvbuf(__iob_func().add(FILE_SIZE), std::ptr::null_mut(), IONBF, 0);
+            SetStdHandle(STD_OUTPUT_HANDLE, GetStdHandle(STD_ERROR_HANDLE));
+            protocol
+        }
+    }
+}
+
+fn spawn_event_writer(mut out: std::fs::File) -> Sender<Event> {
     let (tx, rx) = mpsc::channel::<Event>();
     thread::Builder::new()
         .name("events".into())
         .spawn(move || {
-            let stdout = std::io::stdout();
-            let mut out = stdout.lock();
             for event in rx {
                 if out.write_all(event.to_line().as_bytes()).and_then(|_| out.flush()).is_err() {
                     break;

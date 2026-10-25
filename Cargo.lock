@@ -1467,6 +1467,7 @@ dependencies = [
  "eframe",
  "egui_extras",
  "image",
+ "libc",
  "lighttouch-catalog",
  "lighttouch-core",
  "lighttouch-model",
