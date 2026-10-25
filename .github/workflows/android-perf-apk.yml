@@ -383,7 +383,8 @@ jobs:
             "$SDKMANAGER" --install "$SWIFT_NDK"
             echo "SWIFT_NDK=$ANDROID_HOME/ndk/$(echo "$SWIFT_NDK" | cut -d';' -f2)" >> "$GITHUB_ENV"
           else
-            echo "::warning::the SDK manager offers no NDK 30; the Swift SDK may not link"
+            echo "::warning::the SDK manager offers no NDK 30; the Swift SDK for Android may not link"
+            echo "::warning::ndk packages the SDK manager knows: $(grep -o 'ndk;[0-9][^ |]*' /tmp/sdks.log | sort -u -V | tail -6 | tr '\n' ' ')"
           fi
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
           ninja --version
@@ -445,12 +446,15 @@ jobs:
           # swift.org's guide asks for NDK LTS r30; the job's own NDK links the sysroot just the same, and
           # installing another one here (sdkmanager needs its repository, licenses and a few minutes) only
           # added a way for the step to fail before it compiled anything.
-          NDK_ROOT="${SWIFT_NDK:-$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION}"
-          for candidate in "$ANDROID_HOME"/ndk/3*; do
-            [ -d "$candidate" ] && NDK_ROOT="$candidate"
-          done
+          # The SDK's Swift runtime calls libc++ symbols that only r30's has
+          # (std::__ndk1::__hash_memory), so the newest NDK on the image is the one to link,
+          # not whichever directory sorts last.
+          NDK_ROOT="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          if [ -n "${SWIFT_NDK:-}" ] && [ -d "$SWIFT_NDK" ]; then NDK_ROOT="$SWIFT_NDK"; fi
+          NEWEST="$(ls -1 "$ANDROID_HOME/ndk" 2>/dev/null | sort -V | tail -1)"
+          [ -n "$NEWEST" ] && NDK_ROOT="$ANDROID_HOME/ndk/$NEWEST"
           echo "NDK root: $NDK_ROOT"
-          [ -d "$NDK_ROOT" ] || echo "::warning::no NDK at $NDK_ROOT"
+          echo "NDKs present: $(ls -1 "$ANDROID_HOME/ndk" 2>/dev/null | tr '\n' ' ')"
           # The bundle cross-compiles against an NDK sysroot its setup script links in.
           if [ -f "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" ]; then
             ANDROID_NDK_HOME="$NDK_ROOT" bash "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" >/tmp/ndk-setup.log 2>&1 \
@@ -464,7 +468,12 @@ jobs:
           cd "$GITHUB_WORKSPACE/Packages/FirmwareKit"
           # What the build sees, in one place: a mismatch between these is the likeliest reason a cross-build
           # stops before it compiles anything.
-          { swift --version; echo "bundle: $BUNDLE"; ls "$BUNDLE"; swift sdk list; ls "$BUNDLE/swift-android" 2>/dev/null; } 2>&1 \
+          LIBCXX="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_static.a"
+          { swift --version; echo "bundle: $BUNDLE"; swift sdk list
+            echo "ndk root: $NDK_ROOT"; echo "ndks: $(ls -1 "$ANDROID_HOME/ndk" | tr '\n' ' ')"
+            echo "libc++: $LIBCXX"
+            echo "libc++ has __hash_memory: $(grep -c __hash_memory "$LIBCXX" 2>/dev/null || echo 0)"
+            ls -la "$BUNDLE/swift-android/ndk-sysroot" 2>/dev/null | head -5; } 2>&1 \
             | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}' > /tmp/toolchain.dump
           echo "::warning title=firmwarekit toolchain::$(cat /tmp/toolchain.dump)"
           swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
@@ -634,6 +643,53 @@ jobs:
           # workspace path, so renaming the repository is enough to stale it.
           # Retry once from an empty tree.
           deps || { rm -rf ci/deps ci/crypto; deps; }
+
+      # The guest's only network backend is slirp, and the engine's
+      # --without-default-features resolves that option's "auto" to disabled: -netdev user
+      # did not exist, the Wi-Fi card's default netdev was never added ("Wi-Fi has no
+      # network"), no lease came, and every app reported no connection. libslirp is built
+      # for Android here, with the engine's own set-restricted/dns-forward patch, into the
+      # prefix dependency('slirp') reads.
+      - name: Build libslirp for Android
+        run: |
+          [ -f ci/deps/prefix/lib/libslirp.a ] && exit 0
+          if [ ! -d ci/slirp-src/.git ]; then
+            git clone --quiet https://gitlab.freedesktop.org/slirp/libslirp.git ci/slirp-src
+            git -C ci/slirp-src checkout --quiet d09dc9a70360ee7838acccbd234ab83f3b9b37a5
+          fi
+          git -C ci/slirp-src apply "$GITHUB_WORKSPACE/qemu-ios/subprojects/packagefiles/libslirp-set-restricted.patch"
+          BIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            echo '[binaries]'
+            echo "c = '$BIN/aarch64-linux-android29-clang'"
+            echo "ar = '$BIN/llvm-ar'"
+            echo "strip = '$BIN/llvm-strip'"
+            echo "pkgconfig = 'pkg-config'"
+            echo '[host_machine]'
+            echo "system = 'android'"
+            echo "cpu_family = 'aarch64'"
+            echo "cpu = 'aarch64'"
+            echo "endian = 'little'"
+            echo '[properties]'
+            echo 'needs_exe_wrapper = true'
+          } > ci/libslirp-cross.txt
+          PKG_CONFIG_LIBDIR="$PWD/ci/deps/prefix/lib/pkgconfig" \
+            "${MESON:-meson/bin/meson}" setup ci/libslirp-build ci/slirp-src \
+            --cross-file ci/libslirp-cross.txt --buildtype=release \
+            --default-library=static --prefix "$PWD/ci/deps/prefix"
+          ninja -C ci/libslirp-build install
+          ls -l ci/deps/prefix/lib/libslirp.a
+
+      # build-engine.py refuses a dirty source tree ("Commit source changes before a
+      # reproducible engine build"), so the patch is committed here; fixed dates keep that
+      # commit, and with it the recorded revision and the engine cache key, stable.
+      - name: Patch the engine for Android networking
+        run: |
+          git -C qemu-ios apply "$GITHUB_WORKSPACE"/ci/engine-patches/*.patch
+          GIT_AUTHOR_DATE=2001-01-01T00:00:00Z GIT_COMMITTER_DATE=2001-01-01T00:00:00Z \
+            git -C qemu-ios -c user.name=ci -c user.email=ci@localhost \
+            commit -qam "ci: Android slirp (DNS through getaddrinfo)"
+          git -C qemu-ios log --oneline -1
 
       - name: Build the engine
         run: |
