@@ -30,6 +30,10 @@
 // _securityd's in the archive) stays out: iOS's trust store is the firmware's own and the web proxy's trust only
 // (WebProxySetup). Extracted, it was root's and securityd couldn't open it, so every trust edit failed (-50).
 //
+// The archives are extracted with the host's tar: BSD tar on the Mac, GNU tar on Linux, toybox on Android (which
+// reports every file -k keeps as "File exists" and exits 1 for it). Each one's listing is read for the files whose
+// set-user-ID or set-group-ID bit tar, not run as root, drops; the catalog puts those modes back.
+//
 //   let file = try SystemEdits.Cydia.bootstrap(in: caches.appendingPathComponent("Jailbreak"), log: log)
 //   let (line, root, mobile) = try SystemEdits.installCydia(m, bootstrap: file)
 
@@ -175,7 +179,12 @@ extension SystemEdits {
         entries = entries.filter { !$0.isEmpty }
         let added = Set(entries.filter { !exists($0) })
         for p in packages {
-            _ = try tar(["-xkf", p.path, "-C", m.path, "--exclude", "./" + Cydia.excluded, "--exclude", Cydia.excluded])
+            // -k keeps every file the firmware has. toybox (Android) reports each one it skips as "File exists" and
+            // exits 1 for it where GNU and BSD tar stay silent, so those lines are the ones to tolerate.
+            _ = try tar(
+                ["-xkf", p.path, "-C", m.path, "--exclude", "./" + Cydia.excluded, "--exclude", Cydia.excluded],
+                tolerating: ["File exists"]
+            )
         }
         guard exists("Applications/Cydia.app/Cydia") else {
             throw FirmwareError(.internal, "Cydia bootstrap: no Applications/Cydia.app/Cydia after extracting")
@@ -234,10 +243,14 @@ extension SystemEdits {
     }
 
     /// A `tar -tv` line of a regular file with the set-user-ID or set-group-ID bit: its path and full permission
-    /// bits ("-rwsr-sr-x  0 root wheel 133808 Feb 15  2017 ./usr/libexec/cydia/cydo" is 0o6755).
+    /// bits. Every tar prints the mode first and the name last, but the fields between them differ: BSD tar (macOS)
+    /// writes the link count, owner, group, size and "Mon DD YYYY" ("-rwsr-sr-x  0 root wheel 133808 Feb 15  2017
+    /// ./usr/libexec/cydia/cydo"), GNU tar (Linux) and toybox (Android) the owner/group, size and "YYYY-MM-DD HH:MM"
+    /// ("-rwsr-sr-x root/wheel 133808 2017-02-16 02:44 ./usr/libexec/cydia/cydo"). Both are 0o6755. The name is
+    /// whatever follows the date, spaces and all.
     static func specialMode(_ line: String) -> (path: String, mode: UInt16)? {
-        let fields = line.split(separator: " ", maxSplits: 8, omittingEmptySubsequences: true)
-        guard fields.count == 9, fields[0].count == 10, fields[0].first == "-" else { return nil }
+        let fields = line.split(separator: " ", omittingEmptySubsequences: true)
+        guard fields.count >= 6, fields[0].count == 10, fields[0].first == "-" else { return nil }
         let p = Array(fields[0].dropFirst())
         var mode: UInt16 = 0
         for (i, c) in p.enumerated() where c != "-" && c != "S" && c != "T" {
@@ -246,13 +259,51 @@ extension SystemEdits {
         if p[2] == "s" || p[2] == "S" { mode |= 0o4000 }
         if p[5] == "s" || p[5] == "S" { mode |= 0o2000 }
         guard mode & 0o6000 != 0 else { return nil }
-        return (entryPath(fields[8]), mode)
+        // The date, then the name: "2017-02-16 02:44" (GNU tar, toybox) or "Feb 15  2017" (BSD tar, which writes
+        // the time of day for a file younger than six months).
+        let name: Int
+        if let day = fields.firstIndex(where: { Self.isCalendarDay($0) }), fields.count > day + 2 {
+            name = day + 2
+        } else if let month = fields.firstIndex(where: { Self.isMonth($0) }), fields.count > month + 3,
+            fields[month + 1].allSatisfy({ $0.isNumber })
+        {
+            name = month + 3
+        } else {
+            return nil
+        }
+        return (entryPath(Substring(fields[name...].joined(separator: " "))), mode)
     }
 
-    /// /usr/bin/tar `args`; its stdout, or an error with its stderr.
-    private static func tar(_ args: [String]) throws -> String {
+    /// "2017-02-16": the day GNU tar and toybox print before the time.
+    private static func isCalendarDay(_ field: Substring) -> Bool {
+        let c = Array(field)
+        return c.count == 10 && c[4] == "-" && c[7] == "-"
+            && (0..<10).allSatisfy { $0 == 4 || $0 == 7 || c[$0].isNumber }
+    }
+
+    /// "Feb": the month BSD tar prints before the day.
+    private static func isMonth(_ field: Substring) -> Bool {
+        [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ].contains(String(field))
+    }
+
+    /// The host's tar: /usr/bin/tar on the Mac (BSD) and Linux (GNU), /system/bin/tar on Android (toybox, which also
+    /// brings the gzip a freeze.tar.gz needs; all three read a gzipped archive by its signature and take -k, -C and
+    /// --exclude). `LT_TAR` names another.
+    static let tarExecutable = [
+        ProcessInfo.processInfo.environment["LT_TAR"], "/usr/bin/tar", "/bin/tar", "/usr/local/bin/tar",
+        "/system/bin/tar", "C:\\Windows\\System32\\tar.exe",
+    ].compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
+
+    /// `tar` `args`; its stdout, or an error with its stderr. A non-zero exit is an error unless every line of its
+    /// stderr holds one of `tolerating` (toybox's report of the files -k kept).
+    private static func tar(_ args: [String], tolerating: [String] = []) throws -> String {
+        guard let executable = tarExecutable else {
+            throw FirmwareError(.internal, "Cydia: no tar (looked for /usr/bin/tar, /system/bin/tar; set LT_TAR)")
+        }
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        p.executableURL = URL(fileURLWithPath: executable)
         p.arguments = args
         let out = Pipe()
         let err = Pipe()
@@ -262,8 +313,12 @@ extension SystemEdits {
         let data = out.fileHandleForReading.readDataToEndOfFile()
         let errors = err.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        guard p.terminationStatus == 0 else {
-            throw FirmwareError(.internal, "tar \(args.first ?? ""): \(String(decoding: errors, as: UTF8.self))")
+        let reported = String(decoding: errors, as: UTF8.self)
+        let lines = reported.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let tolerated = !tolerating.isEmpty && !lines.isEmpty
+            && lines.allSatisfy { line in tolerating.contains { line.contains($0) } }
+        guard p.terminationStatus == 0 || tolerated else {
+            throw FirmwareError(.internal, "tar \(args.first ?? ""): \(reported)")
         }
         return String(decoding: data, as: UTF8.self)
     }

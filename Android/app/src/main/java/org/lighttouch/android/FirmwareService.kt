@@ -32,7 +32,9 @@ class FirmwareService : Service() {
         override fun supports(firmwareId: String): Boolean =
             File(applicationInfo.nativeLibraryDir, "libfirmwarekit.so").canExecute() &&
                 FirmwareCatalog.load(this@FirmwareService).any { it.id == firmwareId }
-        override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String, bootromPath: String): Bundle {
+        override fun start(
+            firmwareId: String, ipswPath: String, trustedToolsRoot: String, bootromPath: String, jailbreak: Boolean
+        ): Bundle {
             check(consumed.compareAndSet(false, true)) { "A fresh firmware worker is required" }
             foreground()
             currentFirmwareId = firmwareId
@@ -41,7 +43,7 @@ class FirmwareService : Service() {
             val job = java.lang.Long.toHexString(SystemClock.uptimeMillis())
             destination = File(parent, "job-$job").absolutePath
             note("preparing")
-            Thread({ prepare(firmwareId, ipswPath, File(trustedToolsRoot), bootromPath) }, "firmwarekit").start()
+            Thread({ prepare(firmwareId, ipswPath, File(trustedToolsRoot), bootromPath, jailbreak) }, "firmwarekit").start()
             return status()
         }
         override fun status(): Bundle = Bundle().apply {
@@ -65,9 +67,10 @@ class FirmwareService : Service() {
 
     /**
      * create into `destination`, the device folder the engine worker then moves into its library as it is
-     * (adoptPrepared: no pack-base, no copy, no second hash). The IPSW is only read.
+     * (adoptPrepared: no pack-base, no copy, no second hash). The IPSW is only read. With `jailbreak`, the Cydia
+     * bootstrap the activity downloaded (CydiaBootstrap.directory) is read from beside the cache and installed.
      */
-    private fun prepare(firmwareId: String, ipsw: String, tools: File, bootrom: String) {
+    private fun prepare(firmwareId: String, ipsw: String, tools: File, bootrom: String, jailbreak: Boolean) {
         // Preparation boots iOS (the keybag, the first start) against timeouts: the CPU stays awake while the phone
         // locks or the user switches away. The foreground service only keeps the process alive, not the CPU running.
         val awake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LightTouch:preparation")
@@ -76,6 +79,13 @@ class FirmwareService : Service() {
         val cache = File(cacheDir, "firmwarekit")
         val out = File(destination)
         try {
+            // The bootstrap comes from the activity (CydiaBootstrap): firmwarekit checks it again and would download
+            // it only on a host with a network, so a phone names the file it lacks instead.
+            if (jailbreak) {
+                val bootstrap = CydiaBootstrap.directory(this)
+                val missing = CydiaBootstrap.files.keys.firstOrNull { !File(bootstrap, it).isFile }
+                check(missing == null) { "Cydia's bootstrap is missing ($missing); turn Cydia off and prepare again" }
+            }
             val catalog = File(filesDir, "firmware-catalog.json")
             assets.open("firmware-catalog.json").use { input -> catalog.outputStream().use { input.copyTo(it) } }
             run(libs, listOf("create", "--catalog", catalog.path, "--id", firmwareId, "--ipsw", ipsw, "--out", out.path,
@@ -83,6 +93,8 @@ class FirmwareService : Service() {
                 "--language", Locale.getDefault().toLanguageTag(),
                 // iOS 5 and later start at the Home screen, not Setup Assistant (ignored before 5, which has none)
                 "--skip-setup") +
+                // Cydia, Substrate and afc2 in the system volume, from the bootstrap the activity put in the cache
+                (if (jailbreak) listOf("--jailbreak") else emptyList()) +
                 // the iPod touch 2G's keybag boot (iOS 4) runs its SecureROM, which no IPSW carries
                 (if (bootrom.isNotEmpty()) listOf("--bootrom", bootrom) else emptyList()))
             // create's own lease and boot logs; the device is the rest

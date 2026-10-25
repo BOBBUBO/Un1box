@@ -40,6 +40,12 @@ Install or unpack the build for your platform. You also need an iOS system for i
 - **Prepare one from Apple's IPSW.** On Android, tap **Add a device › Prepare from an IPSW**, pick the device and iOS version, and the app downloads the IPSW and prepares it on the phone (the iPod touch 2G takes about a minute). On Linux and macOS, `firmwarekit` does the same. Every platform uses the same preparer ([Portable/firmware](Portable/firmware/README.md)).
 - **Use an already prepared system** (`.itbase`), for example the one `tools/get-assets.py` takes from upstream's Mac app, along with its guest tools (`armv6.itpack` or `armv7.itpack`) and, for the iPod touch 2G, its boot ROM.
 
+- **Jailbroken, with Cydia.** Turn on **Cydia (jailbreak)** in *Prepare from an IPSW* on Android, or pass
+  `--jailbreak` to `firmwarekit create`: the preparation leaves afc2 (the whole file system over USB) and what
+  Legacy iOS Kit's jailbroken restores carry — Cydia 1.1.30 with apt and dpkg, Substrate on iOS 3 to 6 and Cydia
+  HTTPatch on 3.x — from archives pinned by commit and SHA-1. iPhone OS 2.0 and later. On a phone the app downloads
+  them itself, so the preparation needs no network.
+
 Then start the device. Use the on-screen Home, Power and volume buttons, and **Stop** to shut iOS down cleanly. Each device keeps its own storage, and the prepared system is never changed.
 
 ## Performance

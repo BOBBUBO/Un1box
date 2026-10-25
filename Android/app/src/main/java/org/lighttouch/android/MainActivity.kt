@@ -711,9 +711,12 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun PrepareOverlay() {
         val board = prep.firmware?.board
         LaunchedEffect(board, records) { board?.let { findBootrom(it) } }
+        // Cydia's bootstrap may already be in the cache (an earlier preparation): check it off the main thread.
+        LaunchedEffect(prep.firmwareId) { if (prep.jailbreak && prep.firmwareId.isNotEmpty()) checkCydiaBootstrap() }
         PrepareScreen(prep, busy, preparationActive(),
             onDownload = ::downloadIpsw, onChooseIpsw = { stockIpsw.launch(arrayOf("application/octet-stream", "*/*")) },
             onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onDownloadRom = ::downloadBootrom, onPrepare = ::beginPreparation,
+            onJailbreak = ::chooseJailbreak,
             onChoosePrepared = { preparedCopy.launch(null) },
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
             onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation)
@@ -725,10 +728,37 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         setup.reset(firstRun = false); setup.step = SetupStep.FILES; overlay = Screen.SETUP
         scanFolder(uri) { createDevice() }
     }
+    /**
+     * Cydia on or off for the preparation: turning it on downloads and checks the bootstrap here (CydiaBootstrap),
+     * so the preparation itself never needs the network, and Prepare stays disabled until it is in place.
+     */
+    private fun chooseJailbreak(on: Boolean) {
+        prep.jailbreak = on
+        prep.jailbreakError = ""
+        if (!on) { prep.jailbreakReady = false; return }
+        prep.jailbreakReady = false
+        CydiaBootstrap.start(this) { error ->
+            handler.post {
+                prep.jailbreakError = error
+                prep.jailbreakReady = error.isEmpty()
+            }
+        }
+    }
+    /** Whether the bootstrap is already in the cache, when the flow opens on a firmware prepared with Cydia before. */
+    private fun checkCydiaBootstrap() {
+        Thread({
+            val ready = CydiaBootstrap.ready(this)
+            handler.post { prep.jailbreakReady = ready }
+        }, "cydia-check").start()
+    }
     private fun beginPreparation() {
         if (preparationActive() || busy) return
         val chosen = prep.firmware ?: return
         if (!prep.ipswReady || !prep.romReady) return
+        if (prep.jailbreak && !prep.jailbreakReady) {
+            prep.jailbreakError = "Cydia's files are not downloaded yet"
+            return
+        }
         val worker = firmware ?: run { pendingFirmwareStart = true; firmwareRestarting = true; bindFirmware(); return }
         // Ask the worker, not prep.preparation: Back clears that, and a spent worker would refuse start while its
         // status went on reporting the earlier run (its error and firmware id) as this one's.
@@ -736,6 +766,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (spent) { restartFirmwareForPreparation(); return }
         val selectedIpsw = prep.ipswPath
         val selectedRom = if (needsBootrom(chosen.board)) prep.romPath else ""
+        // 1.x has no jailbreak (FirmwareKit refuses it); the prepare screen does not offer it there either.
+        val jailbreak = prep.jailbreak && CydiaBootstrap.offers(chosen.version)
         prep.importError = ""
         prep.preparation = Bundle().apply { putString("state", "starting"); putString("firmwareId", chosen.id) }
         startForegroundService(Intent(this, FirmwareService::class.java))
@@ -743,7 +775,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             try {
                 // firmwarekit bakes the APK's own guest helpers and packages into the system.
                 val tools = GuestTools.firmwareTools(this)
-                val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath, selectedRom)
+                val state = worker.start(chosen.id, selectedIpsw, tools.absolutePath, selectedRom, jailbreak)
                 handler.post { prep.preparation = state }
             } catch (e: Exception) { handler.post { prep.preparation = Bundle().apply { putString("state", "failed"); putString("error", e.message ?: "Cannot start preparation"); putBoolean("consumed", true) } } }
         }, "prepare-start").start()

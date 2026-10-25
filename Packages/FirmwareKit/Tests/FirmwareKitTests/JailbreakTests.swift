@@ -317,18 +317,42 @@ struct CydiaInstallTests {
         #expect(r.root.contains("usr/libexec/cydia/cydo"))
     }
 
+    /// BSD tar's listing (macOS), and GNU tar's and toybox's (Linux, Android), which write the date as
+    /// "YYYY-MM-DD HH:MM" and the owner as "root/wheel": the same lines freeze.tar's files give on every host.
     @Test func setUserIDLinesOfATarListing() {
+        func mode(_ line: String) -> String? {
+            SystemEdits.specialMode(line).map { "\($0.path) \(String($0.mode, radix: 8))" }
+        }
+        // BSD tar (the Mac)
         #expect(
-            SystemEdits.specialMode("-rwsr-sr-x  0 root   wheel  133808 Feb 15  2017 ./usr/libexec/cydia/cydo")! == (
-                "usr/libexec/cydia/cydo", 0o6755
-            )
+            mode("-rwsr-sr-x  0 root   wheel  133808 Feb 15  2017 ./usr/libexec/cydia/cydo")
+                == "usr/libexec/cydia/cydo 6755"
         )
+        #expect(mode("-r-sr-xr-x  0 root   wheel  105744 Oct 13  2015 ./bin/su") == "bin/su 4555")
+        #expect(mode("-rwsr-xr-x  0 root  wheel  9 Oct 13  2015 ./a b") == "a b 4755")
+        // a file younger than six months: the time of day where the year goes
+        #expect(mode("-r-sr-xr-x  1 root  wheel  105744 Jul  1 10:22 ./bin/su") == "bin/su 4555")
+        // GNU tar 1.34, as `tar -tvf freeze.tar.gz` prints it on Linux
         #expect(
-            SystemEdits.specialMode("-r-sr-xr-x  0 root   wheel  105744 Oct 13  2015 ./bin/su")! == ("bin/su", 0o4555)
+            mode("-rwsr-sr-x root/wheel       133808 2017-02-16 02:44 ./usr/libexec/cydia/cydo")
+                == "usr/libexec/cydia/cydo 6755"
         )
-        #expect(SystemEdits.specialMode("-rwxr-xr-x  0 root   wheel  1 Oct 13  2015 ./bin/bash") == nil)
-        #expect(SystemEdits.specialMode("drwxrwsr-x  0 root   authedusers  0 Oct 28  2006 ./private/var/local/") == nil)
-        #expect(SystemEdits.specialMode("-rwsr-xr-x  0 root  wheel  9 Oct 13  2015 ./a b")! == ("a b", 0o4755))
+        #expect(mode("-rwsr-xr-x root/wheel        71552 2015-10-13 09:32 ./usr/bin/login") == "usr/bin/login 4755")
+        #expect(
+            mode("-rwsr-sr-x 0/0 133808 2017-02-16 02:44 ./usr/libexec/cydia/cydo")
+                == "usr/libexec/cydia/cydo 6755"
+        )
+        #expect(mode("-rwsr-xr-x root/wheel 9 2015-10-13 09:32 ./a b") == "a b 4755")
+        // toybox (Android): the size is padded to 9 and the date has two spaces before it
+        #expect(mode("-r-sr-xr-x root/wheel    105744  2015-10-13 09:57 ./bin/su") == "bin/su 4555")
+        // nothing special, not a regular file, or not a listing at all
+        #expect(mode("-rwxr-xr-x root/wheel 133808 2017-02-16 02:44 ./usr/libexec/cydia/cydo") == nil)
+        #expect(mode("-rwxr-xr-x  0 root   wheel  1 Oct 13  2015 ./bin/bash") == nil)
+        #expect(mode("drwxrwsr-x  0 root   authedusers  0 Oct 28  2006 ./private/var/local/") == nil)
+        #expect(mode("lrwxrwxrwx root/wheel 0 2017-04-26 04:25 ./usr/bin/tar -> /bin/tar") == nil)
+        #expect(mode("") == nil)
+        // The host's tar is where these listings come from: found on every platform the kit builds for, Android too.
+        #expect(SystemEdits.tarExecutable != nil, "no tar for Cydia: set LT_TAR")
     }
 
     /// Cydia's first launch takes its sources from metadata.plist (Version 1: none of its 1.1.30 defaults added), so
