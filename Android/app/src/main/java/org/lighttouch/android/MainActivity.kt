@@ -988,8 +988,22 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         workerEvidenceDelivery.advance()
         engineExpectedExit = false; guestStartRequested = true; status = "starting"
         startForegroundService(Intent(this, EngineService::class.java))
+        val graphicsProvider = settings.graphicsProvider
         Thread({
             try {
+                if (BuildConfig.DEBUG) {
+                    val providerError = worker.debugSelectGraphicsProvider(graphicsProvider.nativeChoice)
+                    if (providerError.isNotEmpty()) {
+                        handler.post {
+                            if (engine?.asBinder() == worker.asBinder()) {
+                                error = "${graphicsProvider.label} graphics provider unavailable: $providerError. Restart LightTouch to reset the graphics driver."
+                                status = "failed"
+                                guestStartRequested = false
+                            }
+                        }
+                        return@Thread
+                    }
+                }
                 // Newer guest tools in this build of LightTouch reach existing devices here; a failure leaves the old ones.
                 try { GuestTools.newerFor(this, request.recordId)?.let { tools ->
                     val result = worker.setGuestPackage(request.recordId, tools.absolutePath)

@@ -11,6 +11,7 @@ enum class OverlayCorner(val label: String, val glyph: String) { TOP_LEFT("Top l
 enum class OverlayGraph(val label: String) { FRAME_TIME("Frame time"), FPS("Frame rate") }
 /** Matches the presenter's PresentScale (lighttouch_jni.cpp). */
 enum class ScreenScaling(val label: String, val native: Int) { SMOOTH("Smooth", 0), SHARP("Sharp", 1) }
+enum class GraphicsProvider(val label: String, val nativeChoice: Int) { PLATFORM("Android driver", 0), ANGLE("ANGLE (experimental)", 1) }
 
 /** User preferences, as Compose state backed by SharedPreferences. Read on the main thread. */
 class AppSettings(context: Context) {
@@ -37,6 +38,12 @@ class AppSettings(context: Context) {
 
     private val autoResumeState = mutableStateOf(prefs.getBoolean("autoResume", true))
     var autoResume: Boolean get() = autoResumeState.value; set(v) { autoResumeState.value = v; prefs.edit().putBoolean("autoResume", v).apply() }
+
+    private val reduceAppSwitchPausesState = mutableStateOf(prefs.getBoolean("reduceAppSwitchPauses", true))
+    var reduceAppSwitchPauses: Boolean get() = reduceAppSwitchPausesState.value; set(v) { reduceAppSwitchPausesState.value = v; prefs.edit().putBoolean("reduceAppSwitchPauses", v).apply() }
+
+    private val graphicsProviderState = enumPref("graphicsProvider", GraphicsProvider.PLATFORM)
+    var graphicsProvider: GraphicsProvider get() = graphicsProviderState.value; set(v) { graphicsProviderState.value = v; prefs.edit().putString("graphicsProvider", v.name).apply() }
 
     private val scalingState = enumPref("scaling", ScreenScaling.SMOOTH)
     var scaling: ScreenScaling get() = scalingState.value; set(v) { scalingState.value = v; prefs.edit().putString("scaling", v.name).apply() }
