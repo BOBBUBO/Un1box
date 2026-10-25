@@ -22,3 +22,7 @@ sha1 = "0.10"
 sha2 = "0.10"
 unicode-normalization = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+libloading = "0.8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

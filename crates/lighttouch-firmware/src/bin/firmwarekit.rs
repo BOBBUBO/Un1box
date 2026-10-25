@@ -1,6 +1,8 @@
 //! firmwarekit: the preparer. `create` is the command the apps run (JSON Lines on stdout, diagnostics on stderr);
 //! the others are for development.
 //!
+//!   firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [...]   the command the apps run
+//!   firmwarekit oneshot ARGV... | '{"mode":{"machines":{}}}'   one preparation boot (the engine in this process)
 //!   firmwarekit decrypt --catalog FILE --id ID --ipsw FILE --out DIR [--no-rootfs]
 //!   firmwarekit extract-rootfs DMG OUT
 //!   firmwarekit hfs-list IMG [PREFIX]          JSON Lines: owner, mode, flags, sizes, sha256, link per path
@@ -272,8 +274,102 @@ fn build_n45_nor(args: &[String]) -> Result<(), String> {
     std::fs::write(&out, nor).map_err(|e| format!("{out}: {e}"))
 }
 
+/// `create`: the command the apps run. stdout is JSON Lines only (begin, step, progress, warning, done, error);
+/// diagnostics go to stderr. Exit 0 after done, 1 after an error event, 64 for a command line it doesn't take.
+fn create(args: &[String]) -> ExitCode {
+    use lighttouch_firmware::create::{self, Options};
+    use lighttouch_firmware::oneshot::Helper;
+    use lighttouch_firmware::progress::Event;
+    use std::io::Write;
+    use std::sync::Arc;
+    let emit: lighttouch_firmware::progress::Emit = Arc::new(|e: Event| {
+        let mut out = std::io::stdout().lock();
+        let _ = writeln!(out, "{}", e.json());
+        let _ = out.flush();
+    });
+    let flag = |name: &str| args.iter().any(|a| a == name);
+    let path = |name: &str| option(args, name).map(PathBuf::from);
+    let fail = |e: lighttouch_firmware::error::Error| {
+        eprintln!("firmwarekit: {}", e.message);
+        emit(Event::error(&e));
+        ExitCode::from(1)
+    };
+    let (Some(ipsw), Some(out)) = (path("--ipsw"), path("--out")) else {
+        eprintln!("usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [--sibling-entry FILE --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE]");
+        return ExitCode::from(64);
+    };
+    let setup = || -> lighttouch_firmware::error::Result<Options> {
+        let mut entry = match (path("--entry"), path("--catalog")) {
+            (Some(e), _) => Entry::load(&e)?,
+            (None, Some(c)) => Entry::load_from_catalog(&c, &option(args, "--id").unwrap_or_default())?,
+            _ => return Err(lighttouch_firmware::unsupported!("--entry or --catalog with --id is required")),
+        };
+        if let Some(r) = entry.recipe.as_mut() {
+            for (name, key) in [("--gl-test", "gl_test"), ("--skip-setup", "skip_setup"), ("--jailbreak", "jailbreak")] {
+                if flag(name) {
+                    r.options.insert(key.into(), true);
+                }
+            }
+        }
+        let exe = std::env::current_exe().map_err(|e| lighttouch_firmware::internal!("this program's path: {e}"))?;
+        let dir = exe.parent().map(PathBuf::from).unwrap_or_default();
+        // the app's guest tools beside this program (the desktop's resources/), else a Mac bundle's ../Resources
+        let guest_tools = path("--guest-tools").unwrap_or_else(|| {
+            let beside = dir.join("guest-tools");
+            if beside.is_dir() { beside } else { dir.join("../Resources/guest-tools") }
+        });
+        let helper_arg = path("--helper");
+        let sibling = match (path("--sibling-entry"), path("--sibling-ipsw")) {
+            (Some(e), Some(i)) => Some((Entry::load(&e)?, i)),
+            _ => None,
+        };
+        std::fs::create_dir_all(&out)?;
+        Ok(Options {
+            entry,
+            ipsw: ipsw.clone(),
+            out: out.clone(),
+            seed: option(args, "--seed"),
+            helper: Helper::new(helper_arg.as_deref())?,
+            helper_path: helper_arg.unwrap_or(exe),
+            cache: path("--cache"),
+            guest_tools,
+            sibling,
+            stop_after_volumes: option(args, "--stop-after").as_deref() == Some("volumes"),
+            built_listing: flag("--built-listing"),
+            language: option(args, "--language"),
+            keyboards: option(args, "--keyboards").map(|k| k.split(',').map(str::to_string).collect()),
+            bootrom: path("--bootrom"),
+        })
+    };
+    let options = match setup() {
+        Ok(o) => o,
+        Err(e) => return fail(e),
+    };
+    // a panic is an error event too: the app always hears how create ended
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| create::create(options, emit.clone())));
+    match run {
+        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Err(e)) => fail(e),
+        Err(panic) => {
+            let why = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "a preparation step failed".into());
+            fail(lighttouch_firmware::internal!("{why}"))
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("oneshot") {
+        // the engine in this process for one preparation boot; no event lines, its own status
+        return ExitCode::from(lighttouch_firmware::oneshot::engine_main(&args[1..]).clamp(0, 255) as u8);
+    }
+    if args.first().map(String::as_str) == Some("create") {
+        return create(&args[1..]);
+    }
     let result = match args.first().map(String::as_str) {
         Some("decrypt") => decrypt(&args[1..]),
         Some("extract-rootfs") => extract_rootfs(&args[1..]),
