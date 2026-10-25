@@ -148,8 +148,9 @@ pub fn reidentify(nor: &[u8], id: &(impl Identity + ?Sized)) -> Result<Vec<u8>> 
     Ok(b)
 }
 
-/// Encrypts the SHSH tag (past sigCheckArea, so no digest covers it) under the UID-derived key.
-fn wrap_shsh(b: &mut [u8], key: &[u8; 16]) -> bool {
+/// Encrypts the SHSH tag (past sigCheckArea, so no digest covers it) under the UID-derived key. K48IBoot's NOR builder
+/// calls this with the S5L8930 wrapping key.
+pub(crate) fn wrap_shsh(b: &mut [u8], key: &[u8; 16]) -> bool {
     if b.len() < IMG3_HEADER {
         return false;
     }

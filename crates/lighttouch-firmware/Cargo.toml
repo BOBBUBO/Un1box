@@ -29,3 +29,8 @@ libloading = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[build-dependencies]
+# Compiles the vendored iBoot32Patcher C sources (vendor/iBoot32Patcher) into the crate for the iPad's real-iBoot
+# chain, so no external binary is shipped.
+cc = "1"
