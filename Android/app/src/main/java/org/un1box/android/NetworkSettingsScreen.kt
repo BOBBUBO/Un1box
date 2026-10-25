@@ -36,7 +36,7 @@ internal fun NetworkSettingsScreen(host: GuestHost, onBack: () -> Unit) {
     var showHttps by rememberSaveable { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
     val update: (NetworkConfiguration) -> Unit = { next ->
-        try { settings.network = next; saveError = null }
+        try { settings.network = next; host.applySettings(); saveError = null }
         catch (_: Exception) { saveError = "Couldn’t save network settings. Check available storage and try again." }
     }
     if (showDate) {
@@ -73,7 +73,7 @@ internal fun NetworkSettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 SettingsGroup("Connection") {
                     SwitchRow(LtIcons.Network, "Enable networking", "Let the emulated device connect through your phone’s internet connection", config.enabled, "network_enabled") { update(config.copy(enabled = it)) }
                 }
-                Text(if (host.active) "Changes apply the next time you start the device. Stop and start it to use these settings." else "Applies when you start the device. Networking is off until you enable it.",
+                Text(if (host.active) "Route, archive date and local network changes apply to new requests. Reload the page to use them. If this session started with networking off, stop and start it once to enable networking." else "Applies when you start the device. Once enabled, you can change the route and archive date while it runs.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp).testTag("network_restart_note"))
                 saveError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
@@ -95,7 +95,9 @@ internal fun NetworkSettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 if (host.active) SettingsGroup("Current session") {
                     Column(Modifier.padding(16.dp)) {
                         Text(host.networkStatus.ifEmpty { "Waiting for network status…" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("network_status"))
-                        Text("Saved for next start: ${config.summary}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+                        host.networkChangeNotice.takeIf { it.isNotEmpty() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp).testTag("network_change_notice"))
+                        }
                     }
                 }
                 Spacer(Modifier.height(24.dp))

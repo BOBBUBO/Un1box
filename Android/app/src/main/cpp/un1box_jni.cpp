@@ -664,8 +664,7 @@ JNI(remove) jstring JNICALL Java_org_un1box_android_Native_remove(JNIEnv *env,jo
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_remove(library,record.value,&error);
     return string(env,result(status,error));
 }
-// The worker owns one immutable network configuration for this boot. Per-device
-// CA material persists, but the private listener dies with the worker.
+// The listener and CA live for this worker; route/date/policy can change live.
 static std::mutex network_guard;
 static std::unique_ptr<lt::network::Proxy> network_proxy;
 static uint32_t network_mode = 0;
@@ -696,6 +695,33 @@ JNI(networkCertificate) jbyteArray JNICALL Java_org_un1box_android_Native_networ
     auto bytes=env->NewByteArray(jsize(der.size()));
     if(!der.empty())env->SetByteArrayRegion(bytes,0,jsize(der.size()),reinterpret_cast<const jbyte *>(der.data()));
     return bytes;
+}
+JNI(networkUpdate) jobjectArray JNICALL Java_org_un1box_android_Native_networkUpdate(JNIEnv *env,jobject,jint mode,jstring date,jboolean local) {
+    Utf day(env,date);
+    lt_error error=LT_INIT(lt_error);
+    lt_status status=LT_OK;
+    std::string message;
+    try {
+        std::scoped_lock lock(guard,network_guard);
+        if(mode<0 || mode>2 || !day.value || !lt::network::Configuration::valid_date(day.value)) {
+            status=LT_INVALID;message="Invalid network configuration";
+        } else if(!network_proxy) {
+            status=LT_UNSUPPORTED;message="Enable networking and restart the device first";
+        } else {
+            status=lt_runtime_network_policy(runtime,uint32_t(mode),local,&error);
+            if(status==LT_OK) {
+                lt::network::Configuration config;
+                config.mode=mode==0?lt::network::Mode::off:mode==1?lt::network::Mode::direct:lt::network::Mode::archive;
+                config.archive_date=day.value;config.local_network=local;
+                network_proxy->configure(std::move(config));
+                network_mode=uint32_t(mode);network_local=local;
+            } else message=result(status,error);
+        }
+    } catch(const std::exception &e) { status=LT_IO;message=e.what(); }
+    auto output=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(output,0,string(env,std::to_string(status)));
+    env->SetObjectArrayElement(output,1,string(env,message));
+    return output;
 }
 JNI(networkStatus) jobjectArray JNICALL Java_org_un1box_android_Native_networkStatus(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(network_guard);

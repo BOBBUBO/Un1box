@@ -75,6 +75,9 @@ int main(int argc,char **argv) {
         Proxy off(directory+"/off",{});
         assert(exchange(off,"GET http://example.com/ HTTP/1.1\r\n\r\n").find("503")!=std::string::npos);
         assert(!std::filesystem::exists(directory+"/off/proxy-ca.pem"));
+        Configuration enabled;enabled.mode=Mode::direct;
+        bool refused=false;try{off.configure(enabled);}catch(...){refused=true;}
+        assert(refused && off.certificate().empty());
     }
     Configuration config;config.mode=Mode::direct;std::string fingerprint;
     {

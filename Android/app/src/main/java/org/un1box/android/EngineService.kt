@@ -52,7 +52,7 @@ class EngineService : Service() {
     // The daemon's parent-death signal follows the thread that forked it, so fork from one that never exits.
     private val usbThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "usb-bridge") }
     @Volatile private var usbError = ""
-    @Volatile private var networkConfiguration = NetworkConfiguration()
+    private val networkSession = NetworkSession()
     @Volatile private var networkSetup = "Off"
     private val networkThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "network-setup") }
     private val cpuSampler by lazy { WorkerCpuSampler() }
@@ -84,6 +84,13 @@ class EngineService : Service() {
         override fun setDetailedTiming(enabled: Boolean) {
             detailedTiming = enabled; detailedTimingError = ""
             if (!enabled && profileCapture.automatic) profileCapture.finish("detailed-timing-off")
+        }
+        override fun applyNetworkSettings() {
+            synchronized(networkSession) {
+                if (!started.isConsumed() || stopping.get()) return
+                networkSession.request(NetworkConfiguration.load(applicationContext))
+                refreshNetworkSettings()
+            }
         }
         /** Freeze what led up to now for the hitch inspector: the frame timeline, and the detailed
          * timing capture (closed and kept) when one is running. The caller has paused the guest. */
@@ -189,20 +196,18 @@ class EngineService : Service() {
             microphoneError = ""
             // The ISP is the engine's camera machine property, off by default: off, the board unmatches the
             // device tree's isp node and the guest has no camera at all. IT_CAMERA is the engine's switch for a
-            // session the app starts, and it has to be set before the machine is created, which is what the
-            // start below does.
-            cameraWanted = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("camera", false)
-            cameraError = ""
-            android.system.Os.setenv("IT_CAMERA", if (cameraWanted) "1" else "0", true)
             // The app owns the proxy and listens on its private socket before the engine is pointed at it.
-            networkConfiguration = NetworkConfiguration.load(applicationContext)
-            networkSetup = if (networkConfiguration.enabled) "Waiting for guest tools…" else "Off"
-            val trustRoots = listOf("/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts")
-                .firstOrNull { File(it).isDirectory } ?: "/system/etc/security/cacerts"
-            error = Native.networkPrepare(filesDir.absolutePath, recordId, networkConfiguration.nativeMode,
-                networkConfiguration.archiveDate, networkConfiguration.localNetwork, trustRoots)
-            if (error.isEmpty()) error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
-            if (error.isEmpty() && networkConfiguration.enabled) networkThread.execute { configureGuestNetwork() }
+            synchronized(networkSession) {
+                networkConfiguration = NetworkConfiguration.load(applicationContext)
+                networkSession.begin(networkConfiguration)
+                networkSetup = if (networkConfiguration.enabled) "Waiting for guest tools…" else "Off"
+                val trustRoots = listOf("/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts")
+                    .firstOrNull { File(it).isDirectory } ?: "/system/etc/security/cacerts"
+                error = Native.networkPrepare(filesDir.absolutePath, recordId, networkConfiguration.nativeMode,
+                    networkConfiguration.archiveDate, networkConfiguration.localNetwork, trustRoots)
+                if (error.isEmpty()) error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
+                if (error.isEmpty() && networkConfiguration.enabled) networkThread.execute { configureGuestNetwork() }
+            }
             if (error.isEmpty()) {
                 File(filesDir, "worker-stop-error.txt").delete()
                 startCamera()
@@ -223,6 +228,8 @@ class EngineService : Service() {
             profileCapture.change(recording, Native.status().firstOrNull() ?: "stopped")
         override fun status(): Bundle {
             val s = Native.status()
+            refreshNetworkSettings()
+            val network = networkSession.snapshot()
             s.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { error = it }
             if (s.firstOrNull() == "failed" && started.isConsumed() && failureRecorded.compareAndSet(false, true)) {
                 val retainedError = error.ifEmpty { "Guest worker failed; writable state and diagnostics retained. Start a fresh worker." }
@@ -255,9 +262,12 @@ class EngineService : Service() {
                 putInt("uid", Process.myUid())
                 putString("usbMuxSocket", usb.muxSocket ?: "")
                 putString("appServicesError", usbError)
-                putString("networkStatus", if (!networkConfiguration.enabled) "Off" else "${networkConfiguration.summary} · $networkSetup" +
+                putString("networkStatus", if (!network.active.enabled) "Off" else "${network.active.summary} · $networkSetup" +
                     if (networkSetup == "Ready") " · ${Native.networkStatus().firstOrNull().orEmpty()}" else "")
-                putInt("networkMode", networkConfiguration.nativeMode)
+                putInt("networkMode", network.active.nativeMode)
+                putString("networkArchiveDate", network.active.archiveDate)
+                putBoolean("networkLocal", network.active.localNetwork)
+                putString("networkChangeNotice", network.notice)
                 putString("networkCertificateFingerprint", Native.networkStatus().getOrElse(1) { "" })
                 putBoolean("sessionStarted", started.isConsumed())
                 putBundle("observations", observations())
@@ -369,6 +379,14 @@ class EngineService : Service() {
             ""
         } catch (e: Exception) { e.message ?: "Screenshot failed" }
     }
+    private fun refreshNetworkSettings() {
+        if (stopping.get()) return
+        networkSession.refresh { config ->
+            val result = Native.networkUpdate(config.nativeMode, config.archiveDate, config.localNetwork)
+            (result.getOrNull(0)?.toIntOrNull() ?: 2) to result.getOrElse(1) { "Network worker unavailable" }
+        }
+    }
+
     /** Fixed typed operations only; no shell or arbitrary guest commands. A failed
      * mutation is reported once and is never silently replayed after a timeout. */
     private fun configureGuestNetwork() {

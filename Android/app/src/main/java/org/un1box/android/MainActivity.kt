@@ -90,6 +90,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var appServicesError by mutableStateOf("")
     override var networkStatus by mutableStateOf("")
         private set
+    override var networkChangeNotice by mutableStateOf("")
+        private set
     private val installer by lazy { StoreInstaller.of(applicationContext) }
     private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
     // Android 13+ shows an install queue's progress and result in notifications only once allowed.
@@ -261,6 +263,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             appServicesError = b.getString("appServicesError") ?: ""
                             cameraStatus = b.getString("cameraStatus") ?: ""
                             networkStatus = b.getString("networkStatus") ?: ""
+                            networkChangeNotice = b.getString("networkChangeNotice") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
                         }
@@ -485,7 +488,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
         val worker = engine ?: return
         val scale = settings.scaling.native; val detailed = settings.detailedTiming
-        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed) } catch (_: RemoteException) { } }, "apply-settings").start()
+        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed); worker.applyNetworkSettings() } catch (_: RemoteException) { } }, "apply-settings").start()
     }
     override fun selectDevice(id: String) {
         busy = true
