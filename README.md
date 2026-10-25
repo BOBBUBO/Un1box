@@ -5,7 +5,12 @@ Un1box emulator runs classic iPhone OS and iOS in an emulator on **Android, Linu
 
 The desktop ports share one device library and setup UI. Android has its own touch UI. A prepared iOS system can back several saved devices, each with its own storage.
 
-[Download the latest pre-release](https://github.com/blake-lucas/LightTouch/releases) (v0.0.9). These are early builds: what works differs by platform, as listed below.
+here are our communities
+
+HyperHLE Discord server:
+https://discord.gg/ZpEkAV47H9
+Our Telegram channel:
+https://t.me/hyperhle
 
 ## Current platforms
 
