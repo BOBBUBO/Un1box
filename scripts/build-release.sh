@@ -30,6 +30,7 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_LINUX_INPUTS:=$LT_INPUTS/linux-desktop/bullseye-build01}"      # deps-full/ crypto/ mobile-private-runtime-ui15/
 : "${LT_LINUX_IMAGE:=lighttouch-bullseye-collector08}"               # Debian 11 build image
 : "${LT_APPIMAGE_TOOLS:=$LT_INPUTS/linux-desktop/dependencies/appimagetool-pinned01}"
+: "${LT_LINUX_CPUS:=$(nproc)}"                                       # the Linux build container's CPUs and jobs"
 : "${LT_WIN_DEPS:=$D/release-0.0.8/win-deps}"                        # MinGW sysroot (copied; FFmpeg installs into it)
 : "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # python-tk01/, services-mobile01/, FFmpeg archive
 : "${LT_WIN_HELPER:=}"                                               # published LightTouchWin helper; empty: published here from app/
@@ -147,12 +148,12 @@ step_linux() {
     [ -d "$b" ] && docker run --rm -v "$b:/b" "$LT_LINUX_IMAGE" sh -c 'rm -rf /b/* /b/.[!.]*'
     mkdir -p "$b"
     docker rm -f "lt-$V-linux" > /dev/null 2>&1 || true
-    timeout 5400 docker run --name "lt-$V-linux" --rm --network none --memory=8g --memory-swap=8g --cpus=4 --pids-limit=256 \
+    timeout 5400 docker run --name "lt-$V-linux" --rm --network none --memory=8g --memory-swap=8g --cpus="$LT_LINUX_CPUS" --pids-limit=256 \
         --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --security-opt no-new-privileges \
         --mount "type=bind,src=$R/app,dst=/src/app,readonly" \
         --mount "type=bind,src=$R/engine,dst=$R/engine,readonly" \
         --mount "type=bind,src=$b,dst=/build" "${mounts[@]}" \
-        -e "QEMU_SOURCE=$R/engine" -e "EXPECTED_QEMU_REV=$(rev "$R/engine")" -e "EXPECTED_APP_REV=$(rev "$R/app")" \
+        -e "LT_JOBS=$LT_LINUX_CPUS" -e "QEMU_SOURCE=$R/engine" -e "EXPECTED_QEMU_REV=$(rev "$R/engine")" -e "EXPECTED_APP_REV=$(rev "$R/app")" \
         "$LT_LINUX_IMAGE" /bin/sh /src/app/scripts/release/linux-inner.sh > "$R/linux.log" 2>&1 ||
         { tail -30 "$R/linux.log" >&2; exit 1; }
     rm -rf "$R/evidence-seal"

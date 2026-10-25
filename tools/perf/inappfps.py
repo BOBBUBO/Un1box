@@ -99,9 +99,11 @@ def avg(rect, fx0, fy0, fx1, fy1, frame=None):
 def is_lock(rect):
     f = shot()  # one capture: the guest re-sleeps ~5 s after a wake
     r, g, b = avg(rect, .12, .27, .88, .69, f)
-    if b > 60 and b > r+25: return True  # the default blue wallpaper
-    # Any wallpaper: the slide-to-unlock knob is light grey on a dark track.
     k = avg(rect, .10, .87, .27, .93, f); t = avg(rect, .40, .88, .85, .92, f)
+    # The default blue wallpaper, over the lock screen's dark slider bar (Home can use the same wallpaper,
+    # but has its dock there).
+    if b > 60 and b > r+25 and max(t) < 110: return True
+    # Any wallpaper: the slide-to-unlock knob is light grey on a dark track.
     return min(k) > 140 and max(k) - min(k) < 30 and max(t) < 100
 def gpt(rect, fx, fy):
     gx, gy, gw, gh = rect; return str(int(gx+gw*fx)), str(int(gy+gh*fy))

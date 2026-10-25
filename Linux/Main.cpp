@@ -399,7 +399,7 @@ static int worker(const Options &o) {
                              o.engine.c_str(),
                              d,
                              {sizeof(lt_boot_config), 1, nullptr, o.rom.empty() ? nullptr : o.rom.c_str(),
-                              o.package.empty() ? nullptr : o.package.c_str(), serial.c_str(), uint32_t(o.audio)}};
+                              o.package.empty() ? nullptr : o.package.c_str(), serial.c_str(), uint32_t(o.audio), 0}};
     admitted = lt_runtime_create(&config, &r, &error);
     if (admitted != LT_OK)
         return fail_admission(admitted);

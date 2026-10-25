@@ -31,6 +31,13 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     val s = host.settings
     val context = LocalContext.current
+    var headphonesInfo by remember { mutableStateOf(false) }
+    if (headphonesInfo) AlertDialog(onDismissRequest = { headphonesInfo = false }, icon = { Icon(LtIcons.Headphones, null) },
+        title = { Text("Headphones or speaker", style = MaterialTheme.typography.titleMedium) },
+        text = { Text("With headphones, iOS plays games and music in stereo, unchanged.\n\n" +
+            "On the speaker, iOS reshapes the sound for the device's small built-in speaker: mono, with the bass cut and a limiter to protect it. " +
+            "That processing runs on the emulated CPU, so games run a little slower, and the sound is closer to an old iPod's speaker than to your phone's.") },
+        confirmButton = { TextButton(onClick = { headphonesInfo = false }) { Text("OK") } })
     Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -42,6 +49,10 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     SwitchRow(LtIcons.Tilt, "Tilt controls", "Your phone's motion sensors move the device's accelerometer", s.tilt, "tilt_toggle") { s.tilt = it; host.applySettings() }
                     SwitchRow(LtIcons.VolumeUp, "Phone volume keys control the device", "Off, they set your phone's volume as usual; the device's own volume buttons are on screen", s.volumeKeys) { s.volumeKeys = it }
                     SwitchRow(LtIcons.Vibrate, "Haptic feedback", "A tap when you press Home, Sleep/Wake or volume", s.haptics) { s.haptics = it }
+                }
+                Group("Audio") {
+                    SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
+                        s.headphones, "headphones_toggle", info = { headphonesInfo = true }) { s.headphones = it }
                 }
                 Group("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
@@ -108,14 +119,16 @@ private fun RowIcon(icon: ImageVector?, alpha: Float = 1f) {
 }
 
 @Composable
-private fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boolean, tag: String? = null, onChange: (Boolean) -> Unit) {
+private fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boolean, tag: String? = null,
+                      info: (() -> Unit)? = null, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         RowIcon(icon)
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        Spacer(Modifier.width(12.dp))
+        if (info != null) IconButton(onClick = info) { Icon(LtIcons.Info, "About this setting", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        else Spacer(Modifier.width(12.dp))
         Switch(checked, onChange, modifier = if (tag != null) Modifier.testTag(tag) else Modifier)
     }
 }

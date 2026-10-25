@@ -41,6 +41,26 @@ the script rewrites `notices/manifest.json` after each engine build.
 Engine A/B switches are environment variables. On Android a debug APK reads them from the app's
 `files/debug-env` (`KEY=VALUE` lines), so one APK can be measured both ways (`docs/PERFORMANCE.md`).
 
+### Engine profile (PGO)
+
+The Android engine is built with profile-guided optimization when `LT_ENGINE_PGO` (default
+`$LT_INPUTS/backend/pgo/engine-arm64.profdata`) exists: clang lays the engine's hot code out together,
+which gave Jetpack Joyride on the Poco F3 about 8% more frames (`docs/PERFORMANCE.md`). `LT_ENGINE_PGO=off`
+builds without it, and a different profile reconfigures the engine on the next build. The profile comes
+from gameplay on a phone:
+
+```
+LT_ENGINE_VARIANT=pgogen LT_ENGINE_CFLAGS=-fprofile-generate LT_ENGINE_LDFLAGS=-fprofile-generate \
+  scripts/build.sh android                      # an instrumented engine in build/obj/android-engine-arm64-pgogen
+tools/perf/pgo-collect.sh build/android/LightTouch-debug.apk engine-arm64.profdata \
+  n81-jetpack-play n81-doodlejump n81-realracing n81-flightcontrol n81-epiccitadel:190
+```
+
+`pgo-collect.sh` runs each `tools/perf/fcbench.py` preset once and has the engine write its counters for a
+window of gameplay (`LT_PGO_RESET`, `LT_PGO_DUMP`; the default is 150 to 250 s after start). Functions
+changed since the profile was taken are compiled without it, so refresh the profile after large engine
+changes. Configure options must match those of the instrumented build. The raw profile of each game stays in `OUT.d`, so a game can be weighted when merging (`llvm-profdata merge -weighted-input=3,jetpack.profraw ...`); the shipped profile weights Jetpack Joyride 3×.
+
 ## Inputs that are not in this repository
 
 Set these in the environment or in `scripts/build.env`, which the script sources if present (not

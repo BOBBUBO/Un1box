@@ -13,7 +13,7 @@ tested only the iPad on 3.2, 3.2.2 and 4.2.1 and the iPod touch 2G on 2.2, 2.2.1
 | --- | --- | --- | --- |
 | iPod touch 2G (n72ap) | 3.1.3 (7E18) | upstream's tested pick, fastest on phones | Tested, recommended |
 | iPod touch 2G | 4.2.1 (8C148) | its last iOS; apps that need iOS 4 | Tested |
-| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested, slow |
+| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested; most games at or near 60 fps on a Poco F3 (Jetpack Joyride's title ~55, Epic Citadel ~30) |
 | iPhone 4 (n90ap) | 6.1.3 (10B329) | its last iOS 6 (6.1.6 shipped only for the 3GS and iPod touch 4G); wide app range | not run off the Mac |
 
 Later: the iPhone 4 on 4.2.1/4.3.5 and the 3GS on 5.1.1 (Tested, slow), the iPod touch 3G 4.2.1 (Tested), the
@@ -48,6 +48,17 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   hitches per 60 s); 57.5 with a 50 µs spin and 58.4 with the 150 µs budget, now the Android default (median 58–60, 1% low
   ~29–30, 1–8 hitches per 60 s). Desktop Jetpack 59. The 1% low (~33 ms frames) is what is left; see
   the hitch leads below.
+- [ ] iPod touch 4G 6.1.6 on the Poco (PERFORMANCE.md, "iPod touch 4G"): Doodle Jump's title 45–49 fps
+  (ceiling 54–60), Asphalt 5's intro movie ~16 of 30, Jetpack's title ~23–24 (median 24; desktop
+  ~27–28, vCPU-bound), Epic Citadel ~6–8 (runs since `d3768ae49c`; vCPU-bound). Next: Flight Control
+  (desktop 54–58; on the Poco its PLAY! button ignores `adb input` taps that UIKit alerts take: find out
+  why before measuring), Real Racing (desktop attract demo 35–45), the Asphalt 5 race. Open option:
+  report a headset plugged in (CS42L59 register 0x33 bit 7) so iOS skips speaker protection (~10% of
+  the vCPU in games); a product decision, since the guest then routes audio as to headphones.
+- [x] IPA installs (PERFORMANCE.md, "App installs"): unpacking progress from the guest's free space,
+  limits that follow it, 1 MiB AFC writes, NAND FIFO bulk moves. Asphalt 5 on the Poco 4G: timed out
+  after ~10 min → done in 240 s. Left: the 2G's unpack is guest-CPU-bound (~148 s on the desktop); the
+  4G's IOP round trip per NAND request (~1.6 ms on the Poco). Check the Pixel.
 - [x] BQL spin on by default on Android with the 150 µs budget (engine `b5708085da`): +7.6% and
   hitches 30 → 8 on the Poco, then +2.1% for 150 µs (PERFORMANCE.md).
 - [ ] BQL spin follow-ups: interleaved pairs on the Pixel (JellyCar and a 60 fps scene) and one more
@@ -218,10 +229,17 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   thread spins on an empty run loop. Guest tools serial 31 make that wait sleep (gles-public); 29.6–29.7 fps, the
   game's cap (PERFORMANCE.md). Check on the phones.
 
-- [ ] Installing a very large app over the USB bridge (Legacy Store or Install IPA) is very slow:
-  Asphalt 5 spends 5+ minutes extracting inside the guest on the phones, and the same install
-  crashed the guest on Linux. Profile the guest during the install (which guest process and
-  syscalls, engine-side NAND/FMSS writes with `LT_FMSS_PATH`, BQL) for red flags.
+- [ ] Installing a very large app over the USB bridge: profiled and sped up (the IPA installs item
+  above). The guest "crash" was likely a killed engine's NAND overlay (fixed in `b704f259fa`); not
+  reproduced on the 4G or 2G desktop runs of 2026-10-22.
+
+- [ ] Doodle Jump on the iPod touch 3G (5.1.1) plays at double speed: physics run twice as fast as they should.
+  An accuracy bug (timer, display-link or vsync rate), not a performance one.
+
+- [x] iPod touch 4G (6.1.6) on the Pixel 10: in gyro driving games (Real Racing with Gyroscope on), "down"
+  re-centred every so often. The accelerometer's z was upside down (face up read as face down), so iOS's motion
+  fusion disagreed with the gyro on every forward or back tilt. Fixed in the engine (cdd01aec99); confirm on the
+  Pixel in Real Racing.
 
 ## Android front end (dev/ui)
 
