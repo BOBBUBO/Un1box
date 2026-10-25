@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
     var renaming by remember { mutableStateOf<DeviceSummary?>(null) }
     var deleting by remember { mutableStateOf<DeviceSummary?>(null) }
+    var details by remember { mutableStateOf<DeviceSummary?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), modifier = DialogTags.testTag("devices_sheet")) {
         SheetSystemBars()
@@ -54,7 +55,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
                     DeviceRow(device, switchable = !host.active && !host.busy, editable = !(host.active && device.selected),
                         needsRecovery = device.dirty && !(host.active && device.selected),
                         onSelect = { host.selectDevice(device.id); onDismiss() },
-                        onRename = { renaming = device }, onDelete = { deleting = device })
+                        onDetails = { details = device }, onRename = { renaming = device }, onDelete = { deleting = device })
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
@@ -71,6 +72,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
             }
         }
     }
+    details?.let { device -> DeviceDetails(device) { details = null } }
     renaming?.let { device -> RenameDialog(device, { renaming = null }) { host.renameDevice(device.id, it); renaming = null } }
     deleting?.let { device ->
         AlertDialog(onDismissRequest = { deleting = null }, modifier = DialogTags, icon = { Icon(Icons.Filled.Delete, null) },
@@ -83,7 +85,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Boolean, needsRecovery: Boolean, onSelect: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Boolean, needsRecovery: Boolean, onSelect: () -> Unit, onDetails: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
         .background(if (device.selected) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow)
@@ -102,6 +104,8 @@ private fun DeviceRow(device: DeviceSummary, switchable: Boolean, editable: Bool
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Options for ${device.name}") }
             DropdownMenu(menu, { menu = false }) {
+                DropdownMenuItem(text = { Text("Details") }, leadingIcon = { Icon(LtIcons.Info, null) }, onClick = { menu = false; onDetails() },
+                    modifier = Modifier.testTag("device_details_item"))
                 DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Filled.Edit, null) }, onClick = { menu = false; onRename() })
                 DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, enabled = editable,
                     onClick = { menu = false; onDelete() })
