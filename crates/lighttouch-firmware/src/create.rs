@@ -180,6 +180,13 @@ fn unix_now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+/// The work directory goes once the device is made; LT_KEEP_WORK=1 keeps it (the volumes as built, for comparisons).
+fn remove_work(work: &Path) {
+    if std::env::var_os("LT_KEEP_WORK").is_none_or(|v| v != "1") {
+        files::remove_tree(work);
+    }
+}
+
 fn iso8601(unix: i64) -> String {
     // civil from days (Howard Hinnant), UTC
     let days = unix.div_euclid(86_400);
@@ -307,7 +314,7 @@ pub fn run(o: Options, board: &mut dyn Board, emit: Emit) -> Result<()> {
                 "guest_package": c.guest_package.as_ref().map(Record::object).unwrap_or(Value::Null),
                 "warnings": *c.warnings.lock().unwrap_or_else(|e| e.into_inner()),
             });
-            files::remove_tree(&c.work);
+            remove_work(&c.work);
             std::fs::write(c.file("fit.json"), lock::pretty(&survey))?;
             progress.finish();
             emit(Event::Done { lock: "fit.json".into() });
@@ -389,7 +396,7 @@ pub fn run(o: Options, board: &mut dyn Board, emit: Emit) -> Result<()> {
             "fit": c.fit.object(),
         });
         let lock_value = lock::merged(shared, board.lock(&c)?);
-        files::remove_tree(&c.work);
+        remove_work(&c.work);
         std::fs::write(c.file(lock::FILE_NAME), lock::pretty(&lock_value))?;
         c.log(&format!("{}: UDID {}", c.o.out.display(), c.udid.as_deref().unwrap_or("-")));
         progress.finish();

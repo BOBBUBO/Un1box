@@ -31,7 +31,7 @@ pub fn parse(bytes: &[u8]) -> Result<Value> {
 pub fn serialize(value: &Value, format: Format) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     match format {
-        Format::Xml => value.to_writer_xml(&mut out),
+        Format::Xml => sorted(value).to_writer_xml(&mut out),
         Format::Binary => value.to_writer_binary(&mut out),
     }
     .map_err(|e| crate::internal!("write a property list: {e}"))?;
@@ -39,6 +39,24 @@ pub fn serialize(value: &Value, format: Format) -> Result<Vec<u8>> {
         out.push(b'\n'); // as Foundation ends one
     }
     Ok(out)
+}
+
+/// `value` with every dictionary's keys in CFPropertyList's XML order (UTF-16 code units, as CFStringCompare with
+/// no options orders them), so an XML plist comes out byte for byte as Foundation writes it.
+fn sorted(value: &Value) -> Value {
+    match value {
+        Value::Dictionary(d) => {
+            let mut keys: Vec<&String> = d.keys().collect();
+            keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+            let mut out = Dictionary::new();
+            for k in keys {
+                out.insert(k.clone(), sorted(&d[k.as_str()]));
+            }
+            Value::Dictionary(out)
+        }
+        Value::Array(a) => Value::Array(a.iter().map(sorted).collect()),
+        v => v.clone(),
+    }
 }
 
 /// The dictionary plist at `path` (through symlinks); None when there is no file.
