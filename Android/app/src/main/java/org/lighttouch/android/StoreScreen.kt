@@ -88,7 +88,11 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     var selected by mutableStateOf<Int?>(null)
     var problem by mutableStateOf<String?>(null)
     var candidate by mutableStateOf<JSONObject?>(null)
+    /** Bundle id to version, for the "Installed" labels on store pages. [installedList] has the whole list. */
     var installed by mutableStateOf<Map<String, String>>(emptyMap())
+    val installedList = InstalledList(apps, muxSocket, { target }, { targetConfirmed }) { list ->
+        installed = list.associate { it.bundleId to (it.version ?: "unknown") }
+    }
     val browser = StoreBrowser { target }
     val resultsList = LazyListState()
     /** What the catalog says about the open app, and its newest screenshots; both arrive after the versions. */
@@ -105,7 +109,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
 
     init {
         installer.onChanged = { queue = it }
-        installer.onInstalled = { installed = it }
+        installer.onInstalled = { installedList.set(it) }
     }
 
     private fun background(name: String, work: () -> Unit) = Thread(work, name).start()
@@ -119,14 +123,14 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
      * even of the same model: two iPod touch 2Gs on different iOS versions have different apps.
      */
     fun useRecord(id: String, next: StoreTarget?) {
-        if (id != recordId) { recordId = id; installed = emptyMap(); targetConfirmed = false; target = null; results = emptyList(); chosen = null }
+        if (id != recordId) { recordId = id; installed = emptyMap(); installedList.reset(); targetConfirmed = false; target = null; results = emptyList(); chosen = null }
         if (next == target || (targetConfirmed && next?.productType == target?.productType)) return
-        target = next; targetConfirmed = false; results = emptyList(); chosen = null
+        target = next; targetConfirmed = false; results = emptyList(); chosen = null; installedList.forgetLookups()
         if (next != null) search()
     }
 
     /** Another guest (or none) is behind the usbmux socket: what the last one reported no longer holds. */
-    fun guestChanged() { installed = emptyMap(); targetConfirmed = false; installer.socket = muxSocket() }
+    fun guestChanged() { installed = emptyMap(); installedList.guestChanged(); targetConfirmed = false; installer.socket = muxSocket() }
 
     /** Ask the running guest for its exact model and iOS version, and which apps it already has. */
     fun refreshGuest() {
@@ -135,11 +139,11 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
         background("store-guest") {
             try {
                 val exact = apps.target(socket)
-                val list = apps.installed(socket)
+                val list = apps.installedApps(socket)
                 post {
                     if (muxSocket() != socket) return@post  // a different guest answered by now
-                    installed = list
-                    if (exact != target) { target = exact; targetConfirmed = true; search() } else targetConfirmed = true
+                    installedList.set(list)
+                    if (exact != target) { target = exact; targetConfirmed = true; installedList.forgetLookups(); installedList.lookUp(); search() } else { targetConfirmed = true; installedList.lookUp() }
                 }
             } catch (e: Exception) { post { if (!installing) message = "Guest app services: ${e.message}" } }
         }
@@ -181,6 +185,15 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     }
 
     fun close() { chosen = null; checkGeneration++ }
+
+    /** An installed app's page: the store's when the catalog knows the app, else what the device says about it. */
+    fun openInstalled(app: InstalledApp) {
+        val found = (installedList.lookups[app.bundleId] as? Lookup.Found)?.known
+        if (found != null) open(found.app) else installedList.plain = app
+    }
+
+    /** The app's queue entry by bundle id, for lists that don't have the store's row. */
+    fun queuedBundle(bundleId: String) = queue.firstOrNull { it.key == "app:$bundleId" }
 
     /** Revalidate one archived copy against this device (CatalogDetailsModel.check). */
     fun choose(ipaId: Int) {
@@ -244,10 +257,13 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
 }
 
 @Composable
-private fun AppIcon(url: String?, size: Int = 48) {
+internal fun AppIcon(url: String?, size: Int = 48, fallback: String? = null) {
     val bitmap by produceState<Bitmap?>(null, url) { value = url?.let { withContext(Dispatchers.IO) { LegacyStore.icon(it) } } }
     Box(Modifier.size(size.dp).clip(RoundedCornerShape((size / 4.5f).dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
         bitmap?.let { Image(it.asImageBitmap(), contentDescription = null, Modifier.fillMaxSize()) }
+        // No icon to be had (the app isn't in the store): its initial, so the row still has something to tap.
+        if (bitmap == null && url == null && !fallback.isNullOrBlank()) Text(fallback.trim().take(1).uppercase(), Modifier.align(Alignment.Center),
+            style = if (size >= 64) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -255,7 +271,8 @@ private fun AppIcon(url: String?, size: Int = 48) {
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () -> Unit, onClose: () -> Unit) {
-    BackHandler(enabled = model.chosen == null, onBack = onClose)
+    val plain = model.installedList.plain
+    BackHandler(enabled = model.chosen == null && plain == null, onBack = onClose)
     val details = model.chosen
     // Another device (or a guest reporting its exact iOS version) has other apps and other charts.
     LaunchedEffect(model.target) { model.browser.reset(); model.browser.show(model.browser.tab) }
@@ -263,7 +280,7 @@ internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () ->
     Surface(Modifier.fillMaxSize().testTag("store").semantics { testTagsAsResourceId = true }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
             StoreTopBar(model, running, onPickLocal, onBack = {
-                when { details != null -> model.close(); model.browser.canGoBack -> model.browser.back(); else -> onClose() }
+                when { details != null -> model.close(); plain != null -> model.installedList.plain = null; model.browser.canGoBack -> model.browser.back(); else -> onClose() }
             })
             Column(Modifier.padding(horizontal = 16.dp)) {
                 model.crash?.let { report ->
@@ -279,12 +296,16 @@ internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () ->
             if (details != null) {
                 BackHandler { model.close() }
                 StoreDetails(model, details, running)
+            } else if (plain != null) {
+                BackHandler { model.installedList.plain = null }
+                InstalledPlainPage(model, plain)
             } else {
                 SearchField(model)
                 BrowseTabs(model.browser)
                 BackHandler(enabled = model.browser.canGoBack) { model.browser.back() }
                 when (model.browser.tab) {
                     StoreTab.DEVICE -> DeviceTab(model)
+                    StoreTab.INSTALLED -> InstalledTab(model, running)
                     StoreTab.FEATURED -> FeaturedTab(model)
                     StoreTab.CHARTS -> ChartsTab(model)
                     StoreTab.CATEGORIES -> CategoriesTab(model)

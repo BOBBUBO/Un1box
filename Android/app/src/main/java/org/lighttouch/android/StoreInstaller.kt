@@ -37,7 +37,7 @@ internal class StoreInstaller private constructor(private val context: Context) 
     @Volatile var visible = false
     /** Posted to the main thread when the queue changes, and with the guest's app list after each install. */
     @Volatile var onChanged: (List<QueueItem>) -> Unit = {}
-    @Volatile var onInstalled: (Map<String, String>) -> Unit = {}
+    @Volatile var onInstalled: (List<InstalledApp>) -> Unit = {}
     /** Run on the main thread when the queue has emptied; null while no activity exists. */
     @Volatile var onIdle: (() -> Unit)? = null
 
@@ -155,7 +155,7 @@ internal class StoreInstaller private constructor(private val context: Context) 
                     if (e.has("percent") && !e.isNull("percent")) e.optInt("percent") / 100f else null)
             }
         }
-        runCatching { apps.installed(socket) }.getOrNull()?.let { list -> main.post { onInstalled(list) } }
+        runCatching { apps.installedApps(socket) }.getOrNull()?.let { list -> main.post { onInstalled(list) } }
     }
 
     override fun discard(file: File) { file.parentFile?.deleteRecursively() }
