@@ -39,7 +39,7 @@
 #include <dlfcn.h>
 #include <sys/file.h>
 #include <unistd.h>
-#if defined(__linux__) || defined(__ANDROID__)
+#if defined(__linux__) || defined(__ANDROID__) || defined(__APPLE__)
 #include <sys/random.h>
 #endif
 #endif

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Assemble the Rust desktop app's folder for Linux or Windows, with every component's notices for its licence page.
+"""Assemble the Rust desktop app for Linux, Windows or macOS, with every component's notices for its licence page.
 
-    package-desktop.py OUT --os linux|windows --app BIN --firmwarekit BIN --engine LIB --usbmuxd BIN
+    package-desktop.py OUT --os linux|windows|macos --app BIN --firmwarekit BIN --engine LIB --usbmuxd BIN
         --guest-tools DIR [--lib FILE_OR_DIR]... [--notices GROUP=DIR]... [--group-source GROUP=URL]... [--source-reference URL] [--zip] [--appimage TOOLS]
 
 OUT/                    lighttouch[.exe]; Linux also gets LightTouch, a launcher that puts lib/ on the library path
@@ -11,6 +11,11 @@ OUT/resources/licenses/ frontend/ and firmware/ (stage-notices.py for the app an
                         plus each --notices GROUP (engine, usb), copied with a manifest.json in the schema
                         lighttouch_model::notices reads; its source link is --group-source, else
                         --source-reference (LightTouch's)
+
+macOS (run on a Mac; OUT is LightTouch.app): the app in Contents/MacOS, the resources in Contents/Resources, and the
+non-system dylibs the engine and the USB bridge load (Homebrew's) copied into Contents/Frameworks with their install
+names rewritten; each one's licence files from its Homebrew keg join the engine group's notices. The bundle is signed
+ad hoc.
 
 The binaries are built beforehand: the app and firmwarekit with `cargo build --release` (packaged builds use
 --features lighttouch-services/vendored-openssl, so the app needs no system OpenSSL), the engine with qemu-ios's
@@ -24,7 +29,28 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 NAME = re.compile(r"[A-Za-z0-9._-]+")  # what the licence page accepts in a notice path
-TRIPLES = {"linux": "x86_64-unknown-linux-gnu", "windows": "x86_64-pc-windows-gnu"}
+TRIPLES = {"linux": "x86_64-unknown-linux-gnu", "windows": "x86_64-pc-windows-gnu", "macos": "aarch64-apple-darwin"}
+INFO_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>lighttouch</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.lighttouch.LightTouch</string>
+	<key>CFBundleName</key>
+	<string>LightTouch</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>VERSION</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
+"""
 APPRUN = """#!/bin/sh
 # The bundled libraries (libfdt, libimobiledevice) come after the system's; resources are found beside usr/bin.
 APPDIR=${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}
@@ -87,23 +113,30 @@ def main():
     a.add_argument("--zip", action="store_true")
     a.add_argument("--appimage", type=Path, metavar="TOOLS", help="appimagetool-x86_64.AppImage and runtime-x86_64")
     args = a.parse_args()
-    windows = args.os == "windows"
+    windows, macos = args.os == "windows", args.os == "macos"
     exe = ".exe" if windows else ""
 
     if args.out.exists():
         shutil.rmtree(args.out)
-    res = args.out / "resources"
-    copy(args.app, args.out / f"lighttouch{exe}", 0o755)
+    res = args.out / ("Contents/Resources" if macos else "resources")
+    copy(args.app, args.out / ("Contents/MacOS/lighttouch" if macos else f"lighttouch{exe}"), 0o755)
     copy(args.firmwarekit, res / f"firmwarekit{exe}", 0o755)
-    copy(args.engine, res / ("libqemu-arm.dll" if windows else "libqemu-arm.so"))
+    engine = {"windows": "libqemu-arm.dll", "macos": "libqemu-arm.dylib"}.get(args.os, "libqemu-arm.so")
+    copy(args.engine, res / engine)
     copy(args.usbmuxd, res / ("lighttouch-usbmuxd.exe" if windows else "usbmuxd-qemu"), 0o755)
     shutil.copytree(args.guest_tools, res / "guest-tools")
-    libs = res if windows else args.out / "lib"
+    libs = res if windows else args.out / ("Contents/Frameworks" if macos else "lib")
     for lib in args.lib:
         for f in sorted(lib.iterdir()) if lib.is_dir() else [lib]:
             if f.is_file():
                 copy(f.resolve(), libs / f.name)
-    if not windows:
+    kegs = []
+    if macos:
+        version = re.search(r'^version = "(.+)"', (REPO / "Cargo.toml").read_text(), re.M).group(1)
+        (args.out / "Contents/Info.plist").write_text(INFO_PLIST.replace("VERSION", version))
+        given = sorted(libs.iterdir()) if libs.is_dir() else []
+        kegs = bundle_dylibs([res / engine, res / "usbmuxd-qemu", *given], libs)
+    elif not windows:
         (args.out / "LightTouch").write_text(LAUNCHER)
         (args.out / "LightTouch").chmod(0o755)
 
@@ -115,11 +148,29 @@ def main():
                    "--target", TRIPLES[args.os], "--source-reference", args.source_reference]
         subprocess.run(command + (["--features", features] if features else []), check=True)
     sources = dict(spec.split("=", 1) for spec in args.group_source)
+    groups = {}
     for spec in args.notices:
         group, _, folder = spec.partition("=")
         if not NAME.fullmatch(group) or not folder:
             raise SystemExit(f"package-desktop: --notices wants GROUP=DIR, not {spec}")
-        notices(licenses / group, Path(folder), sources.get(group, args.source_reference))
+        groups[group] = Path(folder)
+    if kegs:
+        # The bundled Homebrew libraries' own licence files, gathered beside any engine notices given.
+        merged = args.out.parent / (args.out.name + ".engine-notices")
+        if merged.exists():
+            shutil.rmtree(merged)
+        if "engine" in groups:
+            shutil.copytree(groups["engine"], merged)
+        for keg in kegs:
+            for f in sorted(keg.iterdir()):
+                if f.is_file() and re.match(r"(LICEN[SC]E|COPYING|NOTICE|COPYRIGHT)", f.name, re.I):
+                    copy(f, merged / keg.parent.name / f.name)
+        groups["engine"] = merged
+    for group, folder in groups.items():
+        notices(licenses / group, folder, sources.get(group, args.source_reference))
+    if kegs:
+        shutil.rmtree(args.out.parent / (args.out.name + ".engine-notices"))
+        subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(args.out)], check=True)
 
     if args.zip:
         archive = args.out.parent / (args.out.name + ".zip")
@@ -135,6 +186,37 @@ def main():
             raise SystemExit("package-desktop: --appimage is for Linux")
         print(appimage(args.out, args.appimage))
     print(args.out)
+
+
+def bundle_dylibs(binaries, frameworks):
+    """Copy the non-system dylibs `binaries` load (recursively) into `frameworks`, point every load command at the
+    copies, and return the Homebrew kegs they came from (for their licences)."""
+    def deps(path):
+        lines = subprocess.check_output(["otool", "-L", str(path)], text=True).splitlines()
+        # Universal binaries list each architecture under its own "FILE (architecture X):" header.
+        names = {line.strip().split(" (")[0] for line in lines if line.startswith("\t")}
+        return [n for n in names if not n.startswith(("/usr/lib/", "/System/", "@"))]
+
+    kegs, todo, done = set(), list(binaries), set()
+    while todo:
+        path = todo.pop()
+        for dep in deps(path):
+            real = Path(dep).resolve()
+            local = frameworks / Path(dep).name
+            if not local.exists():
+                copy(real, local, 0o644)
+                subprocess.run(["install_name_tool", "-id", "@rpath/" + local.name, str(local)], check=True,
+                               stderr=subprocess.DEVNULL)
+                todo.append(local)
+                parts = real.parts
+                if "Cellar" in parts:
+                    i = parts.index("Cellar")
+                    kegs.add(Path(*parts[: i + 3]))
+            prefix = "@loader_path/" if path.parent == frameworks else "@loader_path/../Frameworks/"
+            subprocess.run(["install_name_tool", "-change", dep, prefix + local.name, str(path)], check=True,
+                           stderr=subprocess.DEVNULL)
+        done.add(path)
+    return sorted(kegs)
 
 
 def appimage(out, tools):

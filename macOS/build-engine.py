@@ -4,7 +4,9 @@
 This recipe uses native Homebrew dependencies; build-shared.py later copies
 and relocates their dylib closure into the development app. No guest is run.
 Use a memory/time supervisor on shared hosts. Requires ninja, meson, jq,
-pkg-config, glib, pixman, libslirp, OpenSSL3 and the macOS Command Line Tools.
+pkg-config, glib, pixman, libslirp, nettle, OpenSSL3 and the macOS Command Line Tools.
+QEMU has no built-in AES any more: without nettle the guest's AES engine (the
+4.x+ data-protection keybag boot) fails with "no crypto library enabled".
 """
 import argparse
 import hashlib
@@ -44,7 +46,7 @@ def main():
     commands = [
         [str(source / "configure"), "--target-list=arm-softmmu", "--without-default-features",
          "--without-default-devices", "--with-devices-arm=portable", "--enable-tcg",
-         "--enable-pixman", "--enable-slirp", "--disable-gnutls", "--disable-docs", "--disable-tools",
+         "--enable-pixman", "--enable-slirp", "--disable-gnutls", "--enable-nettle", "--disable-docs", "--disable-tools",
          "--disable-werror", "--disable-pie", "--python=" + str(args.python.resolve()), "--audio-drv-list=",
          "--extra-cflags=-I" + str(prefix / "include"),
          "--extra-ldflags=-L" + str(prefix / "lib") + " -lcrypto"],
