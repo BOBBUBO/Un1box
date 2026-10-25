@@ -1474,6 +1474,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1520,8 +1521,10 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "lighttouch-catalog",
+ "lighttouch-core",
  "openssl",
  "plist",
+ "serde_json",
 ]
 
 [[package]]

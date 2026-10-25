@@ -194,6 +194,22 @@ inline int fsync(int fd) {
     BY_HANDLE_FILE_INFORMATION info{};
     if (GetFileInformationByHandle(handle(fd), &info) && (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
         return 0;
+    // Flushing needs write access; POSIX code flushes through read-only descriptors too: flush the same file
+    // through a writable handle.
+    if (GetLastError() == ERROR_ACCESS_DENIED) {
+        wchar_t path[32768];
+        DWORD n = GetFinalPathNameByHandleW(handle(fd), path, DWORD(sizeof path / sizeof *path), FILE_NAME_NORMALIZED);
+        if (n > 0 && n < sizeof path / sizeof *path) {
+            HANDLE w = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (w != INVALID_HANDLE_VALUE) {
+                bool flushed = FlushFileBuffers(w);
+                CloseHandle(w);
+                if (flushed)
+                    return 0;
+            }
+        }
+    }
     set_errno_from_win32();
     return -1;
 }
@@ -219,7 +235,9 @@ struct Stat {
 inline void fill(Stat *st, const BY_HANDLE_FILE_INFORMATION &info) {
     *st = Stat{};
     // Owner-only modes, so the core's privacy checks hold: Windows profiles are per-user already.
-    st->st_mode = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? (_S_IFDIR | 0700) : (_S_IFREG | 0600);
+    const bool directory = info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY;
+    const bool read_only = info.dwFileAttributes & FILE_ATTRIBUTE_READONLY;
+    st->st_mode = directory ? (_S_IFDIR | (read_only ? 0500 : 0700)) : (_S_IFREG | (read_only ? 0400 : 0600));
     st->st_size = int64_t((uint64_t(info.nFileSizeHigh) << 32) | info.nFileSizeLow);
     st->st_nlink = info.nNumberOfLinks;
     st->st_dev = info.dwVolumeSerialNumber;
@@ -268,10 +286,29 @@ inline int lstat(const wchar_t *path, Stat *st) { return stat(path, st); }
 inline int lstat(const char *path, Stat *st) { return stat(path, st); }
 inline uint32_t euid() { return 0; }
 
-// Windows has no owner-only modes to set; a read-only attribute would only stop the app deleting its own files.
-inline int chmod(const char *, int) { return 0; }
-inline int chmod(const wchar_t *, int) { return 0; }
+// Windows has no owner-only modes: a mode without write bits is the read-only attribute (the core makes files
+// writable again before it deletes them), anything else clears it.
+inline int chmod(const wchar_t *path, int mode) {
+    DWORD attributes = GetFileAttributesW(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        set_errno_from_win32();
+        return -1;
+    }
+    DWORD wanted = (mode & 0222) ? (attributes & ~DWORD(FILE_ATTRIBUTE_READONLY)) : (attributes | FILE_ATTRIBUTE_READONLY);
+    if (wanted == attributes || SetFileAttributesW(path, wanted))
+        return 0;
+    set_errno_from_win32();
+    return -1;
+}
+inline int chmod(const char *path, int mode) { return chmod(wide(path).c_str(), mode); }
 inline int fchmod(int, int) { return 0; }
+/// Whether nothing may write `path` (a base's files): the read-only attribute. Windows ignores it on directories,
+/// which hold no data of their own, so a directory counts as read-only.
+inline bool read_only(const wchar_t *path) {
+    DWORD attributes = GetFileAttributesW(path);
+    return attributes != INVALID_FILE_ATTRIBUTES &&
+           (attributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_DIRECTORY));
+}
 
 /// An exclusive advisory lock, failing at once when another process holds it.
 inline int lock_exclusive(int fd) {
@@ -411,6 +448,11 @@ inline uint32_t euid() { return uint32_t(::geteuid()); }
 inline int chmod(const char *path, int mode) { return ::chmod(path, mode_t(mode)); }
 inline int fchmod(int fd, int mode) { return ::fchmod(fd, mode_t(mode)); }
 inline int lock_exclusive(int fd) { return ::flock(fd, LOCK_EX | LOCK_NB); }
+/// Whether nothing may write `path`: no write bit for anyone.
+inline bool read_only(const char *path) {
+    struct ::stat st {};
+    return ::stat(path, &st) == 0 && !(st.st_mode & 0222);
+}
 inline int rename(const char *from, const char *to) { return ::rename(from, to); }
 inline bool exists(const char *path) { return ::access(path, F_OK) == 0; }
 inline int pid() { return int(::getpid()); }

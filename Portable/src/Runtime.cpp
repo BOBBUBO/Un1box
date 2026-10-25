@@ -568,6 +568,11 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         for (int i = 0; i < argc; i++)
             runtime->argv.push_back(const_cast<char *>(argv[i]));
         runtime->argv.push_back(nullptr);
+        if (const char *log = getenv("LT_LOG_ARGV"); log && *log) {
+            // The engine's command line, one argument a line, for reproducing a boot outside the app.
+            for (int i = 0; i < argc; i++)
+                fprintf(stderr, "argv[%d] %s\n", i, argv[i]);
+        }
         runtime->audio_enabled = boot.audio_enabled;
         if (const char *log = getenv("LT_FRAME_LOG"); log && *log)
             runtime->frame_log = fopen(log, "a");

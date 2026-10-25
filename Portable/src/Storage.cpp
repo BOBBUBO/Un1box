@@ -848,20 +848,12 @@ std::unique_ptr<lt_device> open_device_checked(const lt_device_config *c, lt_pro
     lt::DigestCache cache = pinned ? lt::read_digest_cache(digest_cache_path) : lt::DigestCache{};
     const auto cached = cache;
     lt::validate_base(d->base, &events, extra_checks, &cache);
-    auto immutable = [](lt::fs::perms mode) {
-        return (mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
-               lt::fs::perms::none;
-    };
-    lt::require(immutable(lt::fs::status(d->base).permissions()),
-                "base root is writable: import into immutable storage first");
+    lt::require(lt::os::read_only(d->base.c_str()), "base root is writable: import into immutable storage first");
     events.checkpoint();
     for (const auto &entry : lt::fs::recursive_directory_iterator(d->base)) {
         events.checkpoint();
         lt::require(!entry.is_symlink(), "base symlink refused");
-        auto mode = entry.status().permissions();
-        lt::require((mode & (lt::fs::perms::owner_write | lt::fs::perms::group_write | lt::fs::perms::others_write)) ==
-                        lt::fs::perms::none,
-                    "base is writable: import it into immutable storage first");
+        lt::require(lt::os::read_only(entry.path().c_str()), "base is writable: import it into immutable storage first");
     }
     events.checkpoint();
     d->lock = lt::parse(lt::read_file(d->base / "device.lock.json"));
