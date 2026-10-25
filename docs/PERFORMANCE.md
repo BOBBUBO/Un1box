@@ -185,6 +185,8 @@ the guest (AP ~90%, jump-cache misses ~10%). A remaining 4G cost is the IOP roun
 
 | Change | Commit | Effect |
 | --- | --- | --- |
+| The display's vsync latch waits for the GL thread's presents without the BQL (`LT_LATCH_WAIT_UNLOCKED=off` for A/B) | `d20877104e` | The latch waited for every issued present to reach guest memory before planning its layers, with the BQL held, so the vCPU waited as long as the GL thread took to get through the game's queued calls: in Epic Citadel's guided tour on the Poco, `vbl_tick` held the lock for 2 ms or more on ~5% of vsyncs, up to 20 ms. Measured with the next row. |
+| AMC (hardware audio decoder): libavcodec decodes without the BQL (`LT_AMC_DECODE_UNLOCKED=off` for A/B) | `7ba03a85fd` | A game's music decoded up to 64 KiB of PCM at a time on the main loop with the BQL held, up to 6.5 ms. **With the row above, Poco, Epic Citadel guided tour, last 120 s of an engine profile, both off → both on: vCPU BQL waits of 0.5 ms or more 2.01 → 0.78 s (1474 → 794; 4 ms or more 28 → 7), frames of 50 ms or more 820 → 679, 27.9 → 29.4 fps, p99 frame 67.5 → 67.1 ms** (a hot phone, ~1.9 GHz). Plain fcbench pairs with the latch change alone (phone at 47 °C): 30.2/30.8 vs 30.0/30.0 fps, 1% low 15 either way, hitch time 11.9/11.2 vs 12.4/12.4 s per minute. |
 | PL192: an input call that leaves a line's level unchanged does nothing (`LT_PL192_SAME_LEVEL=off` for A/B) | `56505fbfdb` | The iPod touch 4G's CDMA re-asserts its unchanged interrupt level on every register write, thousands per storage request on the IOP; each ran a full priority sort and lowered the CPU's FIQ, ~20% of the IOP thread during reads. Desktop, 4G 6.1.6, LT Bench, three interleaved pairs (best, on vs off): `fs-read` 14.4/15.5/13.1 vs 19.0/15.9/15.6 µs/KiB (~15%), `fs-read-16k` 661/837/601 vs 902/777/754 µs (~14%), IOP time per request 122/173/123 vs 183/151/150 µs. |
 | iPod touch 2G flash: a transmit's busy bit clears at once (`LT_FMSS_TX_DONE=off` for A/B) | `3b4f4a67c3` | The stock write program polls FMC 0x40 bit 0 after loading each page's spare bytes; the model never cleared it, so every write program ran to the 100 000-step limit (~4 ms on the vCPU, ~250 times a second while iOS writes). Desktop, 2G 3.1.3, LT Bench: `fs-write` 381 → 148–198 µs/KiB, storage pass 19.1 → 12.1 s, data intact after a reboot. Not yet measured on a phone. |
 | `glDrawElements` fetches only the vertices between its smallest and largest index, with the indices rebased (`LT_GLES_INDEX_RANGE=off` for A/B) | `f4eeeab129` | The fetch ran from vertex 0 to the largest index, a bug from the first GLES bring-up. Asphalt 5 keeps a whole track in one array and makes ~125 draws a frame that reach ~70 of its ~15 000 vertices: ~173 MB of vertex data a frame was copied (a third of it widened from `GL_FIXED`) where ~1 MB was needed, and the Adreno driver allocated and filled GPU memory for all of it per draw (`kgsl` ioctl, mmap/munmap). **Poco, Asphalt 5 Aspen race (`fcbench.py APK 30 asphalt5`): 8.2–8.6 → 24.8 fps; GL 54–66 → 5.4 ms a frame.** |
@@ -463,6 +465,25 @@ The IOP's remaining cost is spread over MMIO dispatch and the BQL; the AP's is i
 with its whole-cache clean-by-set/way loops (~8.7K cache ops a call, no-ops under TCG) the largest piece at
 ~5%. Further gains need faster translated code in general, not storage changes. Tried and dropped: serving
 the IOP's cache-control registers without the BQL (no change).
+
+### Frame pacing on the iPod touch 4G (2026-10-25)
+
+Epic Citadel's guided tour (`fcbench.py APK 60 n81-ec-tour`) on the Poco: ~44 fps cool, 1% low ~20; ~30 / 15
+when the phone is hot. What was checked:
+
+- **The 1% low is real.** The game's own present intervals (frame path, its GL context) give the same 1% low
+  as the frames LightTouch publishes, so reading the display does not invent it. Published intervals are
+  multiples of the 60 Hz vsync, as on the device: the game presents at 16–36 ms and backboardd composites on
+  the vsync.
+- **Slow frames are more guest work, not waiting.** The vCPU is ~97% busy in fast and slow frames alike. A
+  guest timeline (TEMP tracer) of the slowest 1%: the game itself +8 ms over a median frame, plus bursts
+  from iOS's own threads (interrupt work loops, mediaserverd about every 0.83 s, backboardd, locationd).
+  The I2C traffic behind one of them is real sensor polling (the gyro at 200 Hz, two transfers a sample,
+  the accelerometer at 60 Hz: ~490 transfers and interrupts a second, ~5% of the guest).
+- **The CPU and the GPU already run on their own threads** (GL thread `57fb8a115f`, queued present
+  `429e0a3551`). What still stopped the guest was main-loop work holding the BQL: the two rows above
+  removed ~60% of the vCPU's lock waits. What is left (~0.65% of the time) is spread over device timers.
+- The tour reads only tens of flash pages per 5 s once running; storage is not what slows it.
 
 ### Guest benchmarks
 
