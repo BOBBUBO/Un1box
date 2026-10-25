@@ -90,11 +90,13 @@ class FirmwareService : Service() {
             // The bootstrap comes from the activity (CydiaBootstrap): firmwarekit checks it again and would download
             // it only on a host with a network, so a phone names the file it lacks instead.
             if (jailbreak) {
+                stage = "Checking Cydia bootstrap"
                 val bootstrap = CydiaBootstrap.directory(this)
                 val missing = CydiaBootstrap.files.keys.firstOrNull { !File(bootstrap, it).isFile }
                 check(missing == null) { "Cydia's bootstrap is missing ($missing); turn Cydia off and prepare again" }
             }
             val catalog = File(filesDir, "firmware-catalog.json")
+            stage = "Loading firmware catalog"
             assets.open("firmware-catalog.json").use { input -> catalog.outputStream().use { input.copyTo(it) } }
             run(libs, listOf("create", "--catalog", catalog.path, "--id", firmwareId, "--ipsw", ipsw, "--out", out.path,
                 "--helper", File(libs, "liblighttouch_oneshot.so").path, "--guest-tools", tools.path, "--cache", cache.path,
@@ -196,6 +198,7 @@ class FirmwareService : Service() {
             put("SWIFT_BACKTRACE", "enable=yes,threads=all")
         }
         check(!cancelling) { "Cancelled" }
+        stage = "Launching firmwarekit"
         val child = builder.start().also { process = it }
         var weights = listOf<Long>(); var step = 0
         var message = ""

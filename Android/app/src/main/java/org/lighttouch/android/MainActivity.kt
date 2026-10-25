@@ -63,7 +63,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         private set
     override var profileNotice by mutableStateOf("")
         private set
-        private set
     /** True while the engine copies a presented frame on a worker (its default). */
     override var presentAsync by mutableStateOf(true)
     override var faithfulScaler by mutableStateOf(true)
@@ -73,7 +72,33 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
     private val store by lazy { StoreModel(applicationContext) { muxSocket.ifEmpty { null } } }
-    private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) store.installLocal(uri) }
+    private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null && !CydiaTransfers.active) store.installLocal(uri) }
+    private val localDeb = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val worker = engine
+            when {
+                worker == null -> error = "Start iOS before uploading a .deb."
+                storeInstalling || busy || CydiaTransfers.active -> error = "Wait for the current operation to finish, then choose your .deb again."
+                else -> {
+                    try {
+                        // Polling clears the UI's socket while the picker backgrounds iOS. Resume from the
+                        // worker's current state, then obtain its socket before starting the explicit import.
+                        var state = worker.status()
+                        if (state.getString("state") == "paused") {
+                            setPaused(false)
+                            state = worker.status()
+                        }
+                        val socket = state.getString("usbMuxSocket").orEmpty()
+                        if (state.getString("state") != "running" || socket.isEmpty()) {
+                            error = "Start iOS before uploading a .deb."
+                        } else {
+                            CydiaTransfers.import(applicationContext, socket, uri)
+                        }
+                    } catch (_: RemoteException) { error = "Guest worker unavailable" }
+                }
+            }
+        }
+    }
     // board-build -> (product type, iOS version), from the bundled firmware catalog.
     @Volatile private var firmwareTargets: Map<String, StoreTarget> = emptyMap()
     private var catalogVersion by mutableIntStateOf(0)
@@ -86,12 +111,12 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override val settings by lazy { AppSettings(this) }
     private val monitor = PerformanceMonitor { engine }
     override val perf: PerfSnapshot get() = monitor.snapshot
-    override val storeInstalling get() = store.installing
+    override val storeInstalling get() = store.installing || CydiaTransfers.active
     // Save & Stop needs the engine to serialize live GL state on EGL hosts (docs/TODO.md).
     override val canSaveState = false
     /** HOME or FULLSCREEN: what is under any full-page overlay. */
     private var base by mutableStateOf(Screen.HOME)
-    /** LOADING, SETUP, SETTINGS, STORE or HITCH drawn over [base]; null shows the guest. */
+    /** A full-page overlay drawn over [base]; null shows the guest. */
     private var overlay by mutableStateOf<Screen?>(Screen.LOADING)
     private val setup = SetupState()
     private var hitchData by mutableStateOf<HitchData?>(null)
@@ -407,7 +432,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
             // A full page hides the guest surface: the presenter stops drawing into it and drops its 60 Hz request.
-            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE)
+            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.CYDIA)
             LaunchedEffect(guestCovered, engine) {
                 val worker = engine ?: return@LaunchedEffect
                 Thread({ try { worker.setPresentVisible(!guestCovered) } catch (_: RemoteException) { } }, "present-visibility").start()
@@ -455,7 +480,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             onCreate = ::createDevice, onPrepare = { openPreparation() },
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
-                        Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
+                        Screen.CYDIA -> CydiaScreen(selected, muxSocket.takeIf { status == "running" && it.isNotEmpty() },
+                            blocked = busy || store.installing,
+                            onPickLocal = { localDeb.launch(arrayOf("application/vnd.debian.binary-package", "application/octet-stream", "*/*")) }) { overlay = null }
+                        Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty() && !CydiaTransfers.active,
                             onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { overlay = null }
                         Screen.HITCH -> HitchInspector(hitchData, hitchError, onResume = ::closeHitch, onSave = ::saveHitch, saving = hitchSaving,
                             savedNotice = hitchNotice, onShare = hitchReport?.let { uri -> { shareReport(uri) } })
@@ -528,6 +556,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed) } catch (_: RemoteException) { } }, "apply-settings").start()
     }
     override fun selectDevice(id: String) {
+        if (CydiaTransfers.active) return
         busy = true
         val worker = engine
         Thread({
@@ -543,6 +572,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }, "device-rename").start()
     }
     override fun deleteDevice(id: String) {
+        if (CydiaTransfers.active) return
         val worker = engine ?: return
         busy = true
         Thread({
@@ -866,7 +896,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         // 1.x has no jailbreak (FirmwareKit refuses it); the prepare screen does not offer it there either.
         val jailbreak = prep.jailbreak && CydiaBootstrap.offers(chosen.version)
         prep.importError = ""
-        prep.preparation = Bundle().apply { putString("state", "starting"); putString("firmwareId", chosen.id) }
+        prep.preparation = Bundle().apply {
+            putString("state", "starting"); putString("firmwareId", chosen.id)
+            putString("stage", "Unpacking preparation tools")
+        }
         startForegroundService(Intent(this, FirmwareService::class.java))
         Thread({
             try {
@@ -902,8 +935,11 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun pollPreparation(state: Bundle) {
         if (firmwareRestarting) return
         val phase = state.getString("state")
-        if (phase == "idle" && retainedPreparedOutput.isNotEmpty()) return
-        if (phase == "idle" && prep.preparation?.getString("state") != "starting") { prep.preparation = null; return }
+        if (phase == "idle") {
+            // Guest tools are copied before worker.start(). Polling its idle state must not erase that pending start.
+            if (retainedPreparedOutput.isNotEmpty() || prep.preparation?.getString("state") == "starting") return
+            prep.preparation = null; return
+        }
         // The user went back from a finished run; the worker keeps reporting it until it is replaced.
         if (phase in listOf("failed", "cancelled") && prep.preparation == null) return
         // Shown here, so not again at the next launch.
@@ -1134,6 +1170,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }, "guest-start").start()
     }
     private fun stopGuest() {
+        if (CydiaTransfers.active) { notice = "Wait for the .deb transfer to finish before stopping iOS."; return }
         val worker = engine ?: return
         engineExpectedExit = true; status = "stopping"; stopSensors()
         Thread({

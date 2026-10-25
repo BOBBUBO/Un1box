@@ -36,12 +36,12 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
     var confirmJailbreak by remember { mutableStateOf<DeviceSummary?>(null) }
     confirmJailbreak?.let { device ->
         AlertDialog(onDismissRequest = { confirmJailbreak = null }, icon = { Icon(LtIcons.Puzzle, null) },
-            title = { Text("Jailbreak ${device.name}?", style = MaterialTheme.typography.titleMedium) },
+            title = { Text("Install or update Cydia on ${device.name}?", style = MaterialTheme.typography.titleMedium) },
             text = { Text("Adds Cydia, apt and dpkg, Substrate (the tweak loader, iOS 3 to 6) and afc2, which serves " +
-                "the whole file system over USB. The device's apps, settings and data stay. It runs while the device " +
+                "the whole file system over USB, plus automatic .deb installation. An existing Cydia installation is updated. The device's apps, settings and data stay. It runs while the device " +
                 "is stopped, and can't be undone: Erase returns to it too.") },
             confirmButton = { Button(onClick = { confirmJailbreak = null; host.jailbreakSelected() },
-                modifier = Modifier.testTag("confirm_jailbreak")) { Text("Jailbreak") } },
+                modifier = Modifier.testTag("confirm_jailbreak")) { Text("Install / Update") } },
             dismissButton = { TextButton(onClick = { confirmJailbreak = null }) { Text("Cancel") } })
     }
     if (headphonesInfo) AlertDialog(onDismissRequest = { headphonesInfo = false }, icon = { Icon(LtIcons.Headphones, null) },
@@ -107,9 +107,9 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     val device = host.selected
                     // 1.x cannot be jailbroken (firmwarekit refuses it), and a running device's volume is in use.
                     if (device != null && device.target?.ios?.let { CydiaBootstrap.offers(it) } == true) ActionRow(LtIcons.Puzzle,
-                        if (host.jailbreaking) "Jailbreaking…" else "Jailbreak with Cydia",
+                        if (host.jailbreaking) "Installing Cydia…" else "Install or update Cydia",
                         if (host.jailbreaking) host.jailbreakStage.ifEmpty { "Editing the system volume" }
-                        else "Adds Cydia, apt and dpkg, Substrate (iOS 3 to 6) and afc2 to ${device.name}. Its apps and data stay.",
+                        else "Cydia and automatic .deb installation for ${device.name}. Its apps and data stay.",
                         enabled = !host.jailbreaking && !host.active && !host.busy, tag = "jailbreak_device") { confirmJailbreak = device }
                     ActionRow(LtIcons.Puzzle, "Update guest tools", host.selected?.let { "Install a newer .itpack into ${it.name}; it applies at the next start" } ?: "Select a device first",
                         enabled = host.selected != null && !host.active && !host.busy) { host.pickGuestTools() }
