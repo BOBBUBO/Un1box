@@ -10,7 +10,8 @@
 #   windows   engine + FFmpeg cross-built with MinGW, then the worker, runtime and zip
 #   linux     engine, frontend and tests in the Debian 11 image (Docker), then the AppImage
 #   macos     engine and app on the Mac ($LT_MAC) over ssh, from the pushed commits
-#   finish    source archives, guest tools, SHA256SUMS, RELEASE-MANIFEST.json, NOTES.md checksums
+#   finish    source archives, guest tools, SHA256SUMS, RELEASE-MANIFEST.json (status from
+#             LT_PRERELEASE), NOTES.md checksums
 #   publish   push both tags and create the GitHub release from out/NOTES.md (a pre-release unless
 #             LT_PRERELEASE=false)
 #
@@ -44,10 +45,10 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_MAC_PYTHON_RUNTIME:=\$HOME/Documents/LightTouch-Python-ActualInterpreter12/runtime}"
 : "${LT_PRERELEASE:=true}"
 : "${ANDROID_HOME:=$HOME/Android/Sdk}"
-export QEMU_IOS LT_INPUTS ANDROID_HOME
+export QEMU_IOS LT_INPUTS ANDROID_HOME LT_PRERELEASE
 
-[ $# -ge 1 ] || { sed -n 2,21p "$0"; exit 2; }
-case "$1" in -h|--help) sed -n 2,21p "$0"; exit 0 ;; esac
+[ $# -ge 1 ] || { sed -n 2,22p "$0"; exit 2; }
+case "$1" in -h|--help) sed -n 2,22p "$0"; exit 0 ;; esac
 VER=${1#v}; V=v$VER; shift
 R=$LT_RELEASE_ROOT/release-$VER
 OUTD=$R/out
