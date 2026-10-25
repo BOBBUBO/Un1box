@@ -15,6 +15,13 @@ The screen uses the app's existing Compose settings components. Dates are strict
 Gregorian calendar days, from 1996 through today, serialized as `yyyyMMdd` without
 timezone conversion. An atomic `files/network.json` document synchronizes the UI
 and isolated engine processes. Missing or invalid preferences disable networking.
+Current session presents labeled informational lines for the applied connection,
+archive date, guest setup and web activity. **Ready** means the certificate and
+proxy settings were installed; it does not prove a website loaded. Activity counts
+connections as soon as they reach the proxy, before headers or TLS complete, and
+separately reports connections in progress, finished connections, errors and the
+last result. Finished includes errors; totals cover this running session. Guest
+setup failures and the last failed result are explicitly labeled and colored.
 
 ## Shared backend
 
@@ -95,6 +102,8 @@ ctest --test-dir build/obj/network-tests --output-on-failure
 The network fixture exercises actual socket I/O, TLS 1.0 with certificate and
 hostname verification, off-mode identity isolation, LAN policy, chunk decoding,
 multiple response cookies, credential stripping and archive method isolation.
+Activity coverage includes ingress with no HTTP bytes, concurrent connections,
+one connection finishing while another waits, errors and successful responses.
 Typed helper uploads also have bounds/path-injection contract tests. Android unit
 tests cover default-off policy and invalid calendar dates.
 Regression cases also cover admission contention between uploads, lost mutation

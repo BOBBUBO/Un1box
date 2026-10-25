@@ -16,6 +16,7 @@
 #include <thread>
 #include <cerrno>
 #include <sys/stat.h>
+#include <chrono>
 using namespace lt::network;
 #ifdef LT_TEST_NO_HARD_LINKS
 extern "C" int __wrap_link(const char *, const char *) { errno=EPERM;return -1; }
@@ -81,6 +82,32 @@ int main(int argc,char **argv) {
     }
     Configuration config;config.mode=Mode::direct;std::string fingerprint;
     {
+        Proxy proxy(directory+"/activity",config);
+        assert(proxy.activity().connections==0);
+        assert(proxy.status()=="No web connections received yet");
+        // Ingress must become visible before any HTTP bytes arrive. Keep a
+        // second connection open while the first finishes to check concurrency.
+        int first[2],second[2];
+        assert(!socketpair(AF_UNIX,SOCK_STREAM,0,first));assert(!socketpair(AF_UNIX,SOCK_STREAM,0,second));
+        std::thread a([&]{proxy.serve(first[1]);close(first[1]);});
+        std::thread b([&]{proxy.serve(second[1]);close(second[1]);});
+        auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+        while(proxy.activity().active!=2 && std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
+        auto initial=proxy.activity();
+        assert(initial.connections==2 && initial.active==2 && initial.completed==0 && initial.failed==0);
+        assert(initial.summary()=="2 web connections in progress");
+        const std::string invalid="GET http://127.0.0.1/ HTTP/1.1\r\n\r\n";
+        assert(send(first[0],invalid.data(),invalid.size(),0)==ssize_t(invalid.size()));a.join();close(first[0]);
+        auto partial=proxy.activity();
+        assert(partial.active==1 && partial.completed==1 && partial.failed==1);
+        assert(partial.last_result_error && !partial.last_result.empty());
+        assert(partial.summary()=="1 web connection in progress");
+        shutdown(second[0],SHUT_WR);b.join();close(second[0]);
+        auto done=proxy.activity();
+        assert(done.connections==2 && done.active==0 && done.completed==2 && done.failed==2);
+        assert(done.summary()=="Idle — no web connections in progress");
+    }
+    {
         // A killed first launch can leave an incomplete staging file. The next
         // launch must recover, then keep the same identity across later boots.
         auto recovery=directory+"/recovery";
@@ -130,6 +157,9 @@ int main(int argc,char **argv) {
         assert(observed.find("secret")==std::string::npos && observed.find("hidden")==std::string::npos);
         assert((r.find("Set-Cookie: first=1; Path=/\r\n")!=std::string::npos)==!drop_cookie);
         assert((r.find("Set-Cookie: second=2; Path=/\r\n")!=std::string::npos)==!drop_cookie);
+        auto activity=direct.activity();
+        assert(activity.completed==unsigned(drop_cookie?2:1) && activity.failed==0 && activity.active==0);
+        assert(activity.last_result=="HTTP 200" && !activity.last_result_error);
         }
         close(listener);
         // Host loopback remains refused even after LAN opt-in.
