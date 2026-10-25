@@ -402,6 +402,53 @@ jobs:
           # Retry once from an empty tree.
           deps || { rm -rf ci/deps ci/crypto; deps; }
 
+      # The guest's only network backend is slirp, and the engine's
+      # --without-default-features resolves that option's "auto" to disabled: -netdev user
+      # did not exist, the Wi-Fi card's default netdev was never added ("Wi-Fi has no
+      # network"), no lease came, and every app reported no connection. libslirp is built
+      # for Android here, with the engine's own set-restricted/dns-forward patch, into the
+      # prefix dependency('slirp') reads.
+      - name: Build libslirp for Android
+        run: |
+          [ -f ci/deps/prefix/lib/libslirp.a ] && exit 0
+          if [ ! -d ci/slirp-src/.git ]; then
+            git clone --quiet https://gitlab.freedesktop.org/slirp/libslirp.git ci/slirp-src
+            git -C ci/slirp-src checkout --quiet d09dc9a70360ee7838acccbd234ab83f3b9b37a5
+          fi
+          git -C ci/slirp-src apply "$GITHUB_WORKSPACE/qemu-ios/subprojects/packagefiles/libslirp-set-restricted.patch"
+          BIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            echo '[binaries]'
+            echo "c = '$BIN/aarch64-linux-android29-clang'"
+            echo "ar = '$BIN/llvm-ar'"
+            echo "strip = '$BIN/llvm-strip'"
+            echo "pkgconfig = 'pkg-config'"
+            echo '[host_machine]'
+            echo "system = 'android'"
+            echo "cpu_family = 'aarch64'"
+            echo "cpu = 'aarch64'"
+            echo "endian = 'little'"
+            echo '[properties]'
+            echo 'needs_exe_wrapper = true'
+          } > ci/libslirp-cross.txt
+          PKG_CONFIG_LIBDIR="$PWD/ci/deps/prefix/lib/pkgconfig" \
+            "$MESON" setup ci/libslirp-build ci/slirp-src \
+            --cross-file ci/libslirp-cross.txt --buildtype=release \
+            --default-library=static --prefix "$PWD/ci/deps/prefix"
+          ninja -C ci/libslirp-build install
+          ls -l ci/deps/prefix/lib/libslirp.a
+
+      # build-engine.py refuses a dirty source tree ("Commit source changes before a
+      # reproducible engine build"), so the patch is committed here; fixed dates keep that
+      # commit, and with it the recorded revision and the engine cache key, stable.
+      - name: Patch the engine for Android networking
+        run: |
+          git -C qemu-ios apply "$GITHUB_WORKSPACE"/ci/engine-patches/*.patch
+          GIT_AUTHOR_DATE=2001-01-01T00:00:00Z GIT_COMMITTER_DATE=2001-01-01T00:00:00Z \
+            git -C qemu-ios -c user.name=ci -c user.email=ci@localhost \
+            commit -qam "ci: Android slirp (DNS through getaddrinfo)"
+          git -C qemu-ios log --oneline -1
+
       - name: Build the engine
         run: |
           engine() {
