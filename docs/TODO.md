@@ -76,6 +76,20 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   vCPU. Take `present_stage`'s Scale time on the 4G (`F post-complete-ns` profile lines) before and
   after, and the game frame rate in the same pairs; the arithmetic says ~0.5 ms a frame, which is
   small unless the frame budget is tight.
+- [ ] A presented frame's pages resolved once (patch `ci/engine-patches/0006-engine-gles-frame-pages.patch`):
+  the synchronous copy wrote a 960x640 frame with 640 `gles_guest_rw` calls. Unmeasured, and small by
+  arithmetic (tens of microseconds); take it where the frame budget is tight rather than as an average:
+  `IT_GLES_PROF=1` present time on the Poco, and one run on the 2G, whose presents go through the panel
+  path and not this one. Confirm the fallback still reissues a present when a page is missing: an app
+  that has just mapped its CA surface is the case (`present:write` must not appear when the reissue
+  works).
+- [ ] Presenter fallbacks (patch `ci/engine-patches/0007-engine-gles-present-fallbacks.patch`): the
+  readback no longer drains the pipeline first (`LT_READBACK_FINISH=on` to compare), the AHB lock is the
+  only submit a present makes, and the RGBA/BGRA row swap is a shuffle on AArch64. The readback is the
+  iPod touch 2G's path and the ANGLE provider's: take `IT_GLES_PROF=1` present time on a 2G boot, and in
+  a game on a 16-bit surface, before believing the average; check the picture did not change (a torn or
+  swapped frame is the failure mode of the `glFinish` removal), and check the swap on a device that
+  actually refuses BGRA storage (`[gles-ahb]` says which format the surface got).
 - [ ] The synchronous present's GPU wait (patch `ci/engine-patches/0005-engine-ahb-present-fence.patch`,
   `LT_AHB_FENCE=off` for A/B): the path that copies the frame on the vCPU waited with `glFinish()` and then
   locked the buffer with no fence; it now passes an EGL native fence to `AHardwareBuffer_lock`, as the
