@@ -559,8 +559,20 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
             runtime->frame_log = fopen(log, "a");
 #ifdef SYS_memfd_create
         runtime->frame_fd = int(syscall(SYS_memfd_create, "lighttouch-frame", MFD_CLOEXEC | MFD_ALLOW_SEALING));
+#elif defined(__APPLE__)
+        // No memfd: a POSIX shared memory object unlinked at once is as private (names are at most 31 bytes).
+        {
+            char name[32];
+            snprintf(name, sizeof name, "/ltf-%d-%llx", int(getpid()), (unsigned long long)(lt::now_ns() & 0xffffffffffull));
+            runtime->frame_fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
+            if (runtime->frame_fd >= 0) {
+                shm_unlink(name);
+                fcntl(runtime->frame_fd, F_SETFD, FD_CLOEXEC);
+            }
+        }
 #else
- runtime->frame_fd=-1;errno=ENOSYS;
+        runtime->frame_fd = -1;
+        errno = ENOSYS;
 #endif
         lt::io(runtime->frame_fd >= 0, "private frame memfd");
         runtime->mapping_bytes = sizeof(lt_shared_frame) + LT_FRAME_CAPACITY;
@@ -574,8 +586,10 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         runtime->shared->size = sizeof(lt_shared_frame);
         runtime->shared->version = 1;
         runtime->shared->capacity = LT_FRAME_CAPACITY;
+#ifdef F_ADD_SEALS
         lt::io(fcntl(runtime->frame_fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) == 0,
                "seal frame size");
+#endif
         *out = runtime.release();
     });
 }
@@ -841,6 +855,10 @@ lt_status lt_runtime_set_frame_listener(lt_runtime *r, lt_frame_listener listene
 lt_status lt_runtime_frame_fd(lt_runtime *r, int *fd, uint64_t *bytes, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && fd && bytes, "invalid frame FD output");
+#ifdef __APPLE__
+        // A shared memory object can't be reopened read-only by descriptor.
+        throw lt::Failure(LT_UNSUPPORTED, "frame FD sharing is not available on this system");
+#endif
         std::string path = "/proc/self/fd/" + std::to_string(r->frame_fd);
         int copy = open(path.c_str(), O_RDONLY | O_CLOEXEC);
         lt::io(copy >= 0, "readonly frame FD");

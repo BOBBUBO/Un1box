@@ -194,6 +194,10 @@ impl Mapping {
     fn map(name: &str, len: usize, create: bool) -> io::Result<Self> {
         let cname = std::ffi::CString::new(name).map_err(|_| io::ErrorKind::InvalidInput)?;
         let flags = if create { libc::O_CREAT | libc::O_EXCL | libc::O_RDWR } else { libc::O_RDWR };
+        // macOS declares shm_open variadic, so its mode goes as an unsigned int there.
+        #[cfg(target_vendor = "apple")]
+        let fd = unsafe { libc::shm_open(cname.as_ptr(), flags, 0o600 as libc::c_uint) };
+        #[cfg(not(target_vendor = "apple"))]
         let fd = unsafe { libc::shm_open(cname.as_ptr(), flags, 0o600 as libc::mode_t) };
         if fd < 0 {
             return Err(io::Error::last_os_error());

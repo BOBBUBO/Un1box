@@ -97,7 +97,11 @@ static std::string new_id() {
     std::array<uint8_t, 16> b{};
     size_t offset = 0;
     while (offset < b.size()) {
+#ifdef __APPLE__
+        ssize_t n = getentropy(b.data() + offset, b.size() - offset) == 0 ? ssize_t(b.size() - offset) : -1;
+#else
         ssize_t n = getrandom(b.data() + offset, b.size() - offset, 0);
+#endif
         if (n < 0 && errno == EINTR)
             continue;
         io(n > 0, "record identity entropy");

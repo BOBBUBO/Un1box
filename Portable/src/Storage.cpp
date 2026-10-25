@@ -3,7 +3,9 @@
 #include <array>
 #include <fcntl.h>
 #include <fstream>
+#ifdef __linux__
 #include <linux/fs.h>
+#endif
 #include <memory>
 #include <map>
 #include <mutex>
@@ -16,6 +18,10 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <zlib.h>
+#ifdef __APPLE__
+#include <stdio.h>
+#include <sys/clonefile.h>
+#endif
 namespace lt {
 struct Fd {
     int n = -1;
@@ -246,10 +252,14 @@ static void validate_packed_nand(const fs::path &path, uint64_t expected_pages, 
 // modification and change times (every write, rename onto it or chmod moves the change time).
 using DigestCache = std::map<std::string, std::string>;
 static std::string file_identity(const fs::path &path, const struct stat &st) {
+#ifdef __APPLE__
+    const struct timespec &mtime = st.st_mtimespec, &ctime = st.st_ctimespec;
+#else
+    const struct timespec &mtime = st.st_mtim, &ctime = st.st_ctim;
+#endif
     return path.string() + "|" + std::to_string(st.st_dev) + "|" + std::to_string(st.st_ino) + "|" +
-           std::to_string(st.st_size) + "|" + std::to_string(st.st_mtim.tv_sec) + "." +
-           std::to_string(st.st_mtim.tv_nsec) + "|" + std::to_string(st.st_ctim.tv_sec) + "." +
-           std::to_string(st.st_ctim.tv_nsec);
+           std::to_string(st.st_size) + "|" + std::to_string(mtime.tv_sec) + "." + std::to_string(mtime.tv_nsec) +
+           "|" + std::to_string(ctime.tv_sec) + "." + std::to_string(ctime.tv_nsec);
 }
 static DigestCache read_digest_cache(const fs::path &path) {
     DigestCache cache;
@@ -637,6 +647,8 @@ struct Stage {
 #ifdef SYS_renameat2
         io(syscall(SYS_renameat2, AT_FDCWD, path.c_str(), AT_FDCWD, destination.c_str(), RENAME_NOREPLACE) == 0,
            "publish base");
+#elif defined(__APPLE__)
+        io(renamex_np(path.c_str(), destination.c_str(), RENAME_EXCL) == 0, "publish base");
 #else
         require(!fs::exists(destination), "destination race");
         io(rename(path.c_str(), destination.c_str()) == 0, "publish base");
@@ -742,6 +754,13 @@ static void clone_sparse(const fs::path &from, const fs::path &to) {
     auto in = open_read(from);
     struct stat st {};
     io(fstat(in.n, &st) == 0, "fstat");
+#ifdef __APPLE__
+    // APFS copies on write; the clone keeps holes. Falls through to copying on other filesystems.
+    if (fclonefileat(in.n, AT_FDCWD, to.c_str(), CLONE_NOFOLLOW) == 0) {
+        chmod(to.c_str(), 0600);
+        return;
+    }
+#endif
     Fd out(open(to.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
     io(out.n >= 0, "create " + to.string());
 #ifdef FICLONE

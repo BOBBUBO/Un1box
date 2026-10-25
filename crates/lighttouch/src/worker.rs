@@ -246,6 +246,8 @@ fn run(
 
     let trace_input = std::env::var_os("LIGHTTOUCH_TRACE_INPUT").is_some();
     let mut pcm = vec![0i16; 4096 * 2];
+    // The core reports LT_UNSUPPORTED (by a C++ throw) when the session runs without audio: ask once.
+    let mut pcm_live = true;
     let mut stopping_since: Option<Instant> = None;
     let mut last_status: Option<(StatusEvent, Instant)> = None;
     let mut reported_input = 0u64;
@@ -399,8 +401,9 @@ fn run(
         }
 
         // Audio.
-        loop {
+        while pcm_live {
             match runtime.pcm(&mut pcm) {
+                Err(e) if e.is(lighttouch_core::sys::LT_UNSUPPORTED) => pcm_live = false,
                 Ok(0) | Err(_) => break,
                 Ok(frames) => {
                     if let Some(a) = &audio {
