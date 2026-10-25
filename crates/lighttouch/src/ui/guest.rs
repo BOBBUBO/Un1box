@@ -1,9 +1,11 @@
 //! The guest screen: the newest frame as a texture, and input. Left mouse is finger 1, right mouse finger 2, a
 //! touchscreen's fingers map to their own contacts. A finger that leaves the screen is cancelled; a fresh press
-//! starts a new gesture. Keys: H Home, P Sleep/Wake, +/- volume (held while the key is held).
+//! starts a new gesture. Alt-dragging adds a second finger opposite the first through the screen's centre, to pinch
+//! and rotate; Alt+Shift moves the two together (as in Xcode's Simulator). Keys: H Home, P Sleep/Wake, +/- volume
+//! (held while the key is held).
 use super::device_frame;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle, TextureOptions, Ui};
-use lighttouch_core::runtime::Contact;
+use lighttouch_core::runtime::{BoardInfo, Contact};
 use lighttouch_model::Model;
 use lighttouch_model::settings::Scaling;
 use lighttouch_model::tilt::TiltKeys;
@@ -13,6 +15,22 @@ const DOWN: u32 = 0;
 const MOVE: u32 = 1;
 const UP: u32 = 2;
 const CANCEL: u32 = 3;
+
+/// Where an Alt-drag's second finger goes, in normalized screen coordinates.
+#[derive(Clone, Copy)]
+struct Pair {
+    start: (f64, f64),
+    /// Alt+Shift: alongside the first finger rather than opposite it.
+    parallel: bool,
+}
+
+impl Pair {
+    fn partner(&self, x: f64, y: f64) -> (f64, f64) {
+        let (sx, sy) = self.start;
+        let (px, py) = if self.parallel { (1.0 - sx + (x - sx), 1.0 - sy + (y - sy)) } else { (1.0 - x, 1.0 - y) };
+        (px.clamp(0.0, 1.0), py.clamp(0.0, 1.0))
+    }
+}
 
 #[derive(Default)]
 pub struct GuestView {
@@ -25,6 +43,8 @@ pub struct GuestView {
     mouse: HashMap<u32, Pos2>,
     /// Touchscreen finger id → contact id.
     touches: HashMap<u64, u32>,
+    /// The second finger following the left button while Alt-dragging.
+    pair: Option<Pair>,
     /// Hardware buttons held by the pointer on the drawn device or by keys.
     held: Vec<u32>,
     focused: bool,
@@ -131,9 +151,15 @@ impl GuestView {
             }
         }
 
+        let multitouch = session.board.as_ref().is_some_and(|b| b.has(BoardInfo::MULTITOUCH));
+        let modifiers = ui.input(|i| i.modifiers);
         if self.touches.is_empty() {
             let position = pointer.interact_pos().or(pointer.latest_pos());
+            let mouse_from = batch.len();
             for (button, contact) in [(egui::PointerButton::Primary, 1u32), (egui::PointerButton::Secondary, 2u32)] {
+                if contact == 2 && self.pair.is_some() {
+                    continue;
+                }
                 let down = pointer.button_down(button);
                 let held = self.mouse.get(&contact).copied();
                 match (held, down, position) {
@@ -158,6 +184,39 @@ impl GuestView {
                         batch.push(Contact { id: contact, phase: UP, ..normalized(position.unwrap_or(last)) });
                     }
                     _ => {}
+                }
+            }
+            // The Alt-drag's second finger mirrors every step of the first.
+            let mut twins = Vec::new();
+            for c in &batch[mouse_from..] {
+                if c.id != 1 {
+                    continue;
+                }
+                if c.phase == DOWN && modifiers.alt && multitouch && !self.mouse.contains_key(&2) {
+                    self.pair = Some(Pair { start: (c.x, c.y), parallel: modifiers.shift });
+                }
+                if let Some(pair) = self.pair {
+                    let (x, y) = pair.partner(c.x, c.y);
+                    twins.push(Contact { id: 2, phase: c.phase, x, y });
+                    if c.phase == UP || c.phase == CANCEL {
+                        self.pair = None;
+                    }
+                }
+            }
+            batch.extend(twins);
+            // Show where the two fingers are (or would land) while Alt is held over the screen.
+            let hover = position.filter(|p| rect.contains(*p) && (response.hovered() || self.pair.is_some()));
+            if multitouch && (modifiers.alt || self.pair.is_some()) {
+                if let Some(p) = hover {
+                    let n = normalized(p);
+                    let pair = self.pair.unwrap_or(Pair { start: (n.x, n.y), parallel: modifiers.shift });
+                    let (x, y) = pair.partner(n.x, n.y);
+                    let other = rect.min + egui::vec2(x as f32 * rect.width(), y as f32 * rect.height());
+                    let stroke = egui::Stroke::new(1.5, Color32::from_white_alpha(200));
+                    for at in [p, other] {
+                        ui.painter().circle(at, 11.0, Color32::from_white_alpha(50), stroke);
+                    }
+                    ui.ctx().request_repaint();
                 }
             }
         }
@@ -237,6 +296,7 @@ impl GuestView {
         }
         self.mouse.clear();
         self.touches.clear();
+        self.pair = None;
         self.held.clear();
         if let Some(session) = &mut model.session {
             session.cancel_input();
@@ -248,5 +308,21 @@ fn options(scaling: Scaling) -> TextureOptions {
     match scaling {
         Scaling::Smooth => TextureOptions::LINEAR,
         Scaling::Sharp => TextureOptions::NEAREST,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pair;
+
+    #[test]
+    fn second_finger_mirrors_or_follows() {
+        let pinch = Pair { start: (0.6, 0.7), parallel: false };
+        let (x, y) = pinch.partner(0.8, 0.9);
+        assert!((x - 0.2).abs() < 1e-9 && (y - 0.1).abs() < 1e-9);
+        let pan = Pair { start: (0.6, 0.7), parallel: true };
+        let (x, y) = pan.partner(0.7, 0.6);
+        assert!((x - 0.5).abs() < 1e-9 && (y - 0.2).abs() < 1e-9);
+        assert_eq!(pan.partner(1.0, 0.0), (0.8, 0.0));
     }
 }

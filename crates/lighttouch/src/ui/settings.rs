@@ -73,6 +73,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 
             widgets::section(ui, &p, "Controls");
             widgets::card(ui, &p, |ui| {
+                #[cfg(target_os = "macos")]
+                const MOUSE: &str = "Click to tap; Option-drag pinches or rotates, Option-Shift-drag moves two fingers. H is Home, P Sleep/Wake, + and - the volume";
+                #[cfg(not(target_os = "macos"))]
+                const MOUSE: &str = "Click to tap; Alt-drag pinches or rotates, Alt+Shift-drag moves two fingers. H is Home, P Sleep/Wake, + and - the volume";
+                widgets::setting_row(ui, &p, icons::INFO, "Mouse and keyboard", MOUSE, |_| {});
                 widgets::setting_row(
                     ui,
                     &p,
