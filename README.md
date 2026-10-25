@@ -8,7 +8,7 @@ The desktop ports share one device library and setup UI. Android has its own tou
 
 ## Demo videos
 
-Both recorded on a Pixel 10. Click a picture to watch on YouTube.
+Both recorded on a Pixel 10. Click to watch on YouTube.
 
 | iPod touch 4G, iOS 6.1.6 | iPod touch 2G, iOS 3.1.3 |
 | --- | --- |
