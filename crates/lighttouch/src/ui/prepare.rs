@@ -77,7 +77,7 @@ fn header(app: &mut App, ui: &mut Ui, title: &str, subtitle: &str, back: impl Fn
 
 fn page(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        let w = ui.available_width().min(640.0);
+        let w = (ui.available_width() - 48.0).clamp(200.0, 640.0);
         let margin = ((ui.available_width() - w) / 2.0).max(24.0);
         egui::Frame::new()
             .inner_margin(egui::Margin { left: margin as i8, right: margin as i8, top: 28, bottom: 24 })

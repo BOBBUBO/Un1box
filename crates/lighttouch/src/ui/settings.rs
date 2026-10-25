@@ -8,7 +8,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(18.0);
-        let width = ui.available_width().min(640.0);
+        let width = (ui.available_width() - 48.0).clamp(200.0, 640.0);
         let margin = ((ui.available_width() - width) / 2.0).max(24.0);
         egui::Frame::new().inner_margin(egui::Margin::symmetric(margin as i8, 0)).show(ui, |ui| {
             ui.set_max_width(width);

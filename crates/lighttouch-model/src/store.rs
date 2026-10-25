@@ -611,6 +611,10 @@ impl Store {
             }
             Message::LookupsDone { generation } if generation == self.installed_apps.lookup_generation => {
                 self.installed_apps.looking = false;
+                // Apps installed while the sweep ran; not after a failure, which waits for Retry.
+                if self.installed_apps.lookup_error.is_none() {
+                    self.look_up();
+                }
             }
             Message::Lookup { .. } | Message::LookupsDone { .. } => {}
             Message::AfterInstall(apps) => {

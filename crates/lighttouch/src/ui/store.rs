@@ -14,7 +14,7 @@ const WIDTH: f32 = 760.0;
 
 /// The page's column: centred, at most `WIDTH` wide.
 fn column(ui: &mut Ui, top: i8, add: impl FnOnce(&mut Ui)) {
-    let w = ui.available_width().min(WIDTH);
+    let w = (ui.available_width() - 48.0).clamp(200.0, WIDTH);
     let margin = ((ui.available_width() - w) / 2.0).max(24.0);
     egui::Frame::new().inner_margin(Margin { left: margin as i8, right: margin as i8, top, bottom: 0 }).show(
         ui,
@@ -33,7 +33,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         if browsing {
             let mut tab = app.model.store.tab;
             let options: Vec<(Tab, &str)> = Tab::ALL.iter().map(|t| (*t, t.title())).collect();
-            let changed = ui.horizontal(|ui| widgets::segmented(ui, &app.palette, &mut tab, &options)).inner;
+            // A narrow window scrolls the tabs sideways.
+            let changed = egui::ScrollArea::horizontal()
+                .id_salt("store-tabs")
+                .show(ui, |ui| ui.horizontal(|ui| widgets::segmented(ui, &app.palette, &mut tab, &options)).inner)
+                .inner;
             if changed {
                 app.model.store.show(tab);
             }
@@ -138,7 +142,12 @@ fn more_menu(app: &mut App, ui: &mut Ui) {
 fn search_field(app: &mut App, ui: &mut Ui) -> bool {
     let p = app.palette;
     let mut submit = false;
-    let size = vec2(270.0, 36.0);
+    // As wide as the header leaves, up to 270 points; none when the window is too narrow for it.
+    let width = (ui.available_width() - 12.0).min(270.0);
+    if width < 150.0 {
+        return false;
+    }
+    let size = vec2(width, 36.0);
     let layout = egui::Layout::left_to_right(egui::Align::Center);
     let pill = ui
         .allocate_ui_with_layout(size, layout, |ui| {
@@ -153,7 +162,7 @@ fn search_field(app: &mut App, ui: &mut Ui) -> bool {
                             egui::TextEdit::singleline(&mut app.model.store.query)
                                 .hint_text("Search apps and games")
                                 .frame(egui::Frame::NONE)
-                                .desired_width(200.0)
+                                .desired_width(ui.available_width() - 24.0)
                                 .margin(vec2(4.0, 2.0)),
                         );
                         submit = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));

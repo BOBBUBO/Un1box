@@ -22,7 +22,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let reading = state.open.is_some(); // its own scroll position: a file opens at the top
     egui::ScrollArea::vertical().id_salt(("licenses", reading)).auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(18.0);
-        let width = ui.available_width().min(720.0);
+        let width = (ui.available_width() - 48.0).clamp(200.0, 720.0);
         let margin = ((ui.available_width() - width) / 2.0).max(24.0);
         egui::Frame::new().inner_margin(egui::Margin::symmetric(margin as i8, 0)).show(ui, |ui| {
             ui.set_max_width(width);
