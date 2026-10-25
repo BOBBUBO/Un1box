@@ -30,8 +30,27 @@ name: Android perf APK
 # is refused before anything compiles and rebuilt from scratch. If a run fails in
 # the engine step with a cache-refusal message, delete the `lt-engine-*` cache
 # and re-run.
+#
+# Opening a pull request (or pushing to one) starts this workflow too, but it
+# builds nothing until a person confirms it: the `confirm` job holds the run on
+# the `perf-apk` environment, which requires a reviewer, and Approve in the run's
+# review banner lets it go. That keeps a 10-minute engine build from starting on
+# its own while a change is still a draft, and keeps runner minutes for the runs
+# someone asked for. A pull request run always takes the defaults below (4 jobs,
+# a debuggable APK, strict verification) and never publishes a pre-release; the
+# manual run keeps its inputs.
+#
+# The environment is repository configuration, not this file: Settings >
+# Environments > New environment, name `perf-apk`, tick "Required reviewers" and
+# add yourself. Until it has a reviewer, GitHub creates/uses the environment
+# without a gate and pull request runs build immediately.
 
 on:
+  pull_request:
+    branches: [main]
+    # Opened, a new push to the branch, and reopened: each waits for the same
+    # confirmation. Draft pull requests are included; the wait is the point.
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       engine_repository:
@@ -81,19 +100,40 @@ permissions:
   contents: write
 
 concurrency:
-  group: android-perf-apk
+  # One run per pull request (or per branch of a manual run): a pull request's
+  # build no longer queues behind a manual run of another branch, and successive
+  # pushes to the same pull request cancel nothing.
+  group: android-perf-apk-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # The confirmation a pull request's build waits for. The `perf-apk` environment
+  # requires a reviewer (repository Settings > Environments), so this job sits in
+  # "Waiting for review" and the build starts only after Approve. A manual run
+  # skips it.
+  confirm:
+    name: Confirm the pull request build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    environment: perf-apk
+    steps:
+      - run: |
+          echo "Approved: building ${{ github.event.pull_request.head.sha }} of ${{ github.event.pull_request.head.repo.full_name }}"
+          echo "pull request #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
+
   perf-apk:
+    needs: confirm
+    # A skipped confirmation (a manual run) is fine; a rejected or cancelled one is not.
+    if: always() && needs.confirm.result != 'failure' && needs.confirm.result != 'cancelled'
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_NDK_VERSION: 28.2.13676358
-      LT_JOBS: ${{ inputs.jobs }}
-      ENGINE_REPO: ${{ inputs.engine_repository }}
-      ENGINE_REF: ${{ inputs.engine_ref }}
+      # A pull request run has no inputs: these are the defaults the workflow_dispatch block declares.
+      LT_JOBS: ${{ inputs.jobs || '4' }}
+      ENGINE_REPO: ${{ inputs.engine_repository || 'KlugKlugTG/qemu-ios' }}
+      ENGINE_REF: ${{ inputs.engine_ref || 'perf' }}
       MESON: ${{ github.workspace }}/meson/bin/meson
 
     steps:
@@ -103,8 +143,8 @@ jobs:
       - name: Check out the engine source
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.engine_repository }}
-          ref: ${{ inputs.engine_ref }}
+          repository: ${{ inputs.engine_repository || 'KlugKlugTG/qemu-ios' }}
+          ref: ${{ inputs.engine_ref || 'perf' }}
           path: qemu-ios
           fetch-depth: 1
 
@@ -117,8 +157,8 @@ jobs:
       - name: Extract firmwarekit, USB bridge and guest tools from the published APK
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_RELEASE_REPO: ${{ inputs.base_release_repository }}
-          BASE_RELEASE_TAG: ${{ inputs.base_release_tag }}
+          BASE_RELEASE_REPO: ${{ inputs.base_release_repository || 'blake-lucas/LightTouch' }}
+          BASE_RELEASE_TAG: ${{ inputs.base_release_tag || 'v0.0.10' }}
         run: |
           python3 - <<'PY'
           import fnmatch, json, os, pathlib, re, shutil, subprocess, urllib.request, zipfile
@@ -399,9 +439,9 @@ jobs:
         with:
           path: ci/engine-build
           # One tree per engine revision; any tree of this recipe is a starting point.
-          key: lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs }}-${{ steps.engine.outputs.sha }}
+          key: lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs || '4' }}-${{ steps.engine.outputs.sha }}
           restore-keys: |
-            lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs }}-
+            lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs || '4' }}-
 
       - name: Cache the signing key
         uses: actions/cache@v4
@@ -435,8 +475,8 @@ jobs:
           gradlew() {
             ./gradlew --no-daemon --max-workers="$LT_JOBS" \
               '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' \
-              --dependency-verification=${{ inputs.dependency_verification }} \
-              -Pdebuggable="${{ inputs.debuggable }}" "$@"
+              --dependency-verification=${{ inputs.dependency_verification || 'strict' }} \
+              -Pdebuggable="${{ inputs.debuggable || 'true' }}" "$@"
           }
           # Resolving the runtime classpath checks the pinned dependency verification; the dry
           # run configures every task without running it.
@@ -497,7 +537,7 @@ jobs:
         run: |
           ./gradlew --no-daemon --max-workers="$LT_JOBS" \
             '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' \
-            --dependency-verification=${{ inputs.dependency_verification }} \
+            --dependency-verification=${{ inputs.dependency_verification || 'strict' }} \
             -PnativeJobs="$LT_JOBS" \
             -PtargetAbis=arm64-v8a \
             -PportableDir="$GITHUB_WORKSPACE/Portable" \
@@ -507,8 +547,8 @@ jobs:
             -PguestToolsDir="$GITHUB_WORKSPACE/ci/guest-tools" \
             -PmobileServicesArm64="$GITHUB_WORKSPACE/ci/mobile-services/arm64-v8a" \
             -PsourceRevision="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" \
-            -PsourceReference="https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_REF_NAME}" \
-            -Pdebuggable="${{ inputs.debuggable }}" \
+            -PsourceReference="https://github.com/${GITHUB_REPOSITORY}/tree/${{ github.head_ref || github.ref_name }}" \
+            -Pdebuggable="${{ inputs.debuggable || 'true' }}" \
             :app:assembleDebug
 
       # AGP signs a debug build with whatever it finds (or makes) at
@@ -552,8 +592,8 @@ jobs:
             echo "- application revision: $(git rev-parse HEAD) ($GITHUB_REPOSITORY)"
             echo "- engine revision: $(git -C qemu-ios rev-parse HEAD) ($ENGINE_REPO $ENGINE_REF)"
             echo "- engine build: arm64-v8a, NDK $ANDROID_NDK_VERSION, --android-api 29, $LT_JOBS jobs"
-            echo "- reused from ${BASE_RELEASE_RESOLVED:-${{ inputs.base_release_repository }} ${{ inputs.base_release_tag }}}: firmwarekit, lighttouch-oneshot, USB bridge, guest tools"
-            echo "- debuggable: ${{ inputs.debuggable }}; signed with this workflow's own keystore"
+            echo "- reused from ${BASE_RELEASE_RESOLVED:-${{ inputs.base_release_repository || 'blake-lucas/LightTouch' }} ${{ inputs.base_release_tag || 'v0.0.10' }}: firmwarekit, lighttouch-oneshot, USB bridge, guest tools"
+            echo "- debuggable: ${{ inputs.debuggable || 'true' }}; signed with this workflow's own keystore"
             echo
             echo "## Engine commits in $ENGINE_REF that are not in main"
             echo
