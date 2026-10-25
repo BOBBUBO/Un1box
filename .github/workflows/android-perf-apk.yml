@@ -634,7 +634,10 @@ jobs:
           # log is not readable everywhere, and a Kotlin error there is otherwise invisible.
           LOG="$RUNNER_TEMP/preflight.log"
           report() {
-            sed -n 's/^/::error title=preflight::/p' <(grep -E '^e: |What went wrong|^Caused by|^> Task .*FAILED' "$LOG" | head -n 20)
+            # The lines after the match are the message ("What went wrong:" is a heading), and an
+            # annotation keeps only a couple of them, so take the error lines and their context.
+            sed -n 's/^/::error title=preflight::/p' \
+              <(grep -A6 -E '^e: |^What went wrong|^Caused by|^> Task .*FAILED|^Execution failed' "$LOG" | head -n 24)
             exit 1
           }
           # Resolving the runtime classpath checks the pinned dependency verification; the dry
