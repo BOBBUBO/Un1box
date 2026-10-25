@@ -1,6 +1,7 @@
 //! The egui frontend. It only draws `lighttouch_model::Model` and calls its methods; behaviour lives in the model so
 //! another toolkit could replace this module.
 mod device_frame;
+mod devshot;
 mod fullscreen;
 mod guest;
 mod home;
@@ -55,6 +56,7 @@ pub struct App {
     pulse_release: Option<Instant>,
     /// The window was closed with iOS running: close once it has shut down.
     close_after_stop: bool,
+    dev_shot: Option<devshot::DevShot>,
 }
 
 pub fn run() -> eframe::Result {
@@ -73,14 +75,20 @@ pub fn run() -> eframe::Result {
             let ctx = cc.egui_ctx.clone();
             let waker: lighttouch_model::Waker = Arc::new(move || ctx.request_repaint());
             let model = Model::new(DataDirs::new(data_root()), Resources::locate(), waker);
-            Ok(Box::new(App::new(model)))
+            let mut app = App::new(model);
+            devshot::start(&mut app);
+            Ok(Box::new(app))
         }),
     )
 }
 
 impl App {
     pub fn new(model: Model) -> Self {
-        let page = if model.devices.is_empty() { Page::Setup(setup::Step::Welcome) } else { Page::Device };
+        let page = devshot::start_page().unwrap_or(if model.devices.is_empty() {
+            Page::Setup(setup::Step::Welcome)
+        } else {
+            Page::Device
+        });
         Self {
             model,
             guest: guest::GuestView::default(),
@@ -94,6 +102,7 @@ impl App {
             paused_for_hidden: false,
             pulse_release: None,
             close_after_stop: false,
+            dev_shot: devshot::DevShot::from_env(),
         }
     }
 
@@ -344,6 +353,7 @@ impl eframe::App for App {
         self.apply_theme(ctx);
         self.background_work(ctx);
         self.handle_close(ctx);
+        devshot::tick(self, ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

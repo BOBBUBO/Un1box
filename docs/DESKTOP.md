@@ -34,6 +34,8 @@ LIGHTTOUCH_USBMUXD=/path/to/usbmuxd-qemu target/debug/lighttouch run <record id>
 
 `LIGHTTOUCH_DATA` overrides the data folder (default `~/.local/share/LightTouch`, `%LOCALAPPDATA%\LightTouch\App`,
 `~/Library/Application Support/LightTouch`); `LIGHTTOUCH_RESOURCES` the bundled resources folder.
+To check the UI where nothing can capture the screen (over ssh), `LIGHTTOUCH_UI_SHOT=file.png` saves the window after
+`LIGHTTOUCH_UI_SHOT_AFTER` seconds and closes it; `LIGHTTOUCH_UI_START=1` starts the selected device first.
 
 ## Status
 
@@ -44,7 +46,7 @@ LIGHTTOUCH_USBMUXD=/path/to/usbmuxd-qemu target/debug/lighttouch run <record id>
 | Theme, device frame, overlay (FPS/basic/full), full screen, settings | Done; frame inspector to do |
 | Prepare from an IPSW (catalog, download, firmwarekit sidecar, adoption) | Done (Linux): n72ap-7E18 downloaded and prepared in 62 s, boots; firmwarekit needs a static Swift stdlib to ship |
 | Legacy Store, specific versions, IPA install, last crash (Rust usbmux/lockdown/AFC/instproxy over usbmuxd-qemu) | Done (Linux), checked on iPod touch 2G 3.1.3 and 4.2.1 and iPhone 3GS 5.1.1; a store install takes ~20 s from attach |
-| macOS: Portable portability layer, engine dylib exports | Core, worker and guest services work (M-series, n72 3.1.3 boots and shuts down cleanly; a Legacy Store install completes 14 s after boot with the 0.0.9 app's usbmuxd). Needs the engine's indirect-cache JIT fix (qemu-ios `079f70a607`): without it the guest hangs in iBoot. UI on the Mac to check |
+| macOS: Portable portability layer, engine dylib exports | Core, worker and guest services work (M-series, n72 3.1.3 boots and shuts down cleanly; a Legacy Store install completes 14 s after boot with the 0.0.9 app's usbmuxd). Needs the engine's indirect-cache JIT fix (qemu-ios `079f70a607`): without it the guest hangs in iBoot. The egui UI runs there too (Retina, system theme; boots to the lock screen in the window; closing shuts iOS down) |
 | Windows: Portable portability layer, engine DLL | To do |
 | Packaging (`cargo xtask dist`: AppImage, zip, .app) | To do |
 | `firmwarekit` in Rust (Windows prep, no Swift toolchain) | Later, checked against the Swift tool's output hashes |
