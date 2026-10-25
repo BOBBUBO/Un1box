@@ -136,6 +136,9 @@ jobs:
             "") tag="" ;;
             *) tag="-tuned" ;;
           esac
+          # Building against a collected profile is the "use" half of the PGO cycle,
+          # whatever else the flags say.
+          if [ -n "$PGO_PROFILE" ] && [ "$tag" != "-pgo-collect" ]; then tag="-pgo"; fi
           echo "MODE_TAG=$tag" >> "$GITHUB_ENV"
           echo "APK is named ci/LightTouch-<engine>${tag}-arm64-debug.apk"
 
