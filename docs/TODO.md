@@ -243,7 +243,12 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   `no_init_in`, `no_read`) and hands out silence paced at the port's rate, so the fallback was never
   reached. The RX FIFO now asks the ring first (`host_mic_read_frame`) and only falls through to the
   voice's ring when the frontend pushed nothing, which is every case on the Mac and every case with the
-  switch off. The frontend pushes what `AudioRecord` captured into a bounded ring that the same RX FIFO
+  switch off. Every layer of the path is checkable without a device or an engine build:
+  `python3 tests/mic/run.py --engine qemu-ios` (`--sanitize` adds ASan/UBSan) slices the capture port
+  out of `hw/arm/s5l8930_i2s.c`, the API out of `Portable/src/Runtime.cpp` and the JNI glue out of
+  `lighttouch_jni.cpp`, runs them, and checks the wiring between the layers — the ordering above is one
+  of those checks, precisely because getting it wrong sounds exactly like a broken microphone. The CI
+  job runs it before the engine build. The frontend pushes what `AudioRecord` captured into a bounded ring that the same RX FIFO
   reads (`hw/arm/host-mic.c`), and the guest side is unchanged: CDMA 0x1b, the same pacing, the same
   FIFO, all of which the iPad's `mic-check` and Shazam already exercised with a host voice and with
   `tone-hz`. **Not measured and not yet heard on a device**, and only the S5L8920/S5L8930
