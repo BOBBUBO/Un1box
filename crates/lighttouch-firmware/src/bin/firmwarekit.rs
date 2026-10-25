@@ -16,6 +16,8 @@
 //!   firmwarekit write-n45-nand VOLUME OUT (--fil-id 0xN | --iboot FILE) [--banks N] [--bbt-map]
 //!   firmwarekit build-n72-nor --ipsw FILE --identity JSON --out FILE [--board B] [--types A,B] [--wrap all|A,B]
 //!   firmwarekit build-n45-nor --ipsw FILE --identity JSON --out FILE [--board B] [--boot-args S]
+//!   firmwarekit seed-data --system IMG [--var-root P] [--language TAG] [--keyboards A,B] [--skip-setup]
+//!                         [--region LL] [--now SECS] [--jailbreak DIR]   the data-volume seeds on an image
 use lighttouch_firmware::entry::Entry;
 use lighttouch_firmware::hfs::{Editor, Volume};
 use lighttouch_firmware::ipsw::Ipsw;
@@ -272,6 +274,55 @@ fn build_n45_nor(args: &[String]) -> Result<(), String> {
     std::fs::write(&out, nor).map_err(|e| format!("{out}: {e}"))
 }
 
+/// The data-volume seeds (language and keyboards, Setup finished, 6.x assets) applied to an image, as create seeds
+/// /private/var; with --jailbreak, afc2 and Cydia from the bootstrap in DIR (downloaded there when missing) first.
+fn seed_data(args: &[String]) -> Result<(), String> {
+    use lighttouch_firmware::{assets, cydia, keyboards::KeyboardCatalog, plistedit, setup};
+    let e = |e: lighttouch_firmware::Error| e.to_string();
+    let image = PathBuf::from(required(args, "--system")?);
+    let var_root = option(args, "--var-root").unwrap_or_else(|| "private/var".into());
+    let now = match option(args, "--now") {
+        Some(n) => n.parse().map_err(|_| "--now: a number")?,
+        None => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0),
+    };
+    let mut ed = Editor::open(&image).map_err(e)?;
+    if let Some(dir) = option(args, "--jailbreak") {
+        let bootstrap = cydia::bootstrap(&PathBuf::from(dir), &|l| eprintln!("{l}")).map_err(e)?;
+        let jb = cydia::install_jailbreak(&mut ed, &bootstrap, false).map_err(e)?;
+        eprintln!("{}\n{}", jb.afc2, jb.cydia);
+        eprintln!("root {} paths, mobile {}, modes {:?}", jb.root.len(), jb.mobile.len(), jb.modes);
+    }
+    let version = plistedit::read(&ed, "System/Library/CoreServices/SystemVersion.plist").map_err(e)?.unwrap_or_default();
+    let field = |k: &str| version.get(k).and_then(plist::Value::as_string).unwrap_or("").to_string();
+    let (product, build) = (field("ProductVersion"), field("ProductBuildVersion"));
+    let major: u32 = product.split('.').next().and_then(|m| m.parse().ok()).unwrap_or(0);
+    let catalog = KeyboardCatalog::read(&ed);
+    let formats = setup::region_formats(&ed);
+    let keyboards: Option<Vec<String>> = option(args, "--keyboards").map(|k| k.split(',').map(String::from).collect());
+    let language = setup::seed_language(
+        &mut ed,
+        &var_root,
+        option(args, "--language").as_deref(),
+        keyboards.as_deref(),
+        catalog.as_ref(),
+        formats.as_ref(),
+    )
+    .map_err(e)?;
+    if let Some(l) = &language {
+        eprintln!("language {}, region {}, keyboards {:?}", l.language, l.locale, l.keyboards);
+    }
+    if args.iter().any(|a| a == "--skip-setup") && major >= 5 {
+        let (l, locale) = language.as_ref().map_or(("en", "en_US"), |l| (l.language.as_str(), l.locale.as_str()));
+        setup::seed_finished_setup(&mut ed, &var_root, major, l, locale, now).map_err(e)?;
+        eprintln!("Setup Assistant: seeded as finished (iOS {major})");
+    }
+    let region = option(args, "--region").unwrap_or_else(|| "LL".into());
+    if let Some(installed) = assets::seed_preinstalled_assets(&mut ed, &var_root, major, &product, &build, &region).map_err(e)? {
+        eprintln!("preinstalled assets: {} installed as mobileassetd would at the first boot", installed.len());
+    }
+    ed.commit().map_err(e)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
@@ -288,6 +339,7 @@ fn main() -> ExitCode {
         Some("write-n45-nand") => write_n45_nand(&args[1..]),
         Some("build-n72-nor") => build_n72_nor(&args[1..]),
         Some("build-n45-nor") => build_n45_nor(&args[1..]),
+        Some("seed-data") => seed_data(&args[1..]),
         _ => {
             eprintln!("usage: firmwarekit decrypt --catalog FILE --id ID --ipsw FILE --out DIR [--no-rootfs]");
             return ExitCode::from(64);

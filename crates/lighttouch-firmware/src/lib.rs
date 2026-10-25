@@ -14,7 +14,7 @@
 //!   activation lockdownd activated, ad hoc re-signing, the helpers' signature checks
 //!   guest_package  the it_boot loader and the seed package
 //!   keyboards, setup, assets, cydia  the data-volume seeds (keyboards, language, Setup finished, 6.x assets) and
-//!              the jailbreak option
+//!              the jailbreak option;  prefs1x, truststore1x  the 1.x preference keys and trust anchors
 //!   page_nand  the page NAND image store (n72, s5l8900 boards)
 //!   n72nand    the iPod touch 2G NAND writer;  n72nor  its NOR
 //!   n45nand    the iPod touch 1G / iPhone NAND writer;  n45ftl  its FTL read back;  n45nor  its NOR
@@ -44,8 +44,10 @@ pub mod n72nor;
 pub mod page_nand;
 pub mod plistedit;
 pub mod posio;
+pub mod prefs1x;
 pub mod setup;
 pub mod shared_cache;
+pub mod truststore1x;
 pub mod udif;
 pub mod vfdecrypt;
 
