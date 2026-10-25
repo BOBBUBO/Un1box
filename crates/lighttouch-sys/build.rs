@@ -37,6 +37,8 @@ fn main() {
     }
     if target_os == "windows" {
         build.define("WIN32_LEAN_AND_MEAN", None).define("NOMINMAX", None);
+        // MinGW's C++ runtime goes into the executable, so nothing has to ship beside it.
+        build.cpp_link_stdlib(None);
     }
     build.compile("lighttouch_portable");
     cc::Build::new().file(manifest.join("src/layout.c")).include(portable.join("include")).compile("lighttouch_layout");
@@ -44,6 +46,8 @@ fn main() {
     match target_os.as_str() {
         "linux" | "android" => println!("cargo:rustc-link-lib=dl"),
         "windows" => {
+            println!("cargo:rustc-link-lib=static:-bundle=stdc++");
+            println!("cargo:rustc-link-lib=static:-bundle=winpthread");
             for lib in ["bcrypt", "kernel32", "advapi32"] {
                 println!("cargo:rustc-link-lib={lib}");
             }

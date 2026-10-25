@@ -27,8 +27,7 @@ pub fn main(args: &[String]) -> i32 {
     let usb = parsed.usb.as_ref().map(|usb| {
         let bridge = lighttouch_services::bridge::Bridge::start(&usb.daemon, &usb.pairing, &usb.log);
         if let Ok(bridge) = &bridge {
-            // SAFETY: single-threaded so far.
-            unsafe { std::env::set_var("IT_USB_TCP", &bridge.guest_socket) };
+            set_engine_env("IT_USB_TCP", &bridge.guest_socket.to_string_lossy());
         }
         bridge
     });
@@ -48,6 +47,23 @@ pub fn main(args: &[String]) -> i32 {
             drop(events);
             thread::sleep(Duration::from_millis(50));
             2
+        }
+    }
+}
+
+/// Set a variable the engine reads with `getenv`. On Windows that is the C runtime's own copy of the environment,
+/// made at startup, which `SetEnvironmentVariableW` (Rust's `set_var`) doesn't reach: msvcrt's `_putenv_s` does,
+/// and the engine shares this process's msvcrt.
+fn set_engine_env(name: &str, value: &str) {
+    // SAFETY: called before the engine and the session's threads start.
+    unsafe { std::env::set_var(name, value) };
+    #[cfg(windows)]
+    {
+        unsafe extern "C" {
+            fn _putenv_s(name: *const std::ffi::c_char, value: *const std::ffi::c_char) -> i32;
+        }
+        if let (Ok(n), Ok(v)) = (std::ffi::CString::new(name), std::ffi::CString::new(value)) {
+            unsafe { _putenv_s(n.as_ptr(), v.as_ptr()) };
         }
     }
 }

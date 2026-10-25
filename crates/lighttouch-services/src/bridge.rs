@@ -1,7 +1,8 @@
-//! The session's private USB link: the bundled QEMU-only usbmuxd listens on `qemu.sock`, which the engine dials
-//! when the guest brings its USB port up (`IT_USB_TCP`), and serves usbmux clients on `mux.sock`. Both sockets live
-//! in an owner-only folder; pairing records persist per device record in `pairing`. The daemon must be listening
-//! before the engine starts.
+//! The session's private USB link: the bundled QEMU-only usbmuxd listens where the engine dials when the guest
+//! brings its USB port up (`IT_USB_TCP`), and serves usbmux clients. On Linux and macOS both are Unix sockets in an
+//! owner-only folder; on Windows the daemon (`lighttouch-usbmuxd.exe`) picks two loopback TCP ports and reports them,
+//! and the addresses are `127.0.0.1:port`. Pairing records persist per device record in `pairing`. The daemon must
+//! be listening before the engine starts.
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -9,7 +10,11 @@ use std::time::{Duration, Instant};
 
 pub struct Bridge {
     child: Child,
+    /// The Unix sockets' folder (none on Windows).
     dir: PathBuf,
+    /// Windows: the daemon's control pipe (`stop` retires it).
+    #[cfg(windows)]
+    control: Option<std::process::ChildStdin>,
     /// Where usbmux clients connect.
     pub mux_socket: PathBuf,
     /// What the engine dials (the value for `IT_USB_TCP`).
@@ -22,7 +27,11 @@ impl Bridge {
         if !daemon.is_file() {
             return Err(Error("Guest app services are not included in this build.".into()));
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            Self::start_windows(daemon, pairing, log)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (pairing, log);
             Err(Error("Guest app services are not available on this system yet.".into()))
@@ -75,6 +84,7 @@ impl Bridge {
                 });
             }
             let child = command.spawn().map_err(|e| Error(format!("The guest USB bridge couldn't start: {e}")))?;
+            lighttouch_core::job::bind_to_this_process(&child);
             let mut bridge = Self { child, dir, mux_socket, guest_socket };
             let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
@@ -91,11 +101,96 @@ impl Bridge {
         }
     }
 
+    /// `lighttouch-usbmuxd.exe <pairing>`: it prints `DAEMON {json}` with the ports it listens on once ready, and
+    /// retires on `stop` on its stdin. The session identity in `LTW_SESSION_*` is echoed back in that line.
+    #[cfg(windows)]
+    fn start_windows(daemon: &Path, pairing: &Path, log: &Path) -> Result<Self> {
+        use std::io::{BufRead, BufReader};
+        use std::os::windows::process::CommandExt;
+        std::fs::create_dir_all(pairing)?;
+        if let Some(parent) = log.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let profile = pairing.file_name().and_then(|n| n.to_str()).unwrap_or("device").to_string();
+        let token = format!("{:016x}{:016x}", nonce(), nonce());
+        let mut command = Command::new(daemon);
+        command
+            .arg(pairing)
+            .env_remove("IT_USB_TCP")
+            .env_remove("USBMUXD_SOCKET_ADDRESS")
+            .env_remove("USBMUXD_QEMU_ADDR")
+            .env("LTW_SESSION_PROFILE", &profile)
+            .env("LTW_SESSION_TOKEN", &token)
+            .env("LTW_SESSION_GENERATION", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(std::fs::File::create(log)?)
+            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        // Its DLLs sit beside it; Windows looks there first.
+        let mut child = command.spawn().map_err(|e| Error(format!("The guest USB bridge couldn't start: {e}")))?;
+        lighttouch_core::job::bind_to_this_process(&child);
+        let control = child.stdin.take();
+        let stdout = child.stdout.take().ok_or_else(|| Error("The guest USB bridge has no output".into()))?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("usb-bridge-output".into())
+            .spawn(move || {
+                for line in BufReader::new(stdout).lines().map_while(std::result::Result::ok) {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+            })
+            .ok();
+        let mut bridge = Self {
+            child,
+            dir: PathBuf::new(),
+            control,
+            mux_socket: PathBuf::new(),
+            guest_socket: PathBuf::new(),
+        };
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(line) => {
+                    let Some(json) = line.strip_prefix("DAEMON ") else { continue };
+                    let ready: serde_json::Value =
+                        serde_json::from_str(json).map_err(|e| Error(format!("The guest USB bridge said: {e}")))?;
+                    let port = |key: &str| ready.get(key).and_then(|v| v.as_u64()).filter(|p| (1..=65535).contains(p));
+                    let ours = ready.get("format").and_then(|v| v.as_str()) == Some("lighttouch-windows-usbmux")
+                        && ready.get("token").and_then(|v| v.as_str()) == Some(token.as_str());
+                    match (ours, port("client_port"), port("guest_port")) {
+                        (true, Some(client), Some(guest)) => {
+                            bridge.mux_socket = PathBuf::from(format!("127.0.0.1:{client}"));
+                            bridge.guest_socket = PathBuf::from(format!("127.0.0.1:{guest}"));
+                            return Ok(bridge);
+                        }
+                        _ => break,
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if let Ok(Some(status)) = bridge.child.try_wait() {
+                        return Err(Error(format!("The guest USB bridge exited ({status}); see {}", log.display())));
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        bridge.stop();
+        Err(Error(format!("The guest USB bridge didn't start; see {}", log.display())))
+    }
+
     pub fn alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
 
     pub fn stop(&mut self) {
+        // Windows: it retires on "stop" (or when its control pipe closes).
+        #[cfg(windows)]
+        if let Some(mut control) = self.control.take() {
+            use std::io::Write;
+            let _ = control.write_all(b"stop\n").and_then(|()| control.flush());
+        }
         if self.alive() {
             #[cfg(unix)]
             unsafe {
@@ -109,10 +204,12 @@ impl Bridge {
             let _ = self.child.wait();
         }
         // Only the files we expect; anything else stays as evidence.
-        for name in ["mux.sock", "qemu.sock", "daemon.pid"] {
-            let _ = std::fs::remove_file(self.dir.join(name));
+        if !self.dir.as_os_str().is_empty() {
+            for name in ["mux.sock", "qemu.sock", "daemon.pid"] {
+                let _ = std::fs::remove_file(self.dir.join(name));
+            }
+            let _ = std::fs::remove_dir(&self.dir);
         }
-        let _ = std::fs::remove_dir(&self.dir);
     }
 }
 

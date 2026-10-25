@@ -3,6 +3,7 @@
 mod clock;
 mod ffi;
 pub mod frames;
+pub mod job;
 pub mod library;
 pub mod paths;
 pub mod protocol;

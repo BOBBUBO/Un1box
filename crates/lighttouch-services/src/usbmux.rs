@@ -142,16 +142,24 @@ fn open_socket(path: &Path) -> Result<Box<dyn Io>> {
     open_socket_with_timeout(path, Some(Duration::from_secs(10)))
 }
 
-#[cfg(unix)]
-fn open_socket_with_timeout(path: &Path, timeout: Option<Duration>) -> Result<Box<dyn Io>> {
-    let stream = std::os::unix::net::UnixStream::connect(path)
-        .map_err(|e| Error(format!("The guest USB bridge isn't reachable ({e}).")))?;
-    stream.set_read_timeout(timeout)?;
-    stream.set_write_timeout(timeout)?;
-    Ok(Box::new(stream))
-}
-
-#[cfg(not(unix))]
-fn open_socket_with_timeout(_path: &Path, _timeout: Option<Duration>) -> Result<Box<dyn Io>> {
-    Err(Error("Guest app services are not available on this system yet.".into()))
+/// The daemon's client address: a Unix socket path, or `host:port` (Windows, where it listens on loopback TCP).
+fn open_socket_with_timeout(address: &Path, timeout: Option<Duration>) -> Result<Box<dyn Io>> {
+    if let Some(tcp) = address.to_str().and_then(|a| a.parse::<std::net::SocketAddr>().ok()) {
+        let stream = std::net::TcpStream::connect_timeout(&tcp, Duration::from_secs(5))
+            .map_err(|e| Error(format!("The guest USB bridge isn't reachable ({e}).")))?;
+        stream.set_nodelay(true)?;
+        stream.set_read_timeout(timeout)?;
+        stream.set_write_timeout(timeout)?;
+        return Ok(Box::new(stream));
+    }
+    #[cfg(unix)]
+    {
+        let stream = std::os::unix::net::UnixStream::connect(address)
+            .map_err(|e| Error(format!("The guest USB bridge isn't reachable ({e}).")))?;
+        stream.set_read_timeout(timeout)?;
+        stream.set_write_timeout(timeout)?;
+        Ok(Box::new(stream))
+    }
+    #[cfg(not(unix))]
+    Err(Error(format!("Not a guest USB bridge address: {}", address.display())))
 }

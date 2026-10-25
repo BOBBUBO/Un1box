@@ -11,8 +11,10 @@ vendored-openssl = ["openssl/vendored"]
 
 [dependencies]
 lighttouch-catalog = { path = "../lighttouch-catalog" }
+lighttouch-core = { path = "../lighttouch-core" }
 openssl = "0.10"
 plist = "1"
+serde_json = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

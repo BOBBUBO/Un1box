@@ -151,7 +151,7 @@ impl Resources {
     pub fn usbmuxd(&self) -> PathBuf {
         std::env::var_os("LIGHTTOUCH_USBMUXD")
             .map(PathBuf::from)
-            .unwrap_or_else(|| self.dir.join(exe_name("usbmuxd-qemu")))
+            .unwrap_or_else(|| self.dir.join(if cfg!(windows) { "lighttouch-usbmuxd.exe" } else { "usbmuxd-qemu" }))
     }
 }
 
