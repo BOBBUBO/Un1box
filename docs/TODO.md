@@ -76,6 +76,15 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   vCPU. Take `present_stage`'s Scale time on the 4G (`F post-complete-ns` profile lines) before and
   after, and the game frame rate in the same pairs; the arithmetic says ~0.5 ms a frame, which is
   small unless the frame budget is tight.
+- [ ] The synchronous present's GPU wait (patch `ci/engine-patches/0005-engine-ahb-present-fence.patch`,
+  `LT_AHB_FENCE=off` for A/B): the path that copies the frame on the vCPU waited with `glFinish()` and then
+  locked the buffer with no fence; it now passes an EGL native fence to `AHardwareBuffer_lock`, as the
+  queued present does. Unmeasured: `LT_GLES_AHB_PATH=on` reports stage 1 (GPU completion) and stage 2 (row
+  pitch, now asked once at attach) per present, so take those two on the Poco and the Pixel, then the frame
+  rate in interleaved pairs **with recording on** -- the frame metrics turn the queued present off, so a
+  recorded run is the case this changes. Check the pixel report (`IT_GLES_FRAME_METRICS=1`) and the picture
+  for a torn frame, and that `eglCreateSyncKHR`/`eglDupNativeFenceFDANDROID` exist on both phones: the
+  engine prints `[gles-ahb] no native fence` once if they do not and falls back.
 - [ ] Presenter and vsync threads at `THREAD_PRIORITY_DISPLAY` (`display_priority.h`,
   `LT_PRESENT_PRIO=off` for A/B). Unmeasured: take the 1% low and the hitch count rather than the mean,
   on both phones, and check that the presenter preempting the vCPU costs the guest nothing.
