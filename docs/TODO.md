@@ -39,6 +39,10 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 
 ## Performance (current focus)
 
+- [ ] Storage space: give back the space iOS frees. A device's NAND page files only grow: pages iOS
+  erases or no longer maps keep their bytes in the app's storage. Options: punch holes
+  (`fallocate(FALLOC_FL_PUNCH_HOLE)`) for pages an erase clears, the way QEMU discards; or compact a
+  stopped device's page files. Check what Android's file systems (f2fs, ext4) support first.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
