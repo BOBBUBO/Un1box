@@ -523,21 +523,49 @@ jobs:
 
       - name: Build the engine
         run: |
+          set -o pipefail
           engine() {
             python3 qemu-ios/contrib/portable/build-engine.py ci/engine-build \
               --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT" --android-api 29 \
               --prefix ci/deps/prefix --crypto-prefix ci/crypto/prefix "$@"
+          }
+          # Every line of the build is kept: a compile error used to leave nothing behind but
+          # "exit code 1", and neither the step log nor an artifact could be fetched afterwards.
+          # The log is annotated below on failure and uploaded by the step that follows.
+          LOG=ci/engine-build.log
+          : >> "$LOG"   # one file for both attempts: a refused --source-update still explains itself
+          run_engine() {
+            engine "$@" 2>&1 | tee -a "$LOG"
           }
           # The tree restored from another engine revision is updated in place when the only
           # recorded input that changed is the source revision (--source-update: ninja compiles
           # what moved, ~1.5 minutes less than a cold build). A tree whose configuration, tools
           # or dependencies changed is refused before anything compiles, and rebuilt from
           # scratch; so is one whose update fails, which is also the cold-build retry.
-          engine --source-update || {
+          status=0
+          run_engine --source-update || {
             echo "::warning::the cached engine tree could not be updated in place (see the message above); rebuilding it from scratch"
             rm -rf ci/engine-build
-            engine
+            run_engine || status=$?
           }
+          if [ "$status" -ne 0 ]; then
+            # Annotations are the one thing the API still returns for a failed run, so the
+            # compiler's own words go there, one line each, escaped for the command protocol.
+            grep -aE 'error:|FAILED:' "$LOG" | head -5 | while IFS= read -r line; do
+              echo "::error title=engine build::$(printf '%s' "$line" | cut -c1-900 | sed -e 's/%/%25/g' -e 's/\r/%0D/g')"
+            done || true   # no match, or head closing the pipe, is not itself a failure
+            echo "---- last 40 lines of ci/engine-build.log ----"
+            tail -40 "$LOG"
+            exit "$status"
+          fi
+
+      - name: Keep the engine build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-build-log
+          path: ci/engine-build.log
+          if-no-files-found: ignore
 
       - name: Stage the engine next to the NDK C++ runtime
         run: |

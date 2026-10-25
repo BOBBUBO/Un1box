@@ -1,4 +1,4 @@
-From 1f6cd5c24887ccb9eff5c48ffb2d6ed1f2945ec8 Mon Sep 17 00:00:00 2001
+From 0ded6024590024a16017ed6056a2f14b1532051b Mon Sep 17 00:00:00 2001
 From: LightTouch <lighttouch@localhost>
 Date: Sun, 25 Oct 2026 20:26:49 +0000
 Subject: [PATCH] hw/arm: the frontend's microphone into a capture port
@@ -41,11 +41,11 @@ model, which hands out silence.
 ---
  contrib/macos-app/qemu-macos-extras.c |  42 ++++++++
  contrib/macos-app/qemu-macos-extras.h |  14 ++-
- hw/arm/host-mic.c                     | 149 ++++++++++++++++++++++++++
+ hw/arm/host-mic.c                     | 150 ++++++++++++++++++++++++++
  hw/arm/meson.build                    |   2 +-
  hw/arm/s5l8930_i2s.c                  |  32 ++++--
  include/hw/arm/host-mic.h             |  50 +++++++++
- 6 files changed, 281 insertions(+), 8 deletions(-)
+ 6 files changed, 282 insertions(+), 8 deletions(-)
  create mode 100644 hw/arm/host-mic.c
  create mode 100644 include/hw/arm/host-mic.h
 
@@ -140,10 +140,10 @@ index e2aaa0f..4e31244 100644
  /* Machine controls. */
 diff --git a/hw/arm/host-mic.c b/hw/arm/host-mic.c
 new file mode 100644
-index 0000000..194313b
+index 0000000..97386ad
 --- /dev/null
 +++ b/hw/arm/host-mic.c
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,150 @@
 +/*
 + * The frontend's microphone: a bounded ring between the host app and an audio
 + * device's capture port. See include/hw/arm/host-mic.h for the shape of the
@@ -165,6 +165,7 @@ index 0000000..194313b
 + * SPDX-License-Identifier: GPL-2.0-or-later
 + */
 +#include "qemu/osdep.h"
++#include "qemu/bswap.h"        /* stw_le_p: osdep does not pull it in (system/memory.h does) */
 +#include "hw/arm/host-mic.h"
 +
 +#include <pthread.h>
