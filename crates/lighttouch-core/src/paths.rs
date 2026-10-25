@@ -104,6 +104,20 @@ fn pictures_dir() -> PathBuf {
     }
 }
 
+/// `path` without Windows' `\\?\` prefix, which `canonicalize` adds there: the C runtime's `stat` (the engine library's
+/// file checks) refuses such paths. Kept when the path needs it (longer than MAX_PATH).
+pub fn plain(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if text.len() < 260 => match rest.strip_prefix(r"UNC\") {
+            Some(share) => PathBuf::from(format!(r"\\{share}")),
+            None if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+            None => path.to_path_buf(),
+        },
+        _ => path.to_path_buf(),
+    }
+}
+
 /// Bundled resources: the engine library, guest tools, firmwarekit and its helpers.
 ///
 /// Looked up, in order: `LIGHTTOUCH_RESOURCES`; `resources/` next to the executable (Windows zip, dev builds);
@@ -121,6 +135,7 @@ impl Resources {
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.canonicalize().ok())
+            .map(|p| plain(&p))
             .and_then(|p| p.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from("."));
         let candidates = [exe_dir.join("resources"), exe_dir.join("../Resources"), exe_dir.join("../lib/lighttouch")];
@@ -190,4 +205,21 @@ pub fn worker_exe() -> Result<PathBuf, String> {
         return Ok(PathBuf::from("/proc/self/exe"));
     }
     std::env::current_exe().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod plain_tests {
+    use super::plain;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn drops_the_verbatim_prefix() {
+        assert_eq!(
+            plain(Path::new(r"\\?\C:\lt\LightTouch\lighttouch.exe")),
+            PathBuf::from(r"C:\lt\LightTouch\lighttouch.exe")
+        );
+        assert_eq!(plain(Path::new(r"\\?\UNC\host\Data\x")), PathBuf::from(r"\\host\Data\x"));
+        assert_eq!(plain(Path::new(r"\\?\Volume{1234}\x")), PathBuf::from(r"\\?\Volume{1234}\x"));
+        assert_eq!(plain(Path::new("/opt/lighttouch")), PathBuf::from("/opt/lighttouch"));
+    }
 }
