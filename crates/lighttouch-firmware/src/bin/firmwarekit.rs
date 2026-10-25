@@ -22,6 +22,8 @@
 //!   firmwarekit seed-data --system IMG [--var-root P] [--language TAG] [--keyboards A,B] [--skip-setup]
 //!                         [--region LL] [--now SECS] [--jailbreak DIR]   the data-volume seeds on an image
 //!   firmwarekit fit-survey --system IMG --guest-tools DIR --recipe k48|n72 [--kernel FILE] [--commit]
+//!   firmwarekit kboot --decrypted DIR --identity JSON --out FILE [--ramdisk FILE] [--boot-args S] [--sandbox-patch]
+//!   firmwarekit k48-iboot --catalog FILE --id ID --ipsw FILE --decrypted DIR --out DIR [--seed S] [--boot-args S]
 use lighttouch_firmware::entry::Entry;
 use lighttouch_firmware::hfs::{Editor, Volume};
 use lighttouch_firmware::ipsw::Ipsw;
@@ -448,6 +450,42 @@ fn seed_data(args: &[String]) -> Result<(), String> {
     ed.commit().map_err(e)
 }
 
+fn kboot(args: &[String]) -> Result<(), String> {
+    use lighttouch_firmware::{identity::UnitIdentity, kboot};
+    let dec = PathBuf::from(required(args, "--decrypted")?);
+    let identity = UnitIdentity::load(&PathBuf::from(required(args, "--identity")?)).map_err(|e| e.to_string())?;
+    let boot_args = option(args, "--boot-args").unwrap_or_else(|| kboot::DEFAULT_BOOT_ARGS.into());
+    let ramdisk = option(args, "--ramdisk").map(PathBuf::from);
+    let out = required(args, "--out")?;
+    kboot::write(&dec, &PathBuf::from(&out), &identity, &boot_args, ramdisk.as_deref(), None).map_err(|e| e.to_string())
+}
+
+fn k48_iboot(args: &[String]) -> Result<(), String> {
+    use lighttouch_firmware::{identity::UnitIdentity, k48iboot, kboot};
+    let entry = Entry::load_from_catalog(&PathBuf::from(required(args, "--catalog")?), &required(args, "--id")?)
+        .map_err(|e| e.to_string())?;
+    let ipsw = Ipsw::open(&PathBuf::from(required(args, "--ipsw")?)).map_err(|e| e.to_string())?;
+    let storage = entry.recipe.as_ref().map(|r| r.storage.clone()).unwrap_or_else(|| "16g".into());
+    // as the K48 recipe: the default seed unless one is given
+    let seed = option(args, "--seed").unwrap_or_else(|| format!("ipad1-{}-default", entry.build));
+    let identity = UnitIdentity::synthesize(&seed, &storage, None).map_err(|e| e.to_string())?;
+    let boot_args = option(args, "--boot-args").unwrap_or_else(|| kboot::DEFAULT_BOOT_ARGS.into());
+    let out = PathBuf::from(required(args, "--out")?);
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let names = k48iboot::write_boot_files(
+        &ipsw,
+        &entry,
+        &PathBuf::from(required(args, "--decrypted")?),
+        &identity,
+        &boot_args,
+        &out,
+        &|line| eprintln!("{line}"),
+    )
+    .map_err(|e| e.to_string())?;
+    eprintln!("gid components: {names:?}");
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("oneshot") {
@@ -474,6 +512,8 @@ fn main() -> ExitCode {
         Some("build-n45-nor") => build_n45_nor(&args[1..]),
         Some("seed-data") => seed_data(&args[1..]),
         Some("fit-survey") => fit_survey::run(&args[1..]),
+        Some("kboot") => kboot(&args[1..]),
+        Some("k48-iboot") => k48_iboot(&args[1..]),
         _ => {
             eprintln!("usage: firmwarekit decrypt --catalog FILE --id ID --ipsw FILE --out DIR [--no-rootfs]");
             return ExitCode::from(64);

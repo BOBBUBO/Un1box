@@ -20,6 +20,9 @@
 //!   n72nand    the iPod touch 2G NAND writer;  n72nor  its NOR
 //!   n45nand    the iPod touch 1G / iPhone NAND writer;  n45ftl  its FTL read back;  n45nor  its NOR
 //!   k48nand    the K48-family NAND store (iPad 1, iPod touch 3G/4G, iPhone 3GS/4): writer, reader, check
+//!   identity   the synthetic unit identity (identity.json);  devicetree  Apple's flattened device tree
+//!   kboot      the direct-kernel boot bundle (kboot.bin);  k48iboot  the iPad's real-iBoot chain (gid blobs, NOR)
+//!   sandbox_patch  the jailbroken kernel's sandbox patch and the kernelcache re-wrap
 pub mod activation;
 pub mod assets;
 pub mod boot;
@@ -27,6 +30,7 @@ pub mod cache;
 pub mod create;
 pub mod cydia;
 pub mod decrypt;
+pub mod devicetree;
 pub mod entry;
 pub mod error;
 pub mod files;
@@ -38,9 +42,11 @@ pub mod identity;
 pub mod img3;
 pub mod ipsw;
 pub mod k48_recipe;
+pub mod k48iboot;
 pub mod k48nand;
 pub mod k48nand_check;
 pub mod k48nand_image;
+pub mod kboot;
 pub mod keyboards;
 pub mod lock;
 pub mod lzss;

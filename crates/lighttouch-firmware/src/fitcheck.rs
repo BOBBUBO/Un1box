@@ -722,7 +722,7 @@ pub fn sandbox_patch(kernel: Option<&[u8]>) -> Fit {
             true,
             format!("sb_evaluate at 0x{:x} ({})", f.address, macho::hex_bytes(&f.original)),
         ),
-        Err(sandbox_patch::Error::NoSandboxKext | sandbox_patch::Error::NoString) => {
+        Err(sandbox_patch::PatchError::NoSandboxKext | sandbox_patch::PatchError::NoString) => {
             Fit::new(piece, true, "no Seatbelt sandbox kext on this kernel: nothing to patch")
         }
         Err(e) => Fit::new(piece, false, e.to_string()),
