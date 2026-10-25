@@ -169,6 +169,8 @@ pub struct Editor {
     written: HashMap<u32, Content>,
     /// The blocks of removed items, freed at commit.
     removed: Vec<Extent>,
+    /// A snapshot (or a read-only opening): reads only, no commit.
+    read_only: bool,
     next_id: u32,
     /// The time edits are dated with (Unix seconds); now by default.
     pub now: i64,
@@ -186,9 +188,13 @@ fn component(name: &str) -> Vec<u16> {
 
 impl Editor {
     pub fn open(path: &Path) -> Result<Editor> {
+        Editor::open_with(path, true)
+    }
+
+    fn open_with(path: &Path, writable: bool) -> Result<Editor> {
         let file = File::options()
             .read(true)
-            .write(true)
+            .write(writable)
             .open(path)
             .map_err(|e| crate::internal!("open {}: {e}", path.display()))?;
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -220,9 +226,48 @@ impl Editor {
             children: HashMap::new(),
             written: HashMap::new(),
             removed: Vec::new(),
+            read_only: false,
             now: unix_now(),
         };
         ed.load()?;
+        Ok(ed)
+    }
+
+    /// A read-only view of the volume as edited so far (later edits to `self` don't show in it), for readers that
+    /// outlive a borrow, as FitCheck's firmware does. Drop it before `commit`.
+    pub fn snapshot(&self) -> Result<Editor> {
+        Ok(Editor {
+            path: self.path.clone(),
+            file: self.file.try_clone()?,
+            header: self.header.clone(),
+            block_size: self.block_size,
+            total_blocks: self.total_blocks,
+            bitmap: Vec::new(),
+            allocation: self.allocation.clone(),
+            extents_file: self.extents_file.clone(),
+            catalog_file: self.catalog_file.clone(),
+            attributes_file: self.attributes_file.clone(),
+            items: self.items.clone(),
+            attributes: Vec::new(),
+            catalog_shape: self.catalog_shape.clone(),
+            attributes_shape: self.attributes_shape.clone(),
+            extents_shape: self.extents_shape.clone(),
+            case_sensitive: self.case_sensitive,
+            original: self.original.clone(),
+            reader: Some(Volume::open(&self.path, false)?),
+            children: self.children.clone(),
+            written: self.written.clone(),
+            removed: Vec::new(),
+            read_only: true,
+            next_id: self.next_id,
+            now: self.now,
+        })
+    }
+
+    /// The volume in `path` for reading only.
+    pub fn open_read_only(path: &Path) -> Result<Editor> {
+        let mut ed = Editor::open_with(path, false)?;
+        ed.read_only = true;
         Ok(ed)
     }
 
@@ -772,6 +817,9 @@ impl Editor {
 
     /// Writes the edits into the image. The editor is spent afterwards.
     pub fn commit(mut self) -> Result<()> {
+        if self.read_only {
+            return Err(crate::internal!("{}: a read-only view can't commit", self.name()));
+        }
         let hfs_now = hfs_date(self.now);
         // The image is written from here on; nothing more is read through the opening's records.
         self.reader = None;
@@ -1512,6 +1560,7 @@ impl Editor {
             children: HashMap::new(),
             written: HashMap::new(),
             removed: Vec::new(),
+            read_only: false,
             now: unix_now(),
         })
     }
