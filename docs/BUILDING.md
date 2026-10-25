@@ -18,8 +18,8 @@ scripts/build.sh --clean android       # reconfigure from scratch (after a confi
 | `linux` | the engine and `build/linux/lighttouch-linux` | `Linux/CMakeLists.txt` (includes `Portable/`) |
 | `android-engine` | `build/android/engine/arm64-v8a/` (`libqemu-arm.so`, `libc++_shared.so`, manifest, notices) | qemu-ios with NDK clang, API 29 |
 | `android` | the engine, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
-| `firmwarekit` | `build/firmwarekit/linux/` (`firmwarekit`, `lighttouch-oneshot`) | `Packages/FirmwareKit` (Swift) and `Portable/oneshot`; links the system's OpenSSL 3 `libcrypto` (`libssl-dev`) |
-| `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same with the Swift SDK for Android (its static `libcrypto`) and NDK clang |
+| `firmwarekit` | `build/firmwarekit/linux/` (`firmwarekit`, `lighttouch-oneshot`) | `crates/lighttouch-firmware` (Rust; links only libc) and `Portable/oneshot` |
+| `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same for `aarch64-linux-android` (`rustup target add aarch64-linux-android`) with NDK clang; `licenses/` from `crates/lighttouch-firmware/stage-notices.py` |
 | `portable-tests` | test results | `Portable/` with `-DLIGHTTOUCH_BUILD_TESTS=ON` |
 | `guest-package` | `build/guest-package/{armv6,armv7}.itpack`, `build.log`, `VERSION`, `SHA256SUMS` | qemu-ios `contrib/guest-package/build.sh`, run on the Mac over ssh |
 | `ltbench` | `build/ltbench/LTBench.ipa` | `tools/guestbench/build.sh`, on the Mac over ssh |
@@ -72,7 +72,6 @@ tracked). The defaults are the development machine's paths.
 | `LT_INPUTS` | `~/Documents/LightTouch-Development/port-workspace/builds` | prebuilt inputs: `backend/deps/arm64-v8a/prefix` and `backend/deps-linux/prefix` (glib, pixman and the rest), plus `backend/crypto/*` (gcrypt), built by qemu-ios `contrib/portable/build-deps.py` and `build-crypto-deps.py` (see that directory's README); `mobile-android/arm64-v8a` (the USB bridge helpers `libusbmuxd_qemu.so` and `liblt_appservice.so`, from `Android/packaging/build-mobile-android.py`); `graphics/angle-android-arm64-gl-build-01/candidate-01` (ANGLE for arm64, with its ELF closure and notices); `product/frontend-inputs-15` (the frontend notice bundle). The APK build checks the ANGLE and frontend bundles against the SHA-256 pins in the script. |
 | `LT_ENGINE_KIT` | `~/Documents/LightTouch-Development/perf/engine-api29/arm64-v8a` | the NDK's `libc++_shared.so`, the engine notice bundle and a fallback `portable-manifest.json`, which go next to an Android engine |
 | `ANDROID_HOME`, `ANDROID_NDK_VERSION`, `JAVA_HOME` | `~/Android/Sdk`, `28.2.13676358`, JDK 17 | Android SDK, NDK and JDK (`Android/README.md` lists the pinned tool versions) |
-| `LT_SWIFT_ENV`, `LT_SWIFT_ANDROID_SDK` | `~/.local/share/swiftly/env.sh`, `swift-6.4.1-RELEASE_android` (target `aarch64-unknown-linux-android29`) | Swift 6.4.1 (swiftly) and the Swift SDK for Android that `firmwarekit` and `firmwarekit-android` build with. The SDK's static runtime needs NDK r30's libc++; relink the bundle to NDK r30 (`setup-android-sdk.sh`) |
 | `LT_GUEST_TOOLS` | `build/firmware-tools` | the guest tools the APK carries (`-PguestToolsDir`): `armv6.itpack` and `armv7.itpack`, which new devices get, and the helpers IPSW preparation installs (`it_seal` and the rest; `scripts/build.sh firmware-tools` on the Mac) |
 | `LT_MAC` | unset | `user@host` of a Mac for `guest-package` and `ltbench` |
 | `LT_MAC_DEVELOPER_DIR`, `LT_MAC_IPAD_SDK` | Xcode.app; `~/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk` on the Mac | see the Mac below |
@@ -131,4 +130,4 @@ A run skips steps already done; name a step to run it again. The prebuilt inputs
 prefixes, the MinGW sysroot, the Windows Python/Tk runtime, .NET SDK and NuGet packages, the Mac's Python runtime and
 LightTouchMac app) are variables at the top of the script, settable in `scripts/build.env`. The `android`
 step builds the guest tools from the release's engine on `$LT_MAC` (`firmware-tools`) unless
-`LT_GUEST_TOOLS` names a folder, and `firmwarekit-android` with the local Swift SDK for Android. `Android/BUILD-AND-RUN.md` has the sealed two-ABI Android recipe.
+`LT_GUEST_TOOLS` names a folder, and `firmwarekit-android` with the Rust Android target and the NDK. `Android/BUILD-AND-RUN.md` has the sealed two-ABI Android recipe.

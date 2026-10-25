@@ -10,8 +10,8 @@
 #   android-engine build/android/engine/arm64-v8a/              arm64 engine, libc++_shared.so, notices
 #   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
-#   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Swift) + lighttouch-oneshot, x86_64
-#   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Swift SDK for Android)
+#   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Rust) + lighttouch-oneshot, x86_64
+#   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Rust + the NDK)
 #   guest-package  build/guest-package/{armv6,armv7}.itpack   on the Mac ($LT_MAC), Xcode + old SDKs
 #   firmware-tools build/firmware-tools/                       on the Mac: the helpers firmwarekit create bakes in
 #                                                             (--guest-tools; contrib/export-guest-artifacts.sh)
@@ -45,9 +45,6 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${LT_MAC_IPAD_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.2.sdk}"         # expanded on the Mac
 : "${LT_MAC_ARMV6_SDK:=\$HOME/Developer/ipod2g-re/OldSDK/iPhoneOS3.1.3.sdk}"       # expanded on the Mac
 : "${JOBS:=$(nproc 2>/dev/null || echo 4)}"
-: "${LT_SWIFT_ENV:=$HOME/.local/share/swiftly/env.sh}"                           # swiftly's Swift 6.4+
-: "${LT_SWIFT_ANDROID_SDK:=aarch64-unknown-linux-android29}"   # swift sdk install ...android.artifactbundle
-: "${LT_SWIFT_ANDROID_BUNDLE:=$HOME/.swiftpm/swift-sdks/swift-6.4.1-RELEASE_android.artifactbundle}"
 PCLIBDIR=
 export ANDROID_HOME JAVA_HOME
 
@@ -158,7 +155,7 @@ build_android() {
     local w="$LT_INPUTS" angle="$LT_INPUTS/graphics/angle-android-arm64-gl-build-01/candidate-01"
     need "$angle/lib" "ANGLE arm64 libraries"
     need "$w/mobile-android/arm64-v8a" "Android mobile services"
-    # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android): rebuilt every time (SwiftPM is
+    # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android): rebuilt every time (cargo is
     # incremental), or the APK carries whatever firmwarekit and lighttouch-oneshot were last built.
     build_firmwarekit_android
     # Guest tools the APK carries (new devices get the packages; firmwarekit bakes the helpers into the systems it
@@ -198,34 +195,31 @@ build_portable_tests() {
     (cd "$OBJ/portable-tests" && ctest --output-on-failure | tail -3)
 }
 
-# firmwarekit (Packages/FirmwareKit) builds a device from an IPSW off the Mac too; its build-time boots go through
-# lighttouch-oneshot, which loads the engine library ($LTM_QEMU_DYLIB, else libqemu-arm.so beside it).
+# firmwarekit (crates/lighttouch-firmware, Rust) builds a device from an IPSW on every platform. Its preparation boots
+# run the engine library itself (`firmwarekit oneshot`: $LTM_QEMU_DYLIB, else libqemu-arm beside it); the C
+# lighttouch-oneshot is still built for the ports that pass --helper (Android's liblighttouch_oneshot.so).
 build_firmwarekit() {
     log "firmwarekit (linux)"
-    . "$LT_SWIFT_ENV"
-    (cd "$REPO/Packages/FirmwareKit" && swift build -c release --product firmwarekit 2>&1 | tail -3)
+    (cd "$REPO" && cargo build --release -p lighttouch-firmware --bin firmwarekit 2>&1 | tail -3)
     mkdir -p "$OUT/firmwarekit/linux"
-    cp "$REPO/Packages/FirmwareKit/.build/release/firmwarekit" "$OUT/firmwarekit/linux/"
+    cp "$REPO/target/release/firmwarekit" "$OUT/firmwarekit/linux/"
     cc -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/linux/lighttouch-oneshot" "$REPO/Portable/oneshot/lighttouch-oneshot.c" -ldl -lpthread
     ls -la "$OUT/firmwarekit/linux"
 }
 
-# The Swift SDK for Android's static runtime wants NDK r30's libc++ (setup-android-sdk.sh with ANDROID_NDK_HOME at
-# r30); build-support/android-pkgconfig keeps the host's zlib off the link and takes libc++ statically.
+# The Rust target aarch64-linux-android (rustup target add) with the NDK's clang for the crate's C (activation.c,
+# the vendored iBoot32Patcher, SQLite) and as the linker.
 build_firmwarekit_android() {
     log "firmwarekit (android arm64)"
-    . "$LT_SWIFT_ENV"
-    (cd "$REPO/Packages/FirmwareKit" && swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
-        --scratch-path .build-android --static-swift-stdlib --pkg-config-path build-support/android-pkgconfig \
-        -Xlinker -lssl -Xlinker -lcrypto 2>&1 | tail -3)
+    (cd "$REPO" && CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android29-clang" AR_aarch64_linux_android="$NDK_BIN/llvm-ar" \
+        CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android29-clang" \
+        cargo build --release --target aarch64-linux-android -p lighttouch-firmware --bin firmwarekit 2>&1 | tail -3)
     mkdir -p "$OUT/firmwarekit/android"
-    cp "$REPO/Packages/FirmwareKit/.build-android/out/Products/Release-android-aarch64/firmwarekit" "$OUT/firmwarekit/android/"
+    cp "$REPO/target/aarch64-linux-android/release/firmwarekit" "$OUT/firmwarekit/android/"
     "$NDK_BIN/llvm-strip" "$OUT/firmwarekit/android/firmwarekit"
     "$NDK_BIN/aarch64-linux-android29-clang" -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/android/lighttouch-oneshot" \
         "$REPO/Portable/oneshot/lighttouch-oneshot.c"
-    python3 "$REPO/Packages/FirmwareKit/build-support/stage-notices.py" "$OUT/firmwarekit/android/licenses" \
-        --checkouts "$REPO/Packages/FirmwareKit/.build-android/checkouts" \
-        --swift-license "$LT_SWIFT_ANDROID_BUNDLE/swift-android/swift-resources/usr/share/swift/LICENSE.txt" \
+    python3 "$REPO/crates/lighttouch-firmware/stage-notices.py" "$OUT/firmwarekit/android/licenses" --target aarch64-linux-android \
         --source-reference "${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}"
     ls -la "$OUT/firmwarekit/android"
 }
