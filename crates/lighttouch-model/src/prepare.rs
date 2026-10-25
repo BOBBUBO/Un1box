@@ -213,9 +213,10 @@ fn run_firmwarekit(
         .arg("--language")
         .arg(language())
         .arg("--skip-setup");
-    let helper = ctx.resources.oneshot();
-    if helper.is_file() {
-        command.arg("--helper").arg(helper);
+    // firmwarekit boots the engine for its one-shots itself (`firmwarekit oneshot`, the engine library from
+    // LTM_QEMU_DYLIB); LIGHTTOUCH_ONESHOT names a separate launcher instead (the C lighttouch-oneshot).
+    if std::env::var_os("LIGHTTOUCH_ONESHOT").is_some() {
+        command.arg("--helper").arg(ctx.resources.oneshot());
     }
     if let Some(rom) = bootrom {
         command.arg("--bootrom").arg(rom);
