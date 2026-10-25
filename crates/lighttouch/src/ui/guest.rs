@@ -1,6 +1,6 @@
 //! The guest screen: the newest frame as a texture, and input. Left mouse is finger 1, right mouse finger 2, a
-//! touchscreen's fingers map to their own contacts. A finger that leaves the screen is cancelled; a fresh press
-//! starts a new gesture. Alt-dragging adds a second finger opposite the first through the screen's centre, to pinch
+//! touchscreen's fingers map to their own contacts. As on Android, a finger dragged past the screen's edge holds at
+//! the nearest edge rather than lifting. Alt-dragging adds a second finger opposite the first through the screen's centre, to pinch
 //! and rotate; Alt+Shift moves the two together (as in Xcode's Simulator). Keys: H Home, P Sleep/Wake, +/- volume
 //! (held while the key is held).
 use super::device_frame;
@@ -132,12 +132,7 @@ impl GuestView {
                     }
                     egui::TouchPhase::Move => {
                         if let Some(&contact) = self.touches.get(&key) {
-                            if rect.contains(*pos) {
-                                batch.push(Contact { id: contact, phase: MOVE, ..normalized(*pos) });
-                            } else {
-                                self.touches.remove(&key);
-                                batch.push(Contact { id: contact, phase: CANCEL, ..normalized(*pos) });
-                            }
+                            batch.push(Contact { id: contact, phase: MOVE, ..normalized(*pos) });
                         }
                     }
                     egui::TouchPhase::End | egui::TouchPhase::Cancel => {
@@ -170,14 +165,8 @@ impl GuestView {
                         batch.push(Contact { id: contact, phase: DOWN, ..normalized(p) });
                     }
                     (Some(last), true, Some(p)) if p != last => {
-                        if rect.contains(p) {
-                            self.mouse.insert(contact, p);
-                            batch.push(Contact { id: contact, phase: MOVE, ..normalized(p) });
-                        } else {
-                            // Leaving the screen ends ownership; coming back cannot continue it.
-                            self.mouse.remove(&contact);
-                            batch.push(Contact { id: contact, phase: CANCEL, ..normalized(last) });
-                        }
+                        self.mouse.insert(contact, p);
+                        batch.push(Contact { id: contact, phase: MOVE, ..normalized(p) });
                     }
                     (Some(last), false, _) => {
                         self.mouse.remove(&contact);
