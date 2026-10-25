@@ -492,12 +492,16 @@ jobs:
           # The Swift runtime in the SDK calls libc++ symbols (__hash_memory) that the NDK's
           # libc++ provides and the linker was not reaching: name the chosen NDK's libraries
           # explicitly, after the Swift runtime, so the archive resolves what is left.
+          # The C++ runtime must be the shared one the engine also links (the APK ships libc++_shared.so
+          # beside both). A second, static libc++ inside firmwarekit gives the process two runtimes, and
+          # dlopen'ing libqemu-arm.so -- which is what `create` does to boot -- crashes the loader.
           NDK_LIB="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
           swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
             --scratch-path .build-android --static-swift-stdlib \
             --pkg-config-path build-support/android-pkgconfig \
-            -Xlinker -L"$NDK_LIB" -Xlinker -lc++_static -Xlinker -lc++abi \
+            -Xlinker -L"$NDK_LIB" -Xlinker -lc++_shared \
             -Xlinker -lssl -Xlinker -lcrypto >/tmp/firmwarekit.log 2>&1 || report /tmp/firmwarekit.log
+          echo "c++ runtime the link named: $(grep -o -- '-lc\+\+[a-z_]*' /tmp/firmwarekit.log | sort -u | tr '\n' ' ')" >> /tmp/linknote.txt
           echo "c++ libs the link named: $(grep -o -- '-lc++[a-z_]*' /tmp/firmwarekit.log | sort -u | tr '\n' ' ')" \
             >> /tmp/linknote.txt
           PRODUCT=".build-android/out/Products/Release-android-aarch64/firmwarekit"

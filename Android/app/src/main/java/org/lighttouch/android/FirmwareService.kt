@@ -163,6 +163,9 @@ class FirmwareService : Service() {
             put("LTM_QEMU_DYLIB", File(libs, "libqemu-arm.so").path)
             put("LD_LIBRARY_PATH", libs.path)
             put("HOME", filesDir.path); put("TMPDIR", cacheDir.path)
+            // A signal death (exit 139 is SIGSEGV) leaves no message of its own; the Swift runtime
+            // prints a backtrace for it, into the log this worker reports from.
+            put("SWIFT_BACKTRACE", "enable=yes,threads=all")
         }
         check(!cancelling) { "Cancelled" }
         val child = builder.start().also { process = it }
@@ -190,11 +193,20 @@ class FirmwareService : Service() {
         endStep()
         check(!cancelling) { "Cancelled" }
         // firmwarekit's own words are in the log file; an exit code alone says nothing about why.
+        val log = File(cacheDir, "firmwarekit.log")
         val detail = try {
-            File(cacheDir, "firmwarekit.log").takeIf { it.isFile }?.readLines()?.filter { it.isNotBlank() }?.takeLast(3)?.joinToString(" · ")
+            log.takeIf { it.isFile }?.readLines()?.filter { it.isNotBlank() }?.let { lines ->
+                // A crash's backtrace is the useful part, and it is short: keep both ends of the log.
+                (lines.take(2) + lines.takeLast(4)).distinct().joinToString(" · ")
+            }
         } catch (_: Exception) { null }
         check(exit == 0) {
-            message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" } + if (detail.isNullOrBlank()) "" else " — $detail"
+            val cause = message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" }
+            cause + when {
+                !detail.isNullOrBlank() -> " — $detail"
+                exit > 128 -> " — killed by signal ${exit - 128}, and it wrote nothing to its log"
+                else -> ""
+            }
         }
     }
 
