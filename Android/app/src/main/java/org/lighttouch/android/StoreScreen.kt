@@ -515,19 +515,15 @@ private fun StoreCard(modifier: Modifier = Modifier, content: @Composable Column
         .padding(horizontal = 16.dp, vertical = 12.dp), content = content)
 
 /**
- * How far along the whole queue is, 0 to 1. An item is half done once downloaded and done once installed, so the
- * ring moves through both steps; finished items (installed or failed) count whole, until they are cleared.
+ * How far along the whole queue is, 0 to 1: each item's [QueueItem.overall], which runs once through download, copy
+ * onto the device and iOS's install (see [QueueStages]); finished items (installed or failed) count whole, until cleared.
  */
 internal fun queueFraction(items: List<QueueItem>): Float {
     if (items.isEmpty()) return 0f
     return items.sumOf { item ->
-        val step = (item.progress ?: 0f).coerceIn(0f, 1f)
         when (item.state) {
-            QueueState.PENDING -> 0.0
-            QueueState.DOWNLOADING -> step * 0.5
-            QueueState.READY -> 0.5
-            QueueState.INSTALLING -> 0.5 + step * 0.5
             QueueState.DONE, QueueState.FAILED -> 1.0
+            else -> item.overall.coerceIn(0f, 1f).toDouble()
         }
     }.toFloat() / items.size
 }

@@ -76,6 +76,15 @@ class InstallQueueTest {
         assertFalse(a.cancellable)
     }
 
+    @Test fun overallProgressNeverGoesBackAcrossStages() {
+        val h = Harness()
+        h.add("a")
+        h.run("store-download")                              // downloaded: at least the copy stage's start
+        assertEquals(QueueStages.COPY, h.queue.snapshot().first().overall, 0.0001f)
+        h.run("store-install")
+        assertEquals(1f, h.queue.snapshot().first().overall, 0.0001f)
+    }
+
     @Test fun downloadOverlapsInstallButOnlyOneFileWaits() {
         val h = Harness()
         h.add("a", "b", "c")

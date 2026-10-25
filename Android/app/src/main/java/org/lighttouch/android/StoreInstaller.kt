@@ -84,7 +84,7 @@ internal class StoreInstaller private constructor(private val context: Context) 
         lastNotified = now
         val position = (items.count { !it.active } + 1).coerceAtMost(items.size)
         DownloadService.update(context, (if (current.state == QueueState.INSTALLING) "Installing " else "Downloading ") + current.name +
-            if (items.size > 1) " · $position of ${items.size}" else "", current.progress)
+            if (items.size > 1) " · $position of ${items.size}" else "", current.overall)
     }
 
     /** Normal behaviour once nothing is installing and nobody is looking: the guest pauses, as it does when LightTouch is left. */
@@ -119,6 +119,7 @@ internal class StoreInstaller private constructor(private val context: Context) 
                     if (now - reported >= 100 || count == total) {
                         reported = now
                         report.update("Downloading " + byteSize(count) + (total?.let { " of " + byteSize(it) } ?: ""), total?.let { count.toFloat() / it })
+                        total?.let { report.overall(QueueStages.download(count.toFloat() / it)) }
                     }
                 }, cancelled)
             }
@@ -145,17 +146,21 @@ internal class StoreInstaller private constructor(private val context: Context) 
         if (cancelled()) throw StoreError("Cancelled")
         apps.install(socket, prepared, info.bundleId, cancelled) { e ->
             when (e.optString("phase")) {
-                "upload" -> report.update("Copying to device", e.optInt("percent") / 100f)
+                "upload" -> { report.update("Copying to device", e.optInt("percent") / 100f); report.overall(QueueStages.copy(e.optInt("percent") / 100f)) }
                 "mutation" -> { report.commit(); report.update("Installing", null) }
                 // iOS's own steps are internal names; unpacking, most of a large app's time, shows
                 // how much has landed (the service follows the guest's free space).
                 "install" -> {
                     report.commit()
-                    if (e.optLong("unpacked_total") > 0)
-                        report.update("Unpacking · " + byteSize(e.optLong("unpacked")) + " of " + byteSize(e.optLong("unpacked_total")),
-                            e.optLong("unpacked").toFloat() / e.optLong("unpacked_total"))
-                    else report.update(if (e.optString("status") == "ExtractingPackage") "Unpacking" else "Installing",
-                        if (e.has("percent") && !e.isNull("percent")) e.optInt("percent") / 100f else null)
+                    if (e.optLong("unpacked_total") > 0) {
+                        val unpacked = e.optLong("unpacked").toFloat() / e.optLong("unpacked_total")
+                        report.update("Unpacking · " + byteSize(e.optLong("unpacked")) + " of " + byteSize(e.optLong("unpacked_total")), unpacked)
+                        report.overall(QueueStages.unpack(unpacked))
+                    } else {
+                        val percent = if (e.has("percent") && !e.isNull("percent")) e.optInt("percent") else null
+                        report.update(if (e.optString("status") == "ExtractingPackage") "Unpacking" else "Installing", percent?.let { it / 100f })
+                        if (percent != null && e.optString("status") != "ExtractingPackage") report.overall(QueueStages.iosPercent(percent))
+                    }
                 }
             }
         }

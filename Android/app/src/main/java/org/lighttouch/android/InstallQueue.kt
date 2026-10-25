@@ -7,17 +7,35 @@ enum class QueueState { PENDING, DOWNLOADING, READY, INSTALLING, DONE, FAILED }
 /** One app in the install queue, as the screen and the notification show it. */
 data class QueueItem(val id: Long, val key: String, val name: String, val state: QueueState = QueueState.PENDING,
                      val phase: String = "Waiting", val progress: Float? = null, val error: String? = null,
-                     val committed: Boolean = false) {
+                     val committed: Boolean = false, val overall: Float = 0f) {
     /** Still has work to do: it keeps the guest running and the service alive. */
     val active get() = state != QueueState.DONE && state != QueueState.FAILED
     /** Until iOS starts installing it ([committed]); copying the app onto the device can still stop. */
     val cancellable get() = active && !committed
 }
 
+/**
+ * How an item's [QueueItem.overall] splits over its stages, so one bar can follow it from the first downloaded byte to
+ * iOS's last step without starting over at each: download, copy onto the device, then iOS's own install.
+ */
+object QueueStages {
+    const val COPY = 0.4f       // downloaded
+    const val IOS = 0.7f        // on the device; iOS installs from here
+    const val UNPACKED = 0.95f  // iOS's unpacking is most of its time; its remaining steps share the rest
+
+    fun download(fraction: Float) = COPY * fraction
+    fun copy(fraction: Float) = COPY + (IOS - COPY) * fraction
+    fun unpack(fraction: Float) = IOS + (UNPACKED - IOS) * fraction
+    /** iOS's own install percentage; unpacking ends at 20. */
+    fun iosPercent(percent: Int) = UNPACKED + (1 - UNPACKED) * ((percent - 20) / 80f).coerceIn(0f, 1f)
+}
+
 /** What a running step reports back to its item. */
 interface QueueReport {
     fun update(phase: String, fraction: Float? = null)
     fun rename(name: String)
+    /** The whole item's progress (see [QueueStages]); it only moves forward. */
+    fun overall(fraction: Float)
     /** iOS has started installing: from here the install can't be cancelled. */
     fun commit()
 }
@@ -93,7 +111,7 @@ class InstallQueue<P>(private val work: QueueWork<P>,
             // Back of the line, like any newly added app.
             val entry = entries.removeAt(index)
             entry.cancelled = false
-            entry.item = entry.item.copy(state = QueueState.PENDING, phase = "Waiting", progress = null, error = null)
+            entry.item = entry.item.copy(state = QueueState.PENDING, phase = "Waiting", progress = null, error = null, committed = false, overall = 0f)
             entries += entry
             true
         }
@@ -139,7 +157,8 @@ class InstallQueue<P>(private val work: QueueWork<P>,
     private fun reporter(entry: Entry<P>) = object : QueueReport {
         override fun update(phase: String, fraction: Float?) = update(entry) { it.copy(phase = phase, progress = fraction) }
         override fun rename(name: String) = update(entry) { it.copy(name = name) }
-        override fun commit() = update(entry) { it.copy(committed = true) }
+        override fun commit() = update(entry) { it.copy(committed = true, overall = maxOf(it.overall, QueueStages.IOS)) }
+        override fun overall(fraction: Float) = update(entry) { it.copy(overall = maxOf(it.overall, fraction.coerceIn(0f, 1f))) }
     }
 
     /** Start whichever steps can run now. */
@@ -172,7 +191,8 @@ class InstallQueue<P>(private val work: QueueWork<P>,
             fetching = false
             when {
                 entry.cancelled -> { discard = file; entries.remove(entry) }
-                file != null -> { entry.file = file; entry.item = entry.item.copy(state = QueueState.READY, phase = "Waiting to install", progress = null) }
+                file != null -> { entry.file = file; entry.item = entry.item.copy(state = QueueState.READY, phase = "Waiting to install", progress = null,
+                    overall = maxOf(entry.item.overall, QueueStages.COPY)) }
                 else -> entry.item = entry.item.copy(state = QueueState.FAILED, phase = "", progress = null, error = failure)
             }
         }
@@ -189,7 +209,7 @@ class InstallQueue<P>(private val work: QueueWork<P>,
         synchronized(lock) {
             installing = false
             if (entry.cancelled && !entry.item.committed) entries.remove(entry)
-            else entry.item = if (failure == null) entry.item.copy(state = QueueState.DONE, phase = "Installed. Find it on the Home screen.", progress = 1f)
+            else entry.item = if (failure == null) entry.item.copy(state = QueueState.DONE, phase = "Installed. Find it on the Home screen.", progress = 1f, overall = 1f)
             else entry.item.copy(state = QueueState.FAILED, phase = "", progress = null, error = failure)
         }
         changed()
