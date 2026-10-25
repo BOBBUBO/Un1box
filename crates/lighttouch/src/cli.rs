@@ -91,7 +91,15 @@ fn import(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             true
         })
         .map_err(|e| e.to_string())?;
-    println!("added {} ({}) in {:.1} s", record.name, record.id, started.elapsed().as_secs_f64());
+    // The name the app would give it ("iPod touch 2G 3.1.3"), unless one was asked for.
+    let mut name = record.name.clone();
+    if source.name.is_none() {
+        let others: Vec<String> =
+            library.records().map_err(|e| e.to_string())?.into_iter().filter(|r| r.id != record.id).map(|r| r.name).collect();
+        name = lighttouch_catalog::catalog::default_device_name(&record.board, &record.build, others.iter().map(String::as_str));
+        library.rename(&record.id, &name).map_err(|e| e.to_string())?;
+    }
+    println!("added {name} ({}) in {:.1} s", record.id, started.elapsed().as_secs_f64());
     Ok(())
 }
 
