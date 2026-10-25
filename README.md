@@ -7,7 +7,7 @@ The desktop ports share one device library and setup UI. Android has its own tou
 
 here are our communities
 
-HyperHLE Discord server:
+Discord server:
 https://discord.gg/ZpEkAV47H9
 Our Telegram channel:
 https://t.me/hyperhle
