@@ -488,6 +488,10 @@ when the phone is hot. What was checked:
   `429e0a3551`). What still stopped the guest was main-loop work holding the BQL: the two rows above
   removed ~60% of the vCPU's lock waits. What is left (~0.65% of the time) is spread over device timers.
 - The tour reads only tens of flash pages per 5 s once running; storage is not what slows it.
+- Still unexplained: a few kernel threads that run in bursts (one took ~10% of the guest for three seconds
+  of the tour). Sampling the guest PC at interrupts cannot say what they do, since interrupts are taken only
+  where the kernel unmasks them (after a context switch, at a timebase read); that needs a sampler that
+  stops the vCPU on a host timer.
 
 ### Guest benchmarks
 
