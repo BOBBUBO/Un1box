@@ -122,6 +122,10 @@ struct Engine {
     decltype(&qemu_ios_audio_capture_start) audio_start = nullptr;
     decltype(&qemu_ios_audio_capture_read) audio_read = nullptr;
     decltype(&qemu_ios_audio_capture_stop) audio_stop = nullptr;
+    // Optional: an engine built before the microphone tap lacks all three.
+    decltype(&qemu_ios_microphone_write) mic_write = nullptr;
+    decltype(&qemu_ios_microphone_flush) mic_flush = nullptr;
+    decltype(&qemu_ios_microphone_state) mic_state = nullptr;
     decltype(&qemu_ios_profile_start) profile_start = nullptr;
     decltype(&qemu_ios_profile_stop) profile_stop = nullptr;
     decltype(&qemu_ios_profile_status) profile_status = nullptr;
@@ -185,6 +189,9 @@ struct Engine {
             profile_stop = reinterpret_cast<decltype(profile_stop)>(dlsym(library, "qemu_ios_profile_stop"));
             profile_status = reinterpret_cast<decltype(profile_status)>(dlsym(library, "qemu_ios_profile_status"));
             attach = reinterpret_cast<decltype(attach)>(dlsym(library, "qemu_ios_ui_attach"));
+            mic_write = reinterpret_cast<decltype(mic_write)>(dlsym(library, "qemu_ios_microphone_write"));
+            mic_flush = reinterpret_cast<decltype(mic_flush)>(dlsym(library, "qemu_ios_microphone_flush"));
+            mic_state = reinterpret_cast<decltype(mic_state)>(dlsym(library, "qemu_ios_microphone_state"));
             package_report =
                 reinterpret_cast<decltype(package_report)>(dlsym(library, "qemu_ios_guest_package_report"));
         } catch (...) {
@@ -1022,6 +1029,42 @@ lt_status lt_runtime_pcm(lt_runtime *r, int16_t *out, uint32_t capacity, lt_pcm_
     if (status != LT_OK)
         return status; // Validation/errors keep their original precedence.
     return ready ? status : lt::error(e, LT_AGAIN, "no PCM ready");
+}
+lt_status lt_runtime_mic_write(lt_runtime *r, const int16_t *frames, uint32_t count, lt_error *e) {
+    int accepted = 0;
+    const auto status = lt::guard(e, [&] {
+        lt::require(r && frames, "invalid microphone buffer");
+        lt::require(count > 0 && count <= LT_MIC_RATE, "microphone block must be 1-44100 frames");
+        lt::require(r->engine->mic_write != nullptr, "engine has no microphone input", LT_UNSUPPORTED);
+        std::lock_guard<std::mutex> lock(r->mutex);
+        // A guest that is not running reads nothing, so say so rather than fill a ring it will drain later.
+        lt::require(r->started && !r->done, "guest runtime inactive", LT_AGAIN);
+        accepted = r->engine->mic_write(frames, int(count * 4));
+        lt::require(accepted >= 0, "engine rejected the microphone block");
+    });
+    if (status != LT_OK)
+        return status; // Validation/errors keep their original precedence.
+    return accepted == int(count) ? status : lt::error(e, LT_AGAIN, "microphone ring full");
+}
+lt_status lt_runtime_mic_info(lt_runtime *r, lt_mic_info *info, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->engine->mic_state != nullptr, "engine has no microphone input", LT_UNSUPPORTED);
+        lt::abi(info);
+        uint32_t rate = 0, queued = 0;
+        uint64_t pushed = 0, dropped = 0;
+        const int capturing = r->engine->mic_state(&rate, &queued, &pushed, &dropped);
+        info->sample_rate = rate;
+        info->queued_frames = queued;
+        info->capturing = capturing > 0 ? 1 : 0;
+        info->pushed_frames = pushed;
+        info->dropped_frames = dropped;
+    });
+}
+lt_status lt_runtime_mic_flush(lt_runtime *r, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->engine->mic_flush != nullptr, "engine has no microphone input", LT_UNSUPPORTED);
+        r->engine->mic_flush();
+    });
 }
 lt_status lt_runtime_guest_status(lt_runtime *r, uint32_t *out, lt_error *e) {
     return lt::guard(e, [&] {

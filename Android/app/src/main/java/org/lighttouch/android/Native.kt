@@ -53,4 +53,9 @@ internal object Native {
     external fun guestPoll(requestId: Long): Array<String>
     external fun guestCancel(requestId: Long)
     external fun audio(buffer: ShortArray): Int
+    /** Mono 16-bit frames into the guest's capture port; returns the frames taken, 0 dropped, negative = error. */
+    external fun microphone(samples: ShortArray, count: Int): Int
+    external fun microphoneFlush()
+    /** status, sampleRate, queuedFrames, capturing, pushedFrames, droppedFrames. */
+    external fun microphoneInfo(): LongArray
 }

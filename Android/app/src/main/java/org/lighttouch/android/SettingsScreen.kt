@@ -55,6 +55,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 Group("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
                         s.headphones, "headphones_toggle", info = { headphonesInfo = true }) { s.headphones = it }
+                    SwitchRow(LtIcons.Mic, "Microphone", "This phone's microphone becomes the device's input, for Voice Memos, Shazam and anything else that records; iOS asks inside the device the first time an app records. Android asks for the microphone permission when you turn this on. Applies the next time the device starts",
+                        host.microphone, "microphone_toggle") { host.useMicrophone(it) }
                 }
                 Group("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }

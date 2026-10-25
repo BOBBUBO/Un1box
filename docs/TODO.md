@@ -234,6 +234,30 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   frontmost app, per-frame GL totals, slow GL calls, BQL waits and holds, Android present stages
   ([PROFILING.md](PROFILING.md)).
 
+## Audio
+
+- [ ] Microphone on the phone (patch `ci/engine-patches/0009-engine-microphone-input.patch`): the phone's
+  engine runs its audio backend as `driver=none`, so i2s0's input voice never opened and a recording app
+  in the guest heard silence. The frontend now pushes what `AudioRecord` captured into a bounded ring
+  that the same RX FIFO reads (`hw/arm/host-mic.c`), and the guest side is unchanged: CDMA 0x1b, the same
+  pacing, the same FIFO, all of which the iPad's `mic-check` and Shazam already exercised with a host
+  voice and with `tone-hz`. **Not measured and not yet heard on a device**, and only the S5L8920/S5L8930
+  boards have this path — the iPhone 3GS, the iPhone 4 and the iPad 1 are the targets (the iPod touches
+  have no microphone; their own I2S model still hands out silence). To check, in order: the guest's
+  Voice Memos recording of a known sound at 44.1 kHz; `Native.microphoneInfo` (`capturing` 1 and
+  `sampleRate` 44100 while iOS records, `droppedFrames` staying near zero); a recording under a 22.05 kHz
+  route (VoiceOver's speech rates, and the 4G's codec switch) where the resampler is what preserves pitch;
+  a second recording straight after the first, where a stale tail would show; and a call in an app with
+  audio input plus output at once. Then the cost: the ring costs the vCPU one mutex and a frame copy per
+  RX frame, so compare a game's frame rate with the microphone switch on and off (the recorder itself
+  runs on its own thread, in 23 ms blocks). One platform caveat to check on Android 14+: the worker's
+  foreground service is declared `specialUse`, so a capture attempted while the app is in the background
+  can be refused by the platform (the recorder's error then says so, and the guest hears silence); the
+  switch is meant for recording while the device is on screen.
+- [ ] Microphone for the desktop frontends: Linux and Windows push nothing, so the guest still hears
+  silence there; macOS uses CoreAudio's input voice and does not go through the ring. An `lt_runtime_mic_*`
+  frontend for Linux is a `parec`/`PulseAudio` reader in `Portable/`, not an engine change.
+
 ## Firmware and assets
 
 - [x] Rewrite [ASSETS.md](ASSETS.md) easiest route first: `tools/get-assets.py` (downloads the
