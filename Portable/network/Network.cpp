@@ -354,6 +354,8 @@ std::string archive_redirect(const std::string &current, const std::string &loca
 }
 struct Proxy::State {
     Configuration config;
+    mutable std::mutex config_mutex;
+    Configuration configuration() const { std::lock_guard<std::mutex> lock(config_mutex); return config; }
     Key key{nullptr,EVP_PKEY_free}, leaf_key{nullptr,EVP_PKEY_free};
     Cert ca{nullptr,X509_free};
     std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> client{nullptr,SSL_CTX_free};
@@ -367,11 +369,11 @@ struct Proxy::State {
     std::string notice = "Waiting for the guest";
     std::mutex gate;
     std::chrono::steady_clock::time_point next{}, cooldown{};
-    struct Cached { std::string target; Reply reply; };
+    struct Cached { std::string target, date; Reply reply; };
     std::list<Cached> cache;
     size_t cache_bytes = 0;
     void message(const std::string &s) { std::lock_guard<std::mutex> lock(mutex); notice = s; }
-    Reply fetch(const std::string &url, const std::string &method, const Headers &request_headers = {}, const std::string &upload = "") {
+    Reply fetch(const Configuration &config, const std::string &url, const std::string &method, const Headers &request_headers = {}, const std::string &upload = "") {
         Address address = Address::parse(url); Connection origin(connect_to(address, config.local_network && config.mode == Mode::direct));
         if (address.scheme == "https") {
             origin.tls = SSL_new(client.get()); require(origin.tls,503,"TLS allocation failed");
@@ -400,16 +402,16 @@ struct Proxy::State {
         if (reply.headers.count("connection")) { std::istringstream words(lower(reply.headers["connection"])); std::string token; while (std::getline(words,token,',')) { token=trim(token); if (token=="set-cookie") reply.cookies.clear(); if (token!="connection") reply.headers.erase(token); } }
         return reply;
     }
-    Reply archived(const std::string &target, const std::string &method) {
+    Reply archived(const Configuration &config, const std::string &target, const std::string &method) {
         std::lock_guard<std::mutex> lock(gate);
-        for (auto it=cache.begin();it!=cache.end();++it) if (it->target==target) { Reply r=it->reply; cache.splice(cache.begin(),cache,it); return r; }
+        for (auto it=cache.begin();it!=cache.end();++it) if (it->target==target && it->date==config.archive_date) { Reply r=it->reply; cache.splice(cache.begin(),cache,it); return r; }
         auto url = archive_url(target,config.archive_date);
         for (int redirects=0;redirects<8;redirects++) {
             auto now=std::chrono::steady_clock::now();
             if (now<cooldown) return {429,{{"content-type","text/plain"},{"retry-after",std::to_string(std::chrono::duration_cast<std::chrono::seconds>(cooldown-now).count()+1)}},"The Internet Archive asked LightTouch to wait. Try reloading after the wait shown in Retry-After.\n"};
             if (now<next) std::this_thread::sleep_until(next);
             next=std::chrono::steady_clock::now()+1s;
-            Reply r=fetch(url,method,{{"user-agent","LightTouch/1.0 (archive replay)"}});
+            Reply r=fetch(config,url,method,{{"user-agent","LightTouch/1.0 (archive replay)"}});
             if (r.status==429 || r.status==503) {
                 int seconds=60;
                 try { if (r.headers.count("retry-after")) seconds=int(number(r.headers["retry-after"],3600)); } catch (...) {}
@@ -420,7 +422,7 @@ struct Proxy::State {
             r.headers.erase("set-cookie"); r.cookies.clear();
             if (method=="GET" && r.status==200 && r.body.size()<=2<<20) {
                 while (!cache.empty() && (cache.size()>=32 || cache_bytes+r.body.size()>16<<20)) { cache_bytes-=cache.back().reply.body.size(); cache.pop_back(); }
-                cache_bytes+=r.body.size(); cache.push_front({target,r});
+                cache_bytes+=r.body.size(); cache.push_front({target,config.archive_date,r});
             }
             return r;
         }
@@ -528,9 +530,16 @@ std::string Proxy::fingerprint() const {
     return out;
 }
 std::string Proxy::status() const { std::lock_guard<std::mutex> lock(state->mutex); return state->notice; }
+void Proxy::configure(Configuration config) {
+    require(config.mode==Mode::off || config.mode==Mode::direct || config.mode==Mode::archive,400,"Invalid network mode");
+    require(config.mode!=Mode::archive || Configuration::valid_date(config.archive_date),400,"Choose a valid archive date");
+    require(config.mode==Mode::off || bool(state->ca),503,"Enable networking and restart the device first");
+    std::lock_guard<std::mutex> lock(state->config_mutex);
+    state->config=std::move(config);
+}
 void Proxy::listen(const std::string &path) {
 #ifndef _WIN32
-    require(state->config.mode!=Mode::off,503,"Networking is off");
+    require(state->configuration().mode!=Mode::off,503,"Networking is off");
     require(path.size()<sizeof(sockaddr_un::sun_path),503,"Proxy socket path exceeds platform limit");
     Socket fd=socket(AF_UNIX,SOCK_STREAM,0); require(fd>=0,503,"Could not create proxy socket");
     sockaddr_un address{}; address.sun_family=AF_UNIX; memcpy(address.sun_path,path.c_str(),path.size()+1);
@@ -562,7 +571,7 @@ void Proxy::serve(std::intptr_t socket) {
 #endif
     Connection guest(Socket(socket),false);
     try {
-        require(state->config.mode!=Mode::off,503,"Networking is off");
+        require(state->configuration().mode!=Mode::off,503,"Networking is off");
         std::string line=guest.line(); std::istringstream first(line); std::string method,target,version,extra;
         first>>method>>target>>version>>extra;
         require((version=="HTTP/1.0" || version=="HTTP/1.1") && extra.empty(),400,"Invalid HTTP request");
@@ -594,12 +603,17 @@ void Proxy::serve(std::intptr_t socket) {
         }
         require(method=="GET" || method=="HEAD" || method=="POST" || method=="PUT" || method=="DELETE" || method=="OPTIONS" || method=="PATCH",405,"Unsupported HTTP method");
         Address address=Address::parse(target);
+        const auto config=state->configuration();
+        require(config.mode!=Mode::off,503,"Networking is off");
         require(!h.count("expect"),417,"Expect requests are unsupported");
-        if (state->config.mode==Mode::archive) require(method=="GET" || method=="HEAD",405,"Wayback browsing supports GET and HEAD; forms need Direct internet");
+        if (config.mode==Mode::archive) require(method=="GET" || method=="HEAD",405,"Wayback browsing supports GET and HEAD; forms need Direct internet");
         auto upload=body(guest,h,false,upload_limit);
-        Reply reply=state->config.mode==Mode::archive ? state->archived(address.url(),method) : state->fetch(address.url(),method,h,upload);
+        Reply reply=config.mode==Mode::archive ? state->archived(config,address.url(),method) : state->fetch(config,address.url(),method,h,upload);
+        // The guest URL stays the same when the date changes. Keep the dated
+        // cache in the host, where its key includes the selected date.
+        if (config.mode==Mode::archive) reply.headers["cache-control"]="no-store";
         guest.write(response(reply,method=="HEAD"));
-        state->message(reply.status==404 && state->config.mode==Mode::archive ? "No archived capture is available for this page" : "Connected");
+        state->message(reply.status==404 && config.mode==Mode::archive ? "No archived capture is available for this page" : "Connected");
     } catch (const std::exception &error) {
         state->message(error.what());
         try { auto typed=dynamic_cast<const Error *>(&error); guest.write(response({typed?typed->status:502,{{"content-type","text/plain; charset=utf-8"}},std::string(error.what())+"\n"})); } catch (...) {}

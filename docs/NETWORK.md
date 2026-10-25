@@ -2,8 +2,13 @@
 
 Android exposes **Settings → Network**. Networking and local-network access are
 off by default. Enable networking and choose Direct internet or Wayback Machine;
-the selected calendar date uses the Archive's closest available capture. Changes
-apply to the next guest start. No capture means an archive error, never a live-web
+the selected calendar date uses the Archive's closest available capture. Once a
+session starts with networking enabled, route, archive date and LAN changes apply
+to new requests immediately. Reload the page after changing them. In-flight
+requests retain their original route/date. Networking can also be disabled and
+re-enabled live in that session. A session started offline needs a stop/start to
+create its private proxy endpoint; Settings explicitly reports this pending change.
+No capture means an archive error, never a live-web
 fallback. Archived browsing supports GET/HEAD; forms need Direct internet.
 
 The screen uses the app's existing Compose settings components. Dates are strict
@@ -19,6 +24,10 @@ guest TLS bridge, dated archive routing, redirect handling, a bounded memory cac
 one archive fetch per second, and Retry-After cooldowns. Guest credentials and
 cookies are excluded from archive requests. Direct browsing preserves cookies.
 Bodies, headers, uploads, redirects and concurrent connections are bounded.
+`Proxy::configure` publishes a short-locked configuration snapshot independently
+of archive fetches. The bounded host cache keys captures by URL and selected date,
+including responses completing after a date change. Archive responses disable
+guest caching so the unchanged guest URL cannot hide a newly selected date.
 
 Android contributes persistence, Conscrypt root certificates, JNI and worker
 lifecycle. The proxy identity is per emulated device, in private app storage; only
@@ -46,6 +55,10 @@ egress and creates no proxy identity. Archive restricts egress to the private pr
 Direct enables NAT and Android DNS using netd/getaddrinfo; LAN access remains an
 explicit opt-in. Host loopback remains blocked. This source integration replaces
 the fork PR's build-time patches.
+Live NAT/LAN changes use the engine's existing app-thread-safe bottom-half hooks
+through `lt_runtime_network_policy`; slirp is never accessed on the UI/Binder thread.
+The worker reports its applied route/date separately from saved preferences and
+retries admission during engine startup. Live changes do not reinstall guest tools.
 
 Linux and macOS can use the same Unix listener and supply their trust roots.
 Windows frontends can pass accepted sockets to `Proxy::serve`; listener, trust
@@ -88,6 +101,11 @@ Regression cases also cover admission contention between uploads, lost mutation
 completions, interrupted first CA saves, and HTTP framing inside TLS tunnels.
 On Linux the network fixture explicitly denies `link`/`linkat`, and verifies
 first-save recovery, private key permissions and concurrent CA initialization.
+The Linux live-configuration fixture uses a local verified TLS upstream and no
+outbound traffic to check route/date changes, separate date caches, an old request
+completing after a date change, and switching to Direct while archive I/O is blocked.
+Android session tests cover startup admission retries, offline-boot restart notices,
+live disable/re-enable and preserving active status on failed policy changes.
 
 The raw NAT policy can also be checked against the engine's actual vendored
 libslirp on a native host (Meson and GLib development files required):
@@ -111,9 +129,12 @@ before handing it off. Keep source and engine revision receipts beside the APK.
 Device acceptance still requires a stopped guest with current guest tools. Check
 Settings → Network is off on fresh app data, enable Direct, start the guest and
 wait for **Ready** under Current session. Browse an HTTP and an HTTPS page in
-Safari. Stop the guest, select Wayback with date **9 September 2009**, start again
-and verify a page with a capture on a nearby day loads (for example,
+Safari. While it runs, select Wayback with date **9 September 2009**, reload and
+verify a page with a capture on a nearby day loads (for example,
 `http://example.com/`, whose nearby capture is 10 September 2009). Also check a
 missing capture gives an archive error. Return networking to off and stop the guest
 after testing. Host HTTP/TLS tests do not establish Safari or guest trust-store
 acceptance; those checks need the physical device.
+Also change the archive date live, reload, and confirm the Current session date
+and the retrieved capture change. Switch back to Direct and reload without a
+restart. A nearest available capture may be the same for two nearby chosen dates.

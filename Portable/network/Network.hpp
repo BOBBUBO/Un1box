@@ -36,6 +36,10 @@ public:
     Proxy &operator=(const Proxy &) = delete;
     std::string certificate() const; // public DER for the guest trust store
     std::string fingerprint() const;
+    // Applies to subsequently parsed requests, including new HTTPS tunnels.
+    // In-flight work retains its snapshot. Never waits for upstream I/O.
+    // A proxy constructed off has no TLS identity and cannot be enabled live.
+    void configure(Configuration configuration);
     // Unix listener for libslirp's per-connection guestfwd. Windows frontends may
     // call serve() on an accepted socket instead, sharing routing and TLS unchanged.
     void listen(const std::string &socket_path);

@@ -247,6 +247,11 @@ lt_status lt_runtime_io_statistics(lt_runtime *, lt_runtime_io_stats *, lt_error
 lt_status lt_runtime_profile(lt_runtime *, const char *path, lt_error *);
 lt_status lt_runtime_profile_status(lt_runtime *, int32_t *status, lt_error *);
 lt_status lt_runtime_pause(lt_runtime *, uint32_t paused, lt_error *);
+/* Queue a live NAT/LAN policy on the engine loop: 0 off, 1 direct, 2 archive.
+ * Requires an enabled proxy endpoint at boot; LT_AGAIN before engine readiness.
+ * The frontend also updates its shared Proxy configuration. No guest tools or
+ * Wi-Fi reconfiguration is needed. Callers serialize this with proxy changes. */
+lt_status lt_runtime_network_policy(lt_runtime *, uint32_t mode, uint32_t local_network, lt_error *);
 /* Stop requests semantic guest shutdown; poll confirmation. Timeout/kill leaves
  * dirty marker. destroy only after terminal state; returns LT_BUSY otherwise. */
 lt_status lt_runtime_request_shutdown(lt_runtime *, lt_error *);
