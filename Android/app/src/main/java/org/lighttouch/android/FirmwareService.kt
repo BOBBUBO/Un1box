@@ -189,7 +189,13 @@ class FirmwareService : Service() {
         val exit = child.waitFor()
         endStep()
         check(!cancelling) { "Cancelled" }
-        check(exit == 0) { message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" } }
+        // firmwarekit's own words are in the log file; an exit code alone says nothing about why.
+        val detail = try {
+            File(cacheDir, "firmwarekit.log").takeIf { it.isFile }?.readLines()?.filter { it.isNotBlank() }?.takeLast(3)?.joinToString(" · ")
+        } catch (_: Exception) { null }
+        check(exit == 0) {
+            message.ifEmpty { "firmwarekit ${args.first()} failed (exit $exit)" } + if (detail.isNullOrBlank()) "" else " — $detail"
+        }
     }
 
     private fun note(phase: String) = PreparationNote.write(this, JSONObject().put("state", phase).put("pid", Process.myPid())
