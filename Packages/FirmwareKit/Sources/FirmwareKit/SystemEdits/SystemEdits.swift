@@ -169,17 +169,29 @@ public enum SystemEdits {
     /// Under /usr/share, not /usr/local: 4.x's MobileSafari sandbox (builtin profile "MobileSafari") can't read
     /// /usr/local, so its CFNetwork found no PAC and went DIRECT, while every unsandboxed client used the proxy.
     static let pacPath = "usr/share/ltm/proxy.pac"
-    static let pac = """
-        function FindProxyForURL(url, host) {
-            if (isPlainHostName(host)) return "DIRECT";
-            if (/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(host) &&
-                (isInNet(host, "10.0.0.0", "255.0.0.0") || isInNet(host, "172.16.0.0", "255.240.0.0") ||
-                 isInNet(host, "192.168.0.0", "255.255.0.0") || isInNet(host, "169.254.0.0", "255.255.0.0") ||
-                 isInNet(host, "127.0.0.0", "255.0.0.0"))) return "DIRECT";
-            return "PROXY 10.0.2.100:3128; DIRECT";
-        }
+    /// On the Mac the PAC sends public hosts to the app's proxy (the 10.0.2.100 guestfwd the frontend
+    /// installs). The phone has no such proxy, so there the same file goes DIRECT: otherwise every host
+    /// costs one connection to a dead proxy before CFNetwork falls back, which some clients never do.
+    static let pac: String = {
+        #if os(Android)
+            return """
+                function FindProxyForURL(url, host) { return "DIRECT"; }
 
-        """
+                """
+        #else
+            return """
+                function FindProxyForURL(url, host) {
+                    if (isPlainHostName(host)) return "DIRECT";
+                    if (/^\\d+\\.\\d+\\.\\d+\\.\\d+$/.test(host) &&
+                        (isInNet(host, "10.0.0.0", "255.0.0.0") || isInNet(host, "172.16.0.0", "255.240.0.0") ||
+                         isInNet(host, "192.168.0.0", "255.255.0.0") || isInNet(host, "169.254.0.0", "255.255.0.0") ||
+                         isInNet(host, "127.0.0.0", "255.0.0.0"))) return "DIRECT";
+                    return "PROXY 10.0.2.100:3128; DIRECT";
+                }
+
+                """
+        #endif
+    }()
     static let sbEnv = ["CA_ENABLE_OGL": "0", "MBX2D_PAGE_FLIP": "0"]
     static let sbEnvCAOGL = ["MBX2D_PAGE_FLIP": "0"]
     static let mobileTop: Set<String> = ["mobile", "ea"]  // uid 501 on the real unit; the rest of /var is root

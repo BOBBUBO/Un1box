@@ -39,6 +39,10 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 
 ## Performance (current focus)
 
+- [ ] Storage space: give back the space iOS frees. A device's NAND page files only grow: pages iOS
+  erases or no longer maps keep their bytes in the app's storage. Options: punch holes
+  (`fallocate(FALLOC_FL_PUNCH_HOLE)`) for pages an erase clears, the way QEMU discards; or compact a
+  stopped device's page files. Check what Android's file systems (f2fs, ext4) support first.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
@@ -64,9 +68,67 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 - [ ] BQL spin follow-ups: interleaved pairs on the Pixel (JellyCar and a 60 fps scene) and one more
   Poco game with `LT_BQL_SPIN=off` as the A arm, idle engine CPU with the spin on (it burns up to
   150 µs per contended take), and a desktop measurement before turning it on there.
-- [ ] Confirm the two open engine leads (both default off, PERFORMANCE.md): the indirect miss-helper
-  cache (`LT_IBTC_L2=on`, +2.2% in 3 of 3 pairs) and the inlined TB lookup hit (`LT_TB_LOOKUP_INLINE=on`,
-  ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin (now the Android default).
+- [ ] APPLE_fence as a real EGL fence sync (patch `ci/engine-patches/0002-engine-gles-apple-fence.patch`,
+  `LT_GLES_APPLE_FENCE=glfinish` for A/B). Setting, testing and finishing a fence used to be a
+  `glFinish()` each. Count the fence calls per frame in the benchmark scenes first (`IT_GLES_PROF=1`);
+  an ordinary scene may make none, and then there is nothing to win. Measure in the SGX-era titles that
+  pipeline uploads against frames (Real Racing, Asphalt 5, Epic Citadel), interleaved, and check that a
+  fence still tests true after it has been finished.
+- [ ] Presenter: the per-frame convert is a table shuffle on AArch64 now (`convert_row_rgba`,
+  four pixels a lookup); before that it was a scalar R/B swap over every pixel, which at the
+  iPod touch 4G's 960x640 is 614K pixels a frame on the thread that also shares cores with the
+  vCPU. Take `present_stage`'s Scale time on the 4G (`F post-complete-ns` profile lines) before and
+  after, and the game frame rate in the same pairs; the arithmetic says ~0.5 ms a frame, which is
+  small unless the frame budget is tight.
+- [ ] One guest read per draw for interleaved arrays (patch
+  `ci/engine-patches/0008-engine-gles-interleaved-arrays.patch`): the bind copied overlapping array
+  ranges once per array. Unmeasured, and its size depends entirely on how much the games' arrays
+  overlap, so take it in a game and not as an average: `IT_GLES_PROF=1`'s array time per draw, and the
+  draw's host time, in Jetpack's title and Asphalt 5's race. Check the geometry is unchanged (`gl-dump`
+  scenes, and a game's HUD text), since a wrong interior pointer shows up as displaced or garbled
+  vertices rather than as an error.
+- [ ] vCPU threads on the big cores (`cpu_affinity.h`, `LT_VCPU_BIG_CORES=off` for A/B): a scheduling
+  guess, so it needs interleaved runs on both phones with the 1% low and the hitch count as the numbers,
+  not the mean. Read the `[perf] vCPU threads prefer N of M cores` line first to know what mask the
+  device actually produced -- on the Pixel's Tensor the clusters are not the Poco's, and a mask of one
+  core would be worse than none. Also check the engine's other threads are not starved (frame time
+  distribution, and `IT_VCPU_ACCT` for vCPU busy time) and that a hot phone (thermal throttling) does
+  not lose more from the restriction than it gains.
+- [ ] A presented frame's pages resolved once (patch `ci/engine-patches/0006-engine-gles-frame-pages.patch`):
+  the synchronous copy wrote a 960x640 frame with 640 `gles_guest_rw` calls. Unmeasured, and small by
+  arithmetic (tens of microseconds); take it where the frame budget is tight rather than as an average:
+  `IT_GLES_PROF=1` present time on the Poco, and one run on the 2G, whose presents go through the panel
+  path and not this one. Confirm the fallback still reissues a present when a page is missing: an app
+  that has just mapped its CA surface is the case (`present:write` must not appear when the reissue
+  works).
+- [ ] Presenter fallbacks (patch `ci/engine-patches/0007-engine-gles-present-fallbacks.patch`): the
+  readback no longer drains the pipeline first (`LT_READBACK_FINISH=on` to compare), the AHB lock is the
+  only submit a present makes, and the RGBA/BGRA row swap is a shuffle on AArch64. The readback is the
+  iPod touch 2G's path and the ANGLE provider's: take `IT_GLES_PROF=1` present time on a 2G boot, and in
+  a game on a 16-bit surface, before believing the average; check the picture did not change (a torn or
+  swapped frame is the failure mode of the `glFinish` removal), and check the swap on a device that
+  actually refuses BGRA storage (`[gles-ahb]` says which format the surface got).
+- [ ] The synchronous present's GPU wait (patch `ci/engine-patches/0005-engine-ahb-present-fence.patch`,
+  `LT_AHB_FENCE=off` for A/B): the path that copies the frame on the vCPU waited with `glFinish()` and then
+  locked the buffer with no fence; it now passes an EGL native fence to `AHardwareBuffer_lock`, as the
+  queued present does. Unmeasured: `LT_GLES_AHB_PATH=on` reports stage 1 (GPU completion) and stage 2 (row
+  pitch, now asked once at attach) per present, so take those two on the Poco and the Pixel, then the frame
+  rate in interleaved pairs **with recording on** -- the frame metrics turn the queued present off, so a
+  recorded run is the case this changes. Check the pixel report (`IT_GLES_FRAME_METRICS=1`) and the picture
+  for a torn frame, and that `eglCreateSyncKHR`/`eglDupNativeFenceFDANDROID` exist on both phones: the
+  engine prints `[gles-ahb] no native fence` once if they do not and falls back.
+- [ ] Presenter and vsync threads at `THREAD_PRIORITY_DISPLAY` (`display_priority.h`,
+  `LT_PRESENT_PRIO=off` for A/B). Unmeasured: take the 1% low and the hitch count rather than the mean,
+  on both phones, and check that the presenter preempting the vCPU costs the guest nothing.
+- [ ] Confirm the two engine fast paths, now on by default on Android (PERFORMANCE.md, patch
+  `ci/engine-patches/0003-engine-tcg-fast-paths.patch`; `LT_IBTC_L2=off` and `LT_TB_LOOKUP_INLINE=off`
+  are the A/B arms): the indirect miss-helper cache (+2.2% in 3 of 3 pairs) and the inlined TB lookup
+  hit (ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin (now the
+  Android default) and in a game on the iPod touch 4G, which is the vCPU-bound case they should help most.
+- [ ] Transparent huge pages for guest RAM (patch `ci/engine-patches/0003-engine-tcg-fast-paths.patch`,
+  `LT_RAM_HUGEPAGE=off` for A/B): unmeasured, and a no-op where the kernel has no THP. Take a 3D scene
+  (Asphalt 5's race, Epic Citadel) as well as Jetpack, since the guess is host dTLB pressure on guest
+  data; also check the engine's RSS and that nothing stalls while khugepaged collapses the 128 MiB.
 - [ ] Assassin's Creed: Altair's Chronicles holds ~19–20 fps on the Pixel 10, which may be the game's
   own cap (as Asphalt 5's 25 is). The overlay shows the guest CPU at 50–60% while the engine reports
   95–100%: find where the engine time goes that the guest does not account for (frame inspector
@@ -79,7 +141,10 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
      before the visible gap, and compare with ordinary intervals.
   2. Audio: the AAC decoder runs before 48 of 87 gaps over 30 ms, and its converter's 2-mod-4 output
      batches take ~420 µs a call through ARM1176 alignment traps (25 µs aligned). Join exact converter
-     batches to the recurring misses. Keep the traps and iOS's handler (architectural).
+     batches to the recurring misses. Android now performs a misaligned LDM/STM instead of faulting
+     (patch `ci/engine-patches/0004-engine-ldm-unaligned.patch`, `IT_LDM_UNALIGNED=off` for A/B): check
+     that the trap count falls to zero, that the converter call time follows it, that the 30 ms gaps
+     drop, and that the sound is unchanged in a game with music — then either keep it or revert it.
   3. Logging: the two longest gaps in one capture follow ~26 ms of launchd + syslogd work. Find which
      stderr or IPC request it serves before changing logging again (the tally experiments were rejected).
   4. Bluetooth: a 166 ms gap with 84 ms of BTServer work, and a 10 s BTServer timeout and relaunch at
@@ -169,6 +234,42 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   frontmost app, per-frame GL totals, slow GL calls, BQL waits and holds, Android present stages
   ([PROFILING.md](PROFILING.md)).
 
+## Audio
+
+- [ ] Microphone on the phone (patch `ci/engine-patches/0009-engine-microphone-input.patch`): the phone's
+  engine runs its audio backend as `driver=none`, and a first build of this patch put the frontend's ring
+  *behind* the port's input voice as a fallback — which is why the first device test still heard silence
+  in Voice Memos and Talking Tom. `audio/noaudio.c` does open an input voice (`max_voices_in`,
+  `no_init_in`, `no_read`) and hands out silence paced at the port's rate, so the fallback was never
+  reached. The RX FIFO now asks the ring first (`host_mic_read_frame`) and only falls through to the
+  voice's ring when the frontend pushed nothing, which is every case on the Mac and every case with the
+  switch off. Every layer of the path is checkable without a device or an engine build:
+  `python3 tests/mic/run.py --engine qemu-ios` (`--sanitize` adds ASan/UBSan) slices the capture port
+  out of `hw/arm/s5l8930_i2s.c`, the API out of `Portable/src/Runtime.cpp` and the JNI glue out of
+  `lighttouch_jni.cpp`, runs them, and checks the wiring between the layers — the ordering above is one
+  of those checks, precisely because getting it wrong sounds exactly like a broken microphone. The CI
+  job runs it before the engine build. The frontend pushes what `AudioRecord` captured into a bounded ring that the same RX FIFO
+  reads (`hw/arm/host-mic.c`), and the guest side is unchanged: CDMA 0x1b, the same pacing, the same
+  FIFO, all of which the iPad's `mic-check` and Shazam already exercised with a host voice and with
+  `tone-hz`. **Not measured and not yet heard on a device**, and only the S5L8920/S5L8930
+  boards have this path — the iPhone 3GS, the iPhone 4 and the iPad 1 are the targets (the iPod touches
+  have no microphone; their own I2S model still hands out silence). The switch is read when the guest
+  starts, so turn it on before starting (or restart the guest afterwards), and grant Android's
+  microphone permission when it asks. To check, in order: the guest's
+  Voice Memos recording of a known sound at 44.1 kHz; `Native.microphoneInfo` (`capturing` 1 and
+  `sampleRate` 44100 while iOS records, `droppedFrames` staying near zero); a recording under a 22.05 kHz
+  route (VoiceOver's speech rates, and the 4G's codec switch) where the resampler is what preserves pitch;
+  a second recording straight after the first, where a stale tail would show; and a call in an app with
+  audio input plus output at once. Then the cost: the ring costs the vCPU one mutex and a frame copy per
+  RX frame, so compare a game's frame rate with the microphone switch on and off (the recorder itself
+  runs on its own thread, in 23 ms blocks). One platform caveat to check on Android 14+: the worker's
+  foreground service is declared `specialUse`, so a capture attempted while the app is in the background
+  can be refused by the platform (the recorder's error then says so, and the guest hears silence); the
+  switch is meant for recording while the device is on screen.
+- [ ] Microphone for the desktop frontends: Linux and Windows push nothing, so the guest still hears
+  silence there; macOS uses CoreAudio's input voice and does not go through the ring. An `lt_runtime_mic_*`
+  frontend for Linux is a `parec`/`PulseAudio` reader in `Portable/`, not an engine change.
+
 ## Firmware and assets
 
 - [x] Rewrite [ASSETS.md](ASSETS.md) easiest route first: `tools/get-assets.py` (downloads the
@@ -220,6 +321,9 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   (Harness note: the guest re-sleeps ~5 s after a Power wake; a second Power tap before the wake
   shows puts it back to sleep.)
 - [ ] Stop was seen disabled once after Store use; not reproduced.
+- [ ] The Store's install queue keeps the guest running with LightTouch off screen (then pauses it when the
+  queue is empty); not yet tried on a phone. Guest audio is not muted meanwhile, and Android 14+ ends a
+  `dataSync` foreground service after six hours a day.
 - [x] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.
 - [ ] Some catalog apps marked compatible need iOS 4 APIs (Doodle Jump 3.x: GCD; the n72 search row
   is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash

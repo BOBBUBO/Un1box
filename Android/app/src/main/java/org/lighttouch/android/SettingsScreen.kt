@@ -48,7 +48,9 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
         title = { Text("Headphones or speaker", style = MaterialTheme.typography.titleMedium) },
         text = { Text("With headphones, iOS plays games and music in stereo, unchanged.\n\n" +
             "On the speaker, iOS reshapes the sound for the device's small built-in speaker: mono, with the bass cut and a limiter to protect it. " +
-            "That processing runs on the emulated CPU, so games run a little slower, and the sound is closer to an old iPod's speaker than to your phone's.") },
+            "That processing runs on the emulated CPU, so games run a little slower, and the sound is closer to an old iPod's speaker than to your phone's.\n\n" +
+            "Headphones also turn off the speaker's protection limiter. Some games count on it to keep loud sounds in check and can sound distorted without it; " +
+            "if a game crackles or clips, switch this off and restart the device.") },
         confirmButton = { TextButton(onClick = { headphonesInfo = false }) { Text("OK") } })
     Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -65,12 +67,14 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 Group("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
                         s.headphones, "headphones_toggle", info = { headphonesInfo = true }) { s.headphones = it }
+                    SwitchRow(LtIcons.Mic, "Microphone", "This phone's microphone becomes the device's input, for Voice Memos, Shazam and anything else that records; iOS asks inside the device the first time an app records. Android asks for the microphone permission when you turn this on. Applies the next time the device starts",
+                        host.microphone, "microphone_toggle") { host.useMicrophone(it) }
                 }
                 Group("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
                     ChoiceRow(LtIcons.Layers, "Screen scaling", ScreenScaling.entries, s.scaling, { it.label },
                         if (s.scaling == ScreenScaling.SMOOTH) "Filtered by the display hardware" else "Crisp pixels, then filtered to fit") { s.scaling = it; host.applySettings() }
-                    SwitchRow(LtIcons.Play, "Resume automatically", "Pick up where you left off when you come back to LightTouch", s.autoResume) { s.autoResume = it }
+                    SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while LightTouch is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
                 }
                 Group("Performance") {
                     SwitchRow(LtIcons.Speed, "Fewer pauses when opening iOS apps", "Skips large emulator-code cleanups after app changes. Uses more RAM and may slightly lower steady-state game speed; applies after restarting the emulated iPhone.", s.reduceAppSwitchPauses, "reduce_app_switch_pauses") { s.reduceAppSwitchPauses = it }

@@ -1,8 +1,12 @@
 #include "lighttouch.h"
 #include <jni.h>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 #include <android/native_window_jni.h>
 #include <android/bitmap.h>
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -22,6 +26,7 @@
 #include <dlfcn.h>
 #include <dirent.h>
 #include "frame_pacer.h"
+#include "display_priority.h"
 #include <optional>
 #include "presentation_lifetime.h"
 #include "display_lease.h"
@@ -29,6 +34,7 @@
 #include "touch_mapping_result.h"
 #include "experimental_tcg_cache.h"
 #include "performance_hint.h"
+#include "cpu_affinity.h"
 #include "profile_writer.h"
 #include <memory>
 
@@ -66,6 +72,7 @@ std::mutex frame_wake_mutex;
 std::condition_variable frame_wake;
 uint64_t frame_wake_sequence=0;
 VcpuPerformanceHint vcpu_hint;  // frame publisher thread only
+VcpuBigCoreAffinity vcpu_affinity;  // frame publisher thread only
 uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
 // The guest is 60 Hz content. Saying so (API 30+) lets SurfaceFlinger run the panel at 60 Hz, or
 // at 120 with each frame held for exactly two refreshes, instead of treating it as free-running.
@@ -129,6 +136,7 @@ std::atomic<int> present_scale{[] {
 }()};
 void frame_published(void *,uint64_t published) {
     vcpu_hint.framePublished();
+    vcpu_affinity.framePublished();
     timeline_published(published,monotonic_ns());
     const uint64_t id=monotonic_ns()/fps_bucket_ns;auto &slot=fps_bucket_id[id%fps_buckets];
     if(slot.load(std::memory_order_relaxed)!=id){fps_bucket_frames[id%fps_buckets].store(0,std::memory_order_relaxed);slot.store(id,std::memory_order_release);}
@@ -281,7 +289,33 @@ lt_status open_library(const char *root,lt_error *error) {
 }
 using WindowSnapshot = PresentationWindow<ANativeWindow, ANativeWindow_acquire, ANativeWindow_release>;
 using WindowPost = PresentationPost<ANativeWindow, ANativeWindow_unlockAndPost>;
+// The guest's frame bytes are BGRA (p[0] = B, p[1] = G, p[2] = R, p[3] = A) and the window wants
+// RGBA with an opaque alpha. AArch64 swaps R and B four pixels at a time with one table lookup per
+// 16 bytes: 614K pixels a frame at the iPod touch 4G's 960x640, the largest thing this thread does
+// between two presents.
+void convert_row_rgba(uint32_t *dst,const uint8_t *src,int width) {
+#if defined(__aarch64__)
+    static const uint8_t kSwap[16]={2,1,0,3,6,5,4,7,10,9,8,11,14,13,12,15};
+    const uint8x16_t table=vld1q_u8(kSwap);
+    const uint8x16_t opaque=vreinterpretq_u8_u32(vdupq_n_u32(0xff000000u));
+    int x=0;
+    for(;x+4<=width;x+=4) {
+        const uint8x16_t v=vld1q_u8(src+size_t(x)*4);
+        vst1q_u8(reinterpret_cast<uint8_t *>(dst+x),vorrq_u8(vqtbl1q_u8(v,table),opaque));
+    }
+    for(;x<width;++x) {
+        const uint8_t *p=src+size_t(x)*4;
+        dst[x]=uint32_t(p[2])|uint32_t(p[1])<<8|uint32_t(p[0])<<16|0xff000000u;
+    }
+#else
+    for(int x=0;x<width;++x) {
+        const uint8_t *p=src+size_t(x)*4;
+        dst[x]=uint32_t(p[2])|uint32_t(p[1])<<8|uint32_t(p[0])<<16|0xff000000u;
+    }
+#endif
+}
 void present() {
+    request_display_priority();
     uint64_t configured_generation = 0;
     int configured_scale=-1;
     uint32_t configured_width=0,configured_height=0;
@@ -415,6 +449,15 @@ void present() {
                     // once, and repeated target rows are copies of it. A
                     // 320x480 guest on a 1080x2400 panel used to cost two
                     // integer divides per target pixel, ~2.6M per frame.
+                    // The window buffer is the guest's own size here whenever the scale is the
+                    // default (guest-sized geometry) or a whole multiple of it: then every row is
+                    // converted straight across, with no mapping and no margins.
+                    if(int(source.width)==target.width && int(source.height)==target.height &&
+                       target.stride==target.width) {
+                        for(int y=0;y<target.height;++y)
+                            convert_row_rgba(static_cast<uint32_t *>(target.bits)+size_t(y)*target.stride,
+                                             pixels.data()+size_t(y)*source.stride,target.width);
+                    } else {
                     static thread_local std::vector<uint32_t> columns;
                     const int x0=std::max(int(view.left),0);
                     int x1=x0;
@@ -443,6 +486,7 @@ void present() {
                             row[x]=uint32_t(p[2])|(uint32_t(p[1])<<8)|(uint32_t(p[0])<<16)|0xff000000u;
                         }
                         previous=row;previous_sy=sy;
+                    }
                     }
                 }
                 scale_end=monotonic_ns();
@@ -930,7 +974,13 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     const auto view=viewport(width,height);lt_error error=LT_INIT(lt_error);
     for(jsize i=0;i<count;++i) {
         batch.contacts[i]=lt_contact LT_INIT(lt_contact);batch.contacts[i].id=id[i];batch.contacts[i].phase=phase[i];
-        auto status=lt_map_contact(coords[i*2],coords[i*2+1],view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
+        // A finger past the guest's edge (into a letterbox, or off the glass) holds at the nearest edge instead of
+        // cancelling every finger's gesture, as a touchscreen that ends at the guest's border would.
+        double px=coords[i*2],py=coords[i*2+1];
+        if(std::isfinite(px) && std::isfinite(py)) {
+            px=std::clamp(px,view.left,view.left+view.width);py=std::clamp(py,view.top,view.top+view.height);
+        }
+        auto status=lt_map_contact(px,py,view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
         if(status!=LT_OK) {
             const auto cancellation=release_input();
             return string(env,touch_mapping_rejection(status,cancellation));
@@ -1027,6 +1077,37 @@ JNI(audio) jint JNICALL Java_org_lighttouch_android_Native_audio(JNIEnv *env,job
 JNI(audioInfo) jintArray JNICALL Java_org_lighttouch_android_Native_audioInfo(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(guard);jint data[2]={jint(pcm.sample_rate),jint(pcm.channels)};
     jintArray arr=env->NewIntArray(2);env->SetIntArrayRegion(arr,0,2,data);return arr;
+}
+
+// The capture port reads interleaved stereo; the phone's recorder hands us mono, because a mono
+// AudioRecord is what every device supports and what the guest's own HAL feeds on. Duplicating here
+// keeps the engine's interface a single stereo ring. The JNI buffer holds either side of the copy,
+// so the caller's array is read once.
+JNI(microphone) jint JNICALL Java_org_lighttouch_android_Native_microphone(JNIEnv *env,jobject,jshortArray buffer,jint count) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return -jint(LT_AGAIN);
+    const jint mono=std::min(count,jint(env->GetArrayLength(buffer)));
+    if(mono<=0)return 0;
+    static thread_local std::vector<int16_t> input,stereo;
+    input.resize(size_t(mono));env->GetShortArrayRegion(buffer,0,mono,input.data());
+    stereo.resize(size_t(mono)*2);
+    for(jint i=0;i<mono;++i){stereo[size_t(i)*2]=input[size_t(i)];stereo[size_t(i)*2+1]=input[size_t(i)];}
+    lt_error error=LT_INIT(lt_error);
+    const auto status=lt_runtime_mic_write(runtime,stereo.data(),uint32_t(mono),&error);
+    if(status==LT_OK)return mono;
+    if(status==LT_AGAIN)return 0;              // ring full, or the guest is not running: a dropped block
+    return -jint(status);
+}
+JNI(microphoneFlush) void JNICALL Java_org_lighttouch_android_Native_microphoneFlush(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return;
+    lt_error error=LT_INIT(lt_error);lt_runtime_mic_flush(runtime,&error);
+}
+JNI(microphoneInfo) jlongArray JNICALL Java_org_lighttouch_android_Native_microphoneInfo(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_mic_info info=LT_INIT(lt_mic_info);lt_error error=LT_INIT(lt_error);
+    const auto status=runtime?lt_runtime_mic_info(runtime,&info,&error):LT_AGAIN;
+    jlong data[6]={jlong(status),jlong(info.sample_rate),jlong(info.queued_frames),jlong(info.capturing),
+                   jlong(info.pushed_frames),jlong(info.dropped_frames)};
+    jlongArray arr=env->NewLongArray(6);env->SetLongArrayRegion(arr,0,6,data);return arr;
 }
 
 JNI(profile) jstring JNICALL Java_org_lighttouch_android_Native_profile(JNIEnv *env,jobject,jstring path) {

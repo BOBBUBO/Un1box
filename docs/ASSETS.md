@@ -78,11 +78,10 @@ before closing. For a system prepared on a Mac (the iPod touch 4G, [route 5](#5-
 use **Choose folder…** in **1 iOS system** and pick the packed `.itbase` folder, with `armv7.itpack`
 as the guest tools and no boot file.
 
-**Android:** in **Add a device** (the setup screen on first launch), under **Or add a prepared
-device image**, choose `n72ap-7E18.itbase` as the **iOS system** and `bootrom.bin` as the **Boot
-file** (or **Choose a folder** holding both), then **Create device**. The app adds its own guest
-tools. Or skip these files: **Prepare from an IPSW** ([route 5](#5-prepare-a-system-from-an-ipsw-instead))
-downloads everything.
+**Android:** you don't need these files: the app downloads and prepares iOS itself ([route 5](#5-prepare-a-system-from-an-ipsw-instead)).
+To add files you already have, tap **I already have the device files** (on the welcome screen, or under the
+device list of **Add a device**), choose `n72ap-7E18.itbase` as the **iOS system** and `bootrom.bin` as the **Boot
+file** (or **Choose a folder** holding both), then **Create device**. The app adds its own guest tools.
 
 The app checks the files itself; you never type hashes. Each saved device has its own
 writable storage, and the imported system stays read-only, so one import can back several
@@ -111,7 +110,7 @@ Preparation turns Apple's stock firmware into an emulator-ready system. Importin
 | macOS | Upstream app's **Add Device**, or `firmwarekit` (its bundled copy or `scripts/build.sh firmwarekit`), then **Choose folder…** |
 | Windows | Not yet: prepare on another computer, then copy the `.itbase` |
 
-**Android:** in **Add a device** (or Settings), tap **Prepare from an IPSW**, choose the device, then the iOS version. **Download** fetches the IPSW (from the link ipsw.me lists, else the catalog's mirrors and the Internet Archive) and checks it against the catalog; **Choose a file** uses one already on the phone. The iPod touch 2G also needs its boot file: it comes from another device on the phone when one has it, or **Download** fetches it from securerom.fun (GitHub as the fallback), checked against its SHA-256. **Prepare device** shows each step with a progress bar; the device is added when it finishes. On a Poco F3 the iPod touch 2G on iOS 3.1.3 takes about a minute; the iPod touch 4G on iOS 6.1.6 takes several minutes, because preparation starts iOS once so its first-start setup is done.
+**Android:** tap **Get started** on first launch (or **Add a device** later), choose the device, then the iOS version. **Download** fetches the IPSW (from the link ipsw.me lists, else the catalog's mirrors and the Internet Archive) and checks it against the catalog; **Choose a file** uses one already on the phone. The iPod touch 2G also needs its boot file: it comes from another device on the phone when one has it, or **Download** fetches it from securerom.fun (GitHub as the fallback), checked against its SHA-256. **Prepare device** shows each step with a progress bar; the device is added when it finishes. On a Poco F3 the iPod touch 2G on iOS 3.1.3 takes about a minute; the iPod touch 4G on iOS 6.1.6 takes several minutes, because preparation starts iOS once so its first-start setup is done.
 
 Every device and iOS version in the catalog can be chosen, marked **Tested** (checked on LightTouch for Android), **Tested, slow** (works, but slower than the iPod touch 2G on 3.1.3), **Experimental** (passes upstream's Mac checks) or **Untested**.
 

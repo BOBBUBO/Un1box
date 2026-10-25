@@ -28,6 +28,12 @@ class EngineService : Service() {
     private val audioGuard = AudioPacketEpoch()
     private val audioObservations = AudioObservations()
     @Volatile private var audioError = ""
+    /** The Settings switch: this phone's microphone into the guest, read at the next guest start. */
+    @Volatile private var microphoneWanted = false
+    @Volatile private var microphoneOn = false
+    @Volatile private var microphoneError = ""
+    private var microphoneThread: Thread? = null
+    private var recorder: AudioRecord? = null
     private val buttonDownAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonUpAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonRejections = java.util.concurrent.atomic.AtomicLong(0)
@@ -171,6 +177,8 @@ class EngineService : Service() {
             }
             // The Settings switch (AppSettings.headphones); the engine applies it only on boards that model the jack.
             val headphones = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("headphones", true)
+            microphoneWanted = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("microphone", false)
+            microphoneError = ""
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()
@@ -553,6 +561,7 @@ class EngineService : Service() {
             putLong("packetGeneration", audioGuard.currentGeneration()); putBoolean("packetAdmissionOpen", audioGuard.admissionOpen())
         } })
         putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioOutputOn", audioOn)
+        putBoolean("microphoneOn", microphoneOn); putString("microphoneError", microphoneError)
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
         putLong("buttonRejections", buttonRejections.get())
@@ -585,6 +594,7 @@ class EngineService : Service() {
      */
     private fun startAudioOutput() { lifecycleAdmission.run {
         if (userPaused || stopping.get()) return@run
+        startMicrophone()
         if (audioOn) { playAudio(); return@run }
         synchronized(audioGuard) {
             // Resume the retained track before the audio thread sees it on.
@@ -594,7 +604,68 @@ class EngineService : Service() {
             audioOn = true
         }
     } }
-    private fun stopAudioOutput() { lifecycleAdmission.run { audioOn = false } }
+    private fun stopAudioOutput() { lifecycleAdmission.run { audioOn = false; stopMicrophone() } }
+    /**
+     * This phone's microphone into the guest's capture port. Started and stopped with the guest's audio, so a
+     * paused or backgrounded guest does not hold the recorder, and released by the reading thread itself so a
+     * blocked read cannot outlive it. Blocks of 1024 mono frames (23 ms at 44.1 kHz): the JNI side duplicates
+     * each into the stereo frame the port reads, and the engine resamples to the port's own rate.
+     */
+    private fun startMicrophone() {
+        if (microphoneOn || !microphoneWanted || stopping.get() || !alive.get()) return
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            microphoneError = "Microphone off: LightTouch has no microphone permission. Turn the switch off and on again to grant it."
+            return
+        }
+        val rate = 44100
+        val minimum = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (minimum <= 0) {
+            microphoneError = "Microphone unavailable: this phone refused 44.1 kHz mono capture."
+            return
+        }
+        val record = try {
+            AudioRecord.Builder().setAudioSource(MediaRecorder.AudioSource.MIC).setAudioFormat(
+                AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO).build()
+            ).setBufferSizeInBytes(maxOf(minimum, 8192)).build()
+        } catch (failure: Exception) {
+            microphoneError = "Microphone unavailable: ${failure.message ?: "unknown error"}"
+            return
+        }
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release(); microphoneError = "Microphone unavailable: the recorder did not initialize"; return
+        }
+        try { record.startRecording() } catch (failure: Exception) {
+            record.release(); microphoneError = "Microphone unavailable: ${failure.message ?: "unknown error"}"; return
+        }
+        recorder = record; microphoneOn = true; microphoneError = ""
+        microphoneThread = Thread({
+            val samples = ShortArray(1024)
+            try {
+                while (microphoneOn && alive.get() && !stopping.get()) {
+                    val read = record.read(samples, 0, samples.size)
+                    if (read < 0) { if (microphoneOn) microphoneError = "Microphone read failed ($read)"; break }
+                    if (read == 0) continue
+                    val taken = Native.microphone(samples, read)
+                    // Negative: the engine refused the block outright. Zero is a dropped one (the guest is not
+                    // recording, or is behind), which is what a bounded ring does and not an error.
+                    if (taken < 0) { if (microphoneOn) microphoneError = "The engine could not take the microphone (${-taken})"; break }
+                }
+            } catch (_: Exception) {
+                // The recorder is released below; the guest then hears silence until the next start.
+            } finally {
+                runCatching { record.stop() }
+                record.release()
+                Native.microphoneFlush()
+                synchronized(this) { if (recorder === record) { recorder = null; microphoneOn = false } }
+            }
+        }, "microphone").apply { start() }
+    }
+    /** Idempotent: the reading thread sees microphoneOn and finishes on its own, then releases the recorder. */
+    private fun stopMicrophone() {
+        microphoneOn = false
+        recorder?.let { runCatching { it.stop() } }
+    }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("guest", "Running guest", NotificationManager.IMPORTANCE_LOW))

@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 enum class Screen { LOADING, SETUP, HOME, FULLSCREEN, SETTINGS, STORE, CYDIA, HITCH }
+enum class Screen { LOADING, SETUP, HOME, FULLSCREEN, SETTINGS, STORE, HITCH, DETAILS }
 
 /** What the screens read from and ask of the activity, which owns the worker and its lifecycle. */
 interface GuestHost {
@@ -42,7 +43,6 @@ interface GuestHost {
     val profileAutomatic: Boolean
     val profileBusy: Boolean
     val profileNotice: String
-    /** A profile an instrumented engine wrote, in Download/LightTouch once saved. */
     val storeInstalling: Boolean
     /** The engine can save this guest's state (Save & Stop); false until supported on this host. */
     val canSaveState: Boolean
@@ -57,6 +57,7 @@ interface GuestHost {
     fun screenshot()
     fun navigate(screen: Screen)
     fun openDevices()
+    fun openDetails(device: DeviceSummary)
     fun openHitch()
     fun selectDevice(id: String)
     fun renameDevice(id: String, name: String)
@@ -69,6 +70,9 @@ interface GuestHost {
     /** True while the frame block models a transfer's full hardware span (its default). */
     val faithfulScaler: Boolean
     fun useFaithfulScaler(on: Boolean)
+    /** True while this phone's microphone feeds the emulated device's capture port; read at guest start. */
+    val microphone: Boolean
+    fun useMicrophone(on: Boolean)
     fun pickGuestTools()
     /** True while firmwarekit adds Cydia to the selected device (a stopped edit; its apps and data stay). */
     val jailbreaking: Boolean

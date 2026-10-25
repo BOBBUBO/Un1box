@@ -340,6 +340,24 @@ typedef struct {
     uint64_t timestamp_ns, dropped_frames;
 } lt_pcm_info;
 lt_status lt_runtime_pcm(lt_runtime *, int16_t *, uint32_t capacity_frames, lt_pcm_info *, lt_error *);
+/* The host's microphone into the guest's capture port. Interleaved stereo S16
+ * at LT_MIC_RATE; a mono source is duplicated by the caller, and the engine
+ * resamples to the rate the guest's capture port runs at. Bounded: LT_AGAIN
+ * when the engine's ring had no room for the whole block (the guest is not
+ * reading), which is a dropped block and not an error. LT_UNSUPPORTED for an
+ * engine built before this tap; the guest then hears silence. Any thread. */
+#define LT_MIC_RATE 44100
+typedef struct {
+    uint32_t size, version;
+    uint32_t sample_rate;      /* the capture port's rate; 0 before one starts */
+    uint32_t queued_frames, capturing;
+    uint64_t pushed_frames, dropped_frames;
+} lt_mic_info;
+lt_status lt_runtime_mic_write(lt_runtime *, const int16_t *frames, uint32_t count, lt_error *);
+lt_status lt_runtime_mic_info(lt_runtime *, lt_mic_info *, lt_error *);
+/* Drop what the app pushed and the guest has not taken: what a recorder does when it stops, so the
+ * next capture starts at the microphone and not with the tail of the one before it. */
+lt_status lt_runtime_mic_flush(lt_runtime *, lt_error *);
 /* Small typed guest operations use the existing agent, never a host/guest shell.
  * Requests are async, at most one pending; caller polls completion. Lost/timeout
  * mutations are not retried. Launch builtin IDs are limited to com.apple.*;

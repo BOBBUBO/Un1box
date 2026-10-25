@@ -67,8 +67,16 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override var presentAsync by mutableStateOf(true)
     override var faithfulScaler by mutableStateOf(true)
         private set
+    /** The phone's microphone into the guest, read by the worker at the next guest start. */
+    override val microphone: Boolean get() = settings.microphone
+    // Android asks once, when the switch goes on; a denial leaves the switch off and says why.
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        settings.microphone = granted
+        if (!granted) error = "Without the microphone permission the emulated device has no input."
+    }
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
+    private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
     private val store by lazy { StoreModel(applicationContext) { muxSocket.ifEmpty { null } } }
@@ -99,6 +107,17 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             }
         }
     }
+    private val installer by lazy { StoreInstaller.of(applicationContext) }
+    private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
+    // Android 13+ shows an install queue's progress and result in notifications only once allowed.
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && !askedNotifications && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            askedNotifications = true
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) store.installLocal(uri) }
     // board-build -> (product type, iOS version), from the bundled firmware catalog.
     @Volatile private var firmwareTargets: Map<String, StoreTarget> = emptyMap()
     private var catalogVersion by mutableIntStateOf(0)
@@ -127,6 +146,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var hitchResume = false
     // The guest was running when LightTouch left the screen; resume it on return (settings.autoResume).
     private var pausedByBackground = false
+    private var askedNotifications = false
+    private val idleHook: () -> Unit = ::installsFinished
     private var firmware: IFirmware? = null
     private var firmwareBound = false
     // A jailbreak is its own one-shot firmware worker, so it never disturbs a preparation's state.
@@ -406,6 +427,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         preferSixtyHertz(guestInFront = false)
         presentAsync = !(File(filesDir, "debug-env").let { f -> f.exists() && f.readLines().any { it.trim() == "LT_PRESENT_ASYNC=off" } })
         faithfulScaler = !(File(filesDir, "debug-env").let { f -> f.exists() && f.readLines().any { it.trim() == "LT_SCALER_TIME_NS=0" } })
+        installer.onIdle = idleHook
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
@@ -433,6 +455,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
             // A full page hides the guest surface: the presenter stops drawing into it and drops its 60 Hz request.
             val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.CYDIA)
+            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.DETAILS)
             LaunchedEffect(guestCovered, engine) {
                 val worker = engine ?: return@LaunchedEffect
                 Thread({ try { worker.setPresentVisible(!guestCovered) } catch (_: RemoteException) { } }, "present-visibility").start()
@@ -484,6 +507,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             blocked = busy || store.installing,
                             onPickLocal = { localDeb.launch(arrayOf("application/vnd.debian.binary-package", "application/octet-stream", "*/*")) }) { overlay = null }
                         Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty() && !CydiaTransfers.active,
+                        Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
+                        Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
                             onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { overlay = null }
                         Screen.HITCH -> HitchInspector(hitchData, hitchError, onResume = ::closeHitch, onSave = ::saveHitch, saving = hitchSaving,
                             savedNotice = hitchNotice, onShare = hitchReport?.let { uri -> { shareReport(uri) } })
@@ -522,7 +547,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }
     }
     override fun openDevices() { refreshDevices(); devicesOpen = true }
-    override fun addDevice() { setup.reset(firstRun = false); overlay = Screen.SETUP }
+    // A full page like Settings, so it sits inside the window's insets; Back returns to the devices list.
+    override fun openDetails(device: DeviceSummary) { detailsDevice = device; devicesOpen = false; overlay = Screen.DETAILS }
+    override fun addDevice() = openPreparation()
     override fun openLicenses() { licensesOpen = true }
 
     override fun openPreparation() {
@@ -548,6 +575,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun useFaithfulScaler(on: Boolean) {
         setDebugEnv("LT_SCALER_TIME_NS", if (on) null else "0")
         faithfulScaler = on
+    }
+    override fun useMicrophone(on: Boolean) {
+        if (on && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            microphonePermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        settings.microphone = on
+        notice = if (on) "This phone's microphone feeds the device from the next start" else "The device gets no microphone input from the next start"
     }
     override fun applySettings() {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
@@ -846,9 +881,15 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             onJailbreak = ::chooseJailbreak,
             onChoosePrepared = { preparedCopy.launch(null) },
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
-            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation)
+            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onAdvanced = ::openDeviceFiles, onClose = ::closePreparation)
     }
-    /** A firmware prepared on a computer, chosen in the prepare flow: added through Add a device's import. */
+    /** The advanced path from the device list: add device files the user already has (the setup wizard's import). */
+    private fun openDeviceFiles() {
+        if (busy || preparationActive()) return
+        preparationOpen = false; releaseFirmware()
+        setup.reset(firstRun = false); overlay = Screen.SETUP
+    }
+    /** A firmware prepared on a computer, chosen in the prepare flow: added through the device files import. */
     private fun addPreparedCopy(uri: Uri) {
         if (busy || preparationActive()) return
         preparationOpen = false; releaseFirmware()
@@ -1085,7 +1126,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 }
                 handler.post {
                     records = loaded; recordsLoaded = true
-                    if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = false); overlay = Screen.SETUP }
+                    if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = true); overlay = Screen.SETUP }
                 }
             } catch (e: RemoteException) { handler.post { error = "Device library unavailable: ${e.message}" } }
         }, "device-library").start()
@@ -1334,12 +1375,12 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun selectedRecordId() = records.firstOrNull { it.getBoolean("selected") }?.getString("id") ?: ""
     private fun openStore() {
         overlay = Screen.STORE
-        store.close(); store.dismissJob() // Reopen on the search, not a finished install's details.
+        store.close() // Reopen on the search, not an app's details.
         store.useRecord(selectedRecordId(), recordTarget())
         if (muxSocket.isNotEmpty()) store.refreshGuest()
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-    override fun onStart() { super.onStart(); active = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
+    override fun onStart() { super.onStart(); active = true; installer.visible = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
     override fun onResume() {
         super.onResume(); displayResumed = true
         displayOwnerTicket = DisplayOwners.active.resumed(this, hasWindowFocus())
@@ -1371,13 +1412,25 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         active = false; displayView?.keepScreenOn = false; stopSensors()
         // Owner validation also occurs inside the native guard; a handoff after
         // this UI check still cannot make old A pause/cancel/detach new B.
+        installer.visible = false
         if (wasOwner && ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting"))) {
-            pausedByBackground = status == "running" && overlay != Screen.HITCH
-            displayView?.backgroundOwnedDisplay()
+            // Installing apps needs the guest running: it lets go of the display, and keeps going until the queue is empty.
+            if (installer.queue.active) displayView?.retireDisplay()
+            else {
+                pausedByBackground = status == "running" && overlay != Screen.HITCH
+                displayView?.backgroundOwnedDisplay()
+            }
         }
         else displayView?.retireDisplay()
         DisplayOwners.active.stopped(this, displayOwnerTicket)
         handler.removeCallbacks(poll); monitor.setActive(false, false); super.onStop()
     }
-    override fun onDestroy() { buttonCalls.shutdown(); monitor.close(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    /** The install queue emptied. With LightTouch off screen the guest pauses now, as it would have on leaving, and resumes on return. */
+    private fun installsFinished() {
+        if (active || status != "running" || !sessionOwned || overlay == Screen.HITCH) return
+        val worker = engine ?: return
+        pausedByBackground = true
+        Thread({ try { worker.pause(true) } catch (_: RemoteException) { } }, "install-idle-pause").start()
+    }
+    override fun onDestroy() { if (installer.onIdle === idleHook) installer.onIdle = null; buttonCalls.shutdown(); monitor.close(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }
