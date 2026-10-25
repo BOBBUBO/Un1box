@@ -31,7 +31,7 @@ The desktop ports share one device library and setup UI. Android has its own tou
 
 Install or unpack the build for your platform. You also need an iOS system for it to run. The [asset guide](docs/ASSETS.md) covers both routes:
 
-- **Prepare one from Apple's IPSW.** On Android, tap **Add a device › Prepare from an IPSW**, pick the device and iOS version, and the app downloads the IPSW and prepares it on the phone (the iPod touch 2G takes about a minute). On Linux and macOS, `firmwarekit` does the same. Every platform uses the same preparer ([Portable/firmware](Portable/firmware/README.md)).
+- **Prepare one from Apple's IPSW.** On Android, tap **Get started** on first launch (or **Add a device**), pick the device and iOS version, and the app downloads the IPSW and prepares it on the phone (the iPod touch 2G takes about a minute). On Linux and macOS, `firmwarekit` does the same. Every platform uses the same preparer ([Portable/firmware](Portable/firmware/README.md)).
 - **Use an already prepared system** (`.itbase`), for example the one `tools/get-assets.py` takes from upstream's Mac app, along with its guest tools (`armv6.itpack` or `armv7.itpack`) and, for the iPod touch 2G, its boot ROM.
 
 Then start the device. Use the on-screen Home, Power and volume buttons, and **Stop** to shut iOS down cleanly. Each device keeps its own storage, and the prepared system is never changed.

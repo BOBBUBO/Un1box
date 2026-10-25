@@ -406,7 +406,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun openDevices() { refreshDevices(); devicesOpen = true }
     // A full page like Settings, so it sits inside the window's insets; Back returns to the devices list.
     override fun openDetails(device: DeviceSummary) { detailsDevice = device; devicesOpen = false; overlay = Screen.DETAILS }
-    override fun addDevice() { setup.reset(firstRun = false); overlay = Screen.SETUP }
+    override fun addDevice() = openPreparation()
     override fun openLicenses() { licensesOpen = true }
     override fun openPreparation() {
         if (!preparationActive() && prep.preparation?.getString("state") != "complete")
@@ -706,9 +706,15 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onDownloadRom = ::downloadBootrom, onPrepare = ::beginPreparation,
             onChoosePrepared = { preparedCopy.launch(null) },
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
-            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation)
+            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onAdvanced = ::openDeviceFiles, onClose = ::closePreparation)
     }
-    /** A firmware prepared on a computer, chosen in the prepare flow: added through Add a device's import. */
+    /** The advanced path from the device list: add device files the user already has (the setup wizard's import). */
+    private fun openDeviceFiles() {
+        if (busy || preparationActive()) return
+        preparationOpen = false; releaseFirmware()
+        setup.reset(firstRun = false); overlay = Screen.SETUP
+    }
+    /** A firmware prepared on a computer, chosen in the prepare flow: added through the device files import. */
     private fun addPreparedCopy(uri: Uri) {
         if (busy || preparationActive()) return
         preparationOpen = false; releaseFirmware()
@@ -910,7 +916,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 }
                 handler.post {
                     records = loaded; recordsLoaded = true
-                    if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = false); overlay = Screen.SETUP }
+                    if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = true); overlay = Screen.SETUP }
                 }
             } catch (e: RemoteException) { handler.post { error = "Device library unavailable: ${e.message}" } }
         }, "device-library").start()

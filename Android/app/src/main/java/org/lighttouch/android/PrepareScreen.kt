@@ -91,7 +91,7 @@ private fun preparationCost(firmware: CatalogFirmware?) =
 @Composable
 internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolean, onDownload: () -> Unit, onChooseIpsw: () -> Unit,
                            onChooseRom: () -> Unit, onDownloadRom: () -> Unit, onPrepare: () -> Unit, onChoosePrepared: () -> Unit,
-                           onCancel: () -> Unit, onRetryImport: () -> Unit, onClose: () -> Unit) {
+                           onCancel: () -> Unit, onRetryImport: () -> Unit, onAdvanced: () -> Unit, onClose: () -> Unit) {
     val run = state.preparation?.getString("state")
     val showProgress = preparing || run in listOf("complete", "failed", "cancelled")
     val back = {
@@ -117,7 +117,7 @@ internal fun PrepareScreen(state: PrepareState, busy: Boolean, preparing: Boolea
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
                 when {
                     showProgress -> Progress(state, preparing, busy, onPrepare, onCancel, onRetryImport, onClose)
-                    state.step == PrepareStep.DEVICE -> DeviceStep(state)
+                    state.step == PrepareStep.DEVICE -> DeviceStep(state, onAdvanced)
                     state.step == PrepareStep.VERSION -> VersionStep(state)
                     !state.preparesHere -> PreparedCopyStep(state, busy, onChoosePrepared)
                     else -> FilesStep(state, busy, onDownload, onChooseIpsw, onChooseRom, onDownloadRom, onPrepare)
@@ -168,7 +168,7 @@ private fun SupportBadge(support: Support) {
 }
 
 @Composable
-private fun DeviceStep(state: PrepareState) {
+private fun DeviceStep(state: PrepareState, onAdvanced: () -> Unit) {
     Heading("Choose a device", "Pick the device to emulate. You'll choose its iOS version next.")
     val devices = state.catalog.groupBy { it.productType }.entries.sortedBy { deviceOrder.indexOf(it.key).let { i -> if (i < 0) 99 else i } }
     val (tested, others) = devices.partition { (_, firmwares) -> firmwares.any { it.support.tested } }
@@ -188,6 +188,9 @@ private fun DeviceStep(state: PrepareState) {
         }
     }
     if (state.catalog.isEmpty()) Text("Loading the firmware list…", style = MaterialTheme.typography.bodyMedium)
+    TextButton(onClick = onAdvanced, modifier = Modifier.padding(top = 12.dp).testTag("prepare_advanced")) {
+        Text("I already have the device files")
+    }
 }
 
 @Composable
@@ -226,7 +229,7 @@ private fun VersionStep(state: PrepareState) {
 
 /**
  * A firmware this phone cannot build from its IPSW yet: it is prepared on a computer (Light Touch for Mac, or
- * its firmwarekit) and the resulting .itbase is added here, through the same import as Add a device.
+ * its firmwarekit) and the resulting .itbase is added here, through the same import as the advanced device files path.
  */
 @Composable
 private fun ColumnScope.PreparedCopyStep(state: PrepareState, busy: Boolean, onChoosePrepared: () -> Unit) {
