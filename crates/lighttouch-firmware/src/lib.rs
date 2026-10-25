@@ -42,6 +42,7 @@ pub mod k48_recipe;
 pub mod keyboards;
 pub mod lock;
 pub mod lzss;
+pub mod n45_recipe;
 pub mod n45ftl;
 pub mod n45nand;
 pub mod n45nor;

@@ -29,8 +29,8 @@ const MODELS: [(&str, &str); 3] = [("8g", "MB528"), ("16g", "MB531"), ("32g", "M
 const KC_PREFIX: &str = "/System/Library/Caches/com.apple.kernelcaches/";
 const PREFS: &str = "private/var/mobile/Library/Preferences";
 const AGENT_JOB: &str = "System/Library/LaunchDaemons/com.qemu.it-agent.plist";
-const FSTAB_RW: &str = "/dev/disk0s1 / hfs rw 0 1\n";
-const SPRINGBOARD: &str = "System/Library/CoreServices/SpringBoard.app/SpringBoard";
+pub(crate) const FSTAB_RW: &str = "/dev/disk0s1 / hfs rw 0 1\n";
+pub(crate) const SPRINGBOARD: &str = "System/Library/CoreServices/SpringBoard.app/SpringBoard";
 const MBX: &str = "System/Library/Frameworks/OpenGLES.framework/MBXGLEngine.bundle/MBXGLEngine";
 /// The pair the machine boots every n72 device with (qemu-ios ipod_touch_2g.c; FitCheck.amfiArgs).
 const AMFI_ARGS: &str = "amfi_allow_any_signature=1 cs_enforcement_disable=1";
@@ -130,15 +130,15 @@ pub struct N72Board {
     derived: Map<String, Value>,
 }
 
-fn read(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read(path: &Path) -> Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| crate::internal!("{}: {e}", path.display()))
 }
 
-fn file_record(c: &Context, name: &str) -> Result<Value> {
+pub(crate) fn file_record(c: &Context, name: &str) -> Result<Value> {
     Ok(json!({"path": name, "sha256": files::sha256_file(&c.file(name))?}))
 }
 
-fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+pub(crate) fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
     if needle.is_empty() || hay.len() < needle.len() {
         return None;
     }
@@ -146,14 +146,14 @@ fn find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
 }
 
 /// "Darwin Kernel Version ..." up to its NUL.
-fn kernel_version(d: &[u8]) -> Option<String> {
+pub(crate) fn kernel_version(d: &[u8]) -> Option<String> {
     let start = find(d, b"Darwin Kernel Version ", 0)?;
     let end = d[start..].iter().position(|&b| b == 0).map(|n| start + n).unwrap_or(d.len());
     Some(String::from_utf8_lossy(&d[start..end]).into_owned())
 }
 
 /// The first "iBoot-<digits and dots>".
-fn iboot_version(d: &[u8]) -> Option<String> {
+pub(crate) fn iboot_version(d: &[u8]) -> Option<String> {
     let mut from = 0;
     while let Some(i) = find(d, b"iBoot-", from) {
         let n = d[i + 6..].iter().take_while(|b| b.is_ascii_digit() || **b == b'.').count();
@@ -259,7 +259,7 @@ fn guest_tools_fit(fw: &Firmware, helpers_dir: &Path) -> Result<Fit> {
 
 /// contrib/it-prefs offline, where it cannot run: what it writes into the user's com.apple.springboard.plist in
 /// `dir`, each key only if SpringBoard names it (the key and its NUL). Returns the report line.
-fn bake_prefs(ed: &mut Editor, dir: &str) -> Result<String> {
+pub(crate) fn bake_prefs(ed: &mut Editor, dir: &str) -> Result<String> {
     let Ok(sb) = ed.read(SPRINGBOARD) else { return Ok("no SpringBoard: left alone".into()) };
     let all = prefs_baked();
     let named: Vec<(&str, Plist)> =
