@@ -423,6 +423,7 @@ pub fn engine_main(args: &[String]) -> i32 {
     let mut argv: Vec<*mut std::ffi::c_char> = owned.iter().map(|a| a.as_ptr() as *mut _).collect();
     argv.push(std::ptr::null_mut());
     let status = unsafe { qemu_main(owned.len() as i32, argv.as_mut_ptr()) };
+    eprintln!("firmwarekit oneshot: QEMU returned {status}");
     std::mem::forget(lib); // QEMU's threads may outlive main's return until exit
     status
 }

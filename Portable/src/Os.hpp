@@ -195,19 +195,26 @@ inline int fsync(int fd) {
     if (GetFileInformationByHandle(handle(fd), &info) && (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
         return 0;
     // Flushing needs write access; POSIX code flushes through read-only descriptors too: flush the same file
-    // through a writable handle.
+    // through a writable handle. A read-only file (firmwarekit's outputs) refuses one: clear the attribute for it.
     if (GetLastError() == ERROR_ACCESS_DENIED) {
         wchar_t path[32768];
         DWORD n = GetFinalPathNameByHandleW(handle(fd), path, DWORD(sizeof path / sizeof *path), FILE_NAME_NORMALIZED);
         if (n > 0 && n < sizeof path / sizeof *path) {
+            DWORD attributes = GetFileAttributesW(path);
+            bool read_only = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY);
+            if (read_only)
+                SetFileAttributesW(path, attributes & ~DWORD(FILE_ATTRIBUTE_READONLY));
             HANDLE w = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            bool flushed = false;
             if (w != INVALID_HANDLE_VALUE) {
-                bool flushed = FlushFileBuffers(w);
+                flushed = FlushFileBuffers(w);
                 CloseHandle(w);
-                if (flushed)
-                    return 0;
             }
+            if (read_only)
+                SetFileAttributesW(path, attributes);
+            if (flushed)
+                return 0;
         }
     }
     set_errno_from_win32();
