@@ -49,6 +49,9 @@ pub struct Mirror {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Recipe {
     pub name: String,
+    /// The entry whose restore ramdisk boots this build's keybag one-shot (its own has no published key).
+    #[serde(default)]
+    pub keybag_ramdisk_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

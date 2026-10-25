@@ -86,6 +86,22 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
             (download::download_ipsw(&firmware, &ctx.dirs.downloads(), &mut cancel_check).map_err(describe)?, true)
         }
     };
+    // 1b. A build whose restore ramdisk has no published key boots its keybag one-shot from a sibling's.
+    let sibling = match firmware.recipe.as_ref().and_then(|r| r.keybag_ramdisk_from.as_deref()) {
+        None => None,
+        Some(from) => {
+            let sib = catalog.find(from).ok_or_else(|| format!("{from} (its keybag ramdisk) isn't in the catalog"))?.clone();
+            let mut sibling_check = |phase: &str, done: u64, total: u64| -> bool {
+                let text = match phase {
+                    "Downloading" => format!("Downloading iOS {} for its restore ramdisk", sib.version),
+                    "Checking" => format!("Checking iOS {}'s IPSW", sib.version),
+                    other => other.to_string(),
+                };
+                reporter.report(&text, done, total)
+            };
+            Some(download::download_ipsw(&sib, &ctx.dirs.downloads(), &mut sibling_check).map_err(describe)?)
+        }
+    };
     timings.push(("Getting the IPSW".into(), started.elapsed().as_secs_f64()));
 
     // 2. The boot ROM, when the board starts from one.
@@ -124,6 +140,7 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
         &ctx,
         &firmware.id,
         &ipsw,
+        sibling.as_deref(),
         bootrom.as_deref(),
         &out,
         &cache,
@@ -177,6 +194,9 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     if downloaded {
         let _ = std::fs::remove_file(&ipsw);
     }
+    if let Some(sibling) = &sibling {
+        let _ = std::fs::remove_file(sibling);
+    }
     timings.push(("Total".into(), started.elapsed().as_secs_f64()));
     let _ = &ctx.waker;
     Ok(Finished::DeviceAdded { id: record.id, name, selected: ctx.select, timings })
@@ -187,6 +207,7 @@ fn run_firmwarekit(
     ctx: &PrepareContext,
     firmware_id: &str,
     ipsw: &Path,
+    sibling: Option<&Path>,
     bootrom: Option<&Path>,
     out: &Path,
     cache: &Path,
@@ -220,6 +241,9 @@ fn run_firmwarekit(
     }
     if let Some(rom) = bootrom {
         command.arg("--bootrom").arg(rom);
+    }
+    if let Some(sibling) = sibling {
+        command.arg("--sibling-ipsw").arg(sibling);
     }
     command.env("LTM_QEMU_DYLIB", &engine).env("TMPDIR", ctx.dirs.cache());
     if let Some(dir) = engine.parent() {

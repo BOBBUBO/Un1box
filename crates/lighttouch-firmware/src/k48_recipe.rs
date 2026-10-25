@@ -176,10 +176,36 @@ pub fn keybag_ramdisk(c: &Context) -> Result<(PathBuf, String)> {
         .ok_or_else(|| crate::unsupported!("{}: no ramdisk", c.e().id))?;
     let stem = update.strip_suffix(".dmg").unwrap_or(update);
     let name = format!("{}-ramdisk.dmg", stem.rsplit('/').next().unwrap_or(stem));
-    if let Some(from) = &c.recipe.keybag_ramdisk_from {
-        return Err(crate::unsupported!("{}: the keybag ramdisk comes from {from} (not ported yet)", c.e().id));
-    }
-    Ok((c.dec_file(&name)?, name))
+    let Some(from) = &c.recipe.keybag_ramdisk_from else { return Ok((c.dec_file(&name)?, name)) };
+    let Some((sibling, ipsw)) = c.o.sibling.as_ref().filter(|(s, _)| &s.id == from) else {
+        return Err(crate::unsupported!(
+            "{}: the keybag ramdisk comes from {from}; pass --sibling-entry/--sibling-ipsw for it",
+            c.e().id
+        ));
+    };
+    let rd = sibling_ramdisk(sibling, ipsw, &c.work)?;
+    let file = rd.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    c.log(&format!("keybag ramdisk: {from}:{file} (this build has no ramdisk key)"));
+    Ok((rd, format!("{from}:{file}")))
+}
+
+/// The sibling entry's Update (else Restore) ramdisk, decrypted out of its IPSW into `work`.
+pub fn sibling_ramdisk(sibling: &crate::entry::Entry, ipsw: &Path, work: &Path) -> Result<PathBuf> {
+    let archive = crate::ipsw::Ipsw::open(ipsw)?;
+    let comp = crate::ipsw::build_components(&archive, &sibling.board)?;
+    let path = comp
+        .get("UpdateRamDisk")
+        .or_else(|| comp.get("RestoreRamDisk"))
+        .ok_or_else(|| crate::unsupported!("{}: no ramdisk", sibling.id))?;
+    let k = sibling.key_for_path(path)?;
+    let (Some(iv), Some(key)) = (k.iv.as_deref().and_then(crate::entry::from_hex), crate::entry::from_hex(&k.key)) else {
+        return Err(Error::new(Code::KeyMissing, format!("{}: no IV/key for {}", sibling.id, k.file)));
+    };
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let out = work.join(format!("sibling-{}-ramdisk.dmg", name.strip_suffix(".dmg").unwrap_or(name)));
+    std::fs::create_dir_all(work)?;
+    std::fs::write(&out, crate::img3::decrypt(&archive.read(path)?, &iv, &key, false)?)?;
+    Ok(out)
 }
 
 /// A private copy of the restore ramdisk, 1 MiB larger, with `helper` as root's restored_external (mode 755).

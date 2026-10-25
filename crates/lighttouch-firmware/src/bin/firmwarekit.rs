@@ -361,7 +361,7 @@ fn create(args: &[String]) -> ExitCode {
         ExitCode::from(1)
     };
     let (Some(ipsw), Some(out)) = (path("--ipsw"), path("--out")) else {
-        eprintln!("usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [--sibling-entry FILE --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE]");
+        eprintln!("usage: firmwarekit create (--entry FILE | --catalog FILE --id ID) --ipsw FILE --out DIR [--seed S] [--helper FILE] [--cache DIR] [--guest-tools DIR] [[--sibling-entry FILE] --sibling-ipsw FILE] [--stop-after volumes] [--language TAG] [--keyboards A,B] [--gl-test] [--skip-setup] [--jailbreak] [--built-listing] [--bootrom FILE]");
         return ExitCode::from(64);
     };
     let setup = || -> lighttouch_firmware::error::Result<Options> {
@@ -385,8 +385,11 @@ fn create(args: &[String]) -> ExitCode {
             if beside.is_dir() { beside } else { dir.join("../Resources/guest-tools") }
         });
         let helper_arg = path("--helper");
-        let sibling = match (path("--sibling-entry"), path("--sibling-ipsw")) {
-            (Some(e), Some(i)) => Some((Entry::load(&e)?, i)),
+        // the sibling entry from its file, else (with --catalog) the catalog's entry the recipe's keybag_ramdisk_from names
+        let from = entry.recipe.as_ref().and_then(|r| r.keybag_ramdisk_from.clone());
+        let sibling = match (path("--sibling-entry"), path("--sibling-ipsw"), path("--catalog"), from) {
+            (Some(e), Some(i), _, _) => Some((Entry::load(&e)?, i)),
+            (None, Some(i), Some(c), Some(from)) => Some((Entry::load_from_catalog(&c, &from)?, i)),
             _ => None,
         };
         std::fs::create_dir_all(&out)?;
