@@ -16,6 +16,7 @@
 //!   firmwarekit k48-check DIR [--mbr FILE] [--system IMG]
 //!   firmwarekit write-n72-nand VOLUME OUT --blocks N --epoch E
 //!   firmwarekit read-n72-nand NAND OUT --blocks N   the volume back from an n72 store
+//!   firmwarekit read-n45-nand NAND OUT --bytes N    the volume back from an n45/m68 store
 //!   firmwarekit write-n45-nand VOLUME OUT (--fil-id 0xN | --iboot FILE) [--banks N] [--bbt-map]
 //!   firmwarekit build-n72-nor --ipsw FILE --identity JSON --out FILE [--board B] [--types A,B] [--wrap all|A,B]
 //!   firmwarekit build-n45-nor --ipsw FILE --identity JSON --out FILE [--board B] [--boot-args S]
@@ -232,6 +233,31 @@ fn read_n72_nand(args: &[String]) -> Result<(), String> {
         }
         f.seek(SeekFrom::Start((n * PAGE) as u64)).map_err(|e| e.to_string())?;
         f.write_all(data).map_err(|e| e.to_string())?;
+        read += 1;
+    }
+    eprintln!("{read} pages read back");
+    Ok(())
+}
+
+/// The volume an n45/m68 store holds, read back through its FTL (volume page i is logical page FIRST_LBA + i).
+fn read_n45_nand(args: &[String]) -> Result<(), String> {
+    use lighttouch_firmware::n45nand::{FIRST_LBA, PAGE};
+    use std::io::{Seek, SeekFrom, Write};
+    let (Some(nand), Some(out)) = (args.first(), args.get(1)) else {
+        return Err("read-n45-nand NAND OUT --bytes N".into());
+    };
+    let bytes = number(&required(args, "--bytes")?)? as usize;
+    let ftl = lighttouch_firmware::n45ftl::N45Ftl::open(&PathBuf::from(nand), None).map_err(|e| e.to_string())?;
+    let mut f = std::fs::File::create(out).map_err(|e| format!("{out}: {e}"))?;
+    f.set_len(bytes as u64).map_err(|e| format!("{out}: {e}"))?;
+    let mut read = 0;
+    for i in 0..bytes.div_ceil(PAGE) {
+        let Some((data, _)) = ftl.read(FIRST_LBA + i).map_err(|e| e.to_string())? else { continue };
+        if data.iter().all(|&b| b == 0) {
+            continue;
+        }
+        f.seek(SeekFrom::Start((i * PAGE) as u64)).map_err(|e| e.to_string())?;
+        f.write_all(&data).map_err(|e| e.to_string())?;
         read += 1;
     }
     eprintln!("{read} pages read back");
@@ -507,6 +533,7 @@ fn main() -> ExitCode {
         Some("hfs-format") => hfs_format(&args[1..]),
         Some("write-n72-nand") => write_n72_nand(&args[1..]),
         Some("read-n72-nand") => read_n72_nand(&args[1..]),
+        Some("read-n45-nand") => read_n45_nand(&args[1..]),
         Some("write-n45-nand") => write_n45_nand(&args[1..]),
         Some("build-n72-nor") => build_n72_nor(&args[1..]),
         Some("build-n45-nor") => build_n45_nor(&args[1..]),
