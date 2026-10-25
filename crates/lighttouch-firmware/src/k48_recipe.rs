@@ -14,57 +14,11 @@ use crate::fitcheck::{self, Fit};
 use crate::hfs::{Editor, Volume};
 use crate::oneshot::{self, Helper, OneShot};
 use crate::system_edits::{self, helpers};
-use crate::{files, k48nand};
+use crate::identity::UnitIdentity;
+use crate::{files, k48iboot, k48nand, kboot, sandbox_patch};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-
-/// What the boot side provides once ported (KBoot, UnitIdentity, K48IBoot, SandboxPatch); stand-ins until then.
-mod pending {
-    use super::*;
-    pub struct Identity {
-        pub fields: BTreeMap<String, String>,
-        pub udid: Option<String>,
-        pub die_id: Vec<String>,
-    }
-    pub const DEFAULT_BOOT_ARGS: &str = "";
-    pub fn synthesize(_seed: &str, _storage: &str, _model: Option<&str>, _imei: bool) -> Result<Identity> {
-        todo!("UnitIdentity.synthesize")
-    }
-    pub fn write_identity(_i: &Identity, _path: &Path) -> Result<()> {
-        todo!("UnitIdentity.write")
-    }
-    pub fn model_number(_board: Hardware) -> &'static str {
-        todo!("KBoot.Board.modelNumber")
-    }
-    pub fn bluetooth_hci(_board: Hardware) -> bool {
-        todo!("KBoot.Board.bluetoothHCI")
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub fn kboot_write(
-        _decrypted: &Path,
-        _out: &Path,
-        _identity: &Identity,
-        _boot_args: Option<&str>,
-        _kernel_override: Option<&[u8]>,
-        _ramdisk: Option<&Path>,
-    ) -> Result<()> {
-        todo!("KBoot.write")
-    }
-    pub fn sandbox_patch(_kernel: &[u8]) -> Option<Vec<u8>> {
-        todo!("SandboxPatch.apply")
-    }
-    pub fn rewrap_kernelcache(_raw: &[u8], _plain: &[u8], _iv: &[u8], _key: &[u8]) -> Option<(Vec<u8>, u64)> {
-        todo!("SandboxPatch.rewrapKernelcache")
-    }
-    /// The iBoot chain's files: (gid-blobs.bin, its component names), iBoot.bin, nor.bin.
-    pub fn iboot_files(_c: &Context, _identity: &Identity, _boot_args: &str) -> Result<Vec<String>> {
-        todo!("K48IBoot")
-    }
-    pub fn kernelcache_path(_iboot: &[u8]) -> Result<String> {
-        todo!("N72Board.kernelcachePath")
-    }
-}
 
 /// A jailbroken device's kernel leaves code signatures to AMFI alone (amfi_get_out_of_my_way), as the jailbreaks'
 /// kernel patches did: with AMFI asking amfid about every ad hoc signed library, Substrate's launcher, once in launchd,
@@ -72,7 +26,7 @@ mod pending {
 pub const JAILBREAK_BOOT_ARG: &str = "amfi_get_out_of_my_way=1";
 
 pub fn boot_args(jailbreak: bool) -> String {
-    let base = pending::DEFAULT_BOOT_ARGS;
+    let base = kboot::DEFAULT_BOOT_ARGS;
     if jailbreak { format!("{base} {JAILBREAK_BOOT_ARG}") } else { base.to_string() }
 }
 
@@ -94,7 +48,7 @@ pub struct K48Board {
     built: Option<system_edits::Built>,
     gid_components: Vec<String>,
     ramdisk: Option<String>,
-    ident: Option<pending::Identity>,
+    ident: Option<UnitIdentity>,
     /// The keybag and seal one-shots' limit: it_seal waits out the first boot's data migration (6.1.6's took about 2
     /// minutes under TCG), and 7.x's launchd starts our daemons about 170 s in, so every release gets 900 s.
     oneshot_timeout: f64,
@@ -149,23 +103,23 @@ impl K48Board {
     }
     fn system_options(&self) -> system_edits::Options {
         let mut o = system_edits::Options::new(&self.recipe, &self.version);
-        o.bluetooth = pending::bluetooth_hci(self.board);
+        o.bluetooth = kboot::Board::for_board(self.board.name()).bluetooth_hci;
         o
     }
     fn die_id(&self) -> String {
-        self.ident.as_ref().map(|i| i.die_id.join(":")).unwrap_or_default()
+        self.ident.as_ref().and_then(|i| i.die_id()).map(|d| d.join(":")).unwrap_or_default()
     }
     /// What every boot of the device carries (the lock's "machine"): the modem's IMEI, the recipe's pinned clock and
     /// K48's BCM4329 CIS address.
     fn machine_options(&self) -> BTreeMap<String, String> {
         let mut m = BTreeMap::new();
         if let Some(i) = &self.ident {
-            if let Some(imei) = i.fields.get("imei") {
-                m.insert("imei".into(), imei.clone());
+            if let Some(imei) = i.get("imei") {
+                m.insert("imei".into(), imei.to_string());
             }
             if self.board == Hardware::K48 {
-                if let Some(mac) = i.fields.get("wifi-mac") {
-                    m.insert("wifi-mac".into(), mac.clone());
+                if let Some(mac) = i.get("wifi-mac") {
+                    m.insert("wifi-mac".into(), mac.to_string());
                 }
             }
         }
@@ -184,7 +138,7 @@ impl K48Board {
     /// The iBoot names exactly one kernelcache path and it is the one the bake installs.
     pub fn kernelcache_fit(iboot: &[u8]) -> Fit {
         let piece = "kernelcache at the path iBoot loads";
-        match pending::kernelcache_path(iboot) {
+        match crate::n72_recipe::kernelcache_path(iboot) {
             Ok(path) if path == system_edits::KERNELCACHE_PATH => Fit::new(piece, true, format!("iBoot names /{path}")),
             Ok(path) => Fit::new(piece, false, format!("iBoot names /{path}, the bake installs /{}", system_edits::KERNELCACHE_PATH)),
             Err(e) => Fit::new(piece, false, e.message),
@@ -303,11 +257,14 @@ impl Board for K48Board {
     }
 
     fn identity(&mut self, _c: &mut Context, seed: &str, path: &Path) -> Result<Option<String>> {
-        let model = self.kboot_board().then(|| pending::model_number(self.board));
+        let model = self.kboot_board().then(|| kboot::Board::for_board(self.board.name()).model_number);
         // The radio boards: the modem reports the IMEI, and lockdownd/MobileGestalt hash it into the UDID.
-        let ident = pending::synthesize(seed, &self.recipe.storage, model, self.board.kboot_phone())?;
-        pending::write_identity(&ident, path)?;
-        let udid = ident.udid.clone();
+        let mut ident = UnitIdentity::synthesize(seed, &self.recipe.storage, model)?;
+        if self.board.kboot_phone() {
+            ident = ident.adding_imei(seed);
+        }
+        ident.write(path)?;
+        let udid = ident.udid().map(str::to_string);
         self.ident = Some(ident);
         Ok(udid)
     }
@@ -322,16 +279,17 @@ impl Board for K48Board {
         let mut jailbreak_kernel = None;
         if c.cydia.is_some() {
             c.fit.check(fitcheck::sandbox_patch(Some(&kernel)), false, "left out")?;
-            jailbreak_kernel = pending::sandbox_patch(&kernel);
+            jailbreak_kernel = sandbox_patch::apply(&kernel).ok().map(|(k, _)| k);
         }
         // both chains add it
         c.fit.check(fitcheck::device_tree_property(Some(&kernel), "arm-io/usb-complex", "hsic-enabled"), false, "left out")?;
         if self.iboot {
             // fsboot: the kernelcache goes where this iBoot loads it from, the path the volumes step installs to
             c.fit.check(Self::kernelcache_fit(&read(&c.dec_file("iBoot.bin")?)?), true, "left out")?;
-            self.gid_components = pending::iboot_files(c, ident, &args)?;
+            let log = |s: &str| c.log(s);
+            self.gid_components = k48iboot::write_boot_files(&c.ipsw()?, c.e(), c.decrypted()?, ident, &args, &c.o.out, &log)?;
         } else {
-            pending::kboot_write(c.decrypted()?, &c.file("kboot.bin"), ident, Some(&args), jailbreak_kernel.as_deref(), None)?;
+            kboot::write(c.decrypted()?, &c.file("kboot.bin"), ident, &args, None, jailbreak_kernel.as_deref())?;
             if self.kboot_nor() && !self.data_protection {
                 std::fs::write(c.file("nor.bin"), vec![0xFFu8; 1 << 20])?;
             }
@@ -359,8 +317,8 @@ impl Board for K48Board {
             if c.cydia.is_some() {
                 let k = c.e().key_for_path(kc)?;
                 if let (Some(iv), Some(key)) = (k.iv.as_deref().and_then(crate::entry::from_hex), crate::entry::from_hex(&k.key)) {
-                    if let Some((img3, at)) = pending::rewrap_kernelcache(&raw, &read(&c.dec_file("kernelcache.mach")?)?, &iv, &key) {
-                        c.log(&format!("[sandbox] kernelcache re-wrapped with sb_evaluate patched at 0x{at:x}"));
+                    if let Ok((img3, found)) = sandbox_patch::rewrap_kernelcache(&raw, &read(&c.dec_file("kernelcache.mach")?)?, &iv, &key) {
+                        c.log(&format!("[sandbox] kernelcache re-wrapped with sb_evaluate patched at 0x{:x}", found.address));
                         kernelcache_img3 = Some(img3);
                     }
                 }
@@ -437,7 +395,7 @@ impl Board for K48Board {
         self.ramdisk = Some(name);
         let rd = ramdisk_with_helper(&source, &c.o.guest_tools.join(helpers::name("it_keybag", "armv7")), &c.work)?;
         let kboot = c.work.join("kboot-restore.bin");
-        pending::kboot_write(c.decrypted()?, &kboot, self.ident.as_ref().ok_or_else(|| filled("the identity"))?, None, None, Some(&rd))?;
+        kboot::write(c.decrypted()?, &kboot, self.ident.as_ref().ok_or_else(|| filled("the identity"))?, kboot::DEFAULT_BOOT_ARGS, Some(&rd), None)?;
         let before = read(&nor)?;
         let serial = c.work.join("keybag-1.log");
         let boot = IPadBoot::Kernel { image: kboot.to_string_lossy().into_owned(), writable_nor: Some(nor.to_string_lossy().into_owned()) };
@@ -512,7 +470,8 @@ impl Board for K48Board {
             "iboot_signature_checks": if self.iboot { json!("pattern-patched") } else { Value::Null },
             "tool": {
                 "helper": helper.to_string_lossy(), "helper_sha256": files::sha256_file(helper)?,
-                "iboot32patcher": Value::Null,
+                // compiled in (vendor/iBoot32Patcher): the pinned source in place of a separate binary
+                "iboot32patcher": if self.iboot { json!({"path": "built-in", "commit": k48iboot::IBOOT32PATCHER_COMMIT, "sha256": k48iboot::IBOOT32PATCHER_SHA256}) } else { Value::Null },
                 "built": {"OpenGLES": built.engine.clone().map(Value::String).unwrap_or(Value::Null)},
             },
             "inputs": {

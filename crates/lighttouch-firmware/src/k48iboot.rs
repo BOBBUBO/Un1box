@@ -56,6 +56,10 @@ fn aes_cbc_encrypt(d: &[u8], iv: &[u8], key: &[u8]) -> Result<Vec<u8>> {
 
 /// Encrypted KBAG (48 bytes) || plaintext IV/key (48 bytes) for every IMG3 the entry has a key for, in IPSW member
 /// order, de-duplicated by KBAG (production and development KBAGs wrap the same DATA key). ipad1_gid.gid_blobs.
+/// The vendored iBoot32Patcher (vendor/iBoot32Patcher/SOURCE.txt): LukeZGD's fork at this commit, its archive's sha256.
+pub const IBOOT32PATCHER_COMMIT: &str = "1ff9bd14648efae691ed23ae0abb55a4635111e3";
+pub const IBOOT32PATCHER_SHA256: &str = "8e6740aa1a248af8cf26aa7af1d785dbc089c67f510db282cc4c9dd529d4cb2f";
+
 pub fn gid_blobs(ipsw: &Ipsw, entry: &Entry) -> Result<(Vec<u8>, Vec<String>)> {
     let mut records: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
