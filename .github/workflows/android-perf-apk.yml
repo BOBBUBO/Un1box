@@ -403,9 +403,10 @@ jobs:
           report() {
             # One annotation, newlines escaped: a step keeps three of them, and the log is the evidence.
             if [ -f "$1" ]; then
-              echo "::error title=firmwarekit build::$(tail -n 200 "$1" \
-                | sed 's/.*\r//; s/%/%25/g' | grep -vE '^[[:space:]]*$|\[[= ]+\]' | tail -n 40 \
-                | awk '{printf "%s%%0A", $0}')"
+              # Errors first, then the tail without compiler warnings and their source snippets:
+              # the step keeps three annotations, and a warning is not what failed the build.
+              echo "::error title=firmwarekit build::$( { grep -E 'error:|fatal error|undefined reference|ld: |cannot find|No such file' "$1" | head -n 12; tail -n 120 "$1" | grep -vE '^[[:space:]]*$|\[[= ]+\]|warning:|^ *[0-9]+ \||^ *\||^ *`- ' | tail -n 20; } \
+                | sed 's/.*\r//; s/%/%25/g' | awk '{printf "%s%%0A", $0}')"
             fi
             echo "::warning::firmwarekit was not built from this branch; the APK keeps the released one"
             exit 0
