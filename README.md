@@ -6,6 +6,14 @@ The desktop ports share one device library and setup UI. Android has its own tou
 
 [Download the latest release](https://github.com/blake-lucas/LightTouch/releases/latest) (v0.0.11). LightTouch is still early and things can change between versions. Android is the most complete: it sets up devices on the phone from start to finish. The Linux, Windows and macOS versions work but take more setup, since most of the work has gone into Android first.
 
+## Demo videos
+
+Both recorded on a Pixel 10. Click a picture to watch on YouTube.
+
+| iPod touch 4G, iOS 6.1.6 | iPod touch 2G, iOS 3.1.3 |
+| --- | --- |
+| [![iPod touch 4G on iOS 6.1.6 running in LightTouch](https://img.youtube.com/vi/ciXvzyemLPk/hqdefault.jpg)](https://www.youtube.com/watch?v=ciXvzyemLPk) | [![iPod touch 2G on iOS 3.1.3 running in LightTouch](https://img.youtube.com/vi/56bAQQgPxfk/hqdefault.jpg)](https://www.youtube.com/watch?v=56bAQQgPxfk) |
+
 ## Current platforms
 
 | Platform | Build | Status |
