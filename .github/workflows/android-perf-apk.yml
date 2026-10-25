@@ -384,7 +384,10 @@ jobs:
             echo "$SDK_SHA  /tmp/android-sdk.tar.gz" | sha256sum -c - >>/tmp/swift-sdk.log 2>&1 \
               || report /tmp/swift-sdk.log
             swift sdk install /tmp/android-sdk.tar.gz >>/tmp/swift-sdk.log 2>&1 || report /tmp/swift-sdk.log
-            [ -d "$BUNDLE" ] || report /tmp/swift-sdk.log
+            # Where SwiftPM put it is its business (the toolchain on the runner chooses the root).
+            BUNDLE="$(find "$HOME" /usr/local /usr/share -maxdepth 7 -name 'swift-6.4.1-RELEASE_android.artifactbundle' -type d 2>/dev/null | head -1)"
+            echo "installed at: ${BUNDLE:-nowhere}" >>/tmp/swift-sdk.log
+            [ -n "$BUNDLE" ] || report /tmp/swift-sdk.log
           fi
           # The bundle cross-compiles against an NDK sysroot the setup script links in (LTS r30 in
           # swift.org's guide, and the SDK's static runtime wants its libc++).
