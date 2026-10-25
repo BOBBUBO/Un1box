@@ -76,6 +76,20 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   vCPU. Take `present_stage`'s Scale time on the 4G (`F post-complete-ns` profile lines) before and
   after, and the game frame rate in the same pairs; the arithmetic says ~0.5 ms a frame, which is
   small unless the frame budget is tight.
+- [ ] One guest read per draw for interleaved arrays (patch
+  `ci/engine-patches/0008-engine-gles-interleaved-arrays.patch`): the bind copied overlapping array
+  ranges once per array. Unmeasured, and its size depends entirely on how much the games' arrays
+  overlap, so take it in a game and not as an average: `IT_GLES_PROF=1`'s array time per draw, and the
+  draw's host time, in Jetpack's title and Asphalt 5's race. Check the geometry is unchanged (`gl-dump`
+  scenes, and a game's HUD text), since a wrong interior pointer shows up as displaced or garbled
+  vertices rather than as an error.
+- [ ] vCPU threads on the big cores (`cpu_affinity.h`, `LT_VCPU_BIG_CORES=off` for A/B): a scheduling
+  guess, so it needs interleaved runs on both phones with the 1% low and the hitch count as the numbers,
+  not the mean. Read the `[perf] vCPU threads prefer N of M cores` line first to know what mask the
+  device actually produced -- on the Pixel's Tensor the clusters are not the Poco's, and a mask of one
+  core would be worse than none. Also check the engine's other threads are not starved (frame time
+  distribution, and `IT_VCPU_ACCT` for vCPU busy time) and that a hot phone (thermal throttling) does
+  not lose more from the restriction than it gains.
 - [ ] A presented frame's pages resolved once (patch `ci/engine-patches/0006-engine-gles-frame-pages.patch`):
   the synchronous copy wrote a 960x640 frame with 640 `gles_guest_rw` calls. Unmeasured, and small by
   arithmetic (tens of microseconds); take it where the frame budget is tight rather than as an average:

@@ -33,6 +33,7 @@
 #include "touch_mapping_result.h"
 #include "experimental_tcg_cache.h"
 #include "performance_hint.h"
+#include "cpu_affinity.h"
 #include "profile_writer.h"
 #include <memory>
 
@@ -70,6 +71,7 @@ std::mutex frame_wake_mutex;
 std::condition_variable frame_wake;
 uint64_t frame_wake_sequence=0;
 VcpuPerformanceHint vcpu_hint;  // frame publisher thread only
+VcpuBigCoreAffinity vcpu_affinity;  // frame publisher thread only
 uint64_t monotonic_ns() { timespec value{};clock_gettime(CLOCK_MONOTONIC,&value);return uint64_t(value.tv_sec)*1000000000ull+value.tv_nsec; }
 // The guest is 60 Hz content. Saying so (API 30+) lets SurfaceFlinger run the panel at 60 Hz, or
 // at 120 with each frame held for exactly two refreshes, instead of treating it as free-running.
@@ -133,6 +135,7 @@ std::atomic<int> present_scale{[] {
 }()};
 void frame_published(void *,uint64_t published) {
     vcpu_hint.framePublished();
+    vcpu_affinity.framePublished();
     timeline_published(published,monotonic_ns());
     const uint64_t id=monotonic_ns()/fps_bucket_ns;auto &slot=fps_bucket_id[id%fps_buckets];
     if(slot.load(std::memory_order_relaxed)!=id){fps_bucket_frames[id%fps_buckets].store(0,std::memory_order_relaxed);slot.store(id,std::memory_order_release);}
