@@ -11,8 +11,9 @@
 //!   hfs        HFS+/HFSX volumes: read, edit and commit without a mount; grow; format
 //!   plistedit  property lists edited inside a volume, format kept
 //!   fitcheck   proof that a guest piece fits the firmware (Mach-O, the shared cache);  shared_cache  dyld's cache
+//!   macho      32-bit ARM Mach-O: slices, load commands, symbols;  sandbox_patch  sb_evaluate located (jailbreak)
 //!   activation lockdownd activated, ad hoc re-signing, the helpers' signature checks
-//!   guest_package  the it_boot loader and the seed package
+//!   guest_package  the it_boot loader and the seed package;  guest_archive  the .itpack reader and offer text
 //!   keyboards, setup, assets, cydia  the data-volume seeds (keyboards, language, Setup finished, 6.x assets) and
 //!              the jailbreak option;  prefs1x, truststore1x  the 1.x preference keys and trust anchors
 //!   page_nand  the page NAND image store (n72, s5l8900 boards)
@@ -20,8 +21,8 @@
 //!   n45nand    the iPod touch 1G / iPhone NAND writer;  n45ftl  its FTL read back;  n45nor  its NOR
 //!   k48nand    the K48-family NAND store (iPad 1, iPod touch 3G/4G, iPhone 3GS/4): writer, reader, check
 pub mod activation;
-pub mod boot;
 pub mod assets;
+pub mod boot;
 pub mod cache;
 pub mod create;
 pub mod cydia;
@@ -30,18 +31,20 @@ pub mod entry;
 pub mod error;
 pub mod files;
 pub mod fitcheck;
+pub mod guest_archive;
 pub mod guest_package;
 pub mod hfs;
 pub mod identity;
 pub mod img3;
 pub mod ipsw;
+pub mod k48_recipe;
 pub mod k48nand;
 pub mod k48nand_check;
 pub mod k48nand_image;
-pub mod k48_recipe;
 pub mod keyboards;
 pub mod lock;
 pub mod lzss;
+pub mod macho;
 pub mod n45_recipe;
 pub mod n45ftl;
 pub mod n45nand;
@@ -55,6 +58,7 @@ pub mod plistedit;
 pub mod posio;
 pub mod prefs1x;
 pub mod progress;
+pub mod sandbox_patch;
 pub mod setup;
 pub mod shared_cache;
 pub mod system_edits;

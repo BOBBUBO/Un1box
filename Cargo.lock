@@ -1637,11 +1637,13 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "cbc",
+ "cc",
  "flate2",
  "hex",
  "hmac",
  "libc",
  "libloading",
+ "memchr",
  "plist",
  "rusqlite",
  "serde",

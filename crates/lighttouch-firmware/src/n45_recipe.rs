@@ -21,6 +21,7 @@ use crate::fitcheck::{self, Firmware, Fit};
 use crate::hfs::{Editor, Volume};
 use crate::identity::{UnitIdentity, IPAD_REGION};
 use crate::img3::{apple8900, img2};
+use crate::macho::{is_export, MachO32};
 use crate::n72_recipe::{bake_prefs, file_record, find, iboot_version, kernel_version, kernelcache_path, read, FSTAB_RW, SPRINGBOARD};
 use crate::plistedit::{self, Format};
 use crate::system_edits::{self, helpers, DAEMONS, LOCKDOWND, PAC_PATH, SPRINGBOARD_JOB};
@@ -214,69 +215,17 @@ pub fn restore_only(member: &str) -> bool {
     member.rsplit('/').next().unwrap_or(member).contains(".restore.")
 }
 
-// ---- The 32-bit Mach-O symbol table, for the GL front end's export check
-
-fn le32(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
-}
-
-fn be32(b: &[u8], o: usize) -> u32 {
-    u32::from_be_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
-}
-
-/// The thin image for ARM subtype `want` (6 armv6, 9 armv7) in a thin or fat Mach-O.
-fn arm_slice(b: &[u8], want: u32) -> Option<&[u8]> {
-    if b.len() >= 8 && be32(b, 0) == 0xCAFE_BABE {
-        for i in 0..be32(b, 4) as usize {
-            let o = 8 + 20 * i;
-            if o + 20 > b.len() || be32(b, o) != 12 || be32(b, o + 4) != want {
-                continue;
-            }
-            let (off, size) = (be32(b, o + 8) as usize, be32(b, o + 12) as usize);
-            return b.get(off..off + size);
-        }
-        None
-    } else if b.len() >= 28 && le32(b, 0) == 0xFEED_FACE && le32(b, 4) == 12 && le32(b, 8) == want {
-        Some(b)
-    } else {
-        None
-    }
-}
-
 /// gles2x_exports.scan: the defined external symbols of the armv6 (else armv7) slice, without the leading _.
 pub fn exported_symbols(data: &[u8]) -> Result<Vec<String>> {
-    let m = arm_slice(data, 6).or_else(|| arm_slice(data, 9)).ok_or_else(|| crate::unsupported!("OpenGLES: not a 32-bit Mach-O"))?;
-    let mut at = 28;
-    let mut out = Vec::new();
-    for _ in 0..le32(m, 16) {
-        if at + 8 > m.len() {
-            break;
-        }
-        let (cmd, size) = (le32(m, at), le32(m, at + 4) as usize);
-        if cmd == 2 && at + 24 <= m.len() {
-            let (symoff, nsyms, stroff) = (le32(m, at + 8) as usize, le32(m, at + 12) as usize, le32(m, at + 16) as usize);
-            for i in 0..nsyms {
-                let e = symoff + 12 * i;
-                if e + 12 > m.len() {
-                    break;
-                }
-                let t = m[e + 4];
-                // N_EXT, not a stab, defined (N_ABS / N_SECT / N_INDR), not N_PBUD
-                let export = t & 0xE0 == 0 && t & 0x01 != 0 && t & 0x0E != 0 && t & 0x0E != 0x0C;
-                let s = stroff + le32(m, e) as usize;
-                if !export || s >= m.len() {
-                    continue;
-                }
-                let end = m[s..].iter().position(|&c| c == 0).map(|n| s + n).unwrap_or(m.len());
-                let name = String::from_utf8_lossy(&m[s..end]);
-                out.push(name.strip_prefix('_').unwrap_or(&name).to_string());
-            }
-        }
-        if size < 8 {
-            break;
-        }
-        at += size;
-    }
+    let (m, _) = MachO32::slice(data, "armv6")
+        .or_else(|| MachO32::slice(data, "armv7"))
+        .ok_or_else(|| crate::unsupported!("OpenGLES: not a 32-bit Mach-O"))?;
+    let mut out: Vec<String> = m
+        .symbols()
+        .into_iter()
+        .filter(|s| is_export(s.kind))
+        .map(|s| s.name.strip_prefix('_').map(str::to_string).unwrap_or(s.name))
+        .collect();
     out.sort();
     Ok(out)
 }
