@@ -45,6 +45,11 @@ extern int pthread_create(void **, const void *, void *(*)(void *), void *);
 extern int pthread_join(void *, void **);
 extern u32 bootstrap_port;
 extern int bootstrap_look_up(u32, const char *, u32 *);
+extern int open(const char *, int, ...);
+extern int fcntl(int, int, ...);
+extern int fsync(int);
+extern long pread(int, void *, size_t, long long);
+extern char *getenv(const char *);
 
 /* Integer division: ARMv6 has no divide instruction, and the helpers clang calls for it
  * (__udivdi3 and friends) are in iPhone OS 3's libgcc_s, not libSystem: imported from
@@ -709,6 +714,87 @@ static u64 b_fork(u32 n)   /* 0: not allowed (an app's sandbox denies fork) */
     return now_ns() - t;
 }
 
+/* Storage, as a game of the era loads: a file in the app's Documents/ written and read with the guest's
+ * buffer cache bypassed (F_NOCACHE), so every byte crosses the emulated flash controller.
+ * fs-write: 64 KiB writes, then fsync. fs-read: 64 KiB reads in order. fs-read-16k: 16 KiB at
+ * scattered offsets, as an engine pulls textures out of a pack file. Per KiB for the first two. */
+#define IO_FILE_KIB 8192
+#define IO_CHUNK (64 * 1024)
+#define O_RDONLY 0
+#define O_RDWR 2
+#define O_CREAT 0x200
+#define O_TRUNC 0x400
+#define F_NOCACHE 48
+static char io_path[256], *io_buffer;
+static int io_ready;
+static int io_open(int flags)
+{
+    if (!io_path[0]) {
+        const char *home = getenv("HOME");
+        u32 n = 0;
+        if (!home) return -1;
+        while (home[n] && n < sizeof(io_path) - 20) io_path[n] = home[n], n++;
+        const char *tail = "/Documents/ltb-io.dat";
+        for (u32 i = 0; tail[i]; i++) io_path[n++] = tail[i];
+        io_path[n] = 0;
+    }
+    if (!io_buffer && !(io_buffer = malloc(IO_CHUNK))) return -1;
+    int fd = open(io_path, flags, 0644);
+    if (fd >= 0) fcntl(fd, F_NOCACHE, 1);
+    return fd;
+}
+static u64 b_fs_write(u32 n)   /* n KiB */
+{
+    u64 t = now_ns();
+    int fd = io_open(O_RDWR | O_CREAT | O_TRUNC);
+    if (fd < 0) return 0;
+    for (u32 done = 0; done < n; done += IO_CHUNK / 1024) {
+        for (u32 i = 0; i < IO_CHUNK; i += 4096) io_buffer[i] = (char)(done + i);
+        if (write(fd, io_buffer, IO_CHUNK) != IO_CHUNK) { close(fd); return 0; }
+    }
+    if (fsync(fd) != 0) { close(fd); return 0; }
+    close(fd);
+    io_ready = n >= IO_FILE_KIB;
+    return now_ns() - t;
+}
+static int io_prepare(void) { return io_ready || b_fs_write(IO_FILE_KIB) != 0; }
+static u64 b_fs_read(u32 n)    /* n KiB, at most the file */
+{
+    if (!io_prepare()) return 0;
+    u64 t = now_ns();
+    int fd = io_open(O_RDONLY);
+    if (fd < 0) return 0;
+    for (u32 done = 0; done < n; done += IO_CHUNK / 1024) {
+        if (read(fd, io_buffer, IO_CHUNK) != IO_CHUNK) { close(fd); return 0; }
+        for (u32 i = 0; i < IO_CHUNK; i += 4096)   /* what fs-write wrote: a corrupt write path fails the test */
+            if (io_buffer[i] != (char)(done + i)) { close(fd); return 0; }
+    }
+    close(fd);
+    return now_ns() - t;
+}
+/* The file a previous launch's fs-write left, read and checked without writing it first: survives a reboot? */
+static u64 b_fs_check(u32 n)
+{
+    io_ready = 1;
+    return b_fs_read(n);
+}
+static u64 b_fs_read16k(u32 n)
+{
+    if (!io_prepare()) return 0;
+    int fd = io_open(O_RDONLY);
+    if (fd < 0) return 0;
+    u32 seed = 2468;
+    u64 t = now_ns();
+    for (u32 i = 0; i < n; i++) {
+        seed = seed * 1103515245u + 12345u;
+        long long at = (long long)((seed >> 8) % (IO_FILE_KIB / 16)) * 16384;
+        if (pread(fd, io_buffer, 16384, at) != 16384) { close(fd); return 0; }
+    }
+    u64 elapsed = now_ns() - t;
+    close(fd);
+    return elapsed;
+}
+
 /* usleep(1000): the timer interrupt and wakeup path. Reported as the actual sleep. */
 static u64 b_sleep(u32 n)
 {
@@ -740,6 +826,10 @@ static const Test tests[] = {
     {"tlb-1024p", "dependent load, 1024-page working set", b_tlb1024, 2000000},
     {"fork", "fork + exit + wait", b_fork, 40},
     {"sleep", "usleep(1000), actual", b_sleep, 100},
+    {"fs-write", "KiB written uncached (64 KiB writes, then fsync)", b_fs_write, IO_FILE_KIB},
+    {"fs-read", "KiB read uncached (64 KiB reads in order)", b_fs_read, IO_FILE_KIB},
+    {"fs-check", "KiB of a previous launch's fs-write file, read and checked", b_fs_check, IO_FILE_KIB},
+    {"fs-read-16k", "uncached 16 KiB pread at a scattered offset", b_fs_read16k, 256},
     {"gl-get", "glGetError()", b_gl_get, 2000},
     {"gl-state", "glEnable/glDisable", b_gl_state, 20000},
     {"gl-draw", "glDrawArrays, same 32x32 textured quad", b_gl_draw, 5000},

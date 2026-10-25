@@ -38,6 +38,10 @@ repeatable figure, a median well above it means interference).
 | `tlb-32p` / `tlb-1024p` | a dependent load chasing a pointer through 32 / 1024 pages in scrambled order | softmmu TLB hits vs. a working set beyond its reach |
 | `fork` | `fork` + `_exit` + `waitpid` | address-space creation; reports `unavailable` in an app, whose sandbox denies `fork` |
 | `sleep` | `usleep(1000)`, actual time | timer interrupt and wakeup latency |
+| `fs-write` | 1 KiB of an 8 MiB file in the app's `Documents/`, written 64 KiB at a time, then `fsync` | the emulated flash controller's write path; the file is opened with `F_NOCACHE`, so every byte reaches it |
+| `fs-read` | 1 KiB of that file, read 64 KiB at a time in order, first byte of each 4 KiB checked | the flash read path, as a game loads one big asset file; `unavailable` if the bytes are not what `fs-write` wrote |
+| `fs-check` | the same read of the file a previous launch wrote, without writing it first | whether written data survives a restart (run it alone, after a pass and a reboot) |
+| `fs-read-16k` | `pread` of 16 KiB at a scattered offset in the file | an engine pulling textures and sounds out of a pack file |
 | `gl-get` | `glGetError()` | a GL call that returns a value: the guest waits for the host each time (QEMU_CALL round trip plus the host driver) |
 | `gl-state` | `glEnable` / `glDisable(GL_BLEND)` in turn | a GL call with no reply, which the guest shim may queue |
 | `gl-draw` | `glDrawArrays` of the same 32×32 textured quad | the draw call alone: fetching the client arrays from guest memory, the host draw |
@@ -53,7 +57,7 @@ so queued calls are counted when the host has done them. If the setup fails, the
 
 Not covered yet: audio, touch input.
 
-A pass takes ~6 s on a Poco F3 and ~3 s on the desktop. To profile one test, build a variant that
+A pass takes ~6 s on a Poco F3 and ~3 s on the desktop, plus the storage tests (~10 s on the desktop's iPod touch 2G). To profile one test, build a variant that
 runs only it, for many rounds: `LTB_CFLAGS='-DONLY="rpc" -DROUNDS=60' build.sh OUT_DIR` (same bundle
 id, so it replaces the full one when installed).
 `ONLY` also accepts comma-separated exact names, for example
@@ -132,3 +136,7 @@ What it has shown so far:
   space and back, so `syscall` started at ~4.5× the 2G's on the same desktop; it is ~1.9× after the
   n81 work in PERFORMANCE.md. `rpc` is ~25× the 2G's because launchd sandbox-checks each lookup:
   compare it only between iOS 6 builds.
+- On the iPod touch 2G, every flash write ran the controller's write program to its step limit
+  (~4 ms on the vCPU, ~250 times a second while iOS writes), so the app stalled while it saved.
+  Fixed in the engine: desktop `fs-write` 381 → 148–198 µs/KiB. Reads were not affected
+  (`fs-read` ~5 µs/KiB, `fs-read-16k` ~230 µs per read).
