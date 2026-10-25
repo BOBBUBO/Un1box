@@ -153,6 +153,11 @@ impl Resources {
             .map(PathBuf::from)
             .unwrap_or_else(|| self.dir.join(if cfg!(windows) { "lighttouch-usbmuxd.exe" } else { "usbmuxd-qemu" }))
     }
+
+    /// The open source notices, one folder per bundled component (`lighttouch_model::notices`).
+    pub fn licenses(&self) -> PathBuf {
+        self.dir.join("licenses")
+    }
 }
 
 pub fn engine_file_name() -> &'static str {

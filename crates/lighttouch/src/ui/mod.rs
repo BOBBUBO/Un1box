@@ -6,6 +6,7 @@ mod fullscreen;
 mod guest;
 mod home;
 pub mod icons;
+mod licenses;
 mod overlay;
 mod prepare;
 mod settings;
@@ -27,6 +28,8 @@ use theme::Palette;
 pub enum Page {
     Device,
     Settings,
+    /// Open source licenses (from Settings).
+    Licenses,
     Setup(setup::Step),
     /// Prepare from an IPSW (its step lives in `App::prepare`).
     Prepare,
@@ -50,6 +53,7 @@ pub struct App {
     applied: Option<(Theme, bool)>,
     pub setup: setup::SetupState,
     pub prepare: prepare::PrepareState,
+    pub licenses: licenses::LicenseState,
     /// When the window was minimized with the guest running (to resume on return).
     paused_for_hidden: bool,
     /// A Home press that releases itself (waking the screen).
@@ -101,6 +105,7 @@ impl App {
             applied: None,
             setup: setup::SetupState::default(),
             prepare: prepare::PrepareState::default(),
+            licenses: licenses::LicenseState::default(),
             paused_for_hidden: false,
             pulse_release: None,
             close_after_stop: false,
@@ -369,6 +374,7 @@ impl eframe::App for App {
                 match self.page.clone() {
                     Page::Device => home::show(self, ui),
                     Page::Settings => settings::show(self, ui),
+                    Page::Licenses => licenses::show(self, ui),
                     Page::Setup(step) => setup::show(self, ui, step),
                     Page::Prepare => prepare::show(self, ui),
                     Page::Store => store::show(self, ui),

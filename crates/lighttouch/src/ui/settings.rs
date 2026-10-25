@@ -194,6 +194,18 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         }
                     },
                 );
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::FILE,
+                    "Open source licenses",
+                    "The components LightTouch includes and their licenses",
+                    |ui| {
+                        if widgets::tonal(ui, &p, "View").clicked() {
+                            app.page = Page::Licenses;
+                        }
+                    },
+                );
             });
             ui.add_space(28.0);
 

@@ -32,6 +32,7 @@ impl DevShot {
 pub fn start_page() -> Option<Page> {
     match std::env::var("LIGHTTOUCH_UI_PAGE").ok()?.as_str() {
         "settings" => Some(Page::Settings),
+        "licenses" => Some(Page::Licenses),
         "prepare" => Some(Page::Prepare),
         "store" => Some(Page::Store),
         _ => None,

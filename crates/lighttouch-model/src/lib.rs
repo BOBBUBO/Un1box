@@ -1,6 +1,7 @@
 //! Everything the LightTouch app does, without any UI toolkit: the device list, adding devices, running one,
 //! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
+pub mod notices;
 pub mod prepare;
 pub mod session;
 pub mod settings;
