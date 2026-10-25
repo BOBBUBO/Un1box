@@ -9,6 +9,9 @@
 //!   decrypt    the decrypt step and its cache
 //!   udif       DMG images, the rootfs volume out of its partition map
 //!   hfs        HFS+/HFSX volumes: read, edit and commit without a mount; grow; format
+//!   page_nand  the page NAND image store (n72, s5l8900 boards)
+//!   n72nand    the iPod touch 2G NAND writer;  n72nor  its NOR
+//!   n45nand    the iPod touch 1G / iPhone NAND writer;  n45ftl  its FTL read back;  n45nor  its NOR
 pub mod cache;
 pub mod decrypt;
 pub mod entry;
@@ -17,6 +20,12 @@ pub mod hfs;
 pub mod img3;
 pub mod ipsw;
 pub mod lzss;
+pub mod n45ftl;
+pub mod n45nand;
+pub mod n45nor;
+pub mod n72nand;
+pub mod n72nor;
+pub mod page_nand;
 pub mod posio;
 pub mod udif;
 pub mod vfdecrypt;
