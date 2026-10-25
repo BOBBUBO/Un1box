@@ -12,7 +12,7 @@ and grades how far it got:
   clean     iOS shut down cleanly when asked
 
 Bases come from compat.py's BASES (imported once into WORK/ID/base). The bridge and libimobiledevice come from a
-LightTouch Linux AppDir (LT_SERVICES_ROOT, default the extracted 0.0.8 AppDir): usr/bin/usbmuxd-qemu,
+LightTouch Linux AppDir (LT_SERVICES_ROOT, default the extracted 0.0.10 AppDir): usr/bin/usbmuxd-qemu,
 usr/lib/libimobiledevice-1.0.so.6 and usr/lib/libplist-2.0.so.4. Installs use Desktop/app_services/helper.py.
 """
 import argparse, datetime, json, os, re, shutil, socket, subprocess, sys, tempfile, time
@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from compat import REPO, DEV, WORK, ROMS, BASES, LIT, TOOLS, arch, catalog_entry, import_base  # noqa: E402
 
 RESULTS = Path(os.environ.get("LT_SERVICES_RESULTS", DEV / "services-results"))
-ROOT = Path(os.environ.get("LT_SERVICES_ROOT", Path.home() / "Documents/LightTouch-Development/release-0.0.8/appdir/squashfs-root"))
+ROOT = Path(os.environ.get("LT_SERVICES_ROOT", Path.home() / "Documents/LightTouch-Development/release-0.0.10/appdir/squashfs-root"))
 LEVELS = ["usb", "install", "launch", "clean"]
 SETTINGS = "com.apple.Preferences"
 

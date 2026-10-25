@@ -22,7 +22,25 @@ data class StoreTarget(val productType: String, val ios: String, val arch: Strin
     }
 }
 
-class StoreError(message: String) : Exception(message)
+/** A category (the API calls it a genre). */
+data class StoreGenre(val id: String, val name: String, val count: Int)
+data class StoreCollection(val slug: String, val title: String, val subtitle: String?, val count: Int)
+/** App rows from a listing; [next] is the address of the following page, which only the paged listings have. */
+data class StorePage(val rows: List<JSONObject>, val total: Int, val next: String?)
+/** One chart position. [app] is null for an app the archive has not preserved. */
+data class ChartRow(val position: Int, val name: String, val developer: String?, val app: JSONObject?)
+/** One archived chart snapshot: [date] is the snapshot nearest the one asked for, [dates] every snapshot of this chart. */
+data class StoreChart(val title: String, val date: String, val dates: List<String>, val rows: List<ChartRow>)
+data class StoreShot(val url: String, val width: Int, val height: Int)
+
+/** The charts the website offers, as the API names them (slug to title). */
+val CHART_TYPES = listOf("top-free" to "Top Free", "top-paid" to "Top Paid", "top-grossing" to "Top Grossing",
+    "new-noteworthy" to "New & Noteworthy", "new-free" to "New Free", "new-paid" to "New Paid")
+/** How the app lists can be ordered (the API's sort values). */
+val CATEGORY_SORTS = listOf("versions" to "Most archived", "newest" to "Newest", "first_date" to "Oldest", "name" to "A to Z")
+
+/** [status] is the HTTP status when the catalog answered with an error, else 0. */
+class StoreError(message: String, val status: Int = 0) : Exception(message)
 
 /** One archived copy of one version, as the version picker lists it. */
 data class StoreCopy(val ipaId: Int, val version: String, val size: Long?, val minimumOS: String?)
@@ -43,12 +61,8 @@ object LegacyStore {
     /** The copy to select first for a search row that names [ipaId]. */
     fun preferred(ipaId: Int) = BROKEN[ipaId] ?: ipaId
 
-    fun version(value: String?): List<Int>? {
-        if (value == null || !Regex("[0-9]+(\\.[0-9]+){0,2}").matches(value)) return null
-        val parts = value.split('.').map { it.toInt() }
-        return if (parts[0] == 0) null else parts + List(3 - parts.size) { 0 }
-    }
-    fun newer(a: List<Int>, b: List<Int>) = a.zip(b).firstOrNull { it.first != it.second }?.let { it.first > it.second } ?: false
+    fun version(value: String?): List<Int>? = StoreVersions.parse(value)
+    fun newer(a: List<Int>, b: List<Int>) = StoreVersions.newer(a, b)
     private fun requires(minimum: String?, target: StoreTarget): Boolean {
         if (minimum == null) return false
         val need = version(minimum) ?: throw StoreError("The minimum iOS version could not be verified.")
@@ -94,19 +108,30 @@ object LegacyStore {
                 code == 400 && "device must be one of" in body -> "Legacy Store does not support this device yet."
                 code == 503 -> "The Internet Archive is busy; try again later."
                 else -> "Legacy Store could not answer the request (HTTP $code)."
-            })
+            }, code)
         }
         return connection
     }
 
-    private fun json(path: String, query: Map<String, String> = emptyMap()): JSONObject {
-        val url = BASE + path + if (query.isEmpty()) "" else "?" + query.entries.joinToString("&") {
-            URLEncoder.encode(it.key, "UTF-8") + "=" + URLEncoder.encode(it.value, "UTF-8")
-        }
+    private fun url(path: String, query: Map<String, String>) = BASE + path + if (query.isEmpty()) "" else "?" + query.entries.joinToString("&") {
+        URLEncoder.encode(it.key, "UTF-8") + "=" + URLEncoder.encode(it.value, "UTF-8")
+    }
+
+    /** Browsing answers, kept for ten minutes: the catalog asks to be cached, and tabs get revisited. */
+    private val responses = LruCache<String, Pair<Long, JSONObject>>(64)
+    private const val CACHE_MS = 10 * 60_000L
+
+    /** [cached] is for browsing only: what is checked right before a download is always asked for afresh. */
+    private fun json(path: String, query: Map<String, String> = emptyMap(), cached: Boolean = false): JSONObject = fetch(url(path, query), cached)
+
+    private fun fetch(url: String, cached: Boolean): JSONObject {
+        if (cached) responses.get(url)?.let { (time, value) -> if (System.currentTimeMillis() - time < CACHE_MS) return value }
         val connection = open(url)
         val body = try { connection.inputStream.use { it.readNBytes(JSON_LIMIT + 1) } } finally { connection.disconnect() }
         if (body.size > JSON_LIMIT) throw StoreError("The catalog response exceeds the size limit.")
-        return try { JSONObject(body.decodeToString()) } catch (_: org.json.JSONException) { throw StoreError("Legacy Store sent an unreadable response.") }
+        val value = try { JSONObject(body.decodeToString()) } catch (_: org.json.JSONException) { throw StoreError("Legacy Store sent an unreadable response.") }
+        if (cached) responses.put(url, System.currentTimeMillis() to value)
+        return value
     }
 
     private fun apps(query: Map<String, String>, target: StoreTarget): List<JSONObject> {
@@ -142,16 +167,24 @@ object LegacyStore {
         architectures != null && (0 until architectures.length()).map { architectures.optString(it) }
             .any { it == target.arch || (target.arch == "armv7" && it == "armv6") }
 
+    /** How the catalog addresses an app: its App Store id, or its bundle id (which the catalog redirects), URL-escaped for a path. */
+    fun appKey(app: JSONObject): String? =
+        (app.text("app_store_id") ?: app.text("bundle_id") ?: app.text("app_url")?.trimEnd('/')?.substringAfterLast('/'))
+            ?.let { URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+
     /**
      * Every archived copy of the app that could run on the target, newest first. The
      * copy the search row named is always kept so the picker can show it selected, unless it is broken.
      */
     fun versions(app: JSONObject, target: StoreTarget): List<StoreCopy> {
-        val key = app.optString("bundle_id").ifEmpty { app.optString("app_url").trimEnd('/').substringAfterLast('/') }
-        if (key.isEmpty()) throw StoreError("This app has no catalog identifier.")
-        val data = json("/api/v1/apps/${URLEncoder.encode(key, "UTF-8").replace("+", "%20")}/versions").optJSONArray("data")
+        val key = appKey(app) ?: throw StoreError("This app has no catalog identifier.")
+        val data = json("/api/v1/apps/$key/versions", cached = true).optJSONArray("data")
             ?: throw StoreError("Legacy Store sent unreadable version information.")
-        val chosen = app.optInt("ipa_id")
+        return runnableCopies(data, app.optInt("ipa_id"), target)
+    }
+
+    /** The copies in a catalog version list that run on [target], plus the one named [chosen] (if any) whether it runs or not. */
+    private fun runnableCopies(data: JSONArray, chosen: Int, target: StoreTarget): List<StoreCopy> {
         val rows = mutableListOf<StoreCopy>()
         for (v in 0 until data.length()) {
             val entry = data.optJSONObject(v) ?: continue
@@ -170,6 +203,23 @@ object LegacyStore {
             }
         }
         return rows
+    }
+
+    /** An installed app the catalog knows: a listing row for its page, and the newest version that runs on the device. */
+    class Known(val app: JSONObject, val newest: String?)
+
+    /**
+     * The catalog's entry for a bundle id (the catalog redirects the bundle id to the app), or null when it has
+     * none. One cached request: the app's own answer lists its versions. Another identity coming back is "none".
+     */
+    fun lookup(bundleId: String, target: StoreTarget): Known? {
+        val body = try { json("/api/v1/apps/" + URLEncoder.encode(bundleId, "UTF-8").replace("+", "%20"), cached = true) }
+            catch (e: StoreError) { if (e.status == 404) return null else throw e }
+        if (!body.optString("bundle_id").equals(bundleId, ignoreCase = true)) return null
+        val app = JSONObject().put("bundle_id", body.optString("bundle_id")).put("name", body.text("name") ?: body.text("display_name") ?: bundleId)
+        for (key in listOf("app_store_id", "developer", "icon_url")) body.text(key)?.let { app.put(key, it) }
+        val versions = body.optJSONArray("versions")?.let { runnableCopies(it, 0, target) } ?: emptyList()
+        return Known(app, StoreVersions.newest(versions.map { it.version }))
     }
 
     /** catalog.py check_copy: identity, availability, slice, family and minimum OS. */
@@ -231,6 +281,97 @@ object LegacyStore {
             directory.deleteRecursively()
             throw if (e is StoreError) e else StoreError("Download failed: ${e.message}")
         }
+    }
+
+    private fun rows(list: org.json.JSONArray?, what: String): List<JSONObject> {
+        if (list == null || list.length() > 500) throw StoreError("Legacy Store sent an unreadable $what.")
+        return (0 until list.length()).map { index ->
+            val app = list.optJSONObject(index)
+            if (app == null || app.optString("name").isEmpty()) throw StoreError("Legacy Store sent an unreadable app entry.")
+            app
+        }
+    }
+
+    /** The categories that have apps, A to Z. */
+    fun genres(): List<StoreGenre> {
+        val data = json("/api/v1/genres", cached = true).optJSONArray("data") ?: throw StoreError("Legacy Store sent an unreadable category list.")
+        return (0 until data.length()).mapNotNull { data.optJSONObject(it) }
+            .map { StoreGenre(it.optString("genre_id"), it.optString("name"), it.optInt("app_count")) }
+            .filter { it.id.isNotEmpty() && it.name.isNotEmpty() && it.count > 0 }.sortedBy { it.name.lowercase() }
+    }
+
+    /** The first page of a category's apps, in [CATEGORY_SORTS] order; [page] follows [StorePage.next]. */
+    fun genreApps(genreId: String, sort: String): StorePage =
+        page(url("/api/v1/apps", mapOf("genre" to genreId, "sort" to sort, "limit" to "50")))
+
+    /** A page of a paged listing, from the address the catalog gave for it. Only the catalog's own addresses are followed. */
+    fun page(address: String): StorePage {
+        if (URL(address).host != URL(BASE).host) throw StoreError("The catalog supplied an unexpected address.")
+        val body = fetch(address, true)
+        return StorePage(rows(body.optJSONArray("data"), "app list"), body.optInt("total"), body.text("next_url"))
+    }
+
+    fun collections(): List<StoreCollection> {
+        val data = json("/api/v1/collections", cached = true).optJSONArray("data") ?: throw StoreError("Legacy Store sent an unreadable collection list.")
+        return (0 until data.length()).mapNotNull { data.optJSONObject(it) }
+            .map { StoreCollection(it.optString("slug"), it.optString("title"), it.text("subtitle") ?: it.text("series"), it.optInt("app_count")) }
+            .filter { it.slug.isNotEmpty() && it.title.isNotEmpty() }
+    }
+
+    /** A collection's apps in the editors' order; a member's note, if it has one, rides along as "label". */
+    fun collection(slug: String): StorePage {
+        val members = json("/api/v1/collections/" + URLEncoder.encode(slug, "UTF-8"), cached = true).optJSONArray("members")
+            ?: throw StoreError("Legacy Store sent an unreadable collection.")
+        val apps = (0 until members.length()).mapNotNull { members.optJSONObject(it) }.mapNotNull { member ->
+            // A member the archive has not preserved has only its label, and is listed greyed out.
+            member.optJSONObject("app")?.also { app -> member.text("label")?.let { app.put("label", it) } }
+                ?: member.text("label")?.let { JSONObject().put("name", it).put("ghost", true) }
+        }
+        return StorePage(rows(org.json.JSONArray(apps), "collection"), apps.size, null)
+    }
+
+    /** One archived chart. [date] (YYYY-MM-DD) picks the snapshot nearest it; the newest when null. */
+    fun chart(type: String, device: String, genreId: String?, date: String?): StoreChart {
+        val query = mutableMapOf("type" to type, "device" to device)
+        genreId?.let { query["genre"] = it }; date?.let { query["date"] = it }
+        val body = try { json("/api/v1/charts", query, cached = true) } catch (e: StoreError) {
+            // Most type, category and device combinations were never captured.
+            throw if (e.status == 404) StoreError("No chart was archived for this selection.", 404) else e
+        }
+        val positions = body.optJSONArray("positions") ?: throw StoreError("Legacy Store sent an unreadable chart.")
+        val dates = body.optJSONArray("available_dates")?.let { list -> (0 until list.length()).map { list.optString(it) } } ?: emptyList()
+        return StoreChart(body.optJSONObject("chart_type")?.optString("name") ?: type, body.optString("snapshot_date"), dates,
+            (0 until positions.length()).mapNotNull { positions.optJSONObject(it) }.map {
+                ChartRow(it.optInt("position"), it.optString("name"), it.text("developer"), it.optJSONObject("app"))
+            })
+    }
+
+    /** What the catalog says about an app beyond its listing row: category, first release, copyright. */
+    fun appInfo(app: JSONObject): JSONObject {
+        val key = appKey(app) ?: throw StoreError("This app has no catalog identifier.")
+        return json("/api/v1/apps/$key", cached = true)
+    }
+
+    /** The newest archived set of screenshots (the catalog has no app descriptions). */
+    fun screenshots(app: JSONObject): List<StoreShot> {
+        val key = appKey(app) ?: return emptyList()
+        val sets = json("/api/v1/apps/$key/screenshots", cached = true).optJSONArray("data") ?: return emptyList()
+        val shots = (0 until sets.length()).mapNotNull { sets.optJSONObject(it)?.optJSONArray("shots") }.firstOrNull { it.length() > 0 } ?: return emptyList()
+        return (0 until shots.length()).mapNotNull { shots.optJSONObject(it) }
+            .filter { it.optString("url").isNotEmpty() }.map { StoreShot(it.optString("url"), it.optInt("width"), it.optInt("height")) }
+    }
+
+    private val screens = LruCache<String, Bitmap>(24)
+    /** A screenshot at about 400 px wide, which is plenty for a strip; null when it can't be had. */
+    fun screenshot(url: String): Bitmap? {
+        screens.get(url)?.let { return it }
+        return runCatching {
+            val connection = open(url)
+            val bytes = try { connection.inputStream.use { it.readNBytes(JSON_LIMIT) } } finally { connection.disconnect() }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
+            val options = BitmapFactory.Options().apply { inSampleSize = Integer.highestOneBit((bounds.outWidth / 400).coerceAtLeast(1)) }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        }.getOrNull()?.also { screens.put(url, it) }
     }
 
     private val icons = LruCache<String, Bitmap>(128)

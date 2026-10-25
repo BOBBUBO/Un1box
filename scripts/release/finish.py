@@ -6,7 +6,7 @@ placeholder is replaced with the package checksums.
 
 usage: finish.py WORKSPACE VERSION GUEST_TOOLS_DIR
 """
-import hashlib, json, pathlib, shutil, struct, subprocess, sys, zipfile, zlib
+import hashlib, json, os, pathlib, shutil, struct, subprocess, sys, zipfile, zlib
 
 R, VERSION, GUEST = pathlib.Path(sys.argv[1]), sys.argv[2], pathlib.Path(sys.argv[3])
 out, app, engine = R / 'out', R / 'app', R / 'engine'
@@ -57,7 +57,7 @@ files = ['LightTouch-' + VERSION + '-android-arm64.apk', 'LightTouch-' + VERSION
          'LightTouch-' + VERSION + '-Windows-x86_64.zip', 'LightTouch-' + VERSION + '-macOS-arm64.zip',
          'armv6.itpack', 'armv7.itpack', 'LightTouch-' + VERSION + '-source.tar.gz', 'qemu-ios-' + VERSION + '-source.tar.gz']
 records = [dict(file=f, bytes=(out / f).stat().st_size, sha256=sha(out / f)) for f in files]
-manifest = dict(version=VERSION, status='provisional alpha (pre-release)',
+manifest = dict(version=VERSION, status='alpha' if os.environ.get('LT_PRERELEASE') == 'false' else 'provisional alpha (pre-release)',
                 application_revision=app_rev, engine_revision=engine_rev,
                 guest_tools=dict(files=['armv6.itpack', 'armv7.itpack'], serial=tools['serial'], version=tools['version'],
                                  android_apk_bundles=['armv6.itpack', 'armv7.itpack']),

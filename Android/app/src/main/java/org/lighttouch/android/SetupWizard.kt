@@ -56,9 +56,9 @@ internal class SetupState {
 }
 
 /**
- * First launch, and Add device later: welcome, choose the iOS system and boot file (or one folder
- * holding them), or prepare one from an IPSW, then create the device and offer to start it. Guest
- * tools come with LightTouch.
+ * First launch: a welcome that leads into preparing a device from an IPSW on the phone (PrepareScreen). Its advanced
+ * path, also reached from Add a device, adds device files the user already has: an iOS system and boot file, or one
+ * folder holding them. Then the device is created and offered to start. Guest tools come with LightTouch.
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -81,7 +81,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: ()
             }
             AnimatedContent(state.step, Modifier.weight(1f), label = "setup-step") { step ->
                 when (step) {
-                    SetupStep.WELCOME -> Welcome { state.step = SetupStep.FILES }
+                    SetupStep.WELCOME -> Welcome(onPrepare) { state.step = SetupStep.FILES }
                     SetupStep.FILES -> Files(state, onPickFolder, onPickSystem, onPickRom, onCreate, onPrepare)
                     SetupStep.CREATING -> Creating(state.phase, state.progress)
                     SetupStep.DONE -> Done(state.created ?: "Your device", state.timings, onFinish)
@@ -92,7 +92,7 @@ internal fun SetupWizard(state: SetupState, canCancel: Boolean, onPickFolder: ()
 }
 
 @Composable
-private fun Welcome(onNext: () -> Unit) {
+private fun Welcome(onPrepare: () -> Unit, onFiles: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalArrangement = Arrangement.Center) {
         Box(Modifier.size(72.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(20.dp)), contentAlignment = Alignment.Center) {
             Icon(LtIcons.Phone, null, Modifier.size(38.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -103,15 +103,18 @@ private fun Welcome(onNext: () -> Unit) {
         Text("Classic iPod touch and iPhone software, running on your phone.", style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(36.dp))
-        Text("You'll need:", style = MaterialTheme.typography.bodyMedium)
+        Text("LightTouch sets up a device for you, right on this phone:", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp))
-        Need(LtIcons.Layers, "iOS", "Apple's IPSW, which LightTouch can download, or a prepared .itbase")
-        Need(LtIcons.Chip, "Boot file", "The iPod touch 2G's boot ROM, which LightTouch can also download")
+        Need(LtIcons.Phone, "Choose a device and iOS version", "The iPod touch 2G on iOS 3.1.3 is the easiest place to start")
+        Need(LtIcons.Download, "LightTouch downloads it", "iOS comes from Apple, or the Internet Archive when Apple no longer has it")
+        Need(LtIcons.Layers, "And prepares it", "A minute or a few, with 1.5 to 5 GB free")
         Spacer(Modifier.height(40.dp))
-        Button(onClick = onNext, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_start"), contentPadding = PaddingValues(horizontal = 32.dp)) {
+        Button(onClick = onPrepare, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_start"), contentPadding = PaddingValues(horizontal = 32.dp)) {
             Text("Get started", style = MaterialTheme.typography.titleMedium)
         }
-        GuideLink(Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp))
+        TextButton(onClick = onFiles, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp).testTag("setup_advanced")) {
+            Text("I already have the device files")
+        }
     }
 }
 
@@ -141,26 +144,11 @@ private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () 
                   onPickRom: () -> Unit, onCreate: () -> Unit, onPrepare: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
         Spacer(Modifier.height(24.dp))
-        Text("Add a device", style = MaterialTheme.typography.headlineMedium)
+        Text("Add device files", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
-        Text("Build one from Apple's firmware, or add a device image you already have.", style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(24.dp))
-        Surface(onClick = onPrepare, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.fillMaxWidth().testTag("setup_prepare")) {
-            Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(LtIcons.Download, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                Spacer(Modifier.width(16.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Prepare from an IPSW", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text("Choose a device and iOS version; LightTouch downloads and prepares it", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
-                }
-            }
-        }
+        Text("For a device prepared elsewhere, such as on a computer: its iOS system (.itbase) and, for the iPod touch 1G and 2G and the original iPhone, its boot file.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(20.dp))
-        Text("Or add a prepared device image", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(8.dp))
         FileRow(LtIcons.Folder, "Choose a folder", state.scanned ?: "LightTouch finds the files in it", null, onPickFolder, "setup_folder", action = true)
         FileRow(LtIcons.Layers, "iOS system", "Required · .itbase", state.system, onPickSystem, "setup_system")
         // Only the iPod touch 1G and 2G and the original iPhone boot from a boot ROM; a system known to be for
@@ -179,6 +167,9 @@ private fun Files(state: SetupState, onPickFolder: () -> Unit, onPickSystem: () 
         Button(onClick = onCreate, enabled = state.system != null, modifier = Modifier.align(Alignment.CenterHorizontally).height(52.dp).testTag("setup_create"),
             contentPadding = PaddingValues(horizontal = 32.dp)) { Text("Create device", style = MaterialTheme.typography.titleMedium) }
         GuideLink(Modifier.align(Alignment.CenterHorizontally))
+        TextButton(onClick = onPrepare, modifier = Modifier.align(Alignment.CenterHorizontally).testTag("setup_prepare")) {
+            Text("Prepare from an IPSW instead")
+        }
         Spacer(Modifier.height(16.dp))
     }
 }

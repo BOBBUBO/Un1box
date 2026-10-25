@@ -39,6 +39,10 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 
 ## Performance (current focus)
 
+- [ ] Storage space: give back the space iOS frees. A device's NAND page files only grow: pages iOS
+  erases or no longer maps keep their bytes in the app's storage. Options: punch holes
+  (`fallocate(FALLOC_FL_PUNCH_HOLE)`) for pages an erase clears, the way QEMU discards; or compact a
+  stopped device's page files. Check what Android's file systems (f2fs, ext4) support first.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
@@ -281,6 +285,9 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   (Harness note: the guest re-sleeps ~5 s after a Power wake; a second Power tap before the wake
   shows puts it back to sleep.)
 - [ ] Stop was seen disabled once after Store use; not reproduced.
+- [ ] The Store's install queue keeps the guest running with LightTouch off screen (then pauses it when the
+  queue is empty); not yet tried on a phone. Guest audio is not muted meanwhile, and Android 14+ ends a
+  `dataSync` foreground service after six hours a day.
 - [x] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.
 - [ ] Some catalog apps marked compatible need iOS 4 APIs (Doodle Jump 3.x: GCD; the n72 search row
   is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash

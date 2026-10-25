@@ -6,6 +6,7 @@
 #include <android/native_window_jni.h>
 #include <android/bitmap.h>
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -973,7 +974,13 @@ jstring touch_command(JNIEnv *env,uint64_t lease,jlong time,jintArray ids,jintAr
     const auto view=viewport(width,height);lt_error error=LT_INIT(lt_error);
     for(jsize i=0;i<count;++i) {
         batch.contacts[i]=lt_contact LT_INIT(lt_contact);batch.contacts[i].id=id[i];batch.contacts[i].phase=phase[i];
-        auto status=lt_map_contact(coords[i*2],coords[i*2+1],view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
+        // A finger past the guest's edge (into a letterbox, or off the glass) holds at the nearest edge instead of
+        // cancelling every finger's gesture, as a touchscreen that ends at the guest's border would.
+        double px=coords[i*2],py=coords[i*2+1];
+        if(std::isfinite(px) && std::isfinite(py)) {
+            px=std::clamp(px,view.left,view.left+view.width);py=std::clamp(py,view.top,view.top+view.height);
+        }
+        auto status=lt_map_contact(px,py,view.left,view.top,view.width,view.height,0,&batch.contacts[i].x,&batch.contacts[i].y);
         if(status!=LT_OK) {
             const auto cancellation=release_input();
             return string(env,touch_mapping_rejection(status,cancellation));
