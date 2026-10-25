@@ -20,10 +20,16 @@ name: Android perf APK
 # published APK needs an uninstall first (which erases the app's prepared
 # devices; the APK carries firmwarekit, so they can be prepared again).
 #
-# Inputs and caches are pinned by content, not by date: the dependency and
-# engine caches are restored only on an exact key match, because the engine
-# build refuses a cached tree whose recipe changed. If a run fails in the engine
-# step with a cache-refusal message, delete the `lt-engine-*` cache and re-run.
+# Inputs and caches are pinned by content, not by date. The dependency cache's
+# key covers everything build-deps.py and build-crypto-deps.py record (the
+# archives, patches and scripts, the NDK's source.properties, the Meson and Ninja
+# versions), so a hit is a tree those scripts accept and the build step is
+# skipped. The engine cache keeps one tree per engine revision and restores the
+# newest one as a prefix, which build-engine.py updates in place when only the
+# source revision changed (--source-update); a tree whose configuration changed
+# is refused before anything compiles and rebuilt from scratch. If a run fails in
+# the engine step with a cache-refusal message, delete the `lt-engine-*` cache
+# and re-run.
 
 on:
   workflow_dispatch:
@@ -321,6 +327,50 @@ jobs:
           ninja --version
           meson/bin/meson --version
 
+      # Everything the dependency and engine scripts record in their recipes, as two strings: a cache
+      # keyed by them holds a tree those scripts accept, so the build can be skipped instead of run
+      # again over a complete tree. A file a recipe records but this engine ref does not carry is
+      # written into the string as absent, so such a ref still gets a key (and never a stale hit).
+      - name: Fingerprint the dependency and engine recipes
+        id: recipes
+        run: |
+          recorded() {
+            for path in "$@"; do
+              if [ -f "$path" ]; then sha256sum "$path"; else echo "absent $path"; fi
+            done
+          }
+          toolchain() {
+            echo "$ANDROID_NDK_ROOT"
+            recorded "$ANDROID_NDK_ROOT/source.properties"
+            "$MESON" --version 2>/dev/null || echo 'absent meson'
+            ninja --version 2>/dev/null || echo 'absent ninja'
+          }
+          deps=$( {
+            toolchain
+            recorded qemu-ios/contrib/portable/dependencies.json \
+              qemu-ios/contrib/portable/crypto-dependencies.json \
+              qemu-ios/contrib/portable/cache.py \
+              qemu-ios/contrib/portable/build-deps.py \
+              qemu-ios/contrib/portable/build-crypto-deps.py \
+              qemu-ios/contrib/portable/libgpg-error-android-lock.patch \
+              qemu-ios/contrib/ffmpeg/*.patch \
+              qemu-ios/subprojects/packagefiles/libslirp-set-restricted.patch
+          } | sha256sum | cut -c1-24 )
+          engine=$( {
+            toolchain
+            recorded qemu-ios/contrib/portable/build-engine.py \
+              qemu-ios/contrib/portable/engine-cache.py \
+              qemu-ios/contrib/portable/cache.py \
+              qemu-ios/contrib/portable/make-shared.py \
+              qemu-ios/contrib/portable/dependencies.json \
+              qemu-ios/contrib/portable/crypto-dependencies.json
+          } | sha256sum | cut -c1-24 )
+          {
+            echo "deps=$deps"
+            echo "engine=$engine"
+          } >> "$GITHUB_OUTPUT"
+          echo "dependency recipe $deps, engine recipe $engine"
+
       # The engine scripts ask ninja and make for exactly two jobs. The wrapper
       # rewrites that one argument; nothing else about their recipes changes.
       - name: Let the engine scripts use more than two jobs
@@ -337,18 +387,22 @@ jobs:
           cat ci/bin/ninja
 
       - name: Cache the engine dependencies
+        id: deps-cache
         uses: actions/cache@v4
         with:
           path: |
             ci/deps
             ci/crypto
-          key: lt-deps-arm64-${{ hashFiles('qemu-ios/contrib/portable/dependencies.json', 'qemu-ios/contrib/portable/crypto-dependencies.json') }}
+          key: lt-deps-arm64-${{ steps.recipes.outputs.deps }}
 
       - name: Cache the engine object tree
         uses: actions/cache@v4
         with:
           path: ci/engine-build
-          key: lt-engine-${{ steps.engine.outputs.sha }}-j${{ inputs.jobs }}-${{ inputs.engine_cflags == '' && 'plain' || 'flagged' }}-${{ hashFiles('qemu-ios/contrib/portable/dependencies.json', 'qemu-ios/contrib/portable/crypto-dependencies.json') }}
+          # One tree per engine revision; any tree of this recipe is a starting point.
+          key: lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs }}-${{ steps.engine.outputs.sha }}
+          restore-keys: |
+            lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs }}-
 
       - name: Cache the signing key
         uses: actions/cache@v4
@@ -372,23 +426,33 @@ jobs:
           echo "keystore signer: $SIGNER"
 
       # Configures the whole Gradle build (plugins, dependency verification, the
-      # Compose compiler) before the two-hour engine build, so a resolution
-      # problem fails here instead of at the end.
+      # Compose compiler) and compiles the app's sources before the engine build, so a
+      # resolution or Kotlin/Java/AIDL error fails here, in about a minute, instead of
+      # after the engine's three minutes in "Build the APK". Compilation needs neither the
+      # engine nor firmwarekit: only the packaging tasks read those.
       - name: Preflight the Gradle build
         working-directory: Android
         run: |
-          # Resolving the runtime classpath checks the pinned dependency
-          # verification; the dry run configures every task without running it.
-          ./gradlew --no-daemon --max-workers="$LT_JOBS" \
-            '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' \
-            --dependency-verification=${{ inputs.dependency_verification }} \
-            :app:dependencies --configuration debugRuntimeClasspath > /dev/null
-          ./gradlew --no-daemon --max-workers="$LT_JOBS" \
-            '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' \
-            --dependency-verification=${{ inputs.dependency_verification }} \
-            --dry-run :app:assembleDebug
+          gradlew() {
+            ./gradlew --no-daemon --max-workers="$LT_JOBS" \
+              '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' \
+              --dependency-verification=${{ inputs.dependency_verification }} \
+              -Pdebuggable="${{ inputs.debuggable }}" "$@"
+          }
+          # Resolving the runtime classpath checks the pinned dependency verification; the dry
+          # run configures every task without running it.
+          gradlew :app:dependencies --configuration debugRuntimeClasspath > /dev/null
+          gradlew --dry-run :app:assembleDebug
+          # AIDL first (Kotlin compiles against its generated interfaces), then Kotlin and Java:
+          # what the APK step compiles, none of what it packages.
+          gradlew :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac
 
+      # A cache hit is a tree the scripts' own recorded recipe accepts (the key is that recipe), so
+      # there is nothing to rebuild. Without the skip this step spent ~3.5 minutes on every run
+      # running make and ninja again over an already complete tree. The hit must also carry the
+      # libraries the engine links; a tree without them is built again.
       - name: Build the engine dependencies
+        if: steps.deps-cache.outputs.cache-hit != 'true' || hashFiles('ci/deps/prefix/lib/libavcodec.a', 'ci/crypto/prefix/lib/libgcrypt.a') == ''
         run: |
           deps() {
             python3 qemu-ios/contrib/portable/build-deps.py ci/deps \
@@ -402,16 +466,73 @@ jobs:
           # Retry once from an empty tree.
           deps || { rm -rf ci/deps ci/crypto; deps; }
 
+      # The guest's only network backend is slirp, and the engine's
+      # --without-default-features resolves that option's "auto" to disabled: -netdev user
+      # did not exist, the Wi-Fi card's default netdev was never added ("Wi-Fi has no
+      # network"), no lease came, and every app reported no connection. libslirp is built
+      # for Android here, with the engine's own set-restricted/dns-forward patch, into the
+      # prefix dependency('slirp') reads.
+      - name: Build libslirp for Android
+        run: |
+          if [ -f ci/deps/prefix/lib/libslirp.a ]; then
+            echo "libslirp is already in the dependency prefix; nothing to build"
+            exit 0
+          fi
+          if [ ! -d ci/slirp-src/.git ]; then
+            git clone --quiet https://gitlab.freedesktop.org/slirp/libslirp.git ci/slirp-src
+            git -C ci/slirp-src checkout --quiet d09dc9a70360ee7838acccbd234ab83f3b9b37a5
+          fi
+          git -C ci/slirp-src apply "$GITHUB_WORKSPACE/qemu-ios/subprojects/packagefiles/libslirp-set-restricted.patch"
+          BIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          {
+            echo '[binaries]'
+            echo "c = '$BIN/aarch64-linux-android29-clang'"
+            echo "ar = '$BIN/llvm-ar'"
+            echo "strip = '$BIN/llvm-strip'"
+            echo "pkgconfig = 'pkg-config'"
+            echo '[host_machine]'
+            echo "system = 'android'"
+            echo "cpu_family = 'aarch64'"
+            echo "cpu = 'aarch64'"
+            echo "endian = 'little'"
+            echo '[properties]'
+            echo 'needs_exe_wrapper = true'
+          } > ci/libslirp-cross.txt
+          PKG_CONFIG_LIBDIR="$PWD/ci/deps/prefix/lib/pkgconfig" \
+            "$MESON" setup ci/libslirp-build ci/slirp-src \
+            --cross-file ci/libslirp-cross.txt --buildtype=release \
+            --default-library=static --prefix "$PWD/ci/deps/prefix"
+          ninja -C ci/libslirp-build install
+          ls -l ci/deps/prefix/lib/libslirp.a
+
+      # build-engine.py refuses a dirty source tree ("Commit source changes before a
+      # reproducible engine build"), so the patch is committed here; fixed dates keep that
+      # commit, and with it the recorded revision and the engine cache key, stable.
+      - name: Patch the engine for Android networking
+        run: |
+          git -C qemu-ios apply "$GITHUB_WORKSPACE"/ci/engine-patches/*.patch
+          GIT_AUTHOR_DATE=2001-01-01T00:00:00Z GIT_COMMITTER_DATE=2001-01-01T00:00:00Z \
+            git -C qemu-ios -c user.name=ci -c user.email=ci@localhost \
+            commit -qam "ci: Android slirp (DNS through getaddrinfo)"
+          git -C qemu-ios log --oneline -1
+
       - name: Build the engine
         run: |
           engine() {
             python3 qemu-ios/contrib/portable/build-engine.py ci/engine-build \
               --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT" --android-api 29 \
-              --prefix ci/deps/prefix --crypto-prefix ci/crypto/prefix
+              --prefix ci/deps/prefix --crypto-prefix ci/crypto/prefix "$@"
           }
-          # A restored object tree whose recipe no longer matches is refused
-          # rather than silently reused; retry once from an empty tree.
-          engine || { rm -rf ci/engine-build; engine; }
+          # The tree restored from another engine revision is updated in place when the only
+          # recorded input that changed is the source revision (--source-update: ninja compiles
+          # what moved, ~1.5 minutes less than a cold build). A tree whose configuration, tools
+          # or dependencies changed is refused before anything compiles, and rebuilt from
+          # scratch; so is one whose update fails, which is also the cold-build retry.
+          engine --source-update || {
+            echo "::warning::the cached engine tree could not be updated in place (see the message above); rebuilding it from scratch"
+            rm -rf ci/engine-build
+            engine
+          }
 
       - name: Stage the engine next to the NDK C++ runtime
         run: |
