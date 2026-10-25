@@ -135,24 +135,28 @@ internal class StoreInstaller private constructor(private val context: Context) 
         }
     }
 
-    override fun install(payload: InstallRequest, file: File, report: QueueReport) {
+    override fun install(payload: InstallRequest, file: File, report: QueueReport, cancelled: () -> Boolean) {
         val socket = socket ?: throw StoreError("The guest stopped. Start it to install apps.")
         val target = exactTarget(socket)
         report.update("Checking app", null)
         val prepared = File(file.parentFile, "Install.ipa")
         val info = IpaPreflight.prepare(file, prepared, target)
         if (payload is InstallRequest.Local) report.rename(info.name)
-        apps.install(socket, prepared, info.bundleId) { e ->
+        if (cancelled()) throw StoreError("Cancelled")
+        apps.install(socket, prepared, info.bundleId, cancelled) { e ->
             when (e.optString("phase")) {
                 "upload" -> report.update("Copying to device", e.optInt("percent") / 100f)
-                "mutation" -> report.update("Installing", null)
+                "mutation" -> { report.commit(); report.update("Installing", null) }
                 // iOS's own steps are internal names; unpacking, most of a large app's time, shows
                 // how much has landed (the service follows the guest's free space).
-                "install" -> if (e.optLong("unpacked_total") > 0)
-                    report.update("Unpacking · " + byteSize(e.optLong("unpacked")) + " of " + byteSize(e.optLong("unpacked_total")),
-                        e.optLong("unpacked").toFloat() / e.optLong("unpacked_total"))
-                else report.update(if (e.optString("status") == "ExtractingPackage") "Unpacking" else "Installing",
-                    if (e.has("percent") && !e.isNull("percent")) e.optInt("percent") / 100f else null)
+                "install" -> {
+                    report.commit()
+                    if (e.optLong("unpacked_total") > 0)
+                        report.update("Unpacking · " + byteSize(e.optLong("unpacked")) + " of " + byteSize(e.optLong("unpacked_total")),
+                            e.optLong("unpacked").toFloat() / e.optLong("unpacked_total"))
+                    else report.update(if (e.optString("status") == "ExtractingPackage") "Unpacking" else "Installing",
+                        if (e.has("percent") && !e.isNull("percent")) e.optInt("percent") / 100f else null)
+                }
             }
         }
         runCatching { apps.installedApps(socket) }.getOrNull()?.let { list -> main.post { onInstalled(list) } }

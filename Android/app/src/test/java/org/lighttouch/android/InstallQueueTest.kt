@@ -20,7 +20,9 @@ class InstallQueueTest {
                 if ("fetch:$payload" in failures) throw StoreError("No connection")
                 fetched += payload; return File("/tmp/$payload/App.ipa")
             }
-            override fun install(payload: String, file: File, report: QueueReport) {
+            override fun install(payload: String, file: File, report: QueueReport, cancelled: () -> Boolean) {
+                if ("commit:$payload" in failures) report.commit()
+                if (cancelled()) throw StoreError("Cancelled")
                 if ("install:$payload" in failures) throw StoreError("Install failed")
                 installed += payload
             }
@@ -45,6 +47,33 @@ class InstallQueueTest {
         assertEquals(listOf("a"), h.installed)
         assertEquals(listOf(File("/tmp/a/App.ipa")), h.discarded)
         assertEquals(1, h.idle); assertFalse(h.queue.active)
+    }
+
+    @Test fun copyingOntoTheDeviceCanBeCancelledUntilIOSInstalls() {
+        val h = Harness()
+        h.add("a")
+        h.run("store-download")                              // a is installing: still copying onto the device
+        val a = h.queue.snapshot().first { it.key == "a" }
+        assertTrue(a.cancellable)
+        h.queue.cancel(a.id)
+        h.run("store-install")
+        assertTrue(h.queue.snapshot().none { it.key == "a" })
+        assertTrue("a" !in h.installed)
+        assertEquals(listOf(File("/tmp/a/App.ipa")), h.discarded)
+        assertFalse(h.queue.active)
+    }
+
+    @Test fun aCancelThatArrivesAfterIOSStartedInstallingIsTooLate() {
+        val h = Harness()
+        h.failures += "commit:a"
+        h.add("a")
+        h.run("store-download")
+        h.queue.cancel(h.queue.snapshot().first { it.key == "a" }.id)   // before the step commits
+        h.run("store-install")                                           // commits, then sees no cancel
+        val a = h.queue.snapshot().first { it.key == "a" }
+        assertEquals(QueueState.DONE, a.state)
+        assertTrue(a.committed)
+        assertFalse(a.cancellable)
     }
 
     @Test fun downloadOverlapsInstallButOnlyOneFileWaits() {
@@ -158,7 +187,7 @@ class InstallQueueTest {
                 report.update("Downloading 1 MB of 4 MB", 0.25f); seen += queue.snapshot().single().let { it.phase to it.progress }
                 report.rename("Renamed"); return File("/tmp/x/App.ipa")
             }
-            override fun install(payload: String, file: File, report: QueueReport) = Unit
+            override fun install(payload: String, file: File, report: QueueReport, cancelled: () -> Boolean) = Unit
             override fun discard(file: File) = Unit
         }
         queue = InstallQueue(work) { _, body -> tasks += body }

@@ -553,7 +553,8 @@ private fun QueueButton(model: StoreModel) {
 @Composable
 private fun QueueMenu(model: StoreModel, open: Boolean, onDismiss: () -> Unit) {
     val items = model.queue
-    DropdownMenu(open, onDismiss, Modifier.widthIn(min = 300.dp, max = 340.dp)) {
+    DropdownMenu(open, onDismiss, Modifier.widthIn(min = 300.dp, max = 340.dp), shape = MaterialTheme.shapes.large,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Row(Modifier.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(if (items.any { it.active }) "Installing" else "Installs finished", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
             if (items.any { !it.active }) TextButton(onClick = { model.clearFinished() }) { Text("Clear finished") }

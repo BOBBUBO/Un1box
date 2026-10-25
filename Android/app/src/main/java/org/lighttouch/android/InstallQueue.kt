@@ -6,24 +6,28 @@ enum class QueueState { PENDING, DOWNLOADING, READY, INSTALLING, DONE, FAILED }
 
 /** One app in the install queue, as the screen and the notification show it. */
 data class QueueItem(val id: Long, val key: String, val name: String, val state: QueueState = QueueState.PENDING,
-                     val phase: String = "Waiting", val progress: Float? = null, val error: String? = null) {
+                     val phase: String = "Waiting", val progress: Float? = null, val error: String? = null,
+                     val committed: Boolean = false) {
     /** Still has work to do: it keeps the guest running and the service alive. */
     val active get() = state != QueueState.DONE && state != QueueState.FAILED
-    val cancellable get() = state == QueueState.PENDING || state == QueueState.DOWNLOADING || state == QueueState.READY
+    /** Until iOS starts installing it ([committed]); copying the app onto the device can still stop. */
+    val cancellable get() = active && !committed
 }
 
 /** What a running step reports back to its item. */
 interface QueueReport {
     fun update(phase: String, fraction: Float? = null)
     fun rename(name: String)
+    /** iOS has started installing: from here the install can't be cancelled. */
+    fun commit()
 }
 
 /** The two steps of an install. Both throw with a message fit to show the user. */
 interface QueueWork<P> {
     /** Download (or copy) the app's file; stop with an exception once [cancelled] is true. */
     fun fetch(payload: P, report: QueueReport, cancelled: () -> Boolean): File
-    /** Install the fetched file into the guest. */
-    fun install(payload: P, file: File, report: QueueReport)
+    /** Install the fetched file into the guest; stop with an exception once [cancelled] is true, until [QueueReport.commit]. */
+    fun install(payload: P, file: File, report: QueueReport, cancelled: () -> Boolean)
     /** The fetched file is no longer needed (installed, failed or cancelled). */
     fun discard(file: File)
 }
@@ -65,7 +69,7 @@ class InstallQueue<P>(private val work: QueueWork<P>,
         return accepted
     }
 
-    /** Pending and fetched items leave the queue; a download in progress stops and leaves. An install can't be taken back. */
+    /** Pending and fetched items leave the queue; a download or a copy onto the device stops and leaves. Once iOS is installing it can't be taken back. */
     fun cancel(id: Long) {
         var discard: File? = null
         synchronized(lock) {
@@ -74,6 +78,7 @@ class InstallQueue<P>(private val work: QueueWork<P>,
                 QueueState.PENDING -> entries.remove(entry)
                 QueueState.READY -> { discard = entry.file; entry.file = null; entries.remove(entry) }
                 QueueState.DOWNLOADING -> { entry.cancelled = true; entry.item = entry.item.copy(phase = "Cancelling") }
+                QueueState.INSTALLING -> if (!entry.item.committed) { entry.cancelled = true; entry.item = entry.item.copy(phase = "Cancelling") }
                 else -> {}
             }
         }
@@ -134,6 +139,7 @@ class InstallQueue<P>(private val work: QueueWork<P>,
     private fun reporter(entry: Entry<P>) = object : QueueReport {
         override fun update(phase: String, fraction: Float?) = update(entry) { it.copy(phase = phase, progress = fraction) }
         override fun rename(name: String) = update(entry) { it.copy(name = name) }
+        override fun commit() = update(entry) { it.copy(committed = true) }
     }
 
     /** Start whichever steps can run now. */
@@ -177,11 +183,13 @@ class InstallQueue<P>(private val work: QueueWork<P>,
     private fun runInstall(entry: Entry<P>) {
         val file = synchronized(lock) { entry.file.also { entry.file = null } }
         var failure: String? = null
-        try { work.install(entry.payload, requireNotNull(file), reporter(entry)) } catch (e: Exception) { failure = e.message ?: "Install failed" }
+        try { work.install(entry.payload, requireNotNull(file), reporter(entry)) { entry.cancelled && !entry.item.committed } }
+        catch (e: Exception) { failure = e.message ?: "Install failed" }
         file?.let(work::discard)
         synchronized(lock) {
             installing = false
-            entry.item = if (failure == null) entry.item.copy(state = QueueState.DONE, phase = "Installed. Find it on the Home screen.", progress = 1f)
+            if (entry.cancelled && !entry.item.committed) entries.remove(entry)
+            else entry.item = if (failure == null) entry.item.copy(state = QueueState.DONE, phase = "Installed. Find it on the Home screen.", progress = 1f)
             else entry.item.copy(state = QueueState.FAILED, phase = "", progress = null, error = failure)
         }
         changed()
