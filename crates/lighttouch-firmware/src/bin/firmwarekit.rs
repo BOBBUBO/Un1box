@@ -2,6 +2,7 @@
 //! the others are for development.
 //!
 //!   firmwarekit decrypt --catalog FILE --id ID --ipsw FILE --out DIR [--no-rootfs]
+//!   firmwarekit extract-rootfs DMG OUT
 use lighttouch_firmware::entry::Entry;
 use lighttouch_firmware::ipsw::Ipsw;
 use std::path::PathBuf;
@@ -32,10 +33,19 @@ fn decrypt(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn extract_rootfs(args: &[String]) -> Result<(), String> {
+    let (Some(dmg), Some(out)) = (args.first(), args.get(1)) else { return Err("extract-rootfs DMG OUT".into()) };
+    let started = std::time::Instant::now();
+    lighttouch_firmware::udif::extract_rootfs(&PathBuf::from(dmg), &PathBuf::from(out)).map_err(|e| e.to_string())?;
+    eprintln!("extracted in {:.1} s", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("decrypt") => decrypt(&args[1..]),
+        Some("extract-rootfs") => extract_rootfs(&args[1..]),
         _ => {
             eprintln!("usage: firmwarekit decrypt --catalog FILE --id ID --ipsw FILE --out DIR [--no-rootfs]");
             return ExitCode::from(64);

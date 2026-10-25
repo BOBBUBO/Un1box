@@ -7,6 +7,7 @@
 //!   lzss       kernelcache decompression
 //!   vfdecrypt  the encrypted root filesystem image
 //!   decrypt    the decrypt step and its cache
+//!   udif       DMG images, the rootfs volume out of its partition map
 pub mod cache;
 pub mod decrypt;
 pub mod entry;
@@ -14,6 +15,8 @@ pub mod error;
 pub mod img3;
 pub mod ipsw;
 pub mod lzss;
+pub mod posio;
+pub mod udif;
 pub mod vfdecrypt;
 
 pub use error::{Code, Error, Result};
