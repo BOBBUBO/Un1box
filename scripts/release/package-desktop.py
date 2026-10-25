@@ -126,9 +126,14 @@ def main():
     copy(args.usbmuxd, res / ("lighttouch-usbmuxd.exe" if windows else "usbmuxd-qemu"), 0o755)
     shutil.copytree(args.guest_tools, res / "guest-tools")
     libs = res if windows else args.out / ("Contents/Frameworks" if macos else "lib")
+    given_from = {}
     for lib in args.lib:
         for f in sorted(lib.iterdir()) if lib.is_dir() else [lib]:
             if f.is_file():
+                earlier = given_from.get(f.name.lower())
+                if earlier and earlier.read_bytes() != f.resolve().read_bytes():
+                    print(f"package-desktop: {f.name} from {f} replaces the one from {earlier}", file=sys.stderr)
+                given_from[f.name.lower()] = f.resolve()
                 copy(f.resolve(), libs / f.name)
     kegs = []
     if macos:
@@ -136,7 +141,9 @@ def main():
         (args.out / "Contents/Info.plist").write_text(INFO_PLIST.replace("VERSION", version))
         given = sorted(libs.iterdir()) if libs.is_dir() else []
         kegs = bundle_dylibs([res / engine, res / "usbmuxd-qemu", *given], libs)
-    elif not windows:
+    elif windows:
+        check_imports([args.out / "lighttouch.exe", *res.glob("*.exe"), *res.glob("*.dll")])
+    else:
         (args.out / "LightTouch").write_text(LAUNCHER)
         (args.out / "LightTouch").chmod(0o755)
 
@@ -188,6 +195,33 @@ def main():
             raise SystemExit("package-desktop: --appimage is for Linux")
         print(appimage(args.out, args.appimage))
     print(args.out)
+
+
+def check_imports(binaries):
+    """Fail when a bundled DLL imports a function another bundled DLL doesn't export: Windows refuses to load the
+    engine then ("The specified procedure could not be found"), where Wine may find another copy. Two libwinpthread
+    builds (the engine's MSYS2 one and Debian MinGW's) did this."""
+    objdump = shutil.which("x86_64-w64-mingw32-objdump")
+    if not objdump:
+        print("package-desktop: no x86_64-w64-mingw32-objdump, DLL imports not checked", file=sys.stderr)
+        return
+    imports, exports = {}, {}
+    for path in binaries:
+        dll, table, own = None, False, set()
+        for line in subprocess.run([objdump, "-p", str(path)], capture_output=True, text=True, check=True).stdout.splitlines():
+            if m := re.match(r"\s*DLL Name: (\S+)", line):
+                dll = m.group(1).lower()
+            elif dll and (m := re.match(r"\s+[0-9a-f]+\s+\d+\s+(\S+)$", line)):
+                imports.setdefault(path.name, set()).add((dll, m.group(1)))
+            elif "[Ordinal/Name Pointer] Table" in line:
+                dll, table = None, True
+            elif table and (m := re.match(r"\s*\[\s*\d+\]\s+(\S+)$", line)):
+                own.add(m.group(1))
+        exports[path.name.lower()] = own
+    missing = sorted(f"{name} needs {dll}!{symbol}" for name, wanted in imports.items() for dll, symbol in wanted
+                     if dll in exports and symbol not in exports[dll])
+    if missing:
+        raise SystemExit("package-desktop: bundled DLLs don't fit together:\n  " + "\n  ".join(missing))
 
 
 def bundle_dylibs(binaries, frameworks):

@@ -723,7 +723,7 @@ void seed_admission(const fs::path &base_path, const fs::path &state) {
 }
 static void sparse_write(int fd, const uint8_t *bytes, size_t size) {
     if (std::all_of(bytes, bytes + size, [](uint8_t value) { return value == 0; }))
-        io(lt::os::lseek(fd, off_t(size), SEEK_CUR) >= 0, "seek zero archive span");
+        io(lt::os::lseek(fd, int64_t(size), SEEK_CUR) >= 0, "seek zero archive span");
     else
         write_all(fd, bytes, size);
 }
@@ -752,6 +752,30 @@ static void progress(const lt_import_config *c, uint64_t written, uint64_t total
     if (c->progress)
         require(c->progress(c->opaque, written, total) == 0, "import cancelled", LT_CANCELLED);
 }
+#ifdef _WIN32
+// Where a file's data is, as SEEK_DATA/SEEK_HOLE say elsewhere: a hole reads as zeros, so a NAND chip (2 GB, a few
+// hundred MB written) is copied without reading its holes. All of it where the filesystem can't say (FAT).
+static std::vector<std::pair<int64_t, int64_t>> allocated_ranges(int fd, int64_t size) {
+    std::vector<std::pair<int64_t, int64_t>> ranges;
+    FILE_ALLOCATED_RANGE_BUFFER query {}, found[256];
+    query.Length.QuadPart = size;
+    while (query.Length.QuadPart > 0) {
+        DWORD bytes = 0;
+        BOOL done = DeviceIoControl(lt::os::handle(fd), FSCTL_QUERY_ALLOCATED_RANGES, &query, sizeof query, found,
+                                    sizeof found, &bytes, nullptr);
+        if (!done && GetLastError() != ERROR_MORE_DATA)
+            return {{0, size}};
+        const DWORD n = bytes / sizeof found[0];
+        for (DWORD i = 0; i < n; ++i)
+            ranges.emplace_back(found[i].FileOffset.QuadPart, found[i].FileOffset.QuadPart + found[i].Length.QuadPart);
+        if (done || n == 0)
+            break;
+        query.FileOffset.QuadPart = ranges.back().second;
+        query.Length.QuadPart = size - ranges.back().second;
+    }
+    return ranges;
+}
+#endif
 static void clone_sparse(const fs::path &from, const fs::path &to) {
     auto in = open_read(from);
     lt::os::Stat st {};
@@ -771,19 +795,24 @@ static void clone_sparse(const fs::path &from, const fs::path &to) {
 #endif
     io(lt::os::ftruncate(out.n, st.st_size) == 0, "size " + to.string());
     std::vector<uint8_t> buffer(1 << 20);
-    off_t at = 0;
+#ifdef _WIN32
+    const auto ranges = allocated_ranges(in.n, st.st_size);
+    for (auto [at, end] : ranges) {
+#else
+    int64_t at = 0;
     while (at < st.st_size) {
-        off_t end = st.st_size;
+        int64_t end = st.st_size;
 #ifdef SEEK_DATA
-        off_t data = lt::os::lseek(in.n, at, SEEK_DATA);
+        int64_t data = lt::os::lseek(in.n, at, SEEK_DATA);
         if (data < 0)
             break;  // only a hole remains
         at = data;
         end = lt::os::lseek(in.n, data, SEEK_HOLE);
         io(end > 0, "seek hole " + from.string());
 #endif
+#endif
         while (at < end) {
-            const size_t want = size_t(std::min<off_t>(off_t(buffer.size()), end - at));
+            const size_t want = size_t(std::min<int64_t>(int64_t(buffer.size()), end - at));
             ssize_t n = lt::os::pread(in.n, buffer.data(), want, at);
             io(n > 0, "read " + from.string());
             if (!std::all_of(buffer.begin(), buffer.begin() + n, [](uint8_t v) { return v == 0; })) {
@@ -983,7 +1012,7 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
                 lt::os::open((stage.path / "nand").c_str(), O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
             lt::io(packed->n >= 0, "create packed NAND");
             slots.assign(lt::packed_index_bytes, 0);
-            lt::io(lt::os::lseek(packed->n, off_t(lt::packed_records_at), SEEK_SET) >= 0, "seek packed NAND records");
+            lt::io(lt::os::lseek(packed->n, int64_t(lt::packed_records_at), SEEK_SET) >= 0, "seek packed NAND records");
         }
         observation.begin("extracting", total);
         z_stream z{};
@@ -1010,7 +1039,7 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
                 page_name.clear();
             }
             if (target) {
-                lt::io(lt::os::ftruncate(target->n, off_t(target_size)) == 0, "size sparse archive entry");
+                lt::io(lt::os::ftruncate(target->n, int64_t(target_size)) == 0, "size sparse archive entry");
                 if (!stage.bulk_sync)
                     lt::io(lt::os::fsync(target->n) == 0, "sync extracted file");
                 target.reset();
@@ -1089,7 +1118,7 @@ lt_status lt_import_archive_observed(const lt_import_config *c, lt_import_phase_
                     header[8 + field * 4 + byte] = uint8_t(geometry[field] >> (8 * byte));
             lt::io(lt::os::pwrite(packed->n, header, sizeof header, 0) == ssize_t(sizeof header), "write packed NAND header");
             lt::io(lt::os::pwrite(packed->n, slots.data(), slots.size(), 24) == ssize_t(slots.size()), "write packed NAND index");
-            lt::io(lt::os::ftruncate(packed->n, off_t(lt::packed_records_at + uint64_t(records) * lt::packed_record)) == 0,
+            lt::io(lt::os::ftruncate(packed->n, int64_t(lt::packed_records_at + uint64_t(records) * lt::packed_record)) == 0,
                    "size packed NAND");
             lt::io(lt::os::fsync(packed->n) == 0, "sync packed NAND");
             packed.reset();
@@ -1170,7 +1199,7 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
         fs::create_directories(dest.parent_path());
         outputs.push_back(std::make_unique<Fd>(lt::os::open(dest.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)));
         io(outputs.back()->n >= 0, "create packed image");
-        io(lt::os::ftruncate(outputs.back()->n, off_t(size)) == 0, "size packed image");
+        io(lt::os::ftruncate(outputs.back()->n, int64_t(size)) == 0, "size packed image");
     }
     observation.total = total;
     auto report = [&](uint64_t bytes) {
@@ -1217,7 +1246,7 @@ static void import_packed_base(const fs::path &source, Stage &staged, const lt_i
                 require(hash.finish() == item.sha256, "packed chunk checksum mismatch: " + name + " " + item.number);
                 const int out = outputs[item.image]->n;
                 for (size_t done = 0; done < length;) {
-                    ssize_t n = lt::os::pwrite(out, raw.data() + done, length - done, off_t(item.at + done));
+                    ssize_t n = lt::os::pwrite(out, raw.data() + done, length - done, int64_t(item.at + done));
                     if (n < 0 && errno == EINTR)
                         continue;
                     io(n > 0, "write packed chunk");

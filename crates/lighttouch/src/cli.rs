@@ -170,8 +170,9 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
             send(&mut stdin, &command);
         }
         if !stop_sent && started.elapsed().as_secs_f64() >= seconds {
-            if let Some(path) = &shot {
-                save_frame(&frames, path)?;
+            // A missing frame is reported, but the guest still gets its shutdown.
+            if let Some(Err(e)) = shot.as_ref().map(|path| save_frame(&frames, path)) {
+                eprintln!("[{:6.1}] couldn't save the frame: {e}", started.elapsed().as_secs_f64());
             }
             eprintln!("[{:6.1}] requesting shutdown", started.elapsed().as_secs_f64());
             send(&mut stdin, &Command::Stop);

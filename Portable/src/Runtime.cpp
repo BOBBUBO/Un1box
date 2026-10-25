@@ -608,7 +608,7 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         lt::io(runtime->shared != nullptr, "allocate frame memory");
 #else
         lt::io(runtime->frame_fd >= 0, "private frame memfd");
-        lt::io(lt::os::ftruncate(runtime->frame_fd, off_t(runtime->mapping_bytes)) == 0, "size frame memfd");
+        lt::io(lt::os::ftruncate(runtime->frame_fd, int64_t(runtime->mapping_bytes)) == 0, "size frame memfd");
         runtime->shared = static_cast<lt_shared_frame *>(
             mmap(nullptr, runtime->mapping_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, runtime->frame_fd, 0));
         if (runtime->shared == MAP_FAILED) {
