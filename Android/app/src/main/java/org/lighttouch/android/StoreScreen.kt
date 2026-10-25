@@ -29,6 +29,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -80,7 +82,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     var targetConfirmed by mutableStateOf(false)
     var query by mutableStateOf("")
     var results by mutableStateOf<List<JSONObject>>(emptyList())
-    var showIncompatible by mutableStateOf(true)
+    var showIncompatible by mutableStateOf(false)
     var searching by mutableStateOf(false)
     var message by mutableStateOf("")
     var chosen by mutableStateOf<JSONObject?>(null)
@@ -88,14 +90,18 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     var selected by mutableStateOf<Int?>(null)
     var problem by mutableStateOf<String?>(null)
     var candidate by mutableStateOf<JSONObject?>(null)
+    /** Bundle id to version, for the "Installed" labels on store pages. [installedList] has the whole list. */
     var installed by mutableStateOf<Map<String, String>>(emptyMap())
+    val installedList = InstalledList(apps, muxSocket, { target }, { targetConfirmed }) { list ->
+        installed = list.associate { it.bundleId to (it.version ?: "unknown") }
+    }
     val browser = StoreBrowser { target }
     val resultsList = LazyListState()
     /** What the catalog says about the open app, and its newest screenshots; both arrive after the versions. */
     var info by mutableStateOf<JSONObject?>(null)
     var shots by mutableStateOf<List<StoreShot>>(emptyList())
     var queue by mutableStateOf(installer.queue.snapshot())
-    var queueOpen by mutableStateOf(true)
+    var searchOpen by mutableStateOf(false)
     var crash by mutableStateOf<String?>(null)
     private var searchGeneration = 0
     private var checkGeneration = 0
@@ -105,7 +111,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
 
     init {
         installer.onChanged = { queue = it }
-        installer.onInstalled = { installed = it }
+        installer.onInstalled = { installedList.set(it) }
     }
 
     private fun background(name: String, work: () -> Unit) = Thread(work, name).start()
@@ -119,14 +125,14 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
      * even of the same model: two iPod touch 2Gs on different iOS versions have different apps.
      */
     fun useRecord(id: String, next: StoreTarget?) {
-        if (id != recordId) { recordId = id; installed = emptyMap(); targetConfirmed = false; target = null; results = emptyList(); chosen = null }
+        if (id != recordId) { recordId = id; installed = emptyMap(); installedList.reset(); targetConfirmed = false; target = null; results = emptyList(); chosen = null }
         if (next == target || (targetConfirmed && next?.productType == target?.productType)) return
-        target = next; targetConfirmed = false; results = emptyList(); chosen = null
+        target = next; targetConfirmed = false; results = emptyList(); chosen = null; installedList.forgetLookups()
         if (next != null) search()
     }
 
     /** Another guest (or none) is behind the usbmux socket: what the last one reported no longer holds. */
-    fun guestChanged() { installed = emptyMap(); targetConfirmed = false; installer.socket = muxSocket() }
+    fun guestChanged() { installed = emptyMap(); installedList.guestChanged(); targetConfirmed = false; installer.socket = muxSocket() }
 
     /** Ask the running guest for its exact model and iOS version, and which apps it already has. */
     fun refreshGuest() {
@@ -135,11 +141,11 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
         background("store-guest") {
             try {
                 val exact = apps.target(socket)
-                val list = apps.installed(socket)
+                val list = apps.installedApps(socket)
                 post {
                     if (muxSocket() != socket) return@post  // a different guest answered by now
-                    installed = list
-                    if (exact != target) { target = exact; targetConfirmed = true; search() } else targetConfirmed = true
+                    installedList.set(list)
+                    if (exact != target) { target = exact; targetConfirmed = true; installedList.forgetLookups(); installedList.lookUp(); search() } else { targetConfirmed = true; installedList.lookUp() }
                 }
             } catch (e: Exception) { post { if (!installing) message = "Guest app services: ${e.message}" } }
         }
@@ -181,6 +187,15 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     }
 
     fun close() { chosen = null; checkGeneration++ }
+
+    /** An installed app's page: the store's when the catalog knows the app, else what the device says about it. */
+    fun openInstalled(app: InstalledApp) {
+        val found = (installedList.lookups[app.bundleId] as? Lookup.Found)?.known
+        if (found != null) open(found.app) else installedList.plain = app
+    }
+
+    /** The app's queue entry by bundle id, for lists that don't have the store's row. */
+    fun queuedBundle(bundleId: String) = queue.firstOrNull { it.key == "app:$bundleId" }
 
     /** Revalidate one archived copy against this device (CatalogDetailsModel.check). */
     fun choose(ipaId: Int) {
@@ -237,6 +252,12 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
         }
     }
 
+    /** Collapse the search field; a search that was typed is cleared, and the device's own list comes back. */
+    fun closeSearch() {
+        searchOpen = false
+        if (query.isNotBlank()) { query = ""; search() }
+    }
+
     fun cancel(id: Long) = installer.queue.cancel(id)
     fun retry(id: Long) { installer.socket = muxSocket(); installer.queue.retry(id) }
     fun dismiss(id: Long) = installer.queue.dismiss(id)
@@ -244,10 +265,13 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
 }
 
 @Composable
-private fun AppIcon(url: String?, size: Int = 48) {
+internal fun AppIcon(url: String?, size: Int = 48, fallback: String? = null) {
     val bitmap by produceState<Bitmap?>(null, url) { value = url?.let { withContext(Dispatchers.IO) { LegacyStore.icon(it) } } }
     Box(Modifier.size(size.dp).clip(RoundedCornerShape((size / 4.5f).dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
         bitmap?.let { Image(it.asImageBitmap(), contentDescription = null, Modifier.fillMaxSize()) }
+        // No icon to be had (the app isn't in the store): its initial, so the row still has something to tap.
+        if (bitmap == null && url == null && !fallback.isNullOrBlank()) Text(fallback.trim().take(1).uppercase(), Modifier.align(Alignment.Center),
+            style = if (size >= 64) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -255,15 +279,16 @@ private fun AppIcon(url: String?, size: Int = 48) {
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () -> Unit, onClose: () -> Unit) {
-    BackHandler(enabled = model.chosen == null, onBack = onClose)
+    val plain = model.installedList.plain
+    BackHandler(enabled = model.chosen == null && plain == null, onBack = onClose)
     val details = model.chosen
     // Another device (or a guest reporting its exact iOS version) has other apps and other charts.
     LaunchedEffect(model.target) { model.browser.reset(); model.browser.show(model.browser.tab) }
     // Drawn over the activity's content (not a Dialog window, which gets no usable insets edge to edge).
     Surface(Modifier.fillMaxSize().testTag("store").semantics { testTagsAsResourceId = true }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            StoreTopBar(model, running, onPickLocal, onBack = {
-                when { details != null -> model.close(); model.browser.canGoBack -> model.browser.back(); else -> onClose() }
+            StoreTopBar(model, running, onPickLocal, canSearch = details == null && plain == null, onBack = {
+                when { details != null -> model.close(); plain != null -> model.installedList.plain = null; model.searchOpen -> model.closeSearch(); model.browser.canGoBack -> model.browser.back(); else -> onClose() }
             })
             Column(Modifier.padding(horizontal = 16.dp)) {
                 model.crash?.let { report ->
@@ -274,17 +299,20 @@ internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () ->
                         Row { Spacer(Modifier.weight(1f)); TextButton(onClick = { model.crash = null }) { Text("Close") } }
                     }
                 }
-                if (model.queue.isNotEmpty()) QueuePanel(model)
             }
             if (details != null) {
                 BackHandler { model.close() }
                 StoreDetails(model, details, running)
+            } else if (plain != null) {
+                BackHandler { model.installedList.plain = null }
+                InstalledPlainPage(model, plain)
             } else {
-                SearchField(model)
                 BrowseTabs(model.browser)
                 BackHandler(enabled = model.browser.canGoBack) { model.browser.back() }
+                BackHandler(enabled = model.searchOpen) { model.closeSearch() }
                 when (model.browser.tab) {
                     StoreTab.DEVICE -> DeviceTab(model)
+                    StoreTab.INSTALLED -> InstalledTab(model, running)
                     StoreTab.FEATURED -> FeaturedTab(model)
                     StoreTab.CHARTS -> ChartsTab(model)
                     StoreTab.CATEGORIES -> CategoriesTab(model)
@@ -313,15 +341,21 @@ private fun ColumnScope.DeviceTab(model: StoreModel) {
 }
 
 @Composable
-private fun StoreTopBar(model: StoreModel, running: Boolean, onPickLocal: () -> Unit, onBack: () -> Unit) {
+private fun StoreTopBar(model: StoreModel, running: Boolean, onPickLocal: () -> Unit, canSearch: Boolean, onBack: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
+    val searching = model.searchOpen && canSearch
     Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.testTag("store_close")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        Column(Modifier.weight(1f)) {
-            Text("Legacy Store", style = MaterialTheme.typography.titleLarge)
-            Text(model.target?.let { "${shortProductName(it.productType)} · iOS ${it.ios}" } ?: "No device selected",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (searching) SearchField(model, Modifier.weight(1f))
+        else {
+            Column(Modifier.weight(1f)) {
+                Text("Legacy Store", style = MaterialTheme.typography.titleLarge)
+                Text(model.target?.let { "${shortProductName(it.productType)} · iOS ${it.ios}" } ?: "No device selected",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (canSearch) IconButton(onClick = { model.searchOpen = true }, modifier = Modifier.testTag("store_search")) { Icon(Icons.Filled.Search, "Search") }
         }
+        QueueButton(model)
         Box {
             IconButton(onClick = { menu = true }, modifier = Modifier.testTag("store_menu")) { Icon(Icons.Filled.MoreVert, "More") }
             DropdownMenu(menu, { menu = false }) {
@@ -334,13 +368,15 @@ private fun StoreTopBar(model: StoreModel, running: Boolean, onPickLocal: () -> 
     }
 }
 
+/** The search field that takes the title's place in the top bar; Search runs it, Back closes it. */
 @Composable
-private fun SearchField(model: StoreModel) {
+private fun SearchField(model: StoreModel, modifier: Modifier) {
     val keyboard = LocalSoftwareKeyboardController.current
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
     val search = { if (!model.searching && model.target != null) { keyboard?.hide(); model.search() } }
-    TextField(model.query, { model.query = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("store_query"),
+    TextField(model.query, { model.query = it }, modifier.padding(end = 4.dp).focusRequester(focus).testTag("store_query"),
         singleLine = true, shape = RoundedCornerShape(28.dp), placeholder = { Text("Search apps and games") },
-        leadingIcon = { Icon(Icons.Filled.Search, null) },
         trailingIcon = {
             if (model.query.isNotEmpty()) IconButton(onClick = { model.query = "" }) { Icon(Icons.Filled.Close, "Clear") }
         },
@@ -478,27 +514,54 @@ private fun StoreCard(modifier: Modifier = Modifier, content: @Composable Column
     Column(modifier.fillMaxWidth().padding(vertical = 6.dp).clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh)
         .padding(horizontal = 16.dp, vertical = 12.dp), content = content)
 
-/** The install queue: a summary line with the running item's progress, and the items under it. */
-@Composable
-private fun QueuePanel(model: StoreModel) {
-    val items = model.queue
-    val current = items.firstOrNull { it.state == QueueState.INSTALLING } ?: items.firstOrNull { it.state == QueueState.DOWNLOADING }
-    val waiting = items.count { it.active }
-    val finished = items.count { !it.active }
-    StoreCard(Modifier.testTag("store_queue")) {
-        Row(Modifier.fillMaxWidth().clickable { model.queueOpen = !model.queueOpen }, verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(if (waiting > 0) "Installing $waiting app" + if (waiting == 1) "" else "s" else "Installs finished", style = MaterialTheme.typography.titleSmall)
-                if (!model.queueOpen) Text(current?.let { it.name + " · " + it.phase } ?: "", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            if (finished > 1) TextButton(onClick = { model.clearFinished() }) { Text("Clear finished") }
-            Icon(if (model.queueOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, if (model.queueOpen) "Hide" else "Show")
+/**
+ * How far along the whole queue is, 0 to 1. An item is half done once downloaded and done once installed, so the
+ * ring moves through both steps; finished items (installed or failed) count whole, until they are cleared.
+ */
+internal fun queueFraction(items: List<QueueItem>): Float {
+    if (items.isEmpty()) return 0f
+    return items.sumOf { item ->
+        val step = (item.progress ?: 0f).coerceIn(0f, 1f)
+        when (item.state) {
+            QueueState.PENDING -> 0.0
+            QueueState.DOWNLOADING -> step * 0.5
+            QueueState.READY -> 0.5
+            QueueState.INSTALLING -> 0.5 + step * 0.5
+            QueueState.DONE, QueueState.FAILED -> 1.0
         }
-        if (model.queueOpen) Column(Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
+    }.toFloat() / items.size
+}
+
+/** The install queue's button: a download icon in a progress ring, which opens the queue over the store. Absent while the queue is empty. */
+@Composable
+private fun QueueButton(model: StoreModel) {
+    val items = model.queue
+    if (items.isEmpty()) return
+    var open by remember { mutableStateOf(false) }
+    val busy = items.any { it.active }
+    val failed = !busy && items.any { it.state == QueueState.FAILED }
+    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+        IconButton(onClick = { open = true }, modifier = Modifier.testTag("store_queue")) {
+            Icon(LtIcons.Download, if (busy) "Installs in progress" else "Installs", tint = if (failed) MaterialTheme.colorScheme.error else LocalContentColor.current)
+        }
+        if (busy) CircularProgressIndicator(progress = { queueFraction(items).coerceIn(0.02f, 1f) }, modifier = Modifier.size(40.dp), strokeWidth = 3.dp)
+        QueueMenu(model, open) { open = false }
+    }
+}
+
+/** The queue as a floating list under its button: each app's progress, Cancel or Retry, and Clear finished. */
+@Composable
+private fun QueueMenu(model: StoreModel, open: Boolean, onDismiss: () -> Unit) {
+    val items = model.queue
+    DropdownMenu(open, onDismiss, Modifier.widthIn(min = 300.dp, max = 340.dp)) {
+        Row(Modifier.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (items.any { it.active }) "Installing" else "Installs finished", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            if (items.any { !it.active }) TextButton(onClick = { model.clearFinished() }) { Text("Clear finished") }
+        }
+        Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             for (item in items) QueueRow(item, model)
         }
-        else if (current != null) QueueProgress(current)
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -519,7 +582,6 @@ private fun QueueRow(item: QueueItem, model: StoreModel) {
             }
             if (item.cancellable) TextButton(onClick = { model.cancel(item.id) }) { Text("Cancel") }
             if (item.state == QueueState.FAILED) TextButton(onClick = { model.retry(item.id) }) { Text("Retry") }
-            if (!item.active) TextButton(onClick = { model.dismiss(item.id) }) { Text(if (item.state == QueueState.DONE) "OK" else "Dismiss") }
         }
         if (item.state == QueueState.DOWNLOADING || item.state == QueueState.INSTALLING) QueueProgress(item)
     }

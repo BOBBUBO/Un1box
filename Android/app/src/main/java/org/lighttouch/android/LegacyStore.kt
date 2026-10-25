@@ -61,12 +61,8 @@ object LegacyStore {
     /** The copy to select first for a search row that names [ipaId]. */
     fun preferred(ipaId: Int) = BROKEN[ipaId] ?: ipaId
 
-    fun version(value: String?): List<Int>? {
-        if (value == null || !Regex("[0-9]+(\\.[0-9]+){0,2}").matches(value)) return null
-        val parts = value.split('.').map { it.toInt() }
-        return if (parts[0] == 0) null else parts + List(3 - parts.size) { 0 }
-    }
-    fun newer(a: List<Int>, b: List<Int>) = a.zip(b).firstOrNull { it.first != it.second }?.let { it.first > it.second } ?: false
+    fun version(value: String?): List<Int>? = StoreVersions.parse(value)
+    fun newer(a: List<Int>, b: List<Int>) = StoreVersions.newer(a, b)
     private fun requires(minimum: String?, target: StoreTarget): Boolean {
         if (minimum == null) return false
         val need = version(minimum) ?: throw StoreError("The minimum iOS version could not be verified.")
@@ -184,7 +180,11 @@ object LegacyStore {
         val key = appKey(app) ?: throw StoreError("This app has no catalog identifier.")
         val data = json("/api/v1/apps/$key/versions", cached = true).optJSONArray("data")
             ?: throw StoreError("Legacy Store sent unreadable version information.")
-        val chosen = app.optInt("ipa_id")
+        return runnableCopies(data, app.optInt("ipa_id"), target)
+    }
+
+    /** The copies in a catalog version list that run on [target], plus the one named [chosen] (if any) whether it runs or not. */
+    private fun runnableCopies(data: JSONArray, chosen: Int, target: StoreTarget): List<StoreCopy> {
         val rows = mutableListOf<StoreCopy>()
         for (v in 0 until data.length()) {
             val entry = data.optJSONObject(v) ?: continue
@@ -203,6 +203,23 @@ object LegacyStore {
             }
         }
         return rows
+    }
+
+    /** An installed app the catalog knows: a listing row for its page, and the newest version that runs on the device. */
+    class Known(val app: JSONObject, val newest: String?)
+
+    /**
+     * The catalog's entry for a bundle id (the catalog redirects the bundle id to the app), or null when it has
+     * none. One cached request: the app's own answer lists its versions. Another identity coming back is "none".
+     */
+    fun lookup(bundleId: String, target: StoreTarget): Known? {
+        val body = try { json("/api/v1/apps/" + URLEncoder.encode(bundleId, "UTF-8").replace("+", "%20"), cached = true) }
+            catch (e: StoreError) { if (e.status == 404) return null else throw e }
+        if (!body.optString("bundle_id").equals(bundleId, ignoreCase = true)) return null
+        val app = JSONObject().put("bundle_id", body.optString("bundle_id")).put("name", body.text("name") ?: body.text("display_name") ?: bundleId)
+        for (key in listOf("app_store_id", "developer", "icon_url")) body.text(key)?.let { app.put(key, it) }
+        val versions = body.optJSONArray("versions")?.let { runnableCopies(it, 0, target) } ?: emptyList()
+        return Known(app, StoreVersions.newest(versions.map { it.version }))
     }
 
     /** catalog.py check_copy: identity, availability, slice, family and minimum OS. */

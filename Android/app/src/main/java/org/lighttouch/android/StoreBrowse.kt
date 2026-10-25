@@ -31,7 +31,7 @@ import java.time.format.FormatStyle
 
 /** The sections the store can be browsed by. The website's Featured, Charts, Categories and Collections, after the device's own list. */
 internal enum class StoreTab(val title: String) {
-    DEVICE("For this device"), FEATURED("Featured"), CHARTS("Charts"), CATEGORIES("Categories"), COLLECTIONS("Collections")
+    DEVICE("For this device"), INSTALLED("Installed"), FEATURED("Featured"), CHARTS("Charts"), CATEGORIES("Categories"), COLLECTIONS("Collections")
 }
 
 /** A list of apps that loads in pages (or all at once), for one section of the store. */
@@ -102,7 +102,7 @@ internal class StoreBrowser(private val target: () -> StoreTarget?) {
     fun show(next: StoreTab) {
         tab = next
         when (next) {
-            StoreTab.DEVICE -> {}
+            StoreTab.DEVICE, StoreTab.INSTALLED -> {}
             StoreTab.FEATURED -> if (!featured.loaded && !featured.loading) loadFeatured()
             StoreTab.CHARTS -> { loadGenres(); if (chart == null && !chartLoading && chartError == null) loadChart(chartDate ?: eraDate()) }
             StoreTab.CATEGORIES -> loadGenres()
