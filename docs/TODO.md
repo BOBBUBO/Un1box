@@ -237,13 +237,20 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 ## Audio
 
 - [ ] Microphone on the phone (patch `ci/engine-patches/0009-engine-microphone-input.patch`): the phone's
-  engine runs its audio backend as `driver=none`, so i2s0's input voice never opened and a recording app
-  in the guest heard silence. The frontend now pushes what `AudioRecord` captured into a bounded ring
-  that the same RX FIFO reads (`hw/arm/host-mic.c`), and the guest side is unchanged: CDMA 0x1b, the same
-  pacing, the same FIFO, all of which the iPad's `mic-check` and Shazam already exercised with a host
-  voice and with `tone-hz`. **Not measured and not yet heard on a device**, and only the S5L8920/S5L8930
+  engine runs its audio backend as `driver=none`, and a first build of this patch put the frontend's ring
+  *behind* the port's input voice as a fallback — which is why the first device test still heard silence
+  in Voice Memos and Talking Tom. `audio/noaudio.c` does open an input voice (`max_voices_in`,
+  `no_init_in`, `no_read`) and hands out silence paced at the port's rate, so the fallback was never
+  reached. The RX FIFO now asks the ring first (`host_mic_read_frame`) and only falls through to the
+  voice's ring when the frontend pushed nothing, which is every case on the Mac and every case with the
+  switch off. The frontend pushes what `AudioRecord` captured into a bounded ring that the same RX FIFO
+  reads (`hw/arm/host-mic.c`), and the guest side is unchanged: CDMA 0x1b, the same pacing, the same
+  FIFO, all of which the iPad's `mic-check` and Shazam already exercised with a host voice and with
+  `tone-hz`. **Not measured and not yet heard on a device**, and only the S5L8920/S5L8930
   boards have this path — the iPhone 3GS, the iPhone 4 and the iPad 1 are the targets (the iPod touches
-  have no microphone; their own I2S model still hands out silence). To check, in order: the guest's
+  have no microphone; their own I2S model still hands out silence). The switch is read when the guest
+  starts, so turn it on before starting (or restart the guest afterwards), and grant Android's
+  microphone permission when it asks. To check, in order: the guest's
   Voice Memos recording of a known sound at 44.1 kHz; `Native.microphoneInfo` (`capturing` 1 and
   `sampleRate` 44100 while iOS records, `droppedFrames` staying near zero); a recording under a 22.05 kHz
   route (VoiceOver's speech rates, and the 4G's codec switch) where the resampler is what preserves pitch;

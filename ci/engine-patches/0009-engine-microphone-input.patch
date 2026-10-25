@@ -1,4 +1,4 @@
-From 0ded6024590024a16017ed6056a2f14b1532051b Mon Sep 17 00:00:00 2001
+From 3fd66df960cce139cff88bcfe2ee15785c387230 Mon Sep 17 00:00:00 2001
 From: LightTouch <lighttouch@localhost>
 Date: Sun, 25 Oct 2026 20:26:49 +0000
 Subject: [PATCH] hw/arm: the frontend's microphone into a capture port
@@ -24,10 +24,17 @@ quiet for 250 ms gives the port silence rather than replaying its tail. A
 stopped capture flushes, so a recording's unread frames cannot turn up at the
 head of the next one.
 
+The ring is asked BEFORE the port's own input voice, and that ordering is the
+difference between a working capture and silence. `driver=none` does open an
+input voice -- audio/noaudio.c declares max_voices_in, initializes it, and
+no_read() returns silence paced at the port's rate -- so a ring placed behind it
+as a fallback is never reached and the guest records silence. host_mic_read_frame()
+returns false when the frontend pushed nothing, which is every case on the Mac
+and every case with the Android switch off; only then does the voice's ring
+answer, exactly as before.
+
 Nothing about the guest's side changes: the same RX FIFO, the same CDMA chain,
-the same pacing. A host input voice, where one exists (the Mac's microphone
-under coreaudio), still wins over the frontend ring; the test-only `tone-hz`
-property is untouched.
+the same pacing. The test-only `tone-hz` property still wins over both.
 
   hw/arm/host-mic.c, include/hw/arm/host-mic.h   the ring, its resampler, counters
   hw/arm/s5l8930_i2s.c                           the RX FIFO reads it, the port's rate is handed to it
@@ -43,9 +50,9 @@ model, which hands out silence.
  contrib/macos-app/qemu-macos-extras.h |  14 ++-
  hw/arm/host-mic.c                     | 150 ++++++++++++++++++++++++++
  hw/arm/meson.build                    |   2 +-
- hw/arm/s5l8930_i2s.c                  |  32 ++++--
- include/hw/arm/host-mic.h             |  50 +++++++++
- 6 files changed, 282 insertions(+), 8 deletions(-)
+ hw/arm/s5l8930_i2s.c                  |  39 +++++--
+ include/hw/arm/host-mic.h             |  54 ++++++++++
+ 6 files changed, 293 insertions(+), 8 deletions(-)
  create mode 100644 hw/arm/host-mic.c
  create mode 100644 include/hw/arm/host-mic.h
 
@@ -308,23 +315,24 @@ index f8655bf..526734d 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_i2s.c b/hw/arm/s5l8930_i2s.c
-index 1a04c2c..336a0c5 100644
+index 1a04c2c..93ee98f 100644
 --- a/hw/arm/s5l8930_i2s.c
 +++ b/hw/arm/s5l8930_i2s.c
-@@ -25,6 +25,12 @@
+@@ -25,6 +25,13 @@
   * "tone-hz" property replaces the input with a synthetic stereo sine at the
   * port's frame rate, so capture can be checked headless.
   *
-+ * With no input voice -- a phone's engine runs the audio backend as
-+ * `driver=none` -- the FIFO hands out what the frontend's own microphone
-+ * pushed (hw/arm/host-mic.c), resampled to the port's rate, and silence while
-+ * the app records nothing. That is the phone's capture path: the guest reaches
-+ * the same CDMA chains and the same RX FIFO either way.
++ * A phone's engine runs the audio backend as `driver=none`, whose input voice
++ * opens and then hands out silence, so the FIFO asks the frontend's own
++ * microphone first (hw/arm/host-mic.c): what it recorded, resampled to the
++ * port's rate, and -- when it pushed nothing, which is every case on the Mac --
++ * the voice's ring, then silence. That is the phone's capture path: the guest
++ * reaches the same CDMA chains and the same RX FIFO either way.
 + *
   * Use `-audio driver=wav,path=out.wav` (or coreaudio): the card resolves
   * its backend from the default audiodev list, as the iPod's I2S does.
   */
-@@ -38,6 +44,7 @@
+@@ -38,6 +45,7 @@
  #include "hw/core/qdev-properties.h"
  #include "hw/core/qdev-clock.h"
  #include "hw/arm/s5l8930.h"
@@ -332,7 +340,7 @@ index 1a04c2c..336a0c5 100644
  #include "qemu/audio.h"
  #include "migration/vmstate.h"
  
-@@ -203,6 +210,11 @@ static void i2s_set_in_rate(S5L8930I2SState *s, unsigned rate)
+@@ -203,6 +211,11 @@ static void i2s_set_in_rate(S5L8930I2SState *s, unsigned rate)
          .freq = rate, .nchannels = 2, .fmt = AUDIO_FORMAT_S16, .big_endian = false,
      };
  
@@ -344,25 +352,31 @@ index 1a04c2c..336a0c5 100644
      if (rate == s->in_rate || s->tone_hz) {
          s->in_rate = rate;
          return;
-@@ -225,15 +237,19 @@ static void i2s_next_frame(S5L8930I2SState *s)
+@@ -225,15 +238,25 @@ static void i2s_next_frame(S5L8930I2SState *s)
          stw_le_p(s->rx_frame + 2, v);
          return;
      }
 -    if (s->in_level < 4) {
 -        memset(s->rx_frame, 0, 4);
++    /* The frontend's microphone comes first, not as a fallback. A phone's engine has no real input
++     * voice -- the audio backend is `driver=none` -- but that backend's input voice still OPENS
++     * (audio/noaudio.c: max_voices_in, no_init_in, no_read) and then hands out silence paced at the
++     * port's rate, so the voice's ring below is never empty and a capture read out of it hears
++     * nothing. host_mic_read_frame() is false when the frontend pushed nothing (the Mac, where
++     * coreaudio -- not this ring -- is the input, or a phone with the switch off), and only then is
++     * the voice's ring, exactly as before. */
++    if (host_mic_read_frame(s->rx_frame)) {
+         return;
+     }
+-    for (int i = 0; i < 4; i++) {
+-        s->rx_frame[i] = s->in_ring[s->in_tail];
+-        s->in_tail = (s->in_tail + 1) % I2S_RING;
 +    if (s->in_level >= 4) {
 +        for (int i = 0; i < 4; i++) {
 +            s->rx_frame[i] = s->in_ring[s->in_tail];
 +            s->in_tail = (s->in_tail + 1) % I2S_RING;
 +        }
 +        s->in_level -= 4;
-         return;
-     }
--    for (int i = 0; i < 4; i++) {
--        s->rx_frame[i] = s->in_ring[s->in_tail];
--        s->in_tail = (s->in_tail + 1) % I2S_RING;
-+    /* No input voice opened, as on a phone: what the frontend recorded, if it is recording. */
-+    if (host_mic_read_frame(s->rx_frame)) {
 +        return;
      }
 -    s->in_level -= 4;
@@ -370,7 +384,7 @@ index 1a04c2c..336a0c5 100644
  }
  
  static uint64_t i2s_rx_read(S5L8930I2SState *s, unsigned size)
-@@ -400,6 +416,10 @@ static void i2s_write(void *opaque, hwaddr offset, uint64_t value,
+@@ -400,6 +423,10 @@ static void i2s_write(void *opaque, hwaddr offset, uint64_t value,
          if (run) {
              i2s_set_in_rate(s, s5l8930_i2s_rate(s->port));
              s->rx_pos = 0;
@@ -383,10 +397,10 @@ index 1a04c2c..336a0c5 100644
              audio_be_set_active_in(s->audio_be, s->voice_in, run);
 diff --git a/include/hw/arm/host-mic.h b/include/hw/arm/host-mic.h
 new file mode 100644
-index 0000000..7b607fc
+index 0000000..f146165
 --- /dev/null
 +++ b/include/hw/arm/host-mic.h
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,54 @@
 +/*
 + * The frontend's microphone, as an audio device's capture port sees it.
 + *
@@ -397,6 +411,10 @@ index 0000000..7b607fc
 + * a port hands them to the guest as if an input voice had queued them.
 + *
 + *   host app -> host_mic_push() -> ring -> host_mic_read_frame() -> RX FIFO
++ *
++ * The capture port asks this ring BEFORE its own input voice: the phone's
++ * engine has no real input voice, but `driver=none`'s silence-producing one
++ * opens anyway (audio/noaudio.c), so a fallback behind it would never run.
 + *
 + * SPDX-License-Identifier: GPL-2.0-or-later
 + */
