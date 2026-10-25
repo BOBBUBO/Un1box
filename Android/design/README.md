@@ -27,4 +27,4 @@ Live checks on Android 14 and 15 completed all eight preparation steps for an iP
 
 iFile's launch/resume watchdog stall (`0x8badf00d`) on the first phone remains unresolved; successful package installation does not establish that every guest application runs correctly.
 
-These phone checks predate the merge of the updated `main`. After that merge, Android compilation and all 84 unit tests pass, and all 13 Swift installer/extraction tests pass again. The merged native engine and APK have not been rebuilt or tested on a phone; the APK workflow builds the current engine, FirmwareKit and guest services together.
+These phone checks predate the merge of the updated `main`. After that merge, Android compilation and all 84 unit tests pass, and all 13 Swift installer/extraction tests pass again. The [full APK workflow passed in the fork](https://github.com/tayga16/Un1box/actions/runs/40239497566) at `c8255d38`, rebuilding the current engine, FirmwareKit and guest services together. The downloaded APK's signature and all nine native libraries pass validation, including 16 KiB alignment. Phone testing of this complete build remains pending.
