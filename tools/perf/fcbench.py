@@ -50,6 +50,9 @@ GAMES = {
     "n81-realracing": [(.39, .31), 60],
     "n81-realracing-race": [(.39, .31), 60, (.45, .23), 16, (.58, .47), 10, (.45, .18), 7, (.45, .13), 7, (.51, .5), 30],  # Quick Race                    # Real Racing's attract demo (a race replay)
     "n81-epiccitadel": [(.62, .14), 150],                  # Epic Citadel's flythrough, after its green loading screen
+    # Epic Citadel's Guided Tour (Poco page 2): icon, intro flyby, dismiss the welcome panel, the menu handle (right
+    # edge), Guided Tour; the tour then flies itself forever. Repeatable 1% low benchmark (user, 2026-10-25).
+    "n81-ec-tour": [(.62, .14), 150, (.93, .5), 3, (.97, .5), 3, (.95, .75), 15],
     "n81-asphalt5-intro": [(.86, .31), 12],                # Asphalt 5's intro movie (measure ~15 s)
     "home": [2],                                           # stay on Home page 2 (FC_SHOT to see it)
 }
