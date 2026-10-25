@@ -520,7 +520,9 @@ when the phone is hot. What was checked:
   640×960 frame and backboardd swaps only once that is done. The host took 2.8 ms for a turn at the median
   (p90 4.3, p99 6.6) against the 0.6 ms the model allows, and 50 of 414 turns ended after the next vblank (45 of
   them would have been in time at the model's speed). A faster turn (`d58ecd7e9c`, table above) halves the late
-  frames, and turning in place (`e15a9a95e2`) takes them from 7.7% to under 5%. Tool: `presentsplit.py` (work before and after the vblank per frame).
+  frames, and turning in place (`e15a9a95e2`) takes them from 7.7% to under 5%. After both, a trace
+  (tracing inflates late frames to 12%) has the turn past the vblank on 20 of 629 frames; the other late frames are
+  the game presenting a refresh late, behind idle time and background daemons (pasteboardd, sandboxd), not the scaler. Tool: `presentsplit.py` (work before and after the vblank per frame).
 
 ### Guest benchmarks
 
