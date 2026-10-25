@@ -36,6 +36,7 @@ interface GuestHost {
     val devices: List<DeviceSummary>
     val selected: DeviceSummary?
     val error: String
+    val networkStatus: String
     val settings: AppSettings
     val perf: PerfSnapshot
     val profileRecording: Boolean

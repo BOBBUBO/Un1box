@@ -1,0 +1,91 @@
+# Guest networking
+
+Android exposes **Settings → Network**. Networking and local-network access are
+off by default. Enable networking and choose Direct internet or Wayback Machine;
+the selected calendar date uses the Archive's closest available capture. Changes
+apply to the next guest start. No capture means an archive error, never a live-web
+fallback. Archived browsing supports GET/HEAD; forms need Direct internet.
+
+The screen uses the app's existing Compose settings components. Dates are strict
+Gregorian calendar days, from 1996 through today, serialized as `yyyyMMdd` without
+timezone conversion. An atomic `files/network.json` document synchronizes the UI
+and isolated engine processes. Missing or invalid preferences disable networking.
+
+## Shared backend
+
+`Portable/network` is a C++17/OpenSSL 3 library with no Android dependencies. It
+implements HTTP framing, origin DNS, verified modern upstream HTTPS, the legacy
+guest TLS bridge, dated archive routing, redirect handling, a bounded memory cache,
+one archive fetch per second, and Retry-After cooldowns. Guest credentials and
+cookies are excluded from archive requests. Direct browsing preserves cookies.
+Bodies, headers, uploads, redirects and concurrent connections are bounded.
+
+Android contributes persistence, Conscrypt root certificates, JNI and worker
+lifecycle. The proxy identity is per emulated device, in private app storage; only
+its public certificate is sent into the guest. The local guest TLS leg permits TLS
+1.0/SHA-1 for old iOS; origin TLS requires TLS 1.2 or newer with host trust and
+hostname verification. Android's trust store is never changed. Certificate-pinning
+apps can still reject interception.
+
+When the guest agent is ready, typed portable operations atomically upload the
+bundled signed `ittrust` and `itproxy` helpers in bounded chunks, install the public
+CA and configure the Wi-Fi proxy. This supports installed packages that omit the
+helpers. A lost or timed-out mutation is reported rather than replayed. Guests
+without a working agent cannot complete automatic configuration.
+
+The engine's bundled libslirp uses a native private Unix socket forward at
+`10.0.2.100:3128`, with no subprocess or host TCP listener. Off restricts guest
+egress and creates no proxy identity. Archive restricts egress to the private proxy.
+Direct enables NAT and Android DNS using netd/getaddrinfo; LAN access remains an
+explicit opt-in. Host loopback remains blocked. This source integration replaces
+the fork PR's build-time patches.
+
+Linux and macOS can use the same Unix listener and supply their trust roots.
+Windows frontends can pass accepted sockets to `Proxy::serve`; listener, trust
+store integration and Windows build validation remain future frontend work. The
+other frontends do not yet expose these settings. Upstream's retired-service and
+weather adapters are outside this web-routing implementation.
+
+## Build
+
+Use the **dev/net** engine branch in the separate `qemu-ios-net` worktree. It starts
+from engine `dev/perf` and includes slirp, Android DNS, private socket forwarding,
+helper export and notice generation. Set `QEMU_IOS` to that checkout. Build from a
+clean committed engine tree so its manifest and notices identify immutable input.
+
+`scripts/build.sh android-engine` enables slirp and generates notices from the
+actual selected sources/dependencies. `scripts/build.sh firmware-tools` exports
+`ittrust` and `itproxy` alongside the existing helpers. Android builds require
+`-PnetworkDeps` pointing to the target ABI's static OpenSSL producer prefix and
+`-PguestToolsDir` containing those helpers. `scripts/build.sh android` supplies
+the arm64 prefix automatically. OpenSSL notices are staged separately from engine
+notices using the pinned source archive. Do not use host OpenSSL libraries for an
+Android cross build. Firmware and guest assets stay outside source control.
+
+Portable verification:
+
+```sh
+cmake -S Portable -B build/obj/network-tests \
+  -DLIGHTTOUCH_QEMU_SOURCE=/path/to/qemu-ios-net \
+  -DLIGHTTOUCH_BUILD_TESTS=ON -DLIGHTTOUCH_ENABLE_NETWORK=ON
+cmake --build build/obj/network-tests -j6
+ctest --test-dir build/obj/network-tests --output-on-failure
+```
+
+The network fixture exercises actual socket I/O, TLS 1.0 with certificate and
+hostname verification, off-mode identity isolation, LAN policy, chunk decoding,
+multiple response cookies, credential stripping and archive method isolation.
+Typed helper uploads also have bounds/path-injection contract tests. Android unit
+tests cover default-off policy and invalid calendar dates.
+
+The raw NAT policy can also be checked against the engine's actual vendored
+libslirp on a native host (Meson and GLib development files required):
+
+```sh
+sh Portable/tests/network/check-slirp-policy.sh /path/to/qemu-ios-net \
+  /path/to/native-slirp-build [path/to/meson]
+```
+
+This runs libslirp's ping, guest-forward and NCSI suites, then checks Direct-mode
+public/LAN routing, host-loopback refusal and the private Android DNS exemption.
+It opens no outbound connections.

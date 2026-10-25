@@ -166,6 +166,12 @@ typedef struct {
     uint32_t audio_enabled;
     /* Headphones in the jack: set only where the board reports LT_BOARD_HEADPHONES. */
     uint32_t headphones;
+    /* App-owned network policy. Off (zero) blocks guest egress. Direct permits
+     * NAT; archive permits only the dated HTTP proxy. Proxy path is a private
+     * Unix socket, not a shell command. No frontend-supplied QEMU arguments. */
+    uint32_t network_mode; /* 0 off, 1 direct, 2 archive */
+    uint32_t network_local;
+    const char *network_socket;
 } lt_boot_config;
 /* lt_board_info.capabilities: the engine models this board's headphone jack. */
 #define LT_BOARD_HEADPHONES (1ull << 4)
@@ -351,7 +357,14 @@ typedef enum {
     LT_GUEST_LAUNCH_BUILTIN = 2,
     LT_GUEST_TYPE_TEXT = 3,
     LT_GUEST_SYNC = 4,
-    LT_GUEST_LAUNCH_GYRO_PROBE = 5
+    LT_GUEST_LAUNCH_GYRO_PROBE = 5,
+    LT_GUEST_NETWORK_CERTIFICATE = 6,
+    LT_GUEST_NETWORK_TRUST = 7,
+    LT_GUEST_NETWORK_ROUTE = 8,
+    /* argument: decimal offset, final 0/1, base64 bytes (at most 2048).
+     * Only the fixed bundled network helper destinations are permitted. */
+    LT_GUEST_NETWORK_TRUST_CHUNK = 9,
+    LT_GUEST_NETWORK_ROUTE_CHUNK = 10
 } lt_guest_operation;
 typedef struct {
     uint32_t size, version;

@@ -18,6 +18,9 @@ internal object Native {
     external fun frameTimeline(since: Long): LongArray
     external fun setPresentScale(mode: Int)
     external fun setPresentVisible(visible: Boolean)
+    external fun networkPrepare(root: String, record: String, mode: Int, date: String, local: Boolean, roots: String): String
+    external fun networkCertificate(): ByteArray
+    external fun networkStatus(): Array<String>
     external fun start(libraryRoot: String, id: String, headphones: Boolean): String
     external fun recoverStart(libraryRoot: String, id: String, headphones: Boolean): String
     external fun status(): Array<String>

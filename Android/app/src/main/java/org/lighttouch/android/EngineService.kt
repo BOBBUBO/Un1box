@@ -41,6 +41,9 @@ class EngineService : Service() {
     // The daemon's parent-death signal follows the thread that forked it, so fork from one that never exits.
     private val usbThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "usb-bridge") }
     @Volatile private var usbError = ""
+    @Volatile private var networkConfiguration = NetworkConfiguration()
+    @Volatile private var networkSetup = "Off"
+    private val networkThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "network-setup") }
     private val cpuSampler by lazy { WorkerCpuSampler() }
     private val profileTail = ProfileTail()
     @Volatile private var detailedTiming = false
@@ -166,7 +169,13 @@ class EngineService : Service() {
             }
             // The Settings switch (AppSettings.headphones); the engine applies it only on boards that model the jack.
             val headphones = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("headphones", true)
-            error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
+            networkConfiguration = NetworkConfiguration.load(applicationContext)
+            val network = networkConfiguration
+            networkSetup = if (network.enabled) "Waiting for guest tools…" else "Off"
+            val roots = listOf("/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts").firstOrNull { File(it).isDirectory } ?: "/system/etc/security/cacerts"
+            error = Native.networkPrepare(filesDir.absolutePath, recordId, network.nativeMode, network.archiveDate, network.localNetwork, roots)
+            if (error.isEmpty()) error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
+            if (error.isEmpty() && network.enabled) networkThread.execute { configureGuestNetwork() }
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
@@ -215,6 +224,10 @@ class EngineService : Service() {
                 putInt("uid", Process.myUid())
                 putString("usbMuxSocket", usb.muxSocket ?: "")
                 putString("appServicesError", usbError)
+                putString("networkStatus", if (!networkConfiguration.enabled) "Off" else "${networkConfiguration.summary} · $networkSetup" +
+                    if (networkSetup == "Ready") " · ${Native.networkStatus().firstOrNull().orEmpty()}" else "")
+                putInt("networkMode", networkConfiguration.nativeMode)
+                putString("networkCertificateFingerprint", Native.networkStatus().getOrElse(1) { "" })
                 putBoolean("sessionStarted", started.isConsumed())
                 putBundle("observations", observations())
             }
@@ -325,6 +338,62 @@ class EngineService : Service() {
             ""
         } catch (e: Exception) { e.message ?: "Screenshot failed" }
     }
+    /** Fixed typed operations only; no shell or arbitrary guest commands. A failed
+     * mutation is reported once and is never silently replayed after a timeout. */
+    private fun configureGuestNetwork() {
+        try {
+            val deadline = SystemClock.elapsedRealtime() + 120_000
+            fun operation(kind: Int, argument: String = "", waiting: Boolean = false): String {
+                var admitted: Array<String>
+                do {
+                    check(alive.get() && !stopping.get()) { "Network setup stopped" }
+                    admitted = Native.guestRequest(kind, argument, 20_000)
+                    if (admitted[0] != "0") break
+                    if (!waiting || SystemClock.elapsedRealtime() >= deadline) error(admitted[1].ifEmpty { "Guest tools did not become available" })
+                    Thread.sleep(500)
+                } while (true)
+                val id = admitted[0].toLong()
+                while (alive.get() && !stopping.get()) {
+                    val reply = Native.guestPoll(id)
+                    when (reply[0].toIntOrNull()) {
+                        1 -> Thread.sleep(100)
+                        2 -> return reply[2]
+                        else -> error(reply[3].ifEmpty { "Guest network setup step $kind failed (${reply[1]}). Update guest tools and restart." })
+                    }
+                }
+                Native.guestCancel(id)
+                error("Network setup stopped")
+            }
+            operation(0, waiting = true)
+            // Use the app's matching signed helpers, including on older installed
+            // packages that have an agent but omit ittrust/itproxy. Chunk uploads
+            // are atomic in the guest and never replayed after a lost completion.
+            networkSetup = "Preparing guest network tools…"
+            for ((name, kind) in listOf("ittrust" to 9, "itproxy" to 10)) {
+                assets.open("guest-tools/$name").use { stream ->
+                    val binary = stream.readBytes()
+                    check(binary.size in 1..1_048_576) { "Bundled network tool is invalid: $name" }
+                    var offset = 0
+                    while (offset < binary.size) {
+                        val end = minOf(offset + 2048, binary.size)
+                        val chunk = android.util.Base64.encodeToString(binary.copyOfRange(offset, end), android.util.Base64.NO_WRAP)
+                        operation(kind, "$offset ${if (end == binary.size) 1 else 0} $chunk")
+                        offset = end
+                    }
+                }
+            }
+            networkSetup = "Installing guest certificate…"
+            operation(6, android.util.Base64.encodeToString(Native.networkCertificate(), android.util.Base64.NO_WRAP))
+            val trusted = operation(7)
+            check(trusted.contains("Guest trust add: 0")) { "The guest did not accept its HTTPS certificate. Update guest tools and restart." }
+            networkSetup = "Configuring the guest connection…"
+            check(operation(8).contains("Proxy enabled")) { "The guest did not accept the proxy. Update guest tools and restart." }
+            networkSetup = "Ready"
+        } catch (error: Exception) {
+            networkSetup = error.message ?: "Network setup failed. Update guest tools and restart."
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun persistObservations(reason: String) {
         fun encode(bundle: Bundle): JSONObject = JSONObject().apply {
@@ -597,5 +666,5 @@ class EngineService : Service() {
         startForeground(1, Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("LightTouch guest").setContentText("Tap to return; Stop ends this worker").setContentIntent(launch).setOngoing(true).build())
     }
-    override fun onDestroy() { detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); super.onDestroy() }
+    override fun onDestroy() { networkThread.shutdownNow(); detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); super.onDestroy() }
 }
