@@ -362,7 +362,9 @@ jobs:
           report() {
             # One annotation, newlines escaped: a step keeps three of them, and the log is the evidence.
             if [ -f "$1" ]; then
-              echo "::error title=firmwarekit build::$(tail -n 120 "$1" | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')"
+              echo "::error title=firmwarekit build::$(tail -n 200 "$1" \
+                | sed 's/.*\r//; s/%/%25/g' | grep -vE '^[[:space:]]*$|\[[= ]+\]' | tail -n 40 \
+                | awk '{printf "%s%%0A", $0}')"
             fi
             echo "::warning::firmwarekit was not built from this branch; the APK keeps the released one"
             exit 0
@@ -395,23 +397,18 @@ jobs:
           fi
           # The bundle cross-compiles against an NDK sysroot the setup script links in (LTS r30 in
           # swift.org's guide, and the SDK's static runtime wants its libc++).
-          # `bash -e` is the runner's shell: every picker here is guarded, or one that finds nothing
-          # would end the step before report() could say what happened. sdkmanager is not on PATH; the
-          # NDK install step uses this same path.
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          { "$SDKMANAGER" --list >/tmp/sdkmanager.log 2>&1 || true; }
-          NDK30="$(grep -o 'ndk;3[0-9][^ |]*' /tmp/sdkmanager.log | sort -u | tail -1 || true)"
-          if [ -n "$NDK30" ]; then
-            echo "NDK: $NDK30"
-            { yes | "$SDKMANAGER" --install "$NDK30" >/tmp/ndk30.log 2>&1; } || report /tmp/ndk30.log
-            NDK_ROOT="$ANDROID_HOME/ndk/$(echo "$NDK30" | cut -d';' -f2)"
-          else
-            # swift.org's guide asks for LTS r30; the image's own NDK links the sysroot just the same.
-            echo "::warning title=firmwarekit build::the image offers no NDK 30; linking the SDK to NDK $ANDROID_NDK_VERSION"
-            NDK_ROOT="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
-          fi
-          # The bundle cross-compiles against an NDK sysroot its setup script links in.
+          # The setup script links the SDK's runtime against the NDK, so the NDK install step runs before
+          # this one; a missing tree is still worth a line rather than a later linker error.
+          [ -d "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" ] || echo "::warning::no NDK at $ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          # swift.org's guide asks for NDK LTS r30; the job's own NDK links the sysroot just the same, and
+          # installing another one here (sdkmanager needs its repository, licenses and a few minutes) only
+          # added a way for the step to fail before it compiled anything.
+          NDK_ROOT="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          for candidate in "$ANDROID_HOME"/ndk/3*; do
+            [ -d "$candidate" ] && NDK_ROOT="$candidate"
+          done
           echo "NDK root: $NDK_ROOT"
+          # The bundle cross-compiles against an NDK sysroot its setup script links in.
           if [ -f "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" ]; then
             ANDROID_NDK_HOME="$NDK_ROOT" bash "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" >/tmp/ndk-setup.log 2>&1 \
               || report /tmp/ndk-setup.log
