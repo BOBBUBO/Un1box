@@ -88,6 +88,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
+    override var networkStatus by mutableStateOf("")
+        private set
     private val installer by lazy { StoreInstaller.of(applicationContext) }
     private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
     // Android 13+ shows an install queue's progress and result in notifications only once allowed.
@@ -258,6 +260,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             if (socket != muxSocket) { muxSocket = socket; store.guestChanged(); if (socket.isNotEmpty() && overlay == Screen.STORE) store.refreshGuest() }
                             appServicesError = b.getString("appServicesError") ?: ""
                             cameraStatus = b.getString("cameraStatus") ?: ""
+                            networkStatus = b.getString("networkStatus") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
                         }

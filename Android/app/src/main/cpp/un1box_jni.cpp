@@ -1,5 +1,7 @@
 #include "lighttouch.h"
 #include "camera_planes.h"
+#include "Network.hpp"
+#include <filesystem>
 #include <jni.h>
 #if defined(__aarch64__)
 #include <arm_neon.h>
@@ -662,6 +664,46 @@ JNI(remove) jstring JNICALL Java_org_un1box_android_Native_remove(JNIEnv *env,jo
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_remove(library,record.value,&error);
     return string(env,result(status,error));
 }
+// The worker owns one immutable network configuration for this boot. Per-device
+// CA material persists, but the private listener dies with the worker.
+static std::mutex network_guard;
+static std::unique_ptr<lt::network::Proxy> network_proxy;
+static uint32_t network_mode = 0;
+static uint32_t network_local = 0;
+static std::string network_socket;
+JNI(networkPrepare) jstring JNICALL Java_org_un1box_android_Native_networkPrepare(JNIEnv *env,jobject,jstring root,jstring record,jint mode,jstring date,jboolean local,jstring roots) {
+    Utf directory(env,root),id(env,record),day(env,date),certificates(env,roots);
+    try {
+        if(mode<0 || mode>2 || !id.value || std::string(id.value).empty() ||
+           std::string(id.value).find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")!=std::string::npos)
+            return string(env,"Invalid network configuration");
+        std::lock_guard<std::mutex> lock(network_guard);
+        network_proxy.reset();network_mode=uint32_t(mode);network_local=local;network_socket.clear();
+        if(mode) {
+            lt::network::Configuration config;config.mode=mode==1?lt::network::Mode::direct:lt::network::Mode::archive;
+            config.archive_date=day.value;config.local_network=local;
+            network_proxy=std::make_unique<lt::network::Proxy>(std::string(directory.value)+"/network/"+id.value,config,certificates.value);
+            network_socket=std::string(directory.value)+"/network-proxy.sock";
+            std::filesystem::remove(network_socket);
+            network_proxy->listen(network_socket);
+        }
+        return string(env,"");
+    } catch(const std::exception &e) { return string(env,e.what()); }
+}
+JNI(networkCertificate) jbyteArray JNICALL Java_org_un1box_android_Native_networkCertificate(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(network_guard);
+    auto der=network_proxy?network_proxy->certificate():std::string();
+    auto bytes=env->NewByteArray(jsize(der.size()));
+    if(!der.empty())env->SetByteArrayRegion(bytes,0,jsize(der.size()),reinterpret_cast<const jbyte *>(der.data()));
+    return bytes;
+}
+JNI(networkStatus) jobjectArray JNICALL Java_org_un1box_android_Native_networkStatus(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(network_guard);
+    auto output=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(output,0,string(env,network_proxy?network_proxy->status():"Off"));
+    env->SetObjectArrayElement(output,1,string(env,network_proxy?network_proxy->fingerprint():""));return output;
+}
+
 static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirty,bool headphones) {
     bool qmp_requested=false;
     bool touch_trace_requested=false;
@@ -726,6 +768,8 @@ static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirt
     engine.boot.machine=nullptr;engine.boot.bootrom_path=selected.bootrom_path[0]?selected.bootrom_path:nullptr;
     engine.boot.guest_package_path=selected.guest_package_path;engine.boot.serial_path=serial.c_str();engine.boot.audio_enabled=1;
     engine.boot.headphones=headphones && (prepared_board.capabilities&LT_BOARD_HEADPHONES);
+    engine.boot.network_mode=network_mode;engine.boot.network_local=network_local;
+    engine.boot.network_socket=network_socket.empty()?nullptr:network_socket.c_str();
     if(status==LT_OK)status=lt_runtime_create(&engine,&prepared_runtime,&error);
     if(status==LT_OK)status=lt_runtime_set_frame_listener(prepared_runtime,frame_published,nullptr,&error);
 #ifdef LT_ANDROID_DEBUG

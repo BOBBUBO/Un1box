@@ -30,7 +30,6 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 : "${QEMU_IOS:=$HOME/git-projects/qemu-ios}"                                      # engine source
 : "${LT_INPUTS:=$HOME/Documents/LightTouch-Development/port-workspace/builds}"   # prebuilt deps
-: "${LT_ENGINE_KIT:=$HOME/Documents/LightTouch-Development/perf/engine-api29/arm64-v8a}"  # libc++, notices
 : "${ANDROID_HOME:=$HOME/Android/Sdk}"
 : "${ANDROID_NDK_VERSION:=28.2.13676358}"
 : "${JAVA_HOME:=/usr/lib/jvm/java-17-openjdk-amd64}"
@@ -51,7 +50,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PCLIBDIR=
 export ANDROID_HOME JAVA_HOME
 
-OUT="$REPO/build"
+OUT="${LT_BUILD_ROOT:-$REPO/build}"
 OBJ="$OUT/obj"
 NDK_BIN="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
 log() { printf '== %s\n' "$*"; }
@@ -68,7 +67,7 @@ configure_engine() {
     chmod +x "$dir/target-pkg-config"
     (cd "$dir" && env PKG_CONFIG="$dir/target-pkg-config" PKG_CONFIG_PATH="$pcpath" \
         ${PCLIBDIR:+"PKG_CONFIG_LIBDIR=$PCLIBDIR"} "$QEMU_IOS/configure" --target-list=arm-softmmu --without-default-features --without-default-devices \
-        --with-devices-arm=portable --enable-tcg --enable-pixman --enable-gcrypt --python=/usr/bin/python3 \
+        --with-devices-arm=portable --enable-tcg --enable-pixman --enable-gcrypt --enable-slirp --python=/usr/bin/python3 \
         --disable-docs --disable-tools --disable-werror --disable-pie --audio-drv-list= \
         "--extra-cflags=-fPIC -DQEMU_IOS_PORTABLE_CRYPTO${LT_ENGINE_CFLAGS:+ $LT_ENGINE_CFLAGS}" \
         "--extra-ldflags=-L$deps/lib${LT_ENGINE_LDFLAGS:+ $LT_ENGINE_LDFLAGS}" "$@" \
@@ -113,7 +112,6 @@ build_android_engine() {
     log "android-engine (arm64-v8a)"
     local deps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" dir="$OBJ/android-engine-arm64${LT_ENGINE_VARIANT:+-$LT_ENGINE_VARIANT}"
     need "$deps" "Android engine dependency prefix"
-    need "$LT_ENGINE_KIT/notices" "engine notice bundle"
     need "$NDK_BIN" "Android NDK $ANDROID_NDK_VERSION"
     PCLIBDIR="$LT_INPUTS/backend/crypto/arm64-v8a/prefix/lib/pkgconfig:$deps/lib/pkgconfig"
     # Profile-guided optimization from a gameplay profile (docs/BUILDING.md, "Engine profile"): clang lays the
@@ -135,20 +133,24 @@ build_android_engine() {
         --cc="$NDK_BIN/aarch64-linux-android29-clang" --cxx="$NDK_BIN/aarch64-linux-android29-clang++" \
         --disable-containers
     PCLIBDIR=
+    # Record the very runtime AGP packages from the selected NDK in the engine
+    # manifest, before generating notices (not a previous engine kit's copy).
+    cp "$NDK_BIN/../sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$dir/"
     link_engine "$dir"
     local e="$OUT/android/engine/arm64-v8a"
     rm -rf "$e"; mkdir -p "$e"
     cp "$dir/libqemu-arm.so" "$e/"
-    cp "$LT_ENGINE_KIT/libc++_shared.so" "$e/"
-    cp "$dir/portable-manifest.json" "$e/" 2>/dev/null || cp "$LT_ENGINE_KIT/portable-manifest.json" "$e/"
-    cp -rL "$LT_ENGINE_KIT/notices" "$e/notices"
-    # The APK build checks the notice bundle names this library by hash.
-    python3 - "$e" <<'PY'
-import hashlib, json, pathlib, sys
-e = pathlib.Path(sys.argv[1]); m = e / "notices/manifest.json"; d = json.loads(m.read_text())
-d["library_sha256"] = hashlib.sha256((e / "libqemu-arm.so").read_bytes()).hexdigest()
-m.write_text(json.dumps(d, indent=2) + "\n")
-PY
+    cp "$dir/libc++_shared.so" "$e/"
+    cp "$dir/portable-manifest.json" "$e/"
+    # Notices must describe the selected sources and dependencies of this build,
+    # including bundled slirp, rather than a previous engine's notice bundle.
+    python3 "$QEMU_IOS/contrib/portable/audit-selected-sources.py" "$dir"
+    local revision
+    revision=$(git -C "$QEMU_IOS" rev-parse HEAD)
+    python3 "$QEMU_IOS/contrib/portable/package-notices.py" "$dir" "$e/notices" \
+        --deps "$LT_INPUTS/backend/deps/arm64-v8a" --crypto-deps "$LT_INPUTS/backend/crypto/arm64-v8a" \
+        --ndk "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" \
+        --source-reference "https://github.com/blake-lucas/qemu-ios/tree/$revision"
     echo "$e"
 }
 
@@ -172,6 +174,7 @@ build_android() {
     (cd "$REPO/Android" && CMAKE_BUILD_PARALLEL_LEVEL="$JOBS" ./gradlew --offline --no-daemon --max-workers=8 \
         '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs="$JOBS" -PtargetAbis=arm64-v8a \
         -PportableDir="$REPO/Portable" -PqemuSource="$QEMU_IOS" \
+        -PnetworkDeps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" \
         -PengineRoot="$OUT/android/engine" -PfirmwareKitDir="$OUT/firmwarekit/android" \
         -PengineNoticeArm64="$OUT/android/engine/arm64-v8a/notices" \
         -PsourceRevision="$(git -C "$REPO" rev-parse HEAD)" \

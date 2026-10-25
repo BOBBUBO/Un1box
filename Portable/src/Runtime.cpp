@@ -7,6 +7,7 @@
 #include "GuestPackageJudge.hpp"
 #include "FrameStorage.hpp"
 #include "Base64.hpp"
+#include "GuestNetwork.hpp"
 #include "qemu-ios-ui.h"
 #include "qemu-macos-extras.h"
 #include <atomic>
@@ -1147,6 +1148,27 @@ lt_status lt_runtime_guest_request(lt_runtime *r, const lt_guest_request *c, uin
             op = "type";
             body = argument;
             argument.clear();
+            break;
+        case LT_GUEST_NETWORK_CERTIFICATE:
+            op = "put";
+            body = lt::base64_decode(argument);
+            lt::require(body.size() > 256 && body.size() < 4096, "Invalid proxy certificate length");
+            argument = "/tmp/lighttouch-network-ca.der 644";
+            break;
+        case LT_GUEST_NETWORK_TRUST:
+        case LT_GUEST_NETWORK_ROUTE: {
+            lt::require(argument.empty(), "Network setup takes no argument");
+            op = "spawn";
+            std::vector<std::string> args = c->operation == LT_GUEST_NETWORK_TRUST ?
+                std::vector<std::string>{"/tmp/lighttouch-ittrust", "add", "/tmp/lighttouch-network-ca.der"} :
+                std::vector<std::string>{"/tmp/lighttouch-itproxy", "on"};
+            for (const auto &arg : args) { body += arg; body += '\0'; }
+            break;
+        }
+        case LT_GUEST_NETWORK_TRUST_CHUNK:
+        case LT_GUEST_NETWORK_ROUTE_CHUNK:
+            op = "putpart";
+            argument = lt::network_tool_chunk(argument, c->operation == LT_GUEST_NETWORK_TRUST_CHUNK, body);
             break;
         case LT_GUEST_LAUNCH_BUILTIN:
             lt::require(argument.rfind("com.apple.", 0) == 0, "only builtin app IDs allowed");

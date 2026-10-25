@@ -3,6 +3,7 @@
 #include "../src/Json.hpp"
 #include "../src/MotionClock.hpp"
 #include "../src/Base64.hpp"
+#include "../src/GuestNetwork.hpp"
 #include "../src/Elapsed.hpp"
 #include "../src/Lifecycle.hpp"
 #include "../../Linux/TouchScript.hpp"
@@ -187,6 +188,14 @@ int main() {
         bad = true;
     }
     assert(bad);
+    std::string tool_body;
+    assert(lt::network_tool_chunk("0 0 SGk=", true, tool_body) == "0 0 755 /tmp/lighttouch-ittrust" && tool_body == "Hi");
+    assert(lt::network_tool_chunk("2048 1 SGk=", false, tool_body) == "2048 1 755 /tmp/lighttouch-itproxy");
+    for (const auto &invalid : {"", "0 2 SGk=", "-1 1 SGk=", "0 1 ", "0 1 SGk= /tmp/other", "1048576 1 SGk=", "9999999999999999999 1 SGk="}) {
+        bool refused = false;
+        try { lt::network_tool_chunk(invalid, true, tool_body); } catch (...) { refused = true; }
+        assert(refused);
+    }
     bad = false;
     try {
         lt::parse("{\"x\":18446744073709551616}").at("x").integer();
