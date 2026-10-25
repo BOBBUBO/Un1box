@@ -303,6 +303,23 @@ its MBX GPU model (only stock OpenGLES composites on it; with our GL front end S
 the NAND image store (a storage format change for the Mac app's records) and the n72 boot-args rework (7E18
 boots unchanged).
 
+### Un1box review of 2026-10-25
+
+[KlugKlugTG/Un1box](https://github.com/KlugKlugTG/Un1box), a fork of this repository, carries its engine
+changes as patch files applied in CI, all unmeasured there. Each was checked against the iPod touch 4G on the
+Poco F3 and written into our own sources where it helps:
+
+| Their change | What we did |
+| --- | --- |
+| The Android presenter swaps R and B four pixels at a time on arm64 (`978bbefe`) | Taken, app `e1ade586`, for any unscaled row (not only a buffer whose stride equals its width). A 960x640 frame: 0.58 → 0.17 ms on a big core, 0.71 → 0.19 ms on a mid core, identical output. The presenter thread is ~5% of a core in Jetpack. |
+| `APPLE_fence` as EGL fence syncs instead of a `glFinish` per call (`478fbe51`) | Taken, engine `b6d540caf9` (`LT_GLES_APPLE_FENCE=glfinish` for A/B). No measured gain: Jetpack makes no fence calls, and Epic Citadel, Infinity Blade II, Asphalt 5 and 8 and Battle Bears do not import the extension. It only helps a game that uses fences. |
+| The inlined TB lookup and the indirect side table on by default (`a02def4c`) | Not yet. Jetpack title, ABBAAB 60 s at 2.24 GHz: 58.9/58.9/58.9 → 59.0/58.3/58.8 fps, 29.7 → 29.4 Mcycles a frame, late frames and p99 unchanged. Still an open lead in [TODO.md](TODO.md). |
+| Huge pages for guest RAM (same commit) | Not taken: the Poco's kernel has no transparent huge pages, so it would do nothing there. The Pixel is not checked yet. |
+| A misaligned `LDM`/`STM` performed instead of faulting (`2f0c5ac5`) | Not taken. Their evidence is our iPod touch 2G measurement ("Hitches in Jetpack's title" below). Jetpack's title on the 4G takes no alignment faults, with audio playing (150 s on the desktop), so there is nothing to win there, and it departs from the hardware. |
+| Presenter and vsync threads at display priority (`478fbe51`) | Not taken yet: unmeasured there, and the presenter is ~5% of a core here. |
+| The synchronous present waits on a native fence; a frame's pages mapped once; no `glFinish` before the readback (`7ea1b8a8`, `59da7ef0`) | Not taken: these are fallback paths (`LT_PRESENT_ASYNC=off`, 16-bit surfaces, drivers without AHardwareBuffer). The 4G's default present is the asynchronous one. |
+| "Fewer pauses when opening iOS apps" (`f84b1bec`) | Not taken: it turns off the two code-cache flushes measured above as gains (`LT_FLUSH_ON_APP`, `LT_FLUSH_SETTLE`). |
+
 ### Measured and rejected
 
 **iPod touch 4G, 2026-10-25 (TLB and jump-cache sizes).** Poco, Epic Citadel's tour, 120 s windows, eight runs
