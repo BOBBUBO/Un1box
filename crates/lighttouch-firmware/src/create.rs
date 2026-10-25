@@ -158,6 +158,7 @@ pub fn board_for(o: &Options) -> Result<Box<dyn Board>> {
         ("k48ap", "k48") | ("n81ap", "n81") | ("n90ap", "n90") | ("n88ap", "n88") | ("n18ap", "n18") => {
             Ok(Box::new(crate::k48_recipe::K48Board::new(o)?))
         }
+        ("n72ap", "n72") => Ok(Box::new(crate::n72_recipe::N72Board::new(o)?)),
         _ => Err(crate::unsupported!("{}: no preparer for board {} recipe {recipe}", e.id, e.board)),
     }
 }
