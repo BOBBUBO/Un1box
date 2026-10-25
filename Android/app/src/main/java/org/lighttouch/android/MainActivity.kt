@@ -329,7 +329,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
             // A full page hides the guest surface: the presenter stops drawing into it and drops its 60 Hz request.
-            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.DETAILS)
+            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.APPS, Screen.STORE, Screen.DETAILS)
             LaunchedEffect(guestCovered, engine) {
                 val worker = engine ?: return@LaunchedEffect
                 Thread({ try { worker.setPresentVisible(!guestCovered) } catch (_: RemoteException) { } }, "present-visibility").start()
@@ -377,6 +377,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             onCreate = ::createDevice, onPrepare = { openPreparation() },
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
+                        // Opened from Settings, and Back returns there: the device's apps belong to the device's settings.
+                        Screen.APPS -> AppsScreen(store, running = status == "running" && muxSocket.isNotEmpty()) { overlay = Screen.SETTINGS }
                         Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
                         Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
                             onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { overlay = null }

@@ -96,6 +96,9 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         "Start ${host.selected?.name} from its saved data after an unclean shutdown, keeping diagnostics", enabled = !host.busy, tag = "recover_guest") { host.recover(); onBack() }
                 }
                 Group("Device") {
+                    ActionRow(LtIcons.Bag, "Apps on the device",
+                        host.selected?.let { "See what is installed on ${it.name} and remove apps from it" } ?: "Select a device first",
+                        enabled = host.selected != null, tag = "settings_apps") { host.navigate(Screen.APPS) }
                     ActionRow(LtIcons.Puzzle, "Update guest tools", host.selected?.let { "Install a newer .itpack into ${it.name}; it applies at the next start" } ?: "Select a device first",
                         enabled = host.selected != null && !host.active && !host.busy) { host.pickGuestTools() }
                     ActionRow(LtIcons.Download, "Prepare from an IPSW", "Choose a device and iOS version; LightTouch downloads Apple's firmware and builds it here",

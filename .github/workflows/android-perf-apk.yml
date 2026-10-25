@@ -532,6 +532,13 @@ jobs:
         continue-on-error: true
         run: python3 tests/mic/run.py --engine qemu-ios
 
+      - name: Self-check the app manager wiring
+        # Reported, not gating, like the microphone check above: it reads the sources and
+        # asserts the guest uninstall action, the helper's CLI, the Kotlin wrapper, the
+        # model and the Settings entry still line up. No toolchain or device is needed.
+        continue-on-error: true
+        run: python3 tests/apps/wiring.py
+
       - name: Build the engine
         run: |
           set -o pipefail

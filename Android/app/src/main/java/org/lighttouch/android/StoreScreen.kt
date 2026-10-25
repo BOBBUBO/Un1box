@@ -197,6 +197,36 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     /** The app's queue entry by bundle id, for lists that don't have the store's row. */
     fun queuedBundle(bundleId: String) = queue.firstOrNull { it.key == "app:$bundleId" }
 
+    /** The app being removed from the guest (one at a time), and why the last removal failed. */
+    var removing by mutableStateOf<String?>(null)
+    var removeError by mutableStateOf<String?>(null)
+
+    /**
+     * Remove [app] from the guest, data and all. The guest's installer answers when the app is gone, so the list
+     * drops it then and is read again from the guest to show what is really there; a failure changes nothing
+     * and is reported for [app] alone.
+     */
+    fun remove(app: InstalledApp) {
+        val socket = muxSocket() ?: run { removeError = "Start the device to remove apps."; return }
+        if (removing != null) return
+        if (!apps.available) { removeError = "Guest app services are not included in this build."; return }
+        // The installer is busy with this app already: one change at a time.
+        if (queuedBundle(app.bundleId)?.active == true) { removeError = "${app.title} is still being installed."; return }
+        removing = app.bundleId; removeError = null
+        background("store-remove") {
+            val outcome = runCatching { apps.uninstall(socket, app.bundleId) }
+            post {
+                removing = null
+                if (muxSocket() != socket) return@post  // another guest is behind the socket by now
+                outcome.onFailure { removeError = "Couldn't remove ${app.title}: ${it.message}" }
+                    .onSuccess {
+                        installedList.set(installedList.list?.filter { it.bundleId != app.bundleId } ?: emptyList())
+                        installedList.refresh(force = true)
+                    }
+            }
+        }
+    }
+
     /** Revalidate one archived copy against this device (CatalogDetailsModel.check). */
     fun choose(ipaId: Int) {
         val t = target ?: return

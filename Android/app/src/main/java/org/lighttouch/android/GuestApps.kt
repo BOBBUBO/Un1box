@@ -85,4 +85,8 @@ internal class GuestApps(private val context: Context) {
 
     fun install(socket: String, ipa: File, bundleId: String, cancelled: () -> Boolean, event: (JSONObject) -> Unit): JSONObject =
         run(socket, listOf("install", "--ipa", ipa.absolutePath, "--bundle-id", bundleId), 900, cancelled, event)
+
+    /** Removes an app from the guest, and its data with it. Throws [Failure] if the guest refused or didn't answer. */
+    fun uninstall(socket: String, bundleId: String): JSONObject =
+        run(socket, listOf("uninstall", "--bundle-id", bundleId), 120)
 }
