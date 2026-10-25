@@ -32,6 +32,17 @@ LIGHTTOUCH_FIRMWAREKIT=/path/to/firmwarekit target/debug/lighttouch prepare n72a
 LIGHTTOUCH_USBMUXD=/path/to/usbmuxd-qemu target/debug/lighttouch run <record id> --store "doodle jump"   # or --install App.ipa, --services
 ```
 
+Windows, cross-built from Linux with the posix-threads MinGW toolchain (`.cargo/config.toml` picks the linker):
+
+```sh
+export CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc-posix CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++-posix \
+       AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
+cargo build --release --target x86_64-pc-windows-gnu --features lighttouch-services/vendored-openssl
+```
+
+The engine DLL is qemu-ios's MinGW build relinked by `contrib/portable/make-shared-windows.py`; it and its DLLs,
+`lighttouch-usbmuxd.exe` and `guest-tools/` go in `resources\` beside `lighttouch.exe`.
+
 `LIGHTTOUCH_DATA` overrides the data folder (default `~/.local/share/LightTouch`, `%LOCALAPPDATA%\LightTouch\App`,
 `~/Library/Application Support/LightTouch`); `LIGHTTOUCH_RESOURCES` the bundled resources folder.
 To check the UI where nothing can capture the screen (over ssh), `LIGHTTOUCH_UI_SHOT=file.png` saves the window after
@@ -47,7 +58,7 @@ To check the UI where nothing can capture the screen (over ssh), `LIGHTTOUCH_UI_
 | Prepare from an IPSW (catalog, download, firmwarekit sidecar, adoption) | Done (Linux): n72ap-7E18 downloaded and prepared in 62 s, boots; firmwarekit needs a static Swift stdlib to ship |
 | Legacy Store, specific versions, IPA install, last crash (Rust usbmux/lockdown/AFC/instproxy over usbmuxd-qemu) | Done (Linux), checked on iPod touch 2G 3.1.3 and 4.2.1 and iPhone 3GS 5.1.1; a store install takes ~20 s from attach. Following the guest when it reattaches under a new usbmux id is written but not yet exercised |
 | macOS | Everything above works on an M-series Mac: prepare (firmwarekit and `lighttouch-oneshot` built there from this tree; n72 3.1.3 downloaded and prepared in 23 s), sessions in the same egui UI (Retina, system theme), Legacy Store installs with the 0.0.9 app's usbmuxd. Needs the engine's indirect-cache JIT fix (qemu-ios `079f70a607`; the guest hangs in iBoot without it); tested with that fix relinked into the 0.0.9 engine, not yet an engine built from source |
-| Windows: Portable portability layer, engine DLL | To do |
+| Windows | Builds by cross-compiling from Linux (below). Under Wine: import, sessions from the CLI and the UI (boots, clean shutdown, frames, controls). Not checkable under Wine: guest GPU drawing (the engine refuses software OpenGL, so the screen is black there), audio (no device), and app services (the USB daemon checks who owns each loopback connection, which Wine can't answer). Needs a real Windows run for those. Prepare waits for the Rust firmwarekit |
 | Packaging (`cargo xtask dist`: AppImage, zip, .app) | To do |
 | `firmwarekit` in Rust (Windows prep, no Swift toolchain) | Later, checked against the Swift tool's output hashes |
 | Rust tcp_usb host replacing usbmuxd-qemu | Later |
