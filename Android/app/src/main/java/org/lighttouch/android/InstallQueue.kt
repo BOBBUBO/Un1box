@@ -40,6 +40,7 @@ class InstallQueue<P>(private val work: QueueWork<P>,
     private class Entry<P>(var item: QueueItem, val payload: P) { var file: File? = null; @Volatile var cancelled = false }
 
     private val lock = Any()
+    private val announce = Any()
     private val entries = mutableListOf<Entry<P>>()
     private var nextId = 1L
     private var fetching = false
@@ -106,11 +107,14 @@ class InstallQueue<P>(private val work: QueueWork<P>,
 
     /** Announce a change, then start whatever step can now run. */
     private fun changed() {
-        // The transition is decided under the lock, announced outside it.
-        val transition = synchronized(lock) { transition(entries.any { it.item.active }) }
-        if (transition > 0) onBusy()
-        onChange()
-        if (transition < 0) onIdle()
+        // Decided under the queue's lock but announced outside it, and in the order decided: a busy that overtook
+        // the idle before it would have the service released while the queue still has work.
+        synchronized(announce) {
+            val transition = synchronized(lock) { transition(entries.any { it.item.active }) }
+            if (transition > 0) onBusy()
+            onChange()
+            if (transition < 0) onIdle()
+        }
         pump()
     }
 

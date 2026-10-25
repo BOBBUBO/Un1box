@@ -13,6 +13,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -87,6 +89,11 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     var problem by mutableStateOf<String?>(null)
     var candidate by mutableStateOf<JSONObject?>(null)
     var installed by mutableStateOf<Map<String, String>>(emptyMap())
+    val browser = StoreBrowser { target }
+    val resultsList = LazyListState()
+    /** What the catalog says about the open app, and its newest screenshots; both arrive after the versions. */
+    var info by mutableStateOf<JSONObject?>(null)
+    var shots by mutableStateOf<List<StoreShot>>(emptyList())
     var queue by mutableStateOf(installer.queue.snapshot())
     var queueOpen by mutableStateOf(true)
     var crash by mutableStateOf<String?>(null)
@@ -141,6 +148,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     fun search() {
         val t = target ?: run { message = "Select a device first."; return }
         val q = query; val generation = ++searchGeneration
+        browser.tab = StoreTab.DEVICE
         searching = true; message = ""
         background("store-search") {
             val outcome = runCatching { LegacyStore.search(q, t) }
@@ -155,8 +163,10 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
 
     fun open(app: JSONObject) {
         val t = target ?: return
-        chosen = app; copies = null; selected = null; problem = null; candidate = null
+        chosen = app; copies = null; selected = null; problem = null; candidate = null; info = null; shots = emptyList()
         val generation = ++checkGeneration
+        background("store-info") { runCatching { LegacyStore.appInfo(app) }.getOrNull()?.let { found -> post { if (chosen === app) info = found } } }
+        background("store-shots") { runCatching { LegacyStore.screenshots(app) }.getOrNull()?.let { found -> post { if (chosen === app) shots = found } } }
         background("store-versions") {
             val outcome = runCatching { LegacyStore.versions(app, t) }
             post {
@@ -181,7 +191,8 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
         background("store-copy-check") {
             val outcome = runCatching {
                 val found = LegacyStore.compatibleCopy(ipaId, t)
-                if (found.optString("bundle_id") != app.optString("bundle_id")) throw StoreError("This copy belongs to a different app.")
+                // Rows from the charts and categories may not name a bundle.
+                if (app.text("bundle_id")?.let { it != found.optString("bundle_id") } == true) throw StoreError("This copy belongs to a different app.")
                 LegacyStore.checkCopy(LegacyStore.copyDetails(ipaId), found, t)
                 found
             }
@@ -193,7 +204,7 @@ internal class StoreModel(context: Context, private val muxSocket: () -> String?
     }
 
     /** An app's place in the queue: by bundle, since two versions of one app can't install together. */
-    private fun queueKey(app: JSONObject) = "app:" + (app.text("bundle_id") ?: app.optString("app_store_id").ifEmpty { app.optInt("ipa_id").toString() })
+    private fun queueKey(app: JSONObject) = "app:" + (app.text("bundle_id") ?: app.text("app_store_id") ?: app.text("app_url")?.trimEnd('/')?.substringAfterLast('/') ?: app.optInt("ipa_id").toString())
 
     /** The app's queue entry, until the user dismisses it. */
     fun queued(app: JSONObject) = queueKey(app).let { key -> queue.firstOrNull { it.key == key } }
@@ -246,6 +257,8 @@ private fun AppIcon(url: String?, size: Int = 48) {
 internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () -> Unit, onClose: () -> Unit) {
     BackHandler(enabled = model.chosen == null, onBack = onClose)
     val details = model.chosen
+    // Another device (or a guest reporting its exact iOS version) has other apps and other charts.
+    LaunchedEffect(model.target) { model.browser.reset(); model.browser.show(model.browser.tab) }
     // Drawn over the activity's content (not a Dialog window, which gets no usable insets edge to edge).
     Surface(Modifier.fillMaxSize().testTag("store").semantics { testTagsAsResourceId = true }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -266,20 +279,34 @@ internal fun StoreScreen(model: StoreModel, running: Boolean, onPickLocal: () ->
                 StoreDetails(model, details, running)
             } else {
                 SearchField(model)
-                Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    FilterChip(model.showIncompatible, { model.showIncompatible = !model.showIncompatible }, label = { Text("Include apps that won't run") },
-                        leadingIcon = if (model.showIncompatible) {{ Icon(Icons.Filled.Check, null, Modifier.size(18.dp)) }} else null)
-                }
-                if (model.searching) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp))
-                if (model.message.isNotEmpty()) Text(model.message, Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                val rows = if (model.showIncompatible) model.results else model.results.filter { LegacyStore.incompatibility(it) == null }
-                if (rows.isEmpty() && !model.searching) EmptyResults(model.results.isNotEmpty())
-                else LazyColumn(Modifier.weight(1f).testTag("store_results"), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
-                    items(rows, key = { it.optInt("ipa_id") }) { app -> ResultRow(app, model) }
+                BrowseTabs(model.browser)
+                BackHandler(enabled = model.browser.canGoBack) { model.browser.back() }
+                when (model.browser.tab) {
+                    StoreTab.DEVICE -> DeviceTab(model)
+                    StoreTab.FEATURED -> FeaturedTab(model)
+                    StoreTab.CHARTS -> ChartsTab(model)
+                    StoreTab.CATEGORIES -> CategoriesTab(model)
+                    StoreTab.COLLECTIONS -> CollectionsTab(model)
                 }
             }
         }
+    }
+}
+
+/** The apps the catalog has checked against this device, and search results (which also show the ones that won't run). */
+@Composable
+private fun ColumnScope.DeviceTab(model: StoreModel) {
+    Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        FilterChip(model.showIncompatible, { model.showIncompatible = !model.showIncompatible }, label = { Text("Include apps that won't run") },
+            leadingIcon = if (model.showIncompatible) {{ Icon(Icons.Filled.Check, null, Modifier.size(18.dp)) }} else null)
+    }
+    if (model.searching) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp))
+    if (model.message.isNotEmpty()) Text(model.message, Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    val rows = if (model.showIncompatible) model.results else model.results.filter { LegacyStore.incompatibility(it) == null }
+    if (rows.isEmpty() && !model.searching) EmptyResults(model.results.isNotEmpty())
+    else LazyColumn(Modifier.weight(1f).testTag("store_results"), state = model.resultsList, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
+        items(rows, key = { it.optInt("ipa_id") }) { app -> ResultRow(app, model) }
     }
 }
 
@@ -331,19 +358,22 @@ private fun ColumnScope.EmptyResults(filtered: Boolean) {
     }
 }
 
+/** One app in a list. [rank] is its chart position. Rows from the plain listings have no compatibility verdict until opened. */
 @Composable
-private fun ResultRow(app: JSONObject, model: StoreModel) {
+internal fun ResultRow(app: JSONObject, model: StoreModel, rank: Int? = null) {
     val problem = LegacyStore.incompatibility(app)
     val installedVersion = model.installed[app.optString("bundle_id")]
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable { model.open(app) }.padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
+        rank?.let { Text(it.toString(), Modifier.width(32.dp), style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center); Spacer(Modifier.width(8.dp)) }
         Box(Modifier.alpha(if (problem == null) 1f else 0.5f)) { AppIcon(app.optString("icon_url").ifEmpty { null }, 52) }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(app.optString("name"), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall,
                 color = if (problem == null) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(listOfNotNull(app.text("developer"), app.text("version"),
-                app.optLong("size").takeIf { it > 0 }?.let(::byteSize)).joinToString(" · "),
+            Text(listOfNotNull(app.text("developer"), app.text("version"), app.text("label"),
+                app.optLong("size").takeIf { it > 0 }?.let(::byteSize),
+                app.optInt("version_count").takeIf { it > 0 && app.text("version") == null }?.let { if (it == 1) "1 version" else "$it versions" }).joinToString(" · "),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val inQueue = model.queued(app)?.takeIf { it.active }
             when {
@@ -365,10 +395,14 @@ private fun ColumnScope.StoreDetails(model: StoreModel, app: JSONObject, running
             Spacer(Modifier.width(16.dp))
             Column {
                 Text(app.optString("name"), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(app.text("developer") ?: "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(app.text("developer") ?: model.info?.text("developer") ?: "", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                model.info?.let { info -> listOfNotNull(info.text("genre"), info.text("original_release_date")?.take(4)).takeIf { it.isNotEmpty() }?.let {
+                    Text(it.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } }
                 installedVersion?.let { Text("Installed $it", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
             }
         }
+        if (model.shots.isNotEmpty()) Screenshots(model.shots)
         Text("Versions that run on this device", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(start = 4.dp, top = 12.dp, bottom = 8.dp))
         val rows = model.copies
@@ -412,6 +446,19 @@ private fun ColumnScope.StoreDetails(model: StoreModel, app: JSONObject, running
             Text(if (inQueue != null) "In the queue" else if (installedVersion != null) "Reinstall" else "Install", style = MaterialTheme.typography.titleMedium)
         }
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun Screenshots(shots: List<StoreShot>) {
+    LazyRow(Modifier.fillMaxWidth().padding(vertical = 8.dp).testTag("store_screenshots"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(shots, key = { it.url }) { shot ->
+            val bitmap by produceState<Bitmap?>(null, shot.url) { value = withContext(Dispatchers.IO) { LegacyStore.screenshot(shot.url) } }
+            val ratio = if (shot.width > 0 && shot.height > 0) shot.width.toFloat() / shot.height else 0.6f
+            Box(Modifier.height(190.dp).aspectRatio(ratio).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
+                bitmap?.let { Image(it.asImageBitmap(), contentDescription = null, Modifier.fillMaxSize()) }
+            }
+        }
     }
 }
 
