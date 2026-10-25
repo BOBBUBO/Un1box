@@ -486,6 +486,7 @@ pub fn build_k48(
     root_owned.extend(jobs.iter().map(|j| job(j)));
     root_owned.extend(tools.iter().map(|t| t.1.to_string()));
     drop(fw);
+    remove_junk(&mut ed)?;
     ed.commit()?;
 
     let sys = Volume::open(&system, true)?;
@@ -515,6 +516,7 @@ pub fn build_k48(
         log(&format!("preinstalled assets: {} installed as mobileassetd would at the first boot", installed.len()));
     }
     let paths = dv.walk("")?;
+    remove_junk(&mut dv)?;
     dv.commit()?;
     let mut by_owner: BTreeMap<(u32, u32), Vec<String>> = BTreeMap::new();
     for rel in paths {
@@ -569,6 +571,19 @@ pub fn copy_tree(src: &Editor, from: &str, dst: &mut Editor, to: &str) -> Result
                 }
             }
             Kind::File => dst.write(&d, src.read(&s)?, Some(m.perm))?,
+        }
+    }
+    Ok(())
+}
+
+/// What macOS drops on a mounted volume, the IPSW's own rootfs included; removed from a volume's root before it is
+/// committed, as the Swift preparer's mount removed it before unmounting.
+pub const JUNK: [&str; 5] = [".fseventsd", ".Spotlight-V100", ".Trashes", ".TemporaryItems", ".DS_Store"];
+
+pub fn remove_junk(ed: &mut Editor) -> Result<()> {
+    for name in JUNK {
+        if ed.lstat(name)?.is_some() {
+            ed.remove(name)?;
         }
     }
     Ok(())

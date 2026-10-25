@@ -688,6 +688,7 @@ impl Board for N72Board {
         }
         ed.write(&self.kc_path, c.ipsw()?.read(&self.kc_member)?, None)?;
         let (report, modes) = self.bake(&mut ed, c, &mut owners)?;
+        system_edits::remove_junk(&mut ed)?;
         ed.commit()?;
         for (k, v) in report {
             self.derived.insert(k, v);

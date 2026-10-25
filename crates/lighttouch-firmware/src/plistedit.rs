@@ -35,6 +35,9 @@ pub fn serialize(value: &Value, format: Format) -> Result<Vec<u8>> {
         Format::Binary => value.to_writer_binary(&mut out),
     }
     .map_err(|e| crate::internal!("write a property list: {e}"))?;
+    if format == Format::Xml && out.last() != Some(&b'\n') {
+        out.push(b'\n'); // as Foundation ends one
+    }
     Ok(out)
 }
 

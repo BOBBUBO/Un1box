@@ -15,6 +15,7 @@
 //!   firmwarekit k48-rebuild --store DIR [--overlay DIR] --system IMG [--data IMG] --out DIR [--work DIR]
 //!   firmwarekit k48-check DIR [--mbr FILE] [--system IMG]
 //!   firmwarekit write-n72-nand VOLUME OUT --blocks N --epoch E
+//!   firmwarekit read-n72-nand NAND OUT --blocks N   the volume back from an n72 store
 //!   firmwarekit write-n45-nand VOLUME OUT (--fil-id 0xN | --iboot FILE) [--banks N] [--bbt-map]
 //!   firmwarekit build-n72-nor --ipsw FILE --identity JSON --out FILE [--board B] [--types A,B] [--wrap all|A,B]
 //!   firmwarekit build-n45-nor --ipsw FILE --identity JSON --out FILE [--board B] [--boot-args S]
@@ -205,6 +206,33 @@ fn write_n72_nand(args: &[String]) -> Result<(), String> {
     let (written, meta) = lighttouch_firmware::n72nand::write(&PathBuf::from(volume), blocks, epoch, &PathBuf::from(out))
         .map_err(|e| e.to_string())?;
     eprintln!("{written} filesystem pages, {meta} metadata pages (epoch {epoch}) in {:.1} s", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+/// The volume an n72 store holds, read back through the page predictor (holes and blank pages as zeros).
+fn read_n72_nand(args: &[String]) -> Result<(), String> {
+    use lighttouch_firmware::n72nand::{predict, PAGE};
+    use std::io::{Seek, SeekFrom, Write};
+    let (Some(nand), Some(out)) = (args.first(), args.get(1)) else {
+        return Err("read-n72-nand NAND OUT --blocks N".into());
+    };
+    let blocks = number(&required(args, "--blocks")?)? as usize;
+    let store = lighttouch_firmware::page_nand::Store::open(&PathBuf::from(nand), false).map_err(|e| e.to_string())?;
+    let mut f = std::fs::File::create(out).map_err(|e| format!("{out}: {e}"))?;
+    f.set_len((blocks * PAGE) as u64).map_err(|e| format!("{out}: {e}"))?;
+    let mut read = 0;
+    for n in 0..blocks {
+        let p = predict(n);
+        let rec = store.read(p.cs, p.page).map_err(|e| e.to_string())?;
+        let data = &rec[..PAGE];
+        if data.iter().all(|&b| b == 0) {
+            continue;
+        }
+        f.seek(SeekFrom::Start((n * PAGE) as u64)).map_err(|e| e.to_string())?;
+        f.write_all(data).map_err(|e| e.to_string())?;
+        read += 1;
+    }
+    eprintln!("{read} pages read back");
     Ok(())
 }
 
@@ -440,6 +468,7 @@ fn main() -> ExitCode {
         Some("hfs-grow") => hfs_grow(&args[1..]),
         Some("hfs-format") => hfs_format(&args[1..]),
         Some("write-n72-nand") => write_n72_nand(&args[1..]),
+        Some("read-n72-nand") => read_n72_nand(&args[1..]),
         Some("write-n45-nand") => write_n45_nand(&args[1..]),
         Some("build-n72-nor") => build_n72_nor(&args[1..]),
         Some("build-n45-nor") => build_n45_nor(&args[1..]),

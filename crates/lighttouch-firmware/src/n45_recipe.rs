@@ -509,6 +509,7 @@ impl Board for N45Board {
             system_edits::activate(&mut ed, &log).map_err(|f| Error { code: Code::ActivationFailed, message: f.0, piece: None })?
         };
         c.activation = Some(activation);
+        system_edits::remove_junk(&mut ed)?;
         ed.commit()?;
         self.derived.insert("launch_daemons_removed".into(), json!(removed));
         let hfs = Volume::open(&volume, true)?;
