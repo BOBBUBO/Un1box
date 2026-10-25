@@ -43,6 +43,19 @@ cargo build --release --target x86_64-pc-windows-gnu --features lighttouch-servi
 The engine DLL is qemu-ios's MinGW build relinked by `contrib/portable/make-shared-windows.py`; it and its DLLs,
 `lighttouch-usbmuxd.exe` and `guest-tools/` go in `resources\` beside `lighttouch.exe`.
 
+`scripts/release/package-desktop.py` puts a folder together from those pieces, including the notices the licence
+page shows (`--notices engine=DIR --notices usb=DIR` for the engine's and the USB bridge's licence texts; the app's
+and firmwarekit's are staged from `cargo metadata`):
+
+```sh
+python3 scripts/release/package-desktop.py out/LightTouch-windows-x86_64 --os windows \
+    --app target/x86_64-pc-windows-gnu/release/lighttouch.exe \
+    --firmwarekit target/x86_64-pc-windows-gnu/release/firmwarekit.exe \
+    --engine libqemu-arm.dll --usbmuxd lighttouch-usbmuxd.exe --guest-tools guest-tools --lib dlls/ \
+    --notices engine=notices/engine --notices usb=notices/usb \
+    --group-source engine=https://github.com/blake-lucas/qemu-ios --zip
+```
+
 `LIGHTTOUCH_DATA` overrides the data folder (default `~/.local/share/LightTouch`, `%LOCALAPPDATA%\LightTouch\App`,
 `~/Library/Application Support/LightTouch`); `LIGHTTOUCH_RESOURCES` the bundled resources folder.
 To check the UI where nothing can capture the screen (over ssh), `LIGHTTOUCH_UI_SHOT=file.png` saves the window after
@@ -59,6 +72,7 @@ To check the UI where nothing can capture the screen (over ssh), `LIGHTTOUCH_UI_
 | Legacy Store, specific versions, IPA install, last crash (Rust usbmux/lockdown/AFC/instproxy over usbmuxd-qemu) | Done (Linux), checked on iPod touch 2G 3.1.3 and 4.2.1 and iPhone 3GS 5.1.1; a store install takes ~20 s from attach. Following the guest when it reattaches under a new usbmux id is written but not yet exercised |
 | macOS | Everything above works on an M-series Mac: prepare (firmwarekit and `lighttouch-oneshot` built there from this tree; n72 3.1.3 downloaded and prepared in 23 s), sessions in the same egui UI (Retina, system theme), Legacy Store installs with the 0.0.9 app's usbmuxd. Needs the engine's indirect-cache JIT fix (qemu-ios `079f70a607`; the guest hangs in iBoot without it); tested with that fix relinked into the 0.0.9 engine, not yet an engine built from source |
 | Windows | Builds by cross-compiling from Linux (below). Under Wine: import, sessions from the CLI and the UI (boots, clean shutdown, frames, controls). Not checkable under Wine: guest GPU drawing (the engine refuses software OpenGL, so the screen is black there), audio (no device), and app services (the USB daemon checks who owns each loopback connection, which Wine can't answer). Needs a real Windows run for those. The Rust `firmwarekit.exe` cross-builds and is in the dist; prepare under Windows not yet run |
-| Packaging (`cargo xtask dist`: AppImage, zip, .app) | To do |
+| Open source licenses (Settings > About), like the Android licence dialog | Done: lists `resources/licenses/<group>/manifest.json` (frontend, engine, firmware, usb) and shows a file once its SHA-256 matches. `stage-notices.py --package lighttouch` stages the app's crate notices |
+| Packaging | `scripts/release/package-desktop.py` assembles the Linux or Windows folder (and a zip) with every group's notices; checked on Linux (boots to the lock screen) and under Wine. Still to do: a glibc 2.31 Linux build and AppImage (the app is built on the host, glibc 2.39), the macOS .app, and wiring into `scripts/build-release.sh` (its engine and USB notice folders come from that build) |
 | `firmwarekit` in Rust (`crates/lighttouch-firmware`; Windows prep, no Swift toolchain) | Done for every board recipe: K48 family (iPad 1, iPod touch 3G/4G, iPhone 3GS/4), iPod touch 2G and iPhone OS 1.x (iPod touch 1G, original iPhone). Checked against the Swift tool: identity, kboot, NOR, iBoot and GID blobs byte-identical; every fit check, the guest package and activation records equal; the volumes equal file for file except binary plists' object order. 1.x now prepares on Linux (Swift needed a Mac) and boots to SpringBoard; the iPod touch 2G's 4.x keybag boot and sibling keybag ramdisks work. The same inputs give a byte-identical device on Linux, macOS and Windows (Wine). `scripts/build.sh firmwarekit-android` builds it for the APK. Open: an on-phone run, and the Mac's preparation boots (the relinked 0.0.9 engine there panics in the keybag boot; needs a current engine build) |
 | Rust tcp_usb host replacing usbmuxd-qemu | Later |
