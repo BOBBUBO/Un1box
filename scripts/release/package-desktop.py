@@ -2,7 +2,7 @@
 """Assemble the Rust desktop app's folder for Linux or Windows, with every component's notices for its licence page.
 
     package-desktop.py OUT --os linux|windows --app BIN --firmwarekit BIN --engine LIB --usbmuxd BIN
-        --guest-tools DIR [--lib FILE_OR_DIR]... [--notices GROUP=DIR]... [--group-source GROUP=URL]... [--source-reference URL] [--zip]
+        --guest-tools DIR [--lib FILE_OR_DIR]... [--notices GROUP=DIR]... [--group-source GROUP=URL]... [--source-reference URL] [--zip] [--appimage TOOLS]
 
 OUT/                    lighttouch[.exe]; Linux also gets LightTouch, a launcher that puts lib/ on the library path
 OUT/resources/          the engine, firmwarekit, the USB bridge, guest-tools/ (and on Windows, every --lib DLL)
@@ -14,7 +14,10 @@ OUT/resources/licenses/ frontend/ and firmware/ (stage-notices.py for the app an
 
 The binaries are built beforehand: the app and firmwarekit with `cargo build --release` (packaged builds use
 --features lighttouch-services/vendored-openssl, so the app needs no system OpenSSL), the engine with qemu-ios's
-contrib/portable scripts, the USB bridge with its own build. --zip also writes OUT.zip.
+contrib/portable scripts, the USB bridge with its own build (scripts/release/build-desktop-linux.sh builds the Linux app
+against glibc 2.31). --zip also writes OUT.zip. --appimage (Linux) also writes OUT.AppImage: an AppDir with the app in
+usr/bin, the resources in usr/lib/lighttouch and the libraries in usr/lib, sealed by Linux/packaging/seal-appimage.py
+with the pinned appimagetool and runtime in TOOLS.
 """
 import argparse, hashlib, json, re, shutil, subprocess, sys, zipfile
 from pathlib import Path
@@ -22,6 +25,22 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 NAME = re.compile(r"[A-Za-z0-9._-]+")  # what the licence page accepts in a notice path
 TRIPLES = {"linux": "x86_64-unknown-linux-gnu", "windows": "x86_64-pc-windows-gnu"}
+APPRUN = """#!/bin/sh
+# The bundled libraries (libfdt, libimobiledevice) come after the system's; resources are found beside usr/bin.
+APPDIR=${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$APPDIR/usr/bin/lighttouch" "$@"
+"""
+DESKTOP = """[Desktop Entry]
+Type=Application
+Name=LightTouch
+Comment=Run iPod touch and iPhone systems from an IPSW
+Exec=AppRun
+Icon=lighttouch
+Terminal=false
+Categories=System;Emulator;
+StartupNotify=true
+"""
 LAUNCHER = """#!/bin/sh
 # Puts the bundled libraries (libfdt, libimobiledevice) after the system's on the library path.
 HERE=$(dirname "$(readlink -f "$0")")
@@ -66,6 +85,7 @@ def main():
     a.add_argument("--group-source", action="append", default=[], metavar="GROUP=URL")
     a.add_argument("--source-reference", default="https://github.com/blake-lucas/LightTouch")
     a.add_argument("--zip", action="store_true")
+    a.add_argument("--appimage", type=Path, metavar="TOOLS", help="appimagetool-x86_64.AppImage and runtime-x86_64")
     args = a.parse_args()
     windows = args.os == "windows"
     exe = ".exe" if windows else ""
@@ -110,7 +130,39 @@ def main():
                     with f.open("rb") as s:
                         z.writestr(info, s.read(), zipfile.ZIP_DEFLATED)
         print(archive)
+    if args.appimage:
+        if windows:
+            raise SystemExit("package-desktop: --appimage is for Linux")
+        print(appimage(args.out, args.appimage))
     print(args.out)
+
+
+def appimage(out, tools):
+    """OUT.AppImage from the folder in OUT, through the release pipeline's sealer."""
+    work = out.parent / (out.name + ".appimage-work")
+    if work.exists():
+        shutil.rmtree(work)
+    appdir = work / "LightTouch.AppDir"
+    copy(out / "lighttouch", appdir / "usr/bin/lighttouch", 0o755)
+    shutil.copytree(out / "resources", appdir / "usr/lib/lighttouch")
+    if (out / "lib").is_dir():
+        for f in (out / "lib").iterdir():
+            copy(f, appdir / "usr/lib" / f.name)
+    (appdir / "AppRun").write_text(APPRUN)
+    (appdir / "AppRun").chmod(0o755)
+    (appdir / "lighttouch.desktop").write_text(DESKTOP)
+    copy(REPO / "Linux/packaging/lighttouch.svg", appdir / "lighttouch.svg")
+    files = {str(f.relative_to(appdir)): hashlib.sha256(f.read_bytes()).hexdigest()
+             for f in sorted(appdir.rglob("*")) if f.is_file()}
+    (appdir / "runtime-manifest.json").write_text(json.dumps({"schema": 1, "files": files}, indent=2) + "\n")
+    image = out.parent / (out.name + ".AppImage")
+    if image.exists():
+        image.unlink()
+    subprocess.run([sys.executable, str(REPO / "Linux/packaging/seal-appimage.py"), "--appdir", str(appdir),
+                    "--tool", str(tools / "appimagetool-x86_64.AppImage"), "--runtime", str(tools / "runtime-x86_64"),
+                    "--output", str(image), "--evidence", str(work / "seal")], check=True, stdout=subprocess.DEVNULL)
+    shutil.rmtree(work)
+    return image
 
 
 if __name__ == "__main__":
