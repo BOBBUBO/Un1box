@@ -104,6 +104,11 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var pausedByBackground = false
     private var firmware: IFirmware? = null
     private var firmwareBound = false
+    // A jailbreak is its own one-shot firmware worker, so it never disturbs a preparation's state.
+    private var edit: IFirmware? = null
+    private var editBound = false
+    private var jailbreaking by mutableStateOf(false)
+    private var jailbreakStage by mutableStateOf("")
     private var firmwareRestarting by mutableStateOf(false)
     private var pendingFirmwareStart = false
     private var firmwareExpectedExit = false
@@ -136,6 +141,89 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             }
         }
         override fun onServiceDisconnected(name: ComponentName) { firmware = null; if (!firmwareRestarting && !firmwareExpectedExit) prep.preparation = workerExitedRun() }
+    }
+    private val editConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) { edit = IFirmware.Stub.asInterface(binder) }
+        override fun onServiceDisconnected(name: ComponentName) { edit = null }
+    }
+
+    override val jailbreaking: Boolean get() = jailbreaking
+    override val jailbreakStage: String get() = jailbreakStage
+
+    /**
+     * Cydia on a device that is already in the library: firmwarekit edit --action jailbreak, the same edits a
+     * jailbroken preparation makes, through a stopped edit, so the device keeps its apps and data. It needs the
+     * device stopped (no guest running) and the bootstrap CydiaBootstrap downloads here.
+     */
+    override fun jailbreakSelected() {
+        // The device must be stopped: a running guest holds its volume, and the edit copies it.
+        if (jailbreaking || busy || status in listOf("running", "paused", "starting", "stopping") || preparationActive()) return
+        val device = selected ?: return
+        val folder = File(filesDir, "library/records/${device.id}")
+        if (!folder.isDirectory) { error = "The device's folder is missing; start it once, then try again"; return }
+        if (!CydiaBootstrap.ready(this)) {
+            // The bootstrap is downloaded and checked here, before firmwarekit runs, so the edit needs no network.
+            jailbreaking = true; jailbreakStage = "Downloading Cydia"; error = ""
+            CydiaBootstrap.start(this) { failure ->
+                handler.post {
+                    if (failure.isNotEmpty()) { jailbreaking = false; jailbreakStage = ""; error = failure }
+                    else { jailbreaking = false; jailbreakStage = ""; jailbreakSelected() }
+                }
+            }
+            return
+        }
+        jailbreaking = true; jailbreakStage = "Starting"; error = ""
+        if (editBound) { unbindService(editConnection); editBound = false }
+        edit = null
+        editBound = bindService(Intent(this, FirmwareService::class.java), editConnection, BIND_AUTO_CREATE)
+        startForegroundService(Intent(this, FirmwareService::class.java))
+        Thread({
+            try {
+                val worker = awaitEditWorker() ?: throw IllegalStateException("The firmware worker did not start")
+                worker.jailbreak(folder.absolutePath)
+                while (true) {
+                    val state = worker.status()
+                    val phase = state.getString("state") ?: "idle"
+                    val stage = state.getString("stage") ?: ""
+                    handler.post { if (jailbreaking) jailbreakStage = stage }
+                    if (phase in listOf("complete", "failed", "cancelled")) {
+                        val message = state.getString("error") ?: ""
+                        handler.post {
+                            jailbreaking = false; jailbreakStage = ""
+                            if (phase == "complete") notice = "Jailbroken. Start ${device.name} to finish installing Cydia."
+                            else error = message.ifEmpty { "The jailbreak did not finish" }
+                            releaseEdit()
+                        }
+                        return@Thread
+                    }
+                    Thread.sleep(500)
+                }
+            } catch (e: Exception) {
+                handler.post {
+                    jailbreaking = false; jailbreakStage = ""
+                    error = e.message ?: "The jailbreak did not start"
+                    releaseEdit()
+                }
+            }
+        }, "jailbreak").start()
+    }
+
+    /** The jailbreak worker binds asynchronously; wait for the binder, then for the service to answer. */
+    private fun awaitEditWorker(): IFirmware? {
+        repeat(60) {
+            edit?.let { return it }
+            Thread.sleep(100)
+        }
+        return edit
+    }
+
+    /** Ends the jailbreak worker's process (its status is spent) and shows the library as it is now. */
+    private fun releaseEdit() {
+        val worker = edit
+        edit = null
+        if (editBound) { unbindService(editConnection); editBound = false }
+        try { worker?.finish() } catch (_: RemoteException) { }
+        refreshDevices()
     }
     private fun workerExitedRun() = Bundle().apply { putString("state", "failed"); putString("error", "The preparation worker stopped unexpectedly. Try again.") }
     private val stockIpsw = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importStockIpsw(uri) }

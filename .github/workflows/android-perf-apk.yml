@@ -343,6 +343,48 @@ jobs:
           print(f'extracted firmwarekit, USB bridge and guest tools from {resolved_repo}@{resolved_tag} ({asset_name})')
           PY
 
+      # The APK carries the firmwarekit its base release was built with. That binary predates this branch, and
+      # its Cydia install spawns /usr/bin/tar, a path no Android has: the jailbreak (at preparation and from
+      # Settings on an existing device) fails on the phone. Building the tool here is what puts this branch's
+      # fix in the APK. It may not fail the build: the released binary is the fallback, and it does the rest.
+      # scripts/build.sh firmwarekit-android is the repository's own recipe (Swift SDK for Android).
+      - name: Build firmwarekit from this branch
+        id: firmwarekit
+        continue-on-error: true
+        env:
+          LT_SWIFT_ANDROID_SDK: aarch64-unknown-linux-android29
+          LT_SWIFT_ENV: /dev/null
+        run: |
+          set -uo pipefail
+          # The run's log is not readable everywhere, so a failure reports itself through check-run
+          # annotations: one line each, the tail of what went wrong.
+          report() {
+            if [ -f "$1" ]; then while IFS= read -r line; do echo "::error title=firmwarekit build::${line}"; done < <(tail -n 20 "$1"); fi
+            echo "::warning::firmwarekit was not built from this branch; the APK keeps the released one"
+            exit 0
+          }
+          command -v swift >/dev/null 2>&1 || { echo "::warning::the runner has no Swift toolchain; the APK keeps the released firmwarekit"; exit 0; }
+          swift --version
+          BUNDLE="$HOME/.swiftpm/swift-sdks/swift-6.4.1-RELEASE_android.artifactbundle"
+          if [ ! -d "$BUNDLE" ]; then
+            swift sdk list 2>/dev/null | sed 's/^/installed Swift SDK: /' || true
+            for url in \
+              https://download.swift.org/swift-6.4.1-release/android/swift-6.4.1-RELEASE_android.artifactbundle.tar.gz \
+              https://download.swift.org/swift-6.4.1-release/android/swift-6.4.1-RELEASE_android.artifactbundle.zip ; do
+              echo "swift sdk install $url"
+              if swift sdk install "$url" >>/tmp/swift-sdk.log 2>&1; then break; fi
+            done
+            [ -d "$BUNDLE" ] || report /tmp/swift-sdk.log
+          fi
+          cd "$GITHUB_WORKSPACE"
+          JOBS="$LT_JOBS" LT_SWIFT_ANDROID_BUNDLE="$BUNDLE" bash scripts/build.sh firmwarekit-android >/tmp/firmwarekit.log 2>&1 \
+            || report /tmp/firmwarekit.log
+          rm -rf "$GITHUB_WORKSPACE/ci/firmwarekit-built"
+          mkdir -p "$GITHUB_WORKSPACE/ci/firmwarekit-built"
+          cp -a build/firmwarekit/android "$GITHUB_WORKSPACE/ci/firmwarekit-built/android"
+          ls -la "$GITHUB_WORKSPACE/ci/firmwarekit-built/android"
+          echo "dir=$GITHUB_WORKSPACE/ci/firmwarekit-built/android" >> "$GITHUB_OUTPUT"
+
       - name: JDK 17
         uses: actions/setup-java@v4
         with:
@@ -539,7 +581,12 @@ jobs:
 
       - name: Build the APK
         working-directory: Android
+        env:
+          # Built from this branch when the step above managed it; otherwise the release's own binary.
+          LT_FIRMWAREKIT_DIR: ${{ steps.firmwarekit.outputs.dir }}
         run: |
+          : "${LT_FIRMWAREKIT_DIR:=$GITHUB_WORKSPACE/ci/firmwarekit/android}"
+          echo "firmwarekit: $LT_FIRMWAREKIT_DIR"
           ./gradlew --no-daemon --max-workers="$LT_JOBS" \
             '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' \
             --dependency-verification="$DECLARED_DEPENDENCY_VERIFICATION" \
@@ -548,7 +595,7 @@ jobs:
             -PportableDir="$GITHUB_WORKSPACE/Portable" \
             -PqemuSource="$GITHUB_WORKSPACE/qemu-ios" \
             -PengineRoot="$GITHUB_WORKSPACE/ci/engine" \
-            -PfirmwareKitDir="$GITHUB_WORKSPACE/ci/firmwarekit/android" \
+            -PfirmwareKitDir="$LT_FIRMWAREKIT_DIR" \
             -PguestToolsDir="$GITHUB_WORKSPACE/ci/guest-tools" \
             -PmobileServicesArm64="$GITHUB_WORKSPACE/ci/mobile-services/arm64-v8a" \
             -PsourceRevision="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" \

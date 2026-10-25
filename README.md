@@ -46,6 +46,11 @@ Install or unpack the build for your platform. You also need an iOS system for i
   HTTPatch on 3.x — from archives pinned by commit and SHA-1. iPhone OS 2.0 and later. On a phone the app downloads
   them itself, so the preparation needs no network.
 
+  A device that is already prepared can be jailbroken in place instead, keeping its apps and data: **Settings ›
+  Device › Jailbreak with Cydia** on Android runs `firmwarekit edit --device … --action jailbreak`, the same edits
+  through a stopped edit (the device must not be running). On macOS, **Device › Jailbreak…** does the same. Erase
+  returns to the jailbroken state, so the edit can't be undone.
+
 Then start the device. Use the on-screen Home, Power and volume buttons, and **Stop** to shut iOS down cleanly. Each device keeps its own storage, and the prepared system is never changed.
 
 ## Performance

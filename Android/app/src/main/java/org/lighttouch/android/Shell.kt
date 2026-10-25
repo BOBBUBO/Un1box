@@ -70,6 +70,11 @@ interface GuestHost {
     val faithfulScaler: Boolean
     fun useFaithfulScaler(on: Boolean)
     fun pickGuestTools()
+    /** True while firmwarekit adds Cydia to the selected device (a stopped edit; its apps and data stay). */
+    val jailbreaking: Boolean
+    /** What that edit is doing now, for the settings row. */
+    val jailbreakStage: String
+    fun jailbreakSelected()
     fun openLicenses()
     fun openPreparation()
     fun applySettings()

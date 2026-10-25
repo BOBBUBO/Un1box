@@ -58,6 +58,13 @@ class FirmwareService : Service() {
             putString("error", failure); putString("destination", destination); putString("timings", timings)
             putInt("uid", Process.myUid()); putInt("pid", Process.myPid()); putString("firmwareId", currentFirmwareId)
         }
+        override fun jailbreak(devicePath: String): Bundle {
+            check(consumed.compareAndSet(false, true)) { "A fresh firmware worker is required" }
+            foreground("Jailbreaking the device")
+            state = "preparing"; stage = "Starting"
+            Thread({ editJailbreak(File(devicePath)) }, "firmwarekit-edit").start()
+            return status()
+        }
         override fun cancel() { cancelling = true; process?.destroy() }
         override fun finish() {
             check(state != "preparing") { "Cancel preparation and wait for a terminal result before closing the worker" }
@@ -112,6 +119,36 @@ class FirmwareService : Service() {
             if (awake.isHeld) awake.release()
             // Decrypted firmware is only worth keeping for another build of the same IPSW; it is large.
             cache.deleteRecursively()
+        }
+    }
+
+    /**
+     * `firmwarekit edit --device <folder> --action jailbreak`: Cydia, Substrate and afc2 into an existing device's
+     * system volume through a stopped edit, so the device keeps its apps and data. Unlike a preparation, a failure
+     * leaves the folder where it is: firmwarekit discards the edit it began, and the device stays as it was.
+     */
+    private fun editJailbreak(device: File) {
+        val awake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LightTouch:jailbreak")
+        awake.acquire(60 * 60 * 1000L)
+        val libs = File(applicationInfo.nativeLibraryDir)
+        val cache = File(cacheDir, "firmwarekit")
+        try {
+            check(device.isDirectory) { "The device's folder is missing (${device.name})" }
+            // The activity downloads and checks the bootstrap (CydiaBootstrap); firmwarekit reads it beside the
+            // cache, as create does, and would download it only on a host with a network.
+            val bootstrap = CydiaBootstrap.directory(this)
+            val missing = CydiaBootstrap.files.keys.firstOrNull { !File(bootstrap, it).isFile }
+            check(missing == null) { "Cydia's bootstrap is missing ($missing); download it again" }
+            stage = "Editing the system volume"
+            run(libs, listOf("edit", "--device", device.path, "--action", "jailbreak", "--cache", cache.path))
+            done = total
+            state = "complete"
+            foreground("The device is jailbroken. Start it to finish installing Cydia.")
+        } catch (e: Exception) {
+            if (cancelling) state = "cancelled" else { failure = e.message ?: "The jailbreak failed"; state = "failed" }
+        } finally {
+            process = null
+            if (awake.isHeld) awake.release()
         }
     }
 
