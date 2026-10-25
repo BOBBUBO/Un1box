@@ -21,7 +21,7 @@ internal data class HitchFrame(val sequence: Long, val publishedNs: Long, val pr
 internal data class FrameBreakdown(val endNs: Long, val intervalMs: Float, val runMs: Float, val outsideMs: Float,
                                    val bqlMs: Float, val vcpuCpuMs: Float, val glMs: Float, val glPresentMs: Float, val mainCpuMs: Float)
 
-internal enum class EventKind(val label: String) { GL("GL call"), WAIT("Lock wait"), HOLD("Lock hold") }
+internal enum class EventKind(val label: String) { GL("GL call"), WAIT("Lock wait"), HOLD("Lock hold"), CALLBACK("Main loop") }
 internal data class SlowEvent(val startNs: Long, val endNs: Long, val kind: EventKind, val label: String) {
     val ms get() = (endNs - startNs) / 1e6f
 }
@@ -94,6 +94,10 @@ internal class HitchData(val directory: File, val frames: List<HitchFrame>, val 
                             val s = v[1].toLongOrNull(); val e = v[2].toLongOrNull()
                             if (s != null && e != null && e >= from)
                                 events.add(SlowEvent(s, e, if (line[0] == 'W') EventKind.WAIT else EventKind.HOLD, "${File(v[3]).name}:${v[4]}"))
+                        }
+                        'C' -> line.split(' ').takeIf { it.size >= 4 }?.let { v ->
+                            val s = v[1].toLongOrNull(); val e = v[2].toLongOrNull()
+                            if (s != null && e != null && e >= from) events.add(SlowEvent(s, e, EventKind.CALLBACK, v[3]))
                         }
                     }
                 }

@@ -316,8 +316,17 @@ class AppsWindow:
                 self.show_lookup(event["lookup"])
             return
         if "phase" in event:
-            self.message.set(event.get("status") or {"download": "Downloading app…", "upload": "Sending to guest…",
-                                                    "install": "Installing…"}.get(event["phase"], event["phase"]))
+            if event["phase"] == "install" and event.get("unpacked_total"):
+                # Unpacking is most of a large app's install; the helper follows the guest's free space.
+                done, total = event["unpacked"], event["unpacked_total"]
+                self.message.set("Unpacking · {:.0f} MB of {:.0f} MB".format(done / 1e6, total / 1e6))
+                self.progress["value"] = 100 * done / total
+                return
+            if event["phase"] == "install":     # iOS's own step names are internal
+                self.message.set("Unpacking…" if event.get("status") == "ExtractingPackage" else "Installing…")
+            else:
+                self.message.set(event.get("status") or {"download": "Downloading app…", "upload": "Sending to guest…"}
+                                 .get(event["phase"], event["phase"]))
             if isinstance(event.get("percent"), (int, float)):
                 self.progress["value"] = event["percent"]
         result = event.get("background", {})

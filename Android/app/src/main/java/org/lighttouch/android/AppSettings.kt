@@ -28,6 +28,10 @@ class AppSettings(context: Context) {
     private val volumeKeysState = mutableStateOf(prefs.getBoolean("volumeKeys", false))
     var volumeKeys: Boolean get() = volumeKeysState.value; set(v) { volumeKeysState.value = v; prefs.edit().putBoolean("volumeKeys", v).apply() }
 
+    /* Headphones in the device's jack: iOS skips its speaker processing (mono, EQ, limiter). Read at start. */
+    private val headphonesState = mutableStateOf(prefs.getBoolean("headphones", true))
+    var headphones: Boolean get() = headphonesState.value; set(v) { headphonesState.value = v; prefs.edit().putBoolean("headphones", v).apply() }
+
     private val hapticsState = mutableStateOf(prefs.getBoolean("haptics", true))
     var haptics: Boolean get() = hapticsState.value; set(v) { hapticsState.value = v; prefs.edit().putBoolean("haptics", v).apply() }
 

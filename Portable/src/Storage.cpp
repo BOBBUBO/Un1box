@@ -1433,6 +1433,9 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
                        v.second.kind == lt::Json::Boolean ? (v.second.text == "true" ? "on" : "off") : v.second.text);
             }
         }
+        // iOS then routes sound to the jack: stereo, without its speaker EQ and limiter (which cost guest CPU).
+        if (c->headphones)
+            option("headphones", "on");
         d->args = {"LightTouch", "-M", machine};
         // Chain TCG jumps across guest pages: iOS never remaps a code page to other code
         // in place (the engine's cross-page-chain property documents the assumption).

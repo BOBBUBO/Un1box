@@ -164,7 +164,11 @@ typedef struct {
     const char *machine, *bootrom_path, *guest_package_path;
     const char *serial_path;
     uint32_t audio_enabled;
+    /* Headphones in the jack: set only where the board reports LT_BOARD_HEADPHONES. */
+    uint32_t headphones;
 } lt_boot_config;
+/* lt_board_info.capabilities: the engine models this board's headphone jack. */
+#define LT_BOARD_HEADPHONES (1ull << 4)
 lt_status lt_device_boot_argv(lt_device *, const lt_boot_config *, int *argc, const char *const **argv, lt_error *);
 /* Owned argv remains valid until device close or next boot_argv call. */
 typedef enum {

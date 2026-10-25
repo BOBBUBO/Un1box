@@ -25,7 +25,10 @@ out = sh("dumpsys", "SurfaceFlinger", "--timestats", "-dump")
 sh("dumpsys", "SurfaceFlinger", "--timestats", "-disable")
 i = out.find("SurfaceView[" + PKG)
 blk = out[i:out.find("layerName", i + 10)]
-h = {int(k): int(v) for k, v in re.findall(r"(\d+)ms=(\d+)", re.search(r"present2present histogram is as below:\n([^\n]*)", blk).group(1)) if int(v)}
+m = re.search(r"(?:present2present|presentToPresent) histogram is as below:\n([^\n]*)", blk) if i >= 0 else None
+if not m:
+    sys.exit("no guest frames in the window (a static screen, or the guest layer not found)")
+h = {int(k): int(v) for k, v in re.findall(r"(\d+)ms=(\d+)", m.group(1)) if int(v)}
 n = int(re.search(r"totalFrames = (\d+)", blk).group(1))
 gaps = sum(h.values()); mean = sum(k * v for k, v in h.items()) / max(gaps, 1)
 print(f"frames={n} over {secs:.0f}s => {n/secs:.1f} fps delivered; mean gap {mean:.1f}ms; hist {dict(sorted(h.items()))}")

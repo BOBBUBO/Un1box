@@ -53,7 +53,7 @@ internal val testedFirmwares = setOf(
 internal const val recommendedFirmware = "n72ap-7E18"
 
 /** Tested firmwares that run noticeably slower than the iPod touch 2G on iOS 3.1.3, the one to pick first. */
-internal val slowFirmwares = setOf("n81ap-10B500", "n88ap-9B206", "n90ap-8C148", "n90ap-8L1")
+internal val slowFirmwares = setOf("n88ap-9B206", "n90ap-8C148", "n90ap-8L1")
 
 internal object FirmwareCatalog {
     fun load(context: Context): List<CatalogFirmware> =

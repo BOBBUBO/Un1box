@@ -18,8 +18,8 @@ internal object Native {
     external fun frameTimeline(since: Long): LongArray
     external fun setPresentScale(mode: Int)
     external fun setPresentVisible(visible: Boolean)
-    external fun start(libraryRoot: String, id: String): String
-    external fun recoverStart(libraryRoot: String, id: String): String
+    external fun start(libraryRoot: String, id: String, headphones: Boolean): String
+    external fun recoverStart(libraryRoot: String, id: String, headphones: Boolean): String
     external fun status(): Array<String>
     external fun guestFrameBuckets(): IntArray
     external fun claimDisplay(): Long
