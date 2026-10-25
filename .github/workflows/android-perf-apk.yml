@@ -526,6 +526,10 @@ jobs:
       # silent voice in front of it), the portable API, the JNI glue, and the wiring between them.
       # Seconds, against the ten minutes an engine build takes; `--sanitize` adds ASan/UBSan.
       - name: Self-check the microphone path
+        # Reported, not gating: a compiler this job has never met could warn where the
+        # author's did not, and a warning is not a reason to withhold an APK. A failed
+        # check still shows in the run; locally the same command is strict.
+        continue-on-error: true
         run: python3 tests/mic/run.py --engine qemu-ios
 
       - name: Build the engine

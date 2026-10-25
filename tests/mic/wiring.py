@@ -10,6 +10,7 @@ ordering that made the first device build record silence.
 Each check raises with one sentence when it fails, and returns a short note when
 it passes.
 """
+import os
 import re
 import shutil
 import subprocess
@@ -205,9 +206,8 @@ def patch_stack(patch_dir, engine):
         subprocess.run(["git", "-c", "user.name=mic-selftest", "-c", "user.email=mic@selftest",
                         "commit", "-q", "-m", "engine patches"],
                        cwd=tree, check=True, capture_output=True,
-                       env={"GIT_AUTHOR_DATE": "2001-01-01T00:00:00Z",
-                            "GIT_COMMITTER_DATE": "2001-01-01T00:00:00Z",
-                            "PATH": "/usr/bin:/bin:/usr/local/bin"})
+                       env={**os.environ, "GIT_AUTHOR_DATE": "2001-01-01T00:00:00Z",
+                            "GIT_COMMITTER_DATE": "2001-01-01T00:00:00Z"})
         dirty = subprocess.run(["git", "status", "--porcelain"], cwd=tree, capture_output=True, text=True)
         if dirty.stdout.strip():
             raise AssertionError(f"the patched engine tree is dirty after the commit: {dirty.stdout.strip()[:400]}")
