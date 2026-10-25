@@ -1,4 +1,4 @@
-From 85a58fb013e58a99f34863f47a6f779a75d788e2 Mon Sep 17 00:00:00 2001
+From e319d883661be3498298fa6b0f2dc166a3261614 Mon Sep 17 00:00:00 2001
 From: a <a@b>
 Date: Sun, 25 Oct 2026 17:56:41 +0000
 Subject: [PATCH] net: slirp DNS on Android, and build the engine with slirp
@@ -6,10 +6,10 @@ Subject: [PATCH] net: slirp DNS on Android, and build the engine with slirp
 ---
  contrib/portable/build-engine.py |   2 +-
  include/net/slirp.h              |   5 +-
- net/meson.build                  |   2 +-
+ net/meson.build                  |   9 ++-
  net/slirp-dns.c                  | 104 +++++++++++++++++++++++++++----
  net/slirp.c                      |   9 ++-
- 5 files changed, 104 insertions(+), 18 deletions(-)
+ 5 files changed, 111 insertions(+), 18 deletions(-)
 
 diff --git a/contrib/portable/build-engine.py b/contrib/portable/build-engine.py
 index c65e1a1..5be5048 100755
@@ -41,15 +41,22 @@ index 6743e33..d6da6be 100644
  #endif
  
 diff --git a/net/meson.build b/net/meson.build
-index 5fd7970..0bde3a7 100644
+index 5fd7970..cc43e87 100644
 --- a/net/meson.build
 +++ b/net/meson.build
-@@ -38,7 +38,7 @@ if enable_passt
+@@ -38,7 +38,14 @@ if enable_passt
    system_ss.add(files('passt.c'))
  endif
  system_ss.add(when: slirp, if_true: files('slirp.c'))
 -if host_os == 'darwin'
-+if host_os in ['darwin', 'android']
++# host_os stays 'linux' for the Android cross build (QEMU only records Android as a
++# rust os variant), so the target is asked of the compiler itself.
++compiling_for_android = cc.compiles('''
++#ifndef __ANDROID__
++#error not Android
++#endif
++''', name: 'Android target')
++if host_os == 'darwin' or compiling_for_android
    system_ss.add(when: slirp, if_true: files('slirp-dns.c'))
  endif
  system_ss.add(when: vde, if_true: files('vde.c'))
