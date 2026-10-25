@@ -72,6 +72,10 @@ pub struct Session {
     pub stats: FrameStats,
     /// When each frame was published and shown, for the frame inspector.
     pub timeline: crate::inspector::Timeline,
+    /// The detailed timing capture running now: its folder and when it began.
+    capture: Option<(PathBuf, Instant)>,
+    /// A pause was asked for (the worker confirms it with its next status).
+    pause_requested: bool,
     stop_requested: Option<Instant>,
 }
 
@@ -169,6 +173,8 @@ impl Session {
             last_sequence: 0,
             stats: FrameStats::default(),
             timeline: Default::default(),
+            capture: None,
+            pause_requested: false,
             stop_requested: None,
         };
         if options.muted {
@@ -288,6 +294,7 @@ impl Session {
 
     pub fn set_paused(&mut self, paused: bool) {
         if matches!(self.phase, Phase::Running | Phase::Paused) {
+            self.pause_requested = paused;
             self.send(&Command::Pause { paused });
         }
     }
@@ -316,6 +323,49 @@ impl Session {
 
     pub fn profile(&mut self, path: Option<PathBuf>) {
         self.send(&Command::Profile { path });
+    }
+
+    /// Detailed frame timing, as on Android: while `wanted` and the guest runs, an engine capture records into a new
+    /// folder under `root`, restarted at a size or time limit. Only the newest two automatic captures are kept, and
+    /// any the frame inspector claimed.
+    pub fn keep_timing(&mut self, wanted: bool, root: &Path) {
+        const MAX_BYTES: u64 = 64 << 20;
+        const MAX_AGE: Duration = Duration::from_secs(600);
+        let running = matches!(self.phase, Phase::Running) && !self.pause_requested;
+        if let Some((dir, started)) = &self.capture {
+            let size = std::fs::metadata(dir.join("events.tsv")).map_or(0, |m| m.len());
+            if !wanted || !self.phase.active() || size > MAX_BYTES || started.elapsed() > MAX_AGE {
+                self.profile(None);
+                self.capture = None;
+            }
+        }
+        if wanted && running && self.capture.is_none() {
+            let dir = root.join(format!("{:020}", lighttouch_core::monotonic_ns()));
+            if std::fs::create_dir_all(&dir).is_ok() {
+                self.profile(Some(dir.join("events.tsv")));
+                self.capture = Some((dir.clone(), Instant::now()));
+                let mut old: Vec<PathBuf> = std::fs::read_dir(root)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| *p != dir && !p.join("keep").exists())
+                    .collect();
+                old.sort();
+                let excess = old.len().saturating_sub(1);
+                for stale in old.into_iter().take(excess) {
+                    let _ = std::fs::remove_dir_all(stale);
+                }
+            }
+        }
+    }
+
+    /// Stop the detailed timing capture and keep it (for the frame inspector); its events file.
+    pub fn claim_timing(&mut self) -> Option<PathBuf> {
+        let (dir, _) = self.capture.take()?;
+        self.profile(None);
+        let _ = std::fs::write(dir.join("keep"), b"");
+        Some(dir.join("events.tsv"))
     }
 
     /// Whether the guest's display is off (iOS auto-locked or Sleep/Wake pressed).

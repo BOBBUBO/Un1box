@@ -3,8 +3,12 @@
 //! chart to read one frame, then save the range as a report.
 use super::{App, Page, icons, settings::open_path, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, vec2};
-use lighttouch_model::inspector::{Frame, RangeStats, Snapshot};
+use lighttouch_model::inspector::{Detail, Frame, RangeStats, SlowEvent, Snapshot, load_detail};
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
+
+/// The detail chart's segment colours: GL, lock waits, other guest work, everything else.
+const OTHER: Color32 = Color32::from_rgb(0x5A, 0x63, 0x66);
 
 pub struct InspectorState {
     snapshot: Snapshot,
@@ -14,13 +18,26 @@ pub struct InspectorState {
     picked: Option<Frame>,
     drag_anchor: Option<u64>,
     saved: Option<PathBuf>,
+    /// Detailed timing being read in the background.
+    loading: Option<Receiver<Detail>>,
+    all_events: bool,
 }
 
 impl InspectorState {
     pub fn new(snapshot: Snapshot, resume_on_close: bool) -> Self {
         let range = snapshot.initial_range();
         let picked = worst(&snapshot.frames_in(range.0, range.1));
-        Self { snapshot, resume_on_close, range, picked, drag_anchor: None, saved: None }
+        // The capture was just asked to stop; give the engine a moment to flush it before reading.
+        let loading = snapshot.events.clone().map(|path| {
+            let (send, receive) = mpsc::channel();
+            let from = snapshot.snapshot_ns.saturating_sub(120_000_000_000);
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                let _ = send.send(load_detail(&path, from));
+            });
+            receive
+        });
+        Self { snapshot, resume_on_close, range, picked, drag_anchor: None, saved: None, loading, all_events: false }
     }
 
     fn select(&mut self, range: (u64, u64)) {
@@ -53,6 +70,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         app.page = Page::Device;
         return;
     };
+    if let Some(detail) = state.loading.as_ref().and_then(|r| r.try_recv().ok()) {
+        state.snapshot.detail = Some(detail);
+        state.loading = None;
+    }
+    if state.loading.is_some() {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    }
     let mut close = false;
     let mut save = false;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -114,7 +138,10 @@ fn body(ui: &mut Ui, p: &theme::Palette, state: &mut InspectorState, save: &mut 
     });
     ui.add_space(14.0);
     let selected = state.snapshot.frames_in(state.range.0, state.range.1);
-    detail(ui, p, &selected, &mut state.picked);
+    detail(ui, p, &selected, state.snapshot.detail.as_ref(), &mut state.picked);
+    if state.snapshot.detail.is_some() {
+        legend(ui, p);
+    }
     ui.add_space(14.0);
     let stats = RangeStats::of(&selected);
     ui.columns(4, |columns| {
@@ -130,6 +157,45 @@ fn body(ui: &mut Ui, p: &theme::Palette, state: &mut InspectorState, save: &mut 
     if let Some(frame) = state.picked {
         ui.add_space(14.0);
         frame_card(ui, p, &state.snapshot, frame);
+    }
+    ui.add_space(14.0);
+    match (&state.snapshot.detail, state.loading.is_some()) {
+        (Some(detail), _) => {
+            label(ui, "Slow engine events in range".to_string());
+            let mut slow = detail.events_in(state.range.0, state.range.1);
+            slow.sort_by(|a, b| b.ms().total_cmp(&a.ms()));
+            slow.truncate(30);
+            if slow.is_empty() {
+                ui.label(widgets::muted(p, "None over 0.5 ms.").size(12.0));
+            }
+            let shown = if state.all_events { slow.len() } else { slow.len().min(8) };
+            for event in &slow[..shown] {
+                event_row(ui, p, event, start);
+            }
+            if slow.len() > 8 {
+                let text = if state.all_events { "Show fewer".to_string() } else { format!("Show all {}", slow.len()) };
+                if widgets::text_button(ui, p, &text).clicked() {
+                    state.all_events = !state.all_events;
+                }
+            }
+        }
+        (None, true) => {
+            ui.label(widgets::muted(p, "Reading detailed timing…").size(12.0));
+        }
+        (None, false) => {
+            egui::Frame::new().fill(p.container_high).corner_radius(CornerRadius::same(12)).inner_margin(egui::Margin::same(14)).show(
+                ui,
+                |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(widgets::icon_text(icons::INFO, 18.0).color(p.primary));
+                        ui.label(RichText::new(
+                            "Turn on Detailed frame timing in Settings › Diagnostics to see where each frame's time went: guest CPU, GL and lock waits. It costs a few percent of speed while on.",
+                        ).size(12.5));
+                    });
+                },
+            );
+        }
     }
     ui.add_space(16.0);
     ui.horizontal(|ui| {
@@ -194,7 +260,7 @@ fn overview(ui: &mut Ui, p: &theme::Palette, state: &mut InspectorState) {
 }
 
 /// The selected frames as bars sized by frame time, guides at 16.7/33.3/50 ms; click one to read it.
-fn detail(ui: &mut Ui, p: &theme::Palette, frames: &[Frame], picked: &mut Option<Frame>) {
+fn detail(ui: &mut Ui, p: &theme::Palette, frames: &[Frame], timing: Option<&Detail>, picked: &mut Option<Frame>) {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 180.0), Sense::click());
     let top = (frames.iter().map(|f| f.interval_ms).fold(0.0, f32::max) * 1.1).clamp(40.0, 250.0);
     let y = |ms: f32| rect.bottom() - ms.min(top) / top * rect.height();
@@ -224,7 +290,27 @@ fn detail(ui: &mut Ui, p: &theme::Palette, frames: &[Frame], picked: &mut Option
         for (i, f) in frames.iter().enumerate() {
             let left = rect.left() + i as f32 * w;
             let bar = Rect::from_min_max(Pos2::new(left, y(f.interval_ms)), Pos2::new(left + w - gap, rect.bottom()));
-            painter.rect_filled(bar, 0.0, frame_color(f.interval_ms));
+            match timing.and_then(|d| d.breakdown_for(f)) {
+                // Stacked from the bottom: GL, lock waits, other guest work, then everything else.
+                Some(b) => {
+                    let mut base = rect.bottom();
+                    for (ms, color) in [
+                        (b.gl_ms, theme::GPU),
+                        (b.bql_ms, theme::WARNING),
+                        ((b.run_ms - b.gl_ms).max(0.0), theme::CPU),
+                        (f.interval_ms, OTHER),
+                    ] {
+                        let top_y = (base - ms.max(0.0) / top * rect.height()).max(bar.top());
+                        if base > top_y {
+                            painter.rect_filled(Rect::from_x_y_ranges(bar.x_range(), top_y..=base), 0.0, color);
+                        }
+                        base = top_y;
+                    }
+                }
+                None => {
+                    painter.rect_filled(bar, 0.0, frame_color(f.interval_ms));
+                }
+            }
             if Some(*f) == *picked {
                 let mark = Rect::from_min_size(Pos2::new(left, bar.top() - 5.0), vec2((w - gap).max(2.0), 2.0));
                 painter.rect_filled(mark, 0.0, p.on_surface);
@@ -262,7 +348,8 @@ fn histogram(ui: &mut Ui, p: &theme::Palette, stats: &RangeStats) {
     for (i, label) in RangeStats::BUCKET_LABELS.iter().enumerate() {
         ui.horizontal(|ui| {
             ui.add_sized([72.0, 16.0], egui::Label::new(widgets::muted(p, *label).size(11.0)));
-            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width() - 48.0, 14.0), Sense::hover());
+            let width = ui.available_width() - 44.0 - ui.spacing().item_spacing.x;
+            let (rect, _) = ui.allocate_exact_size(vec2(width.max(0.0), 14.0), Sense::hover());
             let filled = Rect::from_min_size(
                 rect.min,
                 vec2(rect.width() * stats.buckets[i] as f32 / most as f32, rect.height()),
@@ -290,11 +377,78 @@ fn frame_card(ui: &mut Ui, p: &theme::Palette, snapshot: &Snapshot, frame: Frame
         } else {
             "skipped (a newer frame replaced it)".to_string()
         };
-        ui.horizontal(|ui| {
-            ui.label(widgets::muted(p, "Shown in the window after"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(shown).monospace());
+        let line = |ui: &mut Ui, name: &str, value: String| {
+            ui.horizontal(|ui| {
+                ui.label(widgets::muted(p, name));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(value).monospace());
+                });
             });
+        };
+        line(ui, "Shown in the window after", shown);
+        let Some(detail) = &snapshot.detail else { return };
+        let ms = |v: f32| format!("{v:.2} ms");
+        if let Some(b) = detail.breakdown_for(&frame) {
+            line(ui, "Guest code (vCPU running)", ms(b.run_ms));
+            line(ui, "  of which GL calls", ms(b.gl_ms));
+            line(ui, "  of which GL present", ms(b.gl_present_ms));
+            line(ui, "vCPU on a host core", ms(b.vcpu_cpu_ms));
+            line(ui, "vCPU halted or outside", ms(b.outside_ms));
+            line(ui, "Lock (BQL) waits", ms(b.bql_ms));
+            line(ui, "Main loop CPU", ms(b.main_cpu_ms));
+            let i = frame.interval_ms;
+            let hint = if b.run_ms > i * 0.8 && b.vcpu_cpu_ms < b.run_ms * 0.75 {
+                Some("The vCPU was runnable but often off-CPU: the computer scheduled other work or slowed the core.")
+            } else if b.gl_ms > i * 0.4 {
+                Some("GL calls took most of this frame: host driver or readback cost.")
+            } else if b.bql_ms > i * 0.25 {
+                Some("The vCPU spent much of this frame waiting for the engine lock.")
+            } else if b.run_ms > i * 0.8 {
+                Some("The guest was busy for the whole frame: more guest work than usual.")
+            } else {
+                None
+            };
+            if let Some(hint) = hint {
+                ui.add_space(6.0);
+                ui.label(RichText::new(hint).size(12.5).color(p.primary));
+            }
+        }
+        let from = frame.published_ns.saturating_sub((frame.interval_ms * 1e6) as u64);
+        let mut overlapping = detail.events_in(from, frame.published_ns);
+        overlapping.sort_by(|a, b| b.ms().total_cmp(&a.ms()));
+        if !overlapping.is_empty() {
+            ui.add_space(6.0);
+            ui.label(RichText::new("Slow events in this frame").font(theme::label()));
+            for event in overlapping.into_iter().take(6) {
+                event_row(ui, p, event, snapshot.start_ns());
+            }
+        }
+    });
+}
+
+fn legend(ui: &mut Ui, p: &theme::Palette) {
+    ui.horizontal(|ui| {
+        for (color, name) in
+            [(theme::GPU, "GL"), (theme::WARNING, "Lock wait"), (theme::CPU, "Guest CPU"), (OTHER, "Other")]
+        {
+            widgets::status_dot(ui, color, 8.0);
+            ui.label(widgets::muted(p, name).size(11.0));
+            ui.add_space(8.0);
+        }
+    });
+}
+
+fn event_row(ui: &mut Ui, p: &theme::Palette, event: &SlowEvent, start: u64) {
+    ui.horizontal(|ui| {
+        let color = if event.ms() > 8.0 { theme::DANGER } else { p.on_surface };
+        ui.add_sized(
+            [72.0, 18.0],
+            egui::Label::new(RichText::new(format!("{:6.2} ms", event.ms())).monospace().color(color)),
+        );
+        ui.vertical(|ui| {
+            ui.label(RichText::new(&event.label).size(12.5));
+            let when = format!("{} · {}", event.kind.label(), seconds(event.start_ns.saturating_sub(start)));
+            ui.label(widgets::muted(p, when).size(11.0));
         });
     });
 }

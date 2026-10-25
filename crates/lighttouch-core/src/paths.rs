@@ -70,6 +70,10 @@ impl DataDirs {
     pub fn cache(&self) -> PathBuf {
         self.root.join("cache")
     }
+    /// Detailed frame timing captures.
+    pub fn profiles(&self) -> PathBuf {
+        self.root.join("profiles")
+    }
     /// Frame inspector reports.
     pub fn reports(&self) -> PathBuf {
         self.root.join("reports")

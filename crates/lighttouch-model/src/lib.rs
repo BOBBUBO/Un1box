@@ -168,6 +168,7 @@ impl Model {
         if let Some(session) = &mut self.session {
             session.poll();
             session.kill_if_overdue();
+            session.keep_timing(self.settings.detailed_timing, &self.dirs.profiles());
             if let Some(error) = session.last_error.take() {
                 self.notice = Some((error, Instant::now()));
             }
@@ -376,7 +377,10 @@ impl Model {
         if pause {
             session.set_paused(true);
         }
-        Some((session.timeline.snapshot(&session.name, Some(session.log_path.clone())), pause))
+        let events = session.claim_timing();
+        let mut snapshot = session.timeline.snapshot(&session.name, Some(session.log_path.clone()));
+        snapshot.events = events;
+        Some((snapshot, pause))
     }
 
     /// Save an inspector range as a report folder; returns it.

@@ -54,7 +54,7 @@ impl Timeline {
                 interval_ms: w[1].published_ns.saturating_sub(w[0].published_ns) as f32 / 1e6,
             })
             .collect();
-        Snapshot { frames, snapshot_ns, device: device.to_string(), log }
+        Snapshot { frames, snapshot_ns, device: device.to_string(), log, events: None, detail: None }
     }
 }
 
@@ -79,6 +79,182 @@ pub struct Snapshot {
     pub device: String,
     /// The session's log, whose end goes in a report.
     pub log: Option<PathBuf>,
+    /// The detailed timing capture the inspector claimed, if detailed timing was on.
+    pub events: Option<PathBuf>,
+    /// Read from `events` (`load_detail`) once the capture has been flushed.
+    pub detail: Option<Detail>,
+}
+
+/// Where one frame interval went, from detailed timing (deltas of the engine's F records, ms).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Breakdown {
+    pub end_ns: u64,
+    pub interval_ms: f32,
+    /// Guest code: the vCPU running.
+    pub run_ms: f32,
+    /// The vCPU halted or outside guest code.
+    pub outside_ms: f32,
+    /// Waiting for the engine lock.
+    pub bql_ms: f32,
+    /// The vCPU thread on a host core.
+    pub vcpu_cpu_ms: f32,
+    pub gl_ms: f32,
+    pub gl_present_ms: f32,
+    pub main_cpu_ms: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventKind {
+    Gl,
+    Wait,
+    Hold,
+    Callback,
+}
+
+impl EventKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            EventKind::Gl => "GL call",
+            EventKind::Wait => "Lock wait",
+            EventKind::Hold => "Lock hold",
+            EventKind::Callback => "Main loop",
+        }
+    }
+}
+
+/// A slow engine event from the capture (the engine records those over 0.5 ms).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlowEvent {
+    pub start_ns: u64,
+    pub end_ns: u64,
+    pub kind: EventKind,
+    pub label: String,
+}
+
+impl SlowEvent {
+    pub fn ms(&self) -> f32 {
+        self.end_ns.saturating_sub(self.start_ns) as f32 / 1e6
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Detail {
+    pub breakdown: Vec<Breakdown>,
+    pub events: Vec<SlowEvent>,
+}
+
+impl Detail {
+    /// The record nearest a frame's publication (they come from the same engine event).
+    pub fn breakdown_for(&self, frame: &Frame) -> Option<Breakdown> {
+        self.breakdown
+            .iter()
+            .min_by_key(|b| b.end_ns.abs_diff(frame.published_ns))
+            .filter(|b| b.end_ns.abs_diff(frame.published_ns) < 8_000_000)
+            .copied()
+    }
+
+    pub fn events_in(&self, from: u64, to: u64) -> Vec<&SlowEvent> {
+        self.events.iter().filter(|e| e.end_ns >= from && e.start_ns <= to).collect()
+    }
+}
+
+/// Read the tail of a capture (at most 24 MiB) from `from_ns` on into per-frame deltas and slow events, as the Android
+/// inspector does. F records: `F ns ? run outside bql-outside bql-inside vcpu-cpu ? gl gl-present main-cpu`; G names a
+/// GL slot; S a GL call (start end slot); W/H a lock wait/hold (start end file line); C a main loop callback.
+pub fn load_detail(path: &Path, from_ns: u64) -> Detail {
+    use std::io::{BufRead, Read, Seek, SeekFrom};
+    let mut detail = Detail::default();
+    let Ok(mut file) = std::fs::File::open(path) else { return detail };
+    let length = file.metadata().map_or(0, |m| m.len());
+    let start = length.saturating_sub(24 << 20);
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return detail;
+    }
+    let mut reader = std::io::BufReader::with_capacity(1 << 16, file.take(u64::MAX));
+    let mut line = String::new();
+    if start > 0 {
+        let _ = reader.read_line(&mut line); // the partial first line
+    }
+    let mut names = std::collections::HashMap::new();
+    let mut gl = Vec::new();
+    let mut previous: Option<[u64; 9]> = None;
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let v: Vec<&str> = line.trim_end().split(' ').collect();
+        let num = |i: usize| v.get(i).and_then(|s| s.parse::<u64>().ok());
+        match v.first().copied() {
+            Some("F") if v.len() >= 12 => {
+                let parsed: Option<Vec<u64>> = [1, 3, 4, 5, 6, 7, 9, 10, 11].iter().map(|i| num(*i)).collect();
+                let Some(f) = parsed else { continue };
+                let f: [u64; 9] = f.try_into().unwrap();
+                if let Some(p) = previous {
+                    if f[0] >= from_ns {
+                        let d = |i: usize| f[i].saturating_sub(p[i]) as f32 / 1e6;
+                        detail.breakdown.push(Breakdown {
+                            end_ns: f[0],
+                            interval_ms: d(0),
+                            run_ms: d(1),
+                            outside_ms: d(2),
+                            bql_ms: d(3) + d(4),
+                            vcpu_cpu_ms: d(5),
+                            gl_ms: d(6),
+                            gl_present_ms: d(7),
+                            main_cpu_ms: d(8),
+                        });
+                    }
+                }
+                previous = Some(f);
+            }
+            Some("G") if v.len() >= 7 => {
+                if let Some(slot) = num(2) {
+                    names.insert(slot, v[6..].join(" "));
+                }
+            }
+            Some("S") if v.len() >= 4 => {
+                if let (Some(s), Some(e), Some(slot)) = (num(1), num(2), num(3)) {
+                    if e >= from_ns {
+                        gl.push((s, e, slot));
+                    }
+                }
+            }
+            Some(kind @ ("W" | "H")) if v.len() >= 5 => {
+                if let (Some(s), Some(e)) = (num(1), num(2)) {
+                    if e >= from_ns {
+                        let file = v[3].rsplit(['/', '\\']).next().unwrap_or(v[3]);
+                        detail.events.push(SlowEvent {
+                            start_ns: s,
+                            end_ns: e,
+                            kind: if kind == "W" { EventKind::Wait } else { EventKind::Hold },
+                            label: format!("{file}:{}", v[4]),
+                        });
+                    }
+                }
+            }
+            Some("C") if v.len() >= 4 => {
+                if let (Some(s), Some(e)) = (num(1), num(2)) {
+                    if e >= from_ns {
+                        detail.events.push(SlowEvent {
+                            start_ns: s,
+                            end_ns: e,
+                            kind: EventKind::Callback,
+                            label: v[3].to_string(),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for (s, e, slot) in gl {
+        let label = names.get(&slot).cloned().unwrap_or_else(|| format!("GL call {slot}"));
+        detail.events.push(SlowEvent { start_ns: s, end_ns: e, kind: EventKind::Gl, label });
+    }
+    detail.events.sort_by_key(|e| e.start_ns);
+    detail
 }
 
 impl Snapshot {
@@ -194,19 +370,66 @@ pub fn save_report(snapshot: &Snapshot, from: u64, to: u64, dir: &Path, stamp: &
     for (label, count) in RangeStats::BUCKET_LABELS.iter().zip(stats.buckets) {
         let _ = writeln!(summary, "  {label:<9} {count}");
     }
+    let detail = snapshot.detail.as_ref();
+    let _ = writeln!(
+        summary,
+        "{}",
+        if detail.is_some() {
+            "Detailed timing: on (selection.tsv has the per-frame breakdown, events.tsv the raw records)"
+        } else {
+            "Detailed timing: off (turn it on in Settings > Diagnostics for per-frame GL, CPU and lock timing)"
+        }
+    );
+    if let Some(detail) = detail {
+        let mut slow = detail.events_in(from, to);
+        slow.sort_by(|a, b| b.ms().total_cmp(&a.ms()));
+        if !slow.is_empty() {
+            let _ = writeln!(summary, "Slowest events:");
+            for e in slow.iter().take(20) {
+                let _ = writeln!(summary, "  {:7.2} ms  {:<9} {}", e.ms(), e.kind.label(), e.label);
+            }
+        }
+    }
     std::fs::write(folder.join("summary.txt"), summary).map_err(fail)?;
 
     let table = |frames: &[Frame]| {
-        let mut out = String::from("# sequence published-ns presented-ns interval-ms\n");
+        let mut out = String::from("# sequence published-ns presented-ns interval-ms");
+        if detail.is_some() {
+            out.push_str(" run-ms outside-ms bql-ms vcpu-cpu-ms gl-ms gl-present-ms main-cpu-ms");
+        }
+        out.push('\n');
         for f in frames {
-            let _ = writeln!(out, "{} {} {} {:.3}", f.sequence, f.published_ns, f.presented_ns, f.interval_ms);
+            let _ = write!(out, "{} {} {} {:.3}", f.sequence, f.published_ns, f.presented_ns, f.interval_ms);
+            if let Some(b) = detail.and_then(|d| d.breakdown_for(f)) {
+                let _ = write!(
+                    out,
+                    " {:.3} {:.3} {:.3} {:.3} {:.3} {:.3} {:.3}",
+                    b.run_ms, b.outside_ms, b.bql_ms, b.vcpu_cpu_ms, b.gl_ms, b.gl_present_ms, b.main_cpu_ms
+                );
+            }
+            out.push('\n');
         }
         out
     };
+    // The raw records from a second before the range to a second after.
+    if let (Some(_), Some(events)) = (detail, &snapshot.events) {
+        if let Ok(text) = std::fs::read_to_string(events) {
+            let window = from.saturating_sub(1_000_000_000)..=to + 1_000_000_000;
+            let kept: String = text
+                .lines()
+                .filter(|l| {
+                    l.starts_with('#')
+                        || l.split(' ').nth(1).and_then(|t| t.parse::<u64>().ok()).is_some_and(|t| window.contains(&t))
+                })
+                .flat_map(|l| [l, "\n"])
+                .collect();
+            std::fs::write(folder.join("events.tsv"), kept).map_err(fail)?;
+        }
+    }
     std::fs::write(folder.join("selection.tsv"), table(&selected)).map_err(fail)?;
     std::fs::write(folder.join("frames.tsv"), table(&snapshot.frames)).map_err(fail)?;
     let report = serde_json::json!({"from": from, "to": to, "frames": stats.frames, "averageFps": stats.avg_fps,
-        "lowFps": stats.low_fps, "worstMs": stats.worst_ms, "hitches": stats.hitches, "detailed": false});
+        "lowFps": stats.low_fps, "worstMs": stats.worst_ms, "hitches": stats.hitches, "detailed": detail.is_some()});
     std::fs::write(folder.join("report.json"), serde_json::to_string_pretty(&report).unwrap_or_default() + "\n")
         .map_err(fail)?;
     if let Some(log) = snapshot.log.as_ref().and_then(|p| std::fs::read(p).ok()) {
@@ -244,6 +467,27 @@ mod tests {
         let (from, to) = s.initial_range();
         let worst = s.frames.iter().find(|f| f.interval_ms == 70.0).unwrap();
         assert!(from <= worst.published_ns && worst.published_ns <= to);
+    }
+
+    #[test]
+    fn detail_records() {
+        let path = std::env::temp_dir().join(format!("lt-events-{}.tsv", std::process::id()));
+        let text = "# header\n\
+            F 1000000000 0 100 200 0 0 300 0 0 0 50\n\
+            G 0 7 0 0 0 glDrawArrays\n\
+            S 1005000000 1006000000 7\n\
+            W 1008000000 1010000000 ../system/cpus.c 120\n\
+            F 1016000000 0 10000100 2200200 1000000 500000 9000300 0 3000000 100000 2000050\n";
+        std::fs::write(&path, text).unwrap();
+        let d = load_detail(&path, 0);
+        assert_eq!(d.breakdown.len(), 1);
+        let b = d.breakdown[0];
+        assert_eq!((b.interval_ms, b.run_ms, b.bql_ms, b.gl_ms, b.main_cpu_ms), (16.0, 10.0, 1.5, 3.0, 2.0));
+        assert_eq!(d.events.len(), 2);
+        assert_eq!(d.events[0].label, "glDrawArrays");
+        assert_eq!(d.events[1].label, "cpus.c:120");
+        assert_eq!(d.events[1].kind, EventKind::Wait);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]

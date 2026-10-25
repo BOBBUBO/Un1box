@@ -149,6 +149,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         widgets::switch(ui, &p, &mut settings.inspect_button);
                     },
                 );
+                widgets::setting_row(
+                    ui,
+                    &p,
+                    icons::CPU,
+                    "Detailed frame timing",
+                    "Shows where each frame's time went in the frame inspector. Costs a few percent of speed.",
+                    |ui| {
+                        widgets::switch(ui, &p, &mut settings.detailed_timing);
+                    },
+                );
                 widgets::setting_row(ui, &p, icons::FILE, "Session logs", "What each device session printed", |ui| {
                     if widgets::tonal(ui, &p, "Open folder").clicked() {
                         let dir = app.model.dirs.logs();
