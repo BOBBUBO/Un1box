@@ -359,7 +359,9 @@ jobs:
           df -h / | tail -1
           # The engine build trees, the NDK and Gradle are the three big ones; the
           # image ships several preinstalled NDKs and system images we do not use.
-          sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/local/.ghcup /opt/ghc \
+          # Not /usr/share/swift: the firmwarekit cross-build runs later in this job and needs the image's
+          # Swift toolchain (the SDK for Android is built for its version).
+          sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/ghc \
             /usr/local/lib/android/sdk/system-images /usr/local/lib/android/sdk/emulator \
             /usr/local/lib/android/sdk/ndk /usr/local/lib/android/sdk/sources \
             /usr/local/share/chromium /usr/lib/firefox /var/lib/docker/overlay2/* || true
