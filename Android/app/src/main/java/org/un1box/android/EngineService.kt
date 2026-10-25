@@ -54,6 +54,7 @@ class EngineService : Service() {
     @Volatile private var usbError = ""
     private val networkSession = NetworkSession()
     @Volatile private var networkSetup = "Off"
+    @Volatile private var networkSetupError = false
     private val networkThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "network-setup") }
     private val cpuSampler by lazy { WorkerCpuSampler() }
     private val profileTail = ProfileTail()
@@ -230,6 +231,7 @@ class EngineService : Service() {
             val s = Native.status()
             refreshNetworkSettings()
             val network = networkSession.snapshot()
+            val proxy = Native.networkStatus()
             s.getOrNull(2)?.takeIf { it.isNotEmpty() }?.let { error = it }
             if (s.firstOrNull() == "failed" && started.isConsumed() && failureRecorded.compareAndSet(false, true)) {
                 val retainedError = error.ifEmpty { "Guest worker failed; writable state and diagnostics retained. Start a fresh worker." }
@@ -263,12 +265,20 @@ class EngineService : Service() {
                 putString("usbMuxSocket", usb.muxSocket ?: "")
                 putString("appServicesError", usbError)
                 putString("networkStatus", if (!network.active.enabled) "Off" else "${network.active.summary} · $networkSetup" +
-                    if (networkSetup == "Ready") " · ${Native.networkStatus().firstOrNull().orEmpty()}" else "")
+                    if (networkSetup == "Ready") " · ${proxy.firstOrNull().orEmpty()}" else "")
+                putString("networkSetup", networkSetup)
+                putBoolean("networkSetupError", networkSetupError)
+                putString("networkActivity", proxy.firstOrNull().orEmpty())
+                putLong("networkConnections", proxy.getOrNull(2)?.toLongOrNull() ?: 0)
+                putLong("networkCompleted", proxy.getOrNull(4)?.toLongOrNull() ?: 0)
+                putLong("networkFailed", proxy.getOrNull(5)?.toLongOrNull() ?: 0)
+                putString("networkLastResult", proxy.getOrElse(6) { "" })
+                putBoolean("networkLastResultError", proxy.getOrNull(7) == "1")
                 putInt("networkMode", network.active.nativeMode)
                 putString("networkArchiveDate", network.active.archiveDate)
                 putBoolean("networkLocal", network.active.localNetwork)
                 putString("networkChangeNotice", network.notice)
-                putString("networkCertificateFingerprint", Native.networkStatus().getOrElse(1) { "" })
+                putString("networkCertificateFingerprint", proxy.getOrElse(1) { "" })
                 putBoolean("sessionStarted", started.isConsumed())
                 putBundle("observations", observations())
             }
@@ -390,6 +400,7 @@ class EngineService : Service() {
     /** Fixed typed operations only; no shell or arbitrary guest commands. A failed
      * mutation is reported once and is never silently replayed after a timeout. */
     private fun configureGuestNetwork() {
+        networkSetupError = false
         try {
             val operations = GuestNetworkOperation(Native::guestRequest, Native::guestPoll, Native::guestCancel,
                 { alive.get() && !stopping.get() }, SystemClock::elapsedRealtime, Thread::sleep)
@@ -421,6 +432,7 @@ class EngineService : Service() {
             networkSetup = "Ready"
         } catch (error: Exception) {
             networkSetup = error.message ?: "Network setup failed. Update guest tools and restart."
+            networkSetupError = true
         }
     }
 

@@ -725,9 +725,16 @@ JNI(networkUpdate) jobjectArray JNICALL Java_org_un1box_android_Native_networkUp
 }
 JNI(networkStatus) jobjectArray JNICALL Java_org_un1box_android_Native_networkStatus(JNIEnv *env,jobject) {
     std::lock_guard<std::mutex> lock(network_guard);
-    auto output=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
-    env->SetObjectArrayElement(output,0,string(env,network_proxy?network_proxy->status():"Off"));
-    env->SetObjectArrayElement(output,1,string(env,network_proxy?network_proxy->fingerprint():""));return output;
+    auto activity=network_proxy?network_proxy->activity():lt::network::Activity{};
+    auto output=env->NewObjectArray(8,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(output,0,string(env,network_proxy?activity.summary():"Off"));
+    env->SetObjectArrayElement(output,1,string(env,network_proxy?network_proxy->fingerprint():""));
+    env->SetObjectArrayElement(output,2,string(env,std::to_string(activity.connections)));
+    env->SetObjectArrayElement(output,3,string(env,std::to_string(activity.active)));
+    env->SetObjectArrayElement(output,4,string(env,std::to_string(activity.completed)));
+    env->SetObjectArrayElement(output,5,string(env,std::to_string(activity.failed)));
+    env->SetObjectArrayElement(output,6,string(env,activity.last_result));
+    env->SetObjectArrayElement(output,7,string(env,activity.last_result_error?"1":"0"));return output;
 }
 
 static jstring start_runtime(JNIEnv *env,jstring root,jstring id,bool allow_dirty,bool headphones) {

@@ -26,6 +26,15 @@ std::string archive_url(const std::string &target, const std::string &date);
 std::string archive_redirect(const std::string &current, const std::string &location,
                              const std::string &date);
 
+// One connection serves one HTTP request (or one CONNECT and its HTTPS request).
+// Count ingress before reading headers so a stalled guest is visible immediately.
+struct Activity {
+    uint64_t connections = 0, active = 0, completed = 0, failed = 0;
+    std::string last_result;
+    bool last_result_error = false;
+    std::string summary() const;
+};
+
 class Proxy {
 public:
     // directory is per-device private storage. CA keys never leave it. ca_directory
@@ -45,6 +54,7 @@ public:
     void listen(const std::string &socket_path);
     void serve(std::intptr_t connected_socket); // borrows the socket
     std::string status() const;
+    Activity activity() const;
 private:
     struct State;
     std::unique_ptr<State> state;

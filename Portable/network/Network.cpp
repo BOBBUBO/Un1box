@@ -366,13 +366,19 @@ struct Proxy::State {
     mutable std::mutex mutex;
     std::condition_variable idle;
     std::set<Socket> active;
-    std::string notice = "Waiting for the guest";
+    Activity activity;
     std::mutex gate;
     std::chrono::steady_clock::time_point next{}, cooldown{};
     struct Cached { std::string target, date; Reply reply; };
     std::list<Cached> cache;
     size_t cache_bytes = 0;
-    void message(const std::string &s) { std::lock_guard<std::mutex> lock(mutex); notice = s; }
+    void begin() { std::lock_guard<std::mutex> lock(mutex); ++activity.connections; ++activity.active; }
+    void finish(const std::string &result, bool error) {
+        std::lock_guard<std::mutex> lock(mutex);
+        --activity.active; ++activity.completed;
+        if (error) ++activity.failed;
+        activity.last_result = result; activity.last_result_error = error;
+    }
     Reply fetch(const Configuration &config, const std::string &url, const std::string &method, const Headers &request_headers = {}, const std::string &upload = "") {
         Address address = Address::parse(url); Connection origin(connect_to(address, config.local_network && config.mode == Mode::direct));
         if (address.scheme == "https") {
@@ -416,7 +422,7 @@ struct Proxy::State {
                 int seconds=60;
                 try { if (r.headers.count("retry-after")) seconds=int(number(r.headers["retry-after"],3600)); } catch (...) {}
                 cooldown=std::chrono::steady_clock::now()+std::chrono::seconds(std::max(1,seconds));
-                r.headers["retry-after"]=std::to_string(seconds); message("Internet Archive is busy; waiting before retrying"); return r;
+                r.headers["retry-after"]=std::to_string(seconds); return r;
             }
             if (r.status>=300 && r.status<400 && r.headers.count("location")) { url=archive_redirect(url,r.headers["location"],config.archive_date); continue; }
             r.headers.erase("set-cookie"); r.cookies.clear();
@@ -529,7 +535,12 @@ std::string Proxy::fingerprint() const {
     for (unsigned i=0;i<length;i++) { if (i) out+=':'; out+=hex[digest[i]>>4];out+=hex[digest[i]&15]; }
     return out;
 }
-std::string Proxy::status() const { std::lock_guard<std::mutex> lock(state->mutex); return state->notice; }
+std::string Activity::summary() const {
+    if (active) return std::to_string(active) + (active==1 ? " web connection in progress" : " web connections in progress");
+    return connections ? "Idle — no web connections in progress" : "No web connections received yet";
+}
+Activity Proxy::activity() const { std::lock_guard<std::mutex> lock(state->mutex); return state->activity; }
+std::string Proxy::status() const { return activity().summary(); }
 void Proxy::configure(Configuration config) {
     require(config.mode==Mode::off || config.mode==Mode::direct || config.mode==Mode::archive,400,"Invalid network mode");
     require(config.mode!=Mode::archive || Configuration::valid_date(config.archive_date),400,"Choose a valid archive date");
@@ -570,6 +581,7 @@ void Proxy::serve(std::intptr_t socket) {
     int no_pipe = 1; setsockopt(Socket(socket), SOL_SOCKET, SO_NOSIGPIPE, &no_pipe, sizeof(no_pipe));
 #endif
     Connection guest(Socket(socket),false);
+    state->begin();
     try {
         require(state->configuration().mode!=Mode::off,503,"Networking is off");
         std::string line=guest.line(); std::istringstream first(line); std::string method,target,version,extra;
@@ -613,10 +625,15 @@ void Proxy::serve(std::intptr_t socket) {
         // cache in the host, where its key includes the selected date.
         if (config.mode==Mode::archive) reply.headers["cache-control"]="no-store";
         guest.write(response(reply,method=="HEAD"));
-        state->message(reply.status==404 && config.mode==Mode::archive ? "No archived capture is available for this page" : "Connected");
+        std::string result = "HTTP " + std::to_string(reply.status);
+        if (config.mode==Mode::archive) {
+            if (reply.status==404) result = "No archived capture is available for this page";
+            if (reply.status==429 || reply.status==503) result = "Internet Archive is busy. Try reloading later.";
+        }
+        state->finish(result, reply.status>=400);
     } catch (const std::exception &error) {
-        state->message(error.what());
         try { auto typed=dynamic_cast<const Error *>(&error); guest.write(response({typed?typed->status:502,{{"content-type","text/plain; charset=utf-8"}},std::string(error.what())+"\n"})); } catch (...) {}
+        state->finish(error.what(), true);
     }
 }
 } // namespace lt::network

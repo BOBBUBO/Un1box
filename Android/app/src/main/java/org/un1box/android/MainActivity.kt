@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
-    override var networkStatus by mutableStateOf("")
+    override var networkSessionStatus by mutableStateOf(NetworkSessionStatus())
         private set
     override var networkChangeNotice by mutableStateOf("")
         private set
@@ -262,7 +262,19 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             if (socket != muxSocket) { muxSocket = socket; store.guestChanged(); if (socket.isNotEmpty() && overlay == Screen.STORE) store.refreshGuest() }
                             appServicesError = b.getString("appServicesError") ?: ""
                             cameraStatus = b.getString("cameraStatus") ?: ""
-                            networkStatus = b.getString("networkStatus") ?: ""
+                            networkSessionStatus = NetworkSessionStatus(
+                                available = b.containsKey("networkSetup"),
+                                mode = b.getInt("networkMode"),
+                                archiveDate = b.getString("networkArchiveDate").orEmpty(),
+                                setup = b.getString("networkSetup").orEmpty(),
+                                setupError = b.getBoolean("networkSetupError"),
+                                activity = b.getString("networkActivity").orEmpty(),
+                                connections = b.getLong("networkConnections"),
+                                completed = b.getLong("networkCompleted"),
+                                failed = b.getLong("networkFailed"),
+                                lastResult = b.getString("networkLastResult").orEmpty(),
+                                lastResultError = b.getBoolean("networkLastResultError"),
+                            )
                             networkChangeNotice = b.getString("networkChangeNotice") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()

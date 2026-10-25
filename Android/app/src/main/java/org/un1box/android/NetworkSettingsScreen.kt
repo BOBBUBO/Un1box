@@ -93,16 +93,58 @@ internal fun NetworkSettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     if (config.route == NetworkRoute.DIRECT) SwitchRow(LtIcons.Network, "Allow local network", "Reach other devices on your Wi-Fi network. Off by default", config.localNetwork, "network_local") { update(config.copy(localNetwork = it)) }
                 }
                 if (host.active) SettingsGroup("Current session") {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(host.networkStatus.ifEmpty { "Waiting for network status…" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("network_status"))
-                        host.networkChangeNotice.takeIf { it.isNotEmpty() }?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp).testTag("network_change_notice"))
-                        }
-                    }
+                    NetworkSessionInfo(host.networkSessionStatus, host.networkChangeNotice)
                 }
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+}
+
+@Composable
+internal fun NetworkSessionInfo(status: NetworkSessionStatus, changeNotice: String) {
+    Column(Modifier.fillMaxWidth().padding(16.dp).testTag("network_status"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+            Icon(LtIcons.Info, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Connection information for this session", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (!status.available) {
+            Text("Waiting for network status…", style = MaterialTheme.typography.bodyMedium)
+        } else {
+            SessionInfoLine("Connection", when (status.mode) {
+                1 -> NetworkRoute.DIRECT.label
+                2 -> NetworkRoute.ARCHIVE.label
+                else -> "Networking is off"
+            }, "network_session_connection")
+            if (status.mode == 2) {
+                val date = runCatching { LocalDate.parse(status.archiveDate, DateTimeFormatter.BASIC_ISO_DATE)
+                    .format(DateTimeFormatter.ofPattern("d MMMM yyyy")) }.getOrDefault(status.archiveDate)
+                SessionInfoLine("Archive date", date, "network_session_date")
+            }
+            if (status.mode != 0) {
+                SessionInfoLine(if (status.setupError) "Guest setup needs attention" else "Guest setup", if (status.setup == "Ready") "Ready — certificate and proxy settings installed" else status.setup,
+                    "network_session_setup", status.setupError)
+                SessionInfoLine("Web activity", status.activity, "network_session_activity")
+                if (status.connections > 0) SessionInfoLine("Session totals",
+                    "Connections received: ${status.connections}\nFinished: ${status.completed} · Errors: ${status.failed}", "network_session_totals")
+                if (status.lastResult.isNotEmpty()) SessionInfoLine(if (status.lastResultError) "Last result (error)" else "Last result", status.lastResult, "network_session_result", status.lastResultError)
+                if (status.setup == "Ready" && status.connections == 0L) {
+                    Text("Setup is complete. Open a page in Safari to check the connection. Being ready doesn’t confirm that a website can load.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (changeNotice.isNotEmpty()) SessionInfoLine("Settings update", changeNotice, "network_change_notice")
+    }
+}
+
+@Composable
+private fun SessionInfoLine(label: String, value: String, tag: String, error: Boolean = false) {
+    Column(Modifier.fillMaxWidth().testTag(tag), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium,
+            color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
     }
 }
 
