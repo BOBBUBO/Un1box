@@ -98,22 +98,6 @@ fn prefs_baked() -> Vec<(&'static str, Plist)> {
     ]
 }
 
-/// The 4.x keybag one-shot (N72Keybag); a stand-in until it is ported.
-mod pending {
-    use super::*;
-    #[allow(clippy::too_many_arguments)]
-    pub fn keybag_run(
-        _out: &Path,
-        _dec: &Path,
-        _ramdisk: &Path,
-        _it_keybag: &Path,
-        _bootrom: &Path,
-        _c: &Context,
-    ) -> Result<()> {
-        Err(crate::unsupported!("the iPod touch 2G's data-protection keybag boot is not ported yet"))
-    }
-}
-
 pub struct N72Board {
     recipe: crate::entry::Recipe,
     model: &'static str,
@@ -720,7 +704,19 @@ impl Board for N72Board {
     fn keybag(&mut self, c: &mut Context) -> Result<()> {
         let (source, name) = crate::k48_recipe::keybag_ramdisk(c)?;
         let bootrom = self.bootrom.clone().ok_or_else(|| filled("the iPod bootrom"))?;
-        pending::keybag_run(&c.o.out, c.decrypted()?, &source, &c.o.guest_tools.join(self.it_keybag()), &bootrom, c)?;
+        let machine: BTreeMap<String, String> = MACHINE.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let log = |l: &str| c.log(l);
+        crate::n72keybag::run(
+            &c.o.out,
+            c.decrypted()?,
+            &source,
+            &c.o.guest_tools.join(self.it_keybag()),
+            &bootrom,
+            &c.o.helper,
+            &machine,
+            &c.work,
+            &log,
+        )?;
         self.derived.insert("keybag_ramdisk".into(), json!(name));
         Ok(())
     }

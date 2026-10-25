@@ -56,6 +56,7 @@ pub mod n45ftl;
 pub mod n45nand;
 pub mod n45nor;
 pub mod n72_recipe;
+pub mod n72keybag;
 pub mod n72nand;
 pub mod n72nor;
 pub mod oneshot;

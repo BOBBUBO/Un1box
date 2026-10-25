@@ -110,6 +110,11 @@ impl DeviceTree {
         self.props.get(path)?.get(prop).copied()
     }
 
+    /// The property names of the node at `path`, sorted; empty for no such node.
+    pub fn prop_names(&self, path: &str) -> Vec<String> {
+        self.props.get(path).map(|p| p.keys().cloned().collect()).unwrap_or_default()
+    }
+
     pub fn has(&self, path: &str, prop: &str) -> bool {
         self.slot(path, prop).is_some()
     }

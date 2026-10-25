@@ -140,6 +140,21 @@ pub fn read_only(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// u+w on one file (a copy of a read-only output keeps its mode).
+pub fn writable(path: &Path) -> Result<()> {
+    let meta = std::fs::metadata(path).map_err(|e| crate::internal!("{}: {e}", path.display()))?;
+    let mut p = meta.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        p.set_mode(p.mode() | 0o200);
+    }
+    #[cfg(not(unix))]
+    #[allow(clippy::permissions_set_readonly_false)]
+    p.set_readonly(false);
+    std::fs::set_permissions(path, p).map_err(|e| crate::internal!("chmod u+w {}: {e}", path.display()))
+}
+
 /// The bytes free for this user on the filesystem holding `dir`; None where it can't tell.
 pub fn available(dir: &Path) -> Option<u64> {
     #[cfg(unix)]
