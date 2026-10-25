@@ -171,10 +171,9 @@ class EngineService : Service() {
             if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 &&
                 android.system.Os.getenv("LT_PGO_FILE") == null && android.system.Os.getenv("LT_PGO_DUMP") == null) {
                 android.system.Os.setenv("LT_PGO_FILE", File(filesDir, "pgo.profraw").absolutePath, false)
-                android.system.Os.setenv("LT_PGO_DUMP", "300", true)
+                android.system.Os.setenv("LT_PGO_DUMP", "300", false)
                 android.system.Os.setenv("LT_PGO_RESET", "30", false)
                 android.system.Os.setenv("LT_PGO_EVERY", "120", false)
-            }
             }
             // The Settings switch (AppSettings.headphones); the engine applies it only on boards that model the jack.
             val headphones = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("headphones", true)
