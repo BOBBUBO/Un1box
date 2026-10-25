@@ -98,6 +98,7 @@ so pull it after Stop. Each line is `monotonic_ns event a b c`. A missing `# end
 | --- | --- | --- |
 | `LT_FRAME_PATH=FILE` | Guest surface presents, LCD flips, vsync and scan, frame capture and publication | `framepath.py` |
 | `LT_FRAME_PATH_CONTEXT=on` | Also CONTEXTIDR and TTBR0 changes (guest address-space switches) | `frameresidency.py` |
+| `LT_FRAME_PATH_DELAY_MS=N` | Nothing until N ms after start, so the buffer goes to a game's steady state rather than boot | |
 | `LT_GUEST_TRACE_PC=PC,PC,…` (up to 32; bit 0 set for Thumb), `LT_GUEST_TRACE_DELAY_MS` | Register snapshots (PC, thread, R0–R3, LR, SP, R12, mode) each time a selected guest instruction is reached. Point sets for `n72ap-7E18` are in `tools/perf/n72-7e18-*-points.json` | `guestpoints.py`, `swapcalls.py`, `queuepath.py`, `audiostages.py` |
 | `LT_NATIVE_WAIT_PROF=on` / `conditions` | vCPU 0 mutex and condition waits of 10 µs or more, with their source site (`conditions`: condition waits only, so it works with the BQL spin; `on` is refused while the spin is installed, so on Android add `LT_BQL_SPIN=off`) | `nativewaits.py` |
 | `LT_BQL_FALLBACK_PROF=on` | With `LT_BQL_SPIN=on` and `LT_NATIVE_WAIT_PROF=conditions`: the blocking BQL takes left after the spin | `nativewaits.py` |

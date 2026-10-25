@@ -5,6 +5,13 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
+/** One app the guest has, as its installer lists it. */
+data class InstalledApp(val bundleId: String, val name: String?, val build: String?, val shortVersion: String?) {
+    /** What the app calls its version, which is what the store's version numbers match (the build number can be anything). */
+    val version get() = shortVersion ?: build
+    val title get() = name ?: bundleId
+}
+
 /**
  * Runs the bundled app-service helper (liblt_appservice.so, libimobiledevice over the
  * :engine worker's private usbmux socket) as a finite child process. One request per process:
@@ -17,13 +24,19 @@ internal class GuestApps(private val context: Context) {
     val available get() = helper.canExecute()
 
     /** Streams each JSON event to [event]; returns the final "result" object or throws its "error". */
-    fun run(socket: String, args: List<String>, timeoutSeconds: Long, event: (JSONObject) -> Unit = {}): JSONObject {
+    fun run(socket: String, args: List<String>, timeoutSeconds: Long, cancelled: () -> Boolean = { false }, event: (JSONObject) -> Unit = {}): JSONObject {
         if (!available) throw Failure("Guest app services are not included in this build.")
         val process = ProcessBuilder(listOf(helper.absolutePath) + args.take(1) + listOf("--socket", socket) + args.drop(1))
             .redirectErrorStream(true).start()
         process.outputStream.close()
         val watchdog = Thread({
-            try { if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) process.destroyForcibly() } catch (_: InterruptedException) { }
+            try {
+                // Polled, so a cancelled request stops within a quarter second.
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds)
+                while (!process.waitFor(250, TimeUnit.MILLISECONDS)) {
+                    if (cancelled() || System.nanoTime() > deadline) { process.destroyForcibly(); break }
+                }
+            } catch (_: InterruptedException) { }
         }, "guest-apps-watchdog").apply { isDaemon = true; start() }
         var result: JSONObject? = null; var error: String? = null; var lastLine = ""
         try {
@@ -51,10 +64,12 @@ internal class GuestApps(private val context: Context) {
         return target ?: throw Failure("The guest did not report its device type.")
     }
 
-    /** Installed user apps: bundle id to version. */
-    fun installed(socket: String): Map<String, String> {
-        val apps = run(socket, listOf("list"), 90).optJSONArray("apps") ?: return emptyMap()
-        return (0 until apps.length()).mapNotNull { apps.optJSONObject(it) }.associate { it.optString("bundle_id") to it.optString("version") }
+    /** The apps the user added (not Apple's own), by name. */
+    fun installedApps(socket: String): List<InstalledApp> {
+        val apps = run(socket, listOf("list"), 90).optJSONArray("apps") ?: return emptyList()
+        return (0 until apps.length()).mapNotNull { apps.optJSONObject(it) }.filter { it.optString("bundle_id").isNotEmpty() }
+            .map { InstalledApp(it.optString("bundle_id"), it.text("name"), it.text("version"), it.text("short_version")) }
+            .sortedBy { it.title.lowercase() }
     }
 
     /** The guest's newest crash report: (file name, the report's description text), or null if it has none. */
@@ -68,6 +83,6 @@ internal class GuestApps(private val context: Context) {
         return name to body
     }
 
-    fun install(socket: String, ipa: File, bundleId: String, event: (JSONObject) -> Unit): JSONObject =
-        run(socket, listOf("install", "--ipa", ipa.absolutePath, "--bundle-id", bundleId), 900, event)
+    fun install(socket: String, ipa: File, bundleId: String, cancelled: () -> Boolean, event: (JSONObject) -> Unit): JSONObject =
+        run(socket, listOf("install", "--ipa", ipa.absolutePath, "--bundle-id", bundleId), 900, cancelled, event)
 }

@@ -13,7 +13,7 @@ tested only the iPad on 3.2, 3.2.2 and 4.2.1 and the iPod touch 2G on 2.2, 2.2.1
 | --- | --- | --- | --- |
 | iPod touch 2G (n72ap) | 3.1.3 (7E18) | upstream's tested pick, fastest on phones | Tested, recommended |
 | iPod touch 2G | 4.2.1 (8C148) | its last iOS; apps that need iOS 4 | Tested |
-| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested; light games ~45–50 fps on a Poco F3, heavy ones ~20 |
+| iPod touch 4G (n81ap) | 6.1.6 (10B500) | its last iOS, widest app range of the iPods | Tested; most games at or near 60 fps on a Poco F3 (Jetpack Joyride's title ~55, Epic Citadel ~30) |
 | iPhone 4 (n90ap) | 6.1.3 (10B329) | its last iOS 6 (6.1.6 shipped only for the 3GS and iPod touch 4G); wide app range | not run off the Mac |
 
 Later: the iPhone 4 on 4.2.1/4.3.5 and the 3GS on 5.1.1 (Tested, slow), the iPod touch 3G 4.2.1 (Tested), the
@@ -39,6 +39,10 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 
 ## Performance (current focus)
 
+- [ ] Storage space: give back the space iOS frees. A device's NAND page files only grow: pages iOS
+  erases or no longer maps keep their bytes in the app's storage. Options: punch holes
+  (`fallocate(FALLOC_FL_PUNCH_HOLE)`) for pages an erase clears, the way QEMU discards; or compact a
+  stopped device's page files. Check what Android's file systems (f2fs, ext4) support first.
 - [ ] Android: steady ~60 Hz guest UI. Poco F3, engine 64d111110b, Home ↔ Spotlight swipes
   (`inappfps.py --swipes 10`, two runs): 55.3 / 56.3 fps, 94% of frames on the 16.7 ms cadence (was
   44.8–49.2). Pixel not re-measured.
@@ -220,6 +224,9 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   (Harness note: the guest re-sleeps ~5 s after a Power wake; a second Power tap before the wake
   shows puts it back to sleep.)
 - [ ] Stop was seen disabled once after Store use; not reproduced.
+- [ ] The Store's install queue keeps the guest running with LightTouch off screen (then pauses it when the
+  queue is empty); not yet tried on a phone. Guest audio is not muted meanwhile, and Android 14+ ends a
+  `dataSync` foreground service after six hours a day.
 - [x] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.
 - [ ] Some catalog apps marked compatible need iOS 4 APIs (Doodle Jump 3.x: GCD; the n72 search row
   is 3.6.1). Consider flagging apps that weak-link iOS 4 symbols, or surfacing Last crash
@@ -235,6 +242,11 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 
 - [ ] Doodle Jump on the iPod touch 3G (5.1.1) plays at double speed: physics run twice as fast as they should.
   An accuracy bug (timer, display-link or vsync rate), not a performance one.
+
+- [x] iPod touch 4G (6.1.6) on the Pixel 10: in gyro driving games (Real Racing with Gyroscope on), "down"
+  re-centred every so often. The accelerometer's z was upside down (face up read as face down), so iOS's motion
+  fusion disagreed with the gyro on every forward or back tilt. Fixed in the engine (cdd01aec99); confirm on the
+  Pixel in Real Racing.
 
 ## Android front end (dev/ui)
 
