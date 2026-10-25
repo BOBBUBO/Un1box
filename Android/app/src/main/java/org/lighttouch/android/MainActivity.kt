@@ -67,7 +67,16 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var devicesOpen by mutableStateOf(false)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
-    private val store by lazy { StoreModel(applicationContext) { muxSocket.ifEmpty { null } } }
+    private val installer by lazy { StoreInstaller.of(applicationContext) }
+    private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
+    // Android 13+ shows an install queue's progress and result in notifications only once allowed.
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && !askedNotifications && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            askedNotifications = true
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) store.installLocal(uri) }
     // board-build -> (product type, iOS version), from the bundled firmware catalog.
     @Volatile private var firmwareTargets: Map<String, StoreTarget> = emptyMap()
@@ -97,6 +106,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var hitchResume = false
     // The guest was running when LightTouch left the screen; resume it on return (settings.autoResume).
     private var pausedByBackground = false
+    private var askedNotifications = false
+    private val idleHook: () -> Unit = ::installsFinished
     private var firmware: IFirmware? = null
     private var firmwareBound = false
     private var firmwareRestarting by mutableStateOf(false)
@@ -277,6 +288,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         @Suppress("DEPRECATION") run { window.statusBarColor = android.graphics.Color.TRANSPARENT; window.navigationBarColor = android.graphics.Color.TRANSPARENT }
         window.isNavigationBarContrastEnforced = false; window.isStatusBarContrastEnforced = false
         preferSixtyHertz(guestInFront = false)
+        installer.onIdle = idleHook
         // Retain the previous own-worker crash even when it happened before this
         // activity/process was running. Never request another application's trace.
         Thread({ WorkerExitEvidence.capture(applicationContext, 0) }, "previous-worker-exit").start()
@@ -1128,12 +1140,12 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private fun selectedRecordId() = records.firstOrNull { it.getBoolean("selected") }?.getString("id") ?: ""
     private fun openStore() {
         overlay = Screen.STORE
-        store.close(); store.dismissJob() // Reopen on the search, not a finished install's details.
+        store.close() // Reopen on the search, not an app's details.
         store.useRecord(selectedRecordId(), recordTarget())
         if (muxSocket.isNotEmpty()) store.refreshGuest()
     }
     override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) = Unit
-    override fun onStart() { super.onStart(); active = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
+    override fun onStart() { super.onStart(); active = true; installer.visible = true; DisplayOwners.active.started(this); displayView?.keepScreenOn = status in listOf("starting", "running", "stopping"); handler.post(poll) }
     override fun onResume() {
         super.onResume(); displayResumed = true
         displayOwnerTicket = DisplayOwners.active.resumed(this, hasWindowFocus())
@@ -1165,13 +1177,25 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         active = false; displayView?.keepScreenOn = false; stopSensors()
         // Owner validation also occurs inside the native guard; a handoff after
         // this UI check still cannot make old A pause/cancel/detach new B.
+        installer.visible = false
         if (wasOwner && ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting"))) {
-            pausedByBackground = status == "running" && overlay != Screen.HITCH
-            displayView?.backgroundOwnedDisplay()
+            // Installing apps needs the guest running: it lets go of the display, and keeps going until the queue is empty.
+            if (installer.queue.active) displayView?.retireDisplay()
+            else {
+                pausedByBackground = status == "running" && overlay != Screen.HITCH
+                displayView?.backgroundOwnedDisplay()
+            }
         }
         else displayView?.retireDisplay()
         DisplayOwners.active.stopped(this, displayOwnerTicket)
         handler.removeCallbacks(poll); monitor.setActive(false, false); super.onStop()
     }
-    override fun onDestroy() { buttonCalls.shutdown(); monitor.close(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    /** The install queue emptied. With LightTouch off screen the guest pauses now, as it would have on leaving, and resumes on return. */
+    private fun installsFinished() {
+        if (active || status != "running" || !sessionOwned || overlay == Screen.HITCH) return
+        val worker = engine ?: return
+        pausedByBackground = true
+        Thread({ try { worker.pause(true) } catch (_: RemoteException) { } }, "install-idle-pause").start()
+    }
+    override fun onDestroy() { if (installer.onIdle === idleHook) installer.onIdle = null; buttonCalls.shutdown(); monitor.close(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }
