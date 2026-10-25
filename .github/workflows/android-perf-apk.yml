@@ -434,7 +434,7 @@ jobs:
           BUNDLE="$SDK_ROOT/swift-6.4.1-RELEASE_android.artifactbundle"
           : >/tmp/swift-sdk.log
           if [ ! -d "$BUNDLE" ]; then
-            swift sdk list 2>/dev/null | sed 's/^/installed Swift SDK: /' >>/tmp/swift-sdk.log || true
+            swift sdk list --swift-sdks-path "$SDK_ROOT" 2>/dev/null | sed 's/^/installed Swift SDK: /' >>/tmp/swift-sdk.log || true
             # swift sdk install downloads through URLSession, which has crashed on Linux mid-install;
             # fetching with curl and handing it the file keeps that out of the way.
             echo "curl $SDK_URL" >>/tmp/swift-sdk.log
@@ -444,7 +444,7 @@ jobs:
               || report /tmp/swift-sdk.log
             swift sdk install --swift-sdks-path "$SDK_ROOT" /tmp/android-sdk.tar.gz >>/tmp/swift-sdk.log 2>&1 || report /tmp/swift-sdk.log
             echo "installed at: ${BUNDLE:-nowhere}" >>/tmp/swift-sdk.log
-            [ -n "$BUNDLE" ] || report /tmp/swift-sdk.log
+            [ -d "$BUNDLE" ] || report /tmp/swift-sdk.log
           fi
           # The bundle cross-compiles against an NDK sysroot the setup script links in (LTS r30 in
           # swift.org's guide, and the SDK's static runtime wants its libc++).
@@ -497,7 +497,7 @@ jobs:
           # What the build sees, in one place: a mismatch between these is the likeliest reason a cross-build
           # stops before it compiles anything.
           LIBCXX="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_static.a"
-          { swift --version; echo "bundle: $BUNDLE"; swift sdk list
+          { swift --version; echo "bundle: $BUNDLE"; swift sdk list --swift-sdks-path "$SDK_ROOT"
             echo "ndk root: $NDK_ROOT"; echo "ndks: $(ls -1 "$ANDROID_HOME/ndk" | tr '\n' ' ')"
             echo "libc++: $LIBCXX"
             echo "libc++ has __hash_memory: $(grep -c __hash_memory "$LIBCXX" 2>/dev/null || echo 0)"
@@ -513,7 +513,8 @@ jobs:
           # beside both). A second, static libc++ inside firmwarekit gives the process two runtimes, and
           # dlopen'ing libqemu-arm.so -- which is what `create` does to boot -- crashes the loader.
           NDK_LIB="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
-          swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
+          # Use the same SDK directory as installation; the runner's default store is empty.
+          swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" --swift-sdks-path "$SDK_ROOT" \
             --scratch-path .build-android --static-swift-stdlib \
             --pkg-config-path build-support/android-pkgconfig \
             -Xlinker -L"$NDK_LIB" -Xlinker -lc++_shared \
