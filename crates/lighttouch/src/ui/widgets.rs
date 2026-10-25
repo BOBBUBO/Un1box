@@ -214,6 +214,40 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, p: &Palette, value: &mut T, o
     changed
 }
 
+/// A filter choice among several (chart type, sort order): a pill, filled when selected.
+pub fn chip(ui: &mut Ui, p: &Palette, selected: bool, text: &str) -> Response {
+    let label = RichText::new(text).size(13.0).color(if selected { p.on_primary_container } else { p.on_surface });
+    let r = ui.add(
+        egui::Button::new(label)
+            .fill(if selected { p.primary_container } else { Color32::TRANSPARENT })
+            .stroke(if selected { Stroke::NONE } else { Stroke::new(1.0, p.outline) })
+            .corner_radius(CornerRadius::same(10))
+            .min_size(vec2(0.0, 30.0)),
+    );
+    r.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A chip that opens a menu: its current choice and a caret.
+pub fn chip_menu(ui: &mut Ui, p: &Palette, text: &str) -> Response {
+    let mut job = egui::text::LayoutJob::default();
+    let format = |font: FontId| egui::TextFormat {
+        font_id: font,
+        color: p.on_surface,
+        valign: egui::Align::Center,
+        ..Default::default()
+    };
+    job.append(text, 0.0, format(FontId::new(13.0, egui::FontFamily::Proportional)));
+    job.append(super::icons::CARET_DOWN, 6.0, format(FontId::new(13.0, theme::icons())));
+    let r = ui.add(
+        egui::Button::new(job)
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::new(1.0, p.outline))
+            .corner_radius(CornerRadius::same(10))
+            .min_size(vec2(0.0, 30.0)),
+    );
+    r.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// One button of the dock under the device: icon over a small label.
 pub fn dock_button(
     ui: &mut Ui,

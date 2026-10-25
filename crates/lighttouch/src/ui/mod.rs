@@ -242,10 +242,11 @@ impl App {
                 }
             }
         }
-        // Pause while minimized, resume on return.
+        // Pause while minimized, resume on return. As on Android, not while apps install (a paused guest never
+        // answers the installer): it pauses once the queue is done.
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         if self.model.settings.pause_when_hidden {
-            if minimized && !self.paused_for_hidden {
+            if minimized && !self.paused_for_hidden && !self.model.store.installing() {
                 if let Some(s) = &self.model.session {
                     if matches!(s.phase, lighttouch_model::session::Phase::Running) {
                         self.model.set_paused(true);
