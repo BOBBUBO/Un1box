@@ -16,11 +16,15 @@
 //!   firmwarekit write-n45-nand VOLUME OUT (--fil-id 0xN | --iboot FILE) [--banks N] [--bbt-map]
 //!   firmwarekit build-n72-nor --ipsw FILE --identity JSON --out FILE [--board B] [--types A,B] [--wrap all|A,B]
 //!   firmwarekit build-n45-nor --ipsw FILE --identity JSON --out FILE [--board B] [--boot-args S]
+//!   firmwarekit fit-survey --system IMG --guest-tools DIR --recipe k48|n72 [--kernel FILE] [--commit]
 use lighttouch_firmware::entry::Entry;
 use lighttouch_firmware::hfs::{Editor, Volume};
 use lighttouch_firmware::ipsw::Ipsw;
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+#[path = "support/fit_survey.rs"]
+mod fit_survey;
 
 fn option(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
@@ -288,6 +292,7 @@ fn main() -> ExitCode {
         Some("write-n45-nand") => write_n45_nand(&args[1..]),
         Some("build-n72-nor") => build_n72_nor(&args[1..]),
         Some("build-n45-nor") => build_n45_nor(&args[1..]),
+        Some("fit-survey") => fit_survey::run(&args[1..]),
         _ => {
             eprintln!("usage: firmwarekit decrypt --catalog FILE --id ID --ipsw FILE --out DIR [--no-rootfs]");
             return ExitCode::from(64);

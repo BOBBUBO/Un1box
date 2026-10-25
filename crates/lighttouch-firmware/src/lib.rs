@@ -11,8 +11,9 @@
 //!   hfs        HFS+/HFSX volumes: read, edit and commit without a mount; grow; format
 //!   plistedit  property lists edited inside a volume, format kept
 //!   fitcheck   proof that a guest piece fits the firmware (Mach-O, the shared cache);  shared_cache  dyld's cache
+//!   macho      32-bit ARM Mach-O: slices, load commands, symbols;  sandbox_patch  sb_evaluate located (jailbreak)
 //!   activation lockdownd activated, ad hoc re-signing, the helpers' signature checks
-//!   guest_package  the it_boot loader and the seed package
+//!   guest_package  the it_boot loader and the seed package;  guest_archive  the .itpack reader and offer text
 //!   keyboards, setup, assets, cydia  the data-volume seeds (keyboards, language, Setup finished, 6.x assets) and
 //!              the jailbreak option
 //!   page_nand  the page NAND image store (n72, s5l8900 boards)
@@ -36,6 +37,9 @@ pub mod k48nand_check;
 pub mod k48nand_image;
 pub mod keyboards;
 pub mod lzss;
+pub mod guest_archive;
+pub mod macho;
+pub mod sandbox_patch;
 pub mod n45ftl;
 pub mod n45nand;
 pub mod n45nor;

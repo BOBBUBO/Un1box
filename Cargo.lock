@@ -1595,9 +1595,11 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "cbc",
+ "cc",
  "flate2",
  "hex",
  "hmac",
+ "memchr",
  "plist",
  "serde",
  "serde_json",
