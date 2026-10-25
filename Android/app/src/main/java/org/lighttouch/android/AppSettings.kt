@@ -38,6 +38,9 @@ class AppSettings(context: Context) {
     private val autoResumeState = mutableStateOf(prefs.getBoolean("autoResume", true))
     var autoResume: Boolean get() = autoResumeState.value; set(v) { autoResumeState.value = v; prefs.edit().putBoolean("autoResume", v).apply() }
 
+    private val reduceAppSwitchPausesState = mutableStateOf(prefs.getBoolean("reduceAppSwitchPauses", true))
+    var reduceAppSwitchPauses: Boolean get() = reduceAppSwitchPausesState.value; set(v) { reduceAppSwitchPausesState.value = v; prefs.edit().putBoolean("reduceAppSwitchPauses", v).apply() }
+
     private val scalingState = enumPref("scaling", ScreenScaling.SMOOTH)
     var scaling: ScreenScaling get() = scalingState.value; set(v) { scalingState.value = v; prefs.edit().putString("scaling", v.name).apply() }
 
