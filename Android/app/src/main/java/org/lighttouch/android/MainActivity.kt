@@ -67,6 +67,13 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override var presentAsync by mutableStateOf(true)
     override var faithfulScaler by mutableStateOf(true)
         private set
+    /** The phone's microphone into the guest, read by the worker at the next guest start. */
+    override val microphone: Boolean get() = settings.microphone
+    // Android asks once, when the switch goes on; a denial leaves the switch off and says why.
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        settings.microphone = granted
+        if (!granted) error = "Without the microphone permission the emulated device has no input."
+    }
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
     private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
@@ -438,6 +445,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun useFaithfulScaler(on: Boolean) {
         setDebugEnv("LT_SCALER_TIME_NS", if (on) null else "0")
         faithfulScaler = on
+    }
+    override fun useMicrophone(on: Boolean) {
+        if (on && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            microphonePermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        settings.microphone = on
+        notice = if (on) "This phone's microphone feeds the device from the next start" else "The device gets no microphone input from the next start"
     }
     override fun applySettings() {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()

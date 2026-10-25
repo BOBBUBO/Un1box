@@ -1079,6 +1079,37 @@ JNI(audioInfo) jintArray JNICALL Java_org_lighttouch_android_Native_audioInfo(JN
     jintArray arr=env->NewIntArray(2);env->SetIntArrayRegion(arr,0,2,data);return arr;
 }
 
+// The capture port reads interleaved stereo; the phone's recorder hands us mono, because a mono
+// AudioRecord is what every device supports and what the guest's own HAL feeds on. Duplicating here
+// keeps the engine's interface a single stereo ring. The JNI buffer holds either side of the copy,
+// so the caller's array is read once.
+JNI(microphone) jint JNICALL Java_org_lighttouch_android_Native_microphone(JNIEnv *env,jobject,jshortArray buffer,jint count) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return -jint(LT_AGAIN);
+    const jint mono=std::min(count,jint(env->GetArrayLength(buffer)));
+    if(mono<=0)return 0;
+    static thread_local std::vector<int16_t> input,stereo;
+    input.resize(size_t(mono));env->GetShortArrayRegion(buffer,0,mono,input.data());
+    stereo.resize(size_t(mono)*2);
+    for(jint i=0;i<mono;++i){stereo[size_t(i)*2]=input[size_t(i)];stereo[size_t(i)*2+1]=input[size_t(i)];}
+    lt_error error=LT_INIT(lt_error);
+    const auto status=lt_runtime_mic_write(runtime,stereo.data(),uint32_t(mono),&error);
+    if(status==LT_OK)return mono;
+    if(status==LT_AGAIN)return 0;              // ring full, or the guest is not running: a dropped block
+    return -jint(status);
+}
+JNI(microphoneFlush) void JNICALL Java_org_lighttouch_android_Native_microphoneFlush(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return;
+    lt_error error=LT_INIT(lt_error);lt_runtime_mic_flush(runtime,&error);
+}
+JNI(microphoneInfo) jlongArray JNICALL Java_org_lighttouch_android_Native_microphoneInfo(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_mic_info info=LT_INIT(lt_mic_info);lt_error error=LT_INIT(lt_error);
+    const auto status=runtime?lt_runtime_mic_info(runtime,&info,&error):LT_AGAIN;
+    jlong data[6]={jlong(status),jlong(info.sample_rate),jlong(info.queued_frames),jlong(info.capturing),
+                   jlong(info.pushed_frames),jlong(info.dropped_frames)};
+    jlongArray arr=env->NewLongArray(6);env->SetLongArrayRegion(arr,0,6,data);return arr;
+}
+
 JNI(profile) jstring JNICALL Java_org_lighttouch_android_Native_profile(JNIEnv *env,jobject,jstring path) {
     std::unique_ptr<ProfileWriter> stopped;
     std::unique_lock<std::mutex> lock(guard);Utf text(env,path);lt_error error=LT_INIT(lt_error);

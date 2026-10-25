@@ -507,32 +507,76 @@ jobs:
 
       # build-engine.py refuses a dirty source tree ("Commit source changes before a
       # reproducible engine build"), so the patch is committed here; fixed dates keep that
-      # commit, and with it the recorded revision and the engine cache key, stable.
-      - name: Patch the engine for Android networking
+      # commit, and with it the recorded revision and the engine cache key, stable. `git add -A`
+      # matters as much as the commit: a patch that *adds* a file (the microphone's
+      # hw/arm/host-mic.c and its header) leaves it untracked, and `commit -a` alone leaves it
+      # behind, which is a dirty tree to the guard even after the commit.
+      - name: Patch the engine for Android
         run: |
           git -C qemu-ios apply "$GITHUB_WORKSPACE"/ci/engine-patches/*.patch
+          git -C qemu-ios add -A
           GIT_AUTHOR_DATE=2001-01-01T00:00:00Z GIT_COMMITTER_DATE=2001-01-01T00:00:00Z \
             git -C qemu-ios -c user.name=ci -c user.email=ci@localhost \
-            commit -qam "ci: Android slirp (DNS through getaddrinfo)"
+            commit -q -m "ci: engine patches (slirp DNS, GLES, TCG fast paths, microphone)"
           git -C qemu-ios log --oneline -1
+          git -C qemu-ios status --porcelain
+
+      # Every layer of the microphone path, checked against the code that ships: the device's capture
+      # FIFO (i2s_next_frame/i2s_rx_read sliced out of hw/arm/s5l8930_i2s.c with the `none` backend's
+      # silent voice in front of it), the portable API, the JNI glue, and the wiring between them.
+      # Seconds, against the ten minutes an engine build takes; `--sanitize` adds ASan/UBSan.
+      - name: Self-check the microphone path
+        # Reported, not gating: a compiler this job has never met could warn where the
+        # author's did not, and a warning is not a reason to withhold an APK. A failed
+        # check still shows in the run; locally the same command is strict.
+        continue-on-error: true
+        run: python3 tests/mic/run.py --engine qemu-ios
 
       - name: Build the engine
         run: |
+          set -o pipefail
           engine() {
             python3 qemu-ios/contrib/portable/build-engine.py ci/engine-build \
               --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT" --android-api 29 \
               --prefix ci/deps/prefix --crypto-prefix ci/crypto/prefix "$@"
+          }
+          # Every line of the build is kept: a compile error used to leave nothing behind but
+          # "exit code 1", and neither the step log nor an artifact could be fetched afterwards.
+          # The log is annotated below on failure and uploaded by the step that follows.
+          LOG=ci/engine-build.log
+          : >> "$LOG"   # one file for both attempts: a refused --source-update still explains itself
+          run_engine() {
+            engine "$@" 2>&1 | tee -a "$LOG"
           }
           # The tree restored from another engine revision is updated in place when the only
           # recorded input that changed is the source revision (--source-update: ninja compiles
           # what moved, ~1.5 minutes less than a cold build). A tree whose configuration, tools
           # or dependencies changed is refused before anything compiles, and rebuilt from
           # scratch; so is one whose update fails, which is also the cold-build retry.
-          engine --source-update || {
+          status=0
+          run_engine --source-update || {
             echo "::warning::the cached engine tree could not be updated in place (see the message above); rebuilding it from scratch"
             rm -rf ci/engine-build
-            engine
+            run_engine || status=$?
           }
+          if [ "$status" -ne 0 ]; then
+            # Annotations are the one thing the API still returns for a failed run, so the
+            # compiler's own words go there, one line each, escaped for the command protocol.
+            grep -aE 'error:|FAILED:' "$LOG" | head -5 | while IFS= read -r line; do
+              echo "::error title=engine build::$(printf '%s' "$line" | cut -c1-900 | sed -e 's/%/%25/g' -e 's/\r/%0D/g')"
+            done || true   # no match, or head closing the pipe, is not itself a failure
+            echo "---- last 40 lines of ci/engine-build.log ----"
+            tail -40 "$LOG"
+            exit "$status"
+          fi
+
+      - name: Keep the engine build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-build-log
+          path: ci/engine-build.log
+          if-no-files-found: ignore
 
       - name: Stage the engine next to the NDK C++ runtime
         run: |
