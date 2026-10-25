@@ -16,11 +16,14 @@ flate2 = "1"
 hex = "0.4"
 hmac = "0.12"
 plist = "1"
+rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha1 = "0.10"
 sha2 = "0.10"
+tar = { version = "0.4", default-features = false }
 unicode-normalization = "0.1"
+ureq = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 libloading = "0.8"
 
