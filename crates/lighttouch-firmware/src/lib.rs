@@ -8,10 +8,12 @@
 //!   vfdecrypt  the encrypted root filesystem image
 //!   decrypt    the decrypt step and its cache
 //!   udif       DMG images, the rootfs volume out of its partition map
+//!   hfs        HFS+/HFSX volumes: read, edit and commit without a mount; grow; format
 pub mod cache;
 pub mod decrypt;
 pub mod entry;
 pub mod error;
+pub mod hfs;
 pub mod img3;
 pub mod ipsw;
 pub mod lzss;
