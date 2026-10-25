@@ -171,6 +171,8 @@ pub struct Editor {
     removed: Vec<Extent>,
     /// A snapshot (or a read-only opening): reads only, no commit.
     read_only: bool,
+    /// enable_journal's info block and journal (and its size in bytes), written at commit.
+    new_journal: Option<(Extent, Extent, u64)>,
     next_id: u32,
     /// The time edits are dated with (Unix seconds); now by default.
     pub now: i64,
@@ -227,6 +229,7 @@ impl Editor {
             written: HashMap::new(),
             removed: Vec::new(),
             read_only: false,
+            new_journal: None,
             now: unix_now(),
         };
         ed.load()?;
@@ -259,6 +262,7 @@ impl Editor {
             written: self.written.clone(),
             removed: Vec::new(),
             read_only: true,
+            new_journal: None,
             next_id: self.next_id,
             now: self.now,
         })
@@ -869,8 +873,63 @@ impl Editor {
             self.items.get_mut(&id).expect("written items exist").data = fork.clone();
             contents.push((fork, content));
         }
+        if let Some((jib, journal, bytes)) = self.new_journal {
+            // blocks free until now: writing them leaves the volume as it was should the layout below fail
+            let mut info = vec![0u8; self.block_size as usize];
+            put32(&mut info, 0, 0x1 | 0x4); // in the file system, needs init
+            put64(&mut info, 36, journal.start as u64 * self.block_size);
+            put64(&mut info, 44, bytes);
+            self.zero(&[journal])?;
+            posio::write_all_at(&self.file, &info, jib.start as u64 * self.block_size)
+                .map_err(|e| crate::internal!("write {}: {e}", self.name()))?;
+            let attributes = be32(&self.header, 4) | 0x2000; // kHFSVolumeJournaledBit
+            put32(&mut self.header, 4, attributes);
+            put32(&mut self.header, 8, 0x4846_534A); // 'HFSJ'
+            put32(&mut self.header, 12, jib.start);
+        }
         put32(&mut self.header, 64, self.next_id);
         self.write_metadata(hfs_now, &freed, contents)
+    }
+
+    /// Journals the volume at commit, as `diskutil enableJournal` and then a hand-over to the device leave it: the
+    /// .journal and .journal_info_block files at the root, the journal zeroed and its info block marked needs-init,
+    /// so the device's kernel writes the header for its own block size at the first mount (a header the host wrote
+    /// says 512-byte blocks, which iPhone OS 1.x on 2048-byte NAND pages then fails its I/O with). A volume already
+    /// journaled is left as it is.
+    pub fn enable_journal(&mut self, bytes: u64) -> Result<()> {
+        if self.read_only {
+            return Err(crate::internal!("{}: a read-only view can't be journaled", self.name()));
+        }
+        if be32(&self.header, 4) & 0x2000 != 0 || self.new_journal.is_some() {
+            return Ok(());
+        }
+        let blocks = bytes.div_ceil(self.block_size);
+        let jib = self.allocate(1)?;
+        let journal = self.allocate(blocks as u32)?;
+        if journal.len() != 1 {
+            self.free(&jib);
+            self.free(&journal);
+            return Err(crate::unsupported!("{}: no contiguous {bytes} bytes free for the journal", self.name()));
+        }
+        let (jib, journal) = (jib[0], journal[0]);
+        let date = hfs_date(self.now);
+        for (file_name, extent, size) in [(".journal", journal, blocks * self.block_size), (".journal_info_block", jib, self.block_size)] {
+            let cnid = self.next_id;
+            self.next_id += 1;
+            let name: Vec<u16> = file_name.encode_utf16().collect();
+            let mut f = new_item(cnid, ROOT_ID, name.clone(), S_IFREG, 0, date, self.case_sensitive);
+            put32(&mut f.body, 32, 0);
+            put32(&mut f.body, 36, 0);
+            put32(&mut f.body, 48, 0x6A72_6E6C); // 'jrnl'
+            put32(&mut f.body, 52, 0x6866_732B); // 'hfs+'
+            put16(&mut f.body, 56, 0x5000); // invisible, name locked
+            f.data.extents = vec![extent];
+            f.data.logical_size = size;
+            self.items.insert(cnid, f);
+            self.children.entry(ROOT_ID).or_default().insert(name, cnid);
+        }
+        self.new_journal = Some((jib, journal, blocks * self.block_size));
+        Ok(())
     }
 
     // ---- Blocks
@@ -1561,6 +1620,7 @@ impl Editor {
             written: HashMap::new(),
             removed: Vec::new(),
             read_only: false,
+            new_journal: None,
             now: unix_now(),
         })
     }

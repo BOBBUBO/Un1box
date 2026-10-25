@@ -7,7 +7,7 @@
 //!   firmwarekit extract-rootfs DMG OUT
 //!   firmwarekit hfs-list IMG [PREFIX]          JSON Lines: owner, mode, flags, sizes, sha256, link per path
 //!   firmwarekit hfs-edit IMG [EDIT...]         edits, then commit: write:PATH=HOSTFILE mkdirs:PATH
-//!                                              symlink:PATH=TARGET rm:PATH mv:FROM=TO chmod:PATH=OCTAL
+//!                                              symlink:PATH=TARGET rm:PATH mv:FROM=TO chmod:PATH=OCTAL journal:MIB
 //!   firmwarekit hfs-grow IMG BYTES
 //!   firmwarekit hfs-format IMG BYTES NAME [--journaled]
 //!   firmwarekit k48-build --mbr FILE --system IMG [--data IMG] [--s3 IMG] --out DIR --kernelcache FILE
@@ -87,6 +87,10 @@ fn hfs_edit(args: &[String]) -> Result<(), String> {
                 let mode = u16::from_str_radix(m, 8).map_err(|e| e.to_string())?;
                 ed.chmod(p, mode).map_err(|e| e.to_string())
             }),
+            "journal" => {
+                let mib: u64 = rest.parse().map_err(|_| format!("journal:{rest}: not a size in MiB"))?;
+                ed.enable_journal(mib << 20).map_err(|e| e.to_string())
+            }
             _ => Err(format!("unknown edit: {verb}")),
         };
         result?;
