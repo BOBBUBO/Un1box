@@ -351,7 +351,7 @@ pub fn download(
             return fail("The download is incomplete or differs from the archive's size.");
         }
         if let Some(checksum) = &checksum {
-            if format!("{:x}", digest.compute()) != checksum.to_lowercase() {
+            if format!("{:x}", digest.finalize()) != checksum.to_lowercase() {
                 return fail("The downloaded IPA failed its checksum check.");
             }
         }

@@ -176,7 +176,7 @@ fn search(app: &mut App, ui: &mut Ui) {
                         egui::TextEdit::singleline(&mut app.model.store.query)
                             .hint_text("Search apps and games")
                             .frame(egui::Frame::NONE)
-                            .vertical_align(egui::Align::Center)
+                            .align(egui::Align2::LEFT_CENTER)
                             .desired_width(ui.available_width().min(380.0))
                             .margin(vec2(4.0, 2.0)),
                     );

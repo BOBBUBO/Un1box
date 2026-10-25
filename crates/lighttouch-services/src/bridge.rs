@@ -30,11 +30,11 @@ impl Bridge {
         #[cfg(unix)]
         {
             use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-            use std::os::unix::process::CommandExt;
             std::fs::DirBuilder::new().recursive(true).mode(0o700).create(pairing)?;
             std::fs::set_permissions(pairing, std::fs::Permissions::from_mode(0o700))?;
-            // Socket paths are limited to ~100 bytes, so they go in a short temporary folder.
-            let dir = std::env::temp_dir().join(format!("lighttouch-usb-{}-{:x}", std::process::id(), nonce()));
+            sweep(daemon);
+            // Socket paths are limited to 104 bytes (macOS), so they go in a short temporary folder.
+            let dir = std::env::temp_dir().join(format!("{PREFIX}{}-{:08x}", std::process::id(), nonce() as u32));
             std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
             let mux_socket = dir.join("mux.sock");
             let guest_socket = dir.join("qemu.sock");
@@ -65,9 +65,10 @@ impl Bridge {
                     command.env("LD_LIBRARY_PATH", joined);
                 }
             }
-            // The daemon goes when this process does, however it ends.
+            // The daemon goes when this process does, however it ends. Elsewhere `sweep` retires it later.
             #[cfg(target_os = "linux")]
             unsafe {
+                use std::os::unix::process::CommandExt;
                 command.pre_exec(|| {
                     libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
                     Ok(())
@@ -119,6 +120,60 @@ impl Drop for Bridge {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+const PREFIX: &str = "lighttouch-usb-";
+
+/// Retire bridges whose worker died without stopping them (killed, or crashed): remove their folders, and stop
+/// their daemon if it still runs, which happens where the daemon can't be tied to its parent's life (macOS).
+#[cfg(unix)]
+fn sweep(daemon: &Path) {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(owner) = name.to_str().and_then(|n| n.strip_prefix(PREFIX)).and_then(|n| n.split('-').next()) else {
+            continue;
+        };
+        let Ok(owner) = owner.parse::<i32>() else { continue };
+        if owner <= 0 || alive(owner) {
+            continue;
+        }
+        let dir = entry.path();
+        let pid = std::fs::read_to_string(dir.join("daemon.pid")).ok().and_then(|p| p.trim().parse::<i32>().ok());
+        // Only a process that is still this daemon: a reused pid belongs to something else.
+        if let Some(pid) = pid.filter(|&pid| pid > 0 && alive(pid) && runs(pid, daemon)) {
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+        }
+        for name in ["mux.sock", "qemu.sock", "daemon.pid"] {
+            let _ = std::fs::remove_file(dir.join(name));
+        }
+        let _ = std::fs::remove_dir(&dir);
+    }
+}
+
+#[cfg(unix)]
+fn alive(pid: i32) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
+}
+
+/// Whether `pid` runs the executable at `path`.
+#[cfg(unix)]
+fn runs(pid: i32, path: &Path) -> bool {
+    let Ok(expected) = path.canonicalize() else { return false };
+    #[cfg(target_os = "linux")]
+    let actual = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+    #[cfg(target_os = "macos")]
+    let actual = {
+        let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        let n = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+        (n > 0).then(|| {
+            use std::os::unix::ffi::OsStrExt;
+            PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..n as usize]))
+        })
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let actual: Option<PathBuf> = None;
+    actual.and_then(|a| a.canonicalize().ok()).is_some_and(|a| a == expected)
 }
 
 #[cfg(unix)]
