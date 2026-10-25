@@ -507,14 +507,19 @@ jobs:
 
       # build-engine.py refuses a dirty source tree ("Commit source changes before a
       # reproducible engine build"), so the patch is committed here; fixed dates keep that
-      # commit, and with it the recorded revision and the engine cache key, stable.
-      - name: Patch the engine for Android networking
+      # commit, and with it the recorded revision and the engine cache key, stable. `git add -A`
+      # matters as much as the commit: a patch that *adds* a file (the microphone's
+      # hw/arm/host-mic.c and its header) leaves it untracked, and `commit -a` alone leaves it
+      # behind, which is a dirty tree to the guard even after the commit.
+      - name: Patch the engine for Android
         run: |
           git -C qemu-ios apply "$GITHUB_WORKSPACE"/ci/engine-patches/*.patch
+          git -C qemu-ios add -A
           GIT_AUTHOR_DATE=2001-01-01T00:00:00Z GIT_COMMITTER_DATE=2001-01-01T00:00:00Z \
             git -C qemu-ios -c user.name=ci -c user.email=ci@localhost \
-            commit -qam "ci: Android slirp (DNS through getaddrinfo)"
+            commit -q -m "ci: engine patches (slirp DNS, GLES, TCG fast paths, microphone)"
           git -C qemu-ios log --oneline -1
+          git -C qemu-ios status --porcelain
 
       - name: Build the engine
         run: |
