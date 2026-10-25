@@ -64,6 +64,15 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
 - [ ] BQL spin follow-ups: interleaved pairs on the Pixel (JellyCar and a 60 fps scene) and one more
   Poco game with `LT_BQL_SPIN=off` as the A arm, idle engine CPU with the spin on (it burns up to
   150 µs per contended take), and a desktop measurement before turning it on there.
+- [ ] APPLE_fence as a real EGL fence sync (patch `ci/engine-patches/0002-engine-gles-apple-fence.patch`,
+  `LT_GLES_APPLE_FENCE=glfinish` for A/B). Setting, testing and finishing a fence used to be a
+  `glFinish()` each. Count the fence calls per frame in the benchmark scenes first (`IT_GLES_PROF=1`);
+  an ordinary scene may make none, and then there is nothing to win. Measure in the SGX-era titles that
+  pipeline uploads against frames (Real Racing, Asphalt 5, Epic Citadel), interleaved, and check that a
+  fence still tests true after it has been finished.
+- [ ] Presenter and vsync threads at `THREAD_PRIORITY_DISPLAY` (`display_priority.h`,
+  `LT_PRESENT_PRIO=off` for A/B). Unmeasured: take the 1% low and the hitch count rather than the mean,
+  on both phones, and check that the presenter preempting the vCPU costs the guest nothing.
 - [ ] Confirm the two open engine leads (both default off, PERFORMANCE.md): the indirect miss-helper
   cache (`LT_IBTC_L2=on`, +2.2% in 3 of 3 pairs) and the inlined TB lookup hit (`LT_TB_LOOKUP_INLINE=on`,
   ahead in 6 of 6 pairs, flat with the array cache). Measure each on top of the BQL spin (now the Android default).

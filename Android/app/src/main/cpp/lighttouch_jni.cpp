@@ -22,6 +22,7 @@
 #include <dlfcn.h>
 #include <dirent.h>
 #include "frame_pacer.h"
+#include "display_priority.h"
 #include <optional>
 #include "presentation_lifetime.h"
 #include "display_lease.h"
@@ -282,6 +283,7 @@ lt_status open_library(const char *root,lt_error *error) {
 using WindowSnapshot = PresentationWindow<ANativeWindow, ANativeWindow_acquire, ANativeWindow_release>;
 using WindowPost = PresentationPost<ANativeWindow, ANativeWindow_unlockAndPost>;
 void present() {
+    request_display_priority();
     uint64_t configured_generation = 0;
     int configured_scale=-1;
     uint32_t configured_width=0,configured_height=0;

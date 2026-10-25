@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <thread>
 #include <utility>
+#include "display_priority.h"
 
 // The display's vsync, from Choreographer on a thread of its own (it needs a looper): the
 // latest vsync time and the refresh period, the shortest of the recent gaps between callbacks
@@ -33,6 +34,7 @@ private:
         AChoreographer_postFrameCallback64(self->choreographer_,frame,self);
     }
     void run() {
+        request_display_priority();
         ALooper_prepare(0);
         choreographer_=AChoreographer_getInstance();
         if(!choreographer_)return;
