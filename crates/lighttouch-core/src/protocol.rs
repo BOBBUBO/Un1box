@@ -102,6 +102,9 @@ pub enum Event {
     /// A new frame is in shared memory.
     Frame {
         sequence: u64,
+        /// When the engine published it (`clock::monotonic_ns`), for the frame inspector's timeline.
+        #[serde(default)]
+        published_ns: u64,
     },
     /// A command failed; the session continues.
     Error {

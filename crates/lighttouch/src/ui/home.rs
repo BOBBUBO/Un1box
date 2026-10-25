@@ -281,10 +281,10 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
                     if show_inspect
                         && widgets::dock_button(ui, &p, icons::CHART, "Inspect", running || paused, None).clicked()
                     {
-                        app.model.notice = Some((
-                            "The frame inspector is coming to this build soon".into(),
-                            std::time::Instant::now(),
-                        ));
+                        if let Some((snapshot, paused)) = app.model.inspect() {
+                            app.inspector = Some(super::inspector::InspectorState::new(snapshot, paused));
+                            app.page = Page::Inspector;
+                        }
                     }
                     if widgets::dock_button(ui, &p, icons::POWER, "Stop", can_stop, Some(theme::DANGER)).clicked() {
                         app.dialog = Some(Dialog::Stop);

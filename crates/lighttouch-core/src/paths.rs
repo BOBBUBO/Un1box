@@ -70,6 +70,10 @@ impl DataDirs {
     pub fn cache(&self) -> PathBuf {
         self.root.join("cache")
     }
+    /// Frame inspector reports.
+    pub fn reports(&self) -> PathBuf {
+        self.root.join("reports")
+    }
     pub fn screenshots(&self) -> PathBuf {
         pictures_dir().join("LightTouch")
     }

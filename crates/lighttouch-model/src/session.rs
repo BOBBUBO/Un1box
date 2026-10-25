@@ -70,6 +70,8 @@ pub struct Session {
     bgra: Vec<u8>,
     last_sequence: u64,
     pub stats: FrameStats,
+    /// When each frame was published and shown, for the frame inspector.
+    pub timeline: crate::inspector::Timeline,
     stop_requested: Option<Instant>,
 }
 
@@ -166,6 +168,7 @@ impl Session {
             bgra: Vec::new(),
             last_sequence: 0,
             stats: FrameStats::default(),
+            timeline: Default::default(),
             stop_requested: None,
         };
         if options.muted {
@@ -229,7 +232,12 @@ impl Session {
                     };
                 }
             }
-            Event::Frame { sequence } => self.stats.frame(sequence),
+            Event::Frame { sequence, published_ns } => {
+                self.stats.frame(sequence);
+                if published_ns > 0 {
+                    self.timeline.published(sequence, published_ns);
+                }
+            }
             Event::Error { command, message } => self.last_error = Some(format!("{command}: {message}")),
             Event::InputRejected { message } => self.last_error = Some(message),
             Event::GuestResult { .. } | Event::Screenshot { .. } => {}
@@ -255,6 +263,7 @@ impl Session {
             }
         }
         self.stats.presented(meta);
+        self.timeline.presented(meta.sequence, lighttouch_core::monotonic_ns());
         Some(meta)
     }
 

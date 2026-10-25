@@ -1,6 +1,7 @@
 //! Everything the LightTouch app does, without any UI toolkit: the device list, adding devices, running one,
 //! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
+pub mod inspector;
 pub mod notices;
 pub mod prepare;
 pub mod session;
@@ -367,6 +368,28 @@ impl Model {
         }
     }
 
+    /// Pause the guest and freeze its last two minutes of frames for the frame inspector. The flag says whether this
+    /// paused it, so closing the inspector resumes it.
+    pub fn inspect(&mut self) -> Option<(inspector::Snapshot, bool)> {
+        let session = self.session.as_mut()?;
+        let pause = matches!(session.phase, Phase::Running);
+        if pause {
+            session.set_paused(true);
+        }
+        Some((session.timeline.snapshot(&session.name, Some(session.log_path.clone())), pause))
+    }
+
+    /// Save an inspector range as a report folder; returns it.
+    pub fn save_frame_report(&mut self, snapshot: &inspector::Snapshot, from: u64, to: u64) -> Option<PathBuf> {
+        match inspector::save_report(snapshot, from, to, &self.dirs.reports(), &chrono_like_stamp()) {
+            Ok(folder) => Some(folder),
+            Err(e) => {
+                self.error = Some(e);
+                None
+            }
+        }
+    }
+
     pub fn set_muted(&mut self, muted: bool) {
         self.settings.muted = muted;
         self.save_settings();
@@ -534,7 +557,7 @@ fn sha256_with_progress(path: &Path, reporter: &Reporter) -> Result<String, Stri
 }
 
 /// "2026-10-24 at 21.05.33" in local-ish time without a date library: UTC is fine for file names.
-fn chrono_like_stamp() -> String {
+pub(crate) fn chrono_like_stamp() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
     let (days, rem) = (secs / 86400, secs % 86400);
     let (h, m, s) = (rem / 3600, rem % 3600 / 60, rem % 60);

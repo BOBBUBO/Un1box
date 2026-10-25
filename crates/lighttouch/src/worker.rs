@@ -262,7 +262,7 @@ fn run(
                     let mut published = None;
                     writer.publish(|pixels| match runtime.copy_frame(pixels, &mut since) {
                         Ok(Some(info)) => {
-                            published = Some(info.sequence);
+                            published = Some((info.sequence, info.timestamp_ns));
                             Some(FrameMeta {
                                 width: info.width,
                                 height: info.height,
@@ -278,8 +278,10 @@ fn run(
                             None
                         }
                     });
-                    if let Some(sequence) = published {
-                        let _ = events.send(Event::Frame { sequence });
+                    if let Some((sequence, timestamp_ns)) = published {
+                        let published_ns =
+                            if timestamp_ns > 0 { timestamp_ns } else { lighttouch_core::monotonic_ns() };
+                        let _ = events.send(Event::Frame { sequence, published_ns });
                     }
                 }
             })
