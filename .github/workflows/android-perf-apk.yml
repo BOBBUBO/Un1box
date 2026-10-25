@@ -365,29 +365,37 @@ jobs:
           }
           command -v swift >/dev/null 2>&1 || { echo "::warning::the runner has no Swift toolchain; the APK keeps the released firmwarekit"; exit 0; }
           swift --version
-          # `swift sdk install <url>` refuses a remote bundle without the distributor's checksum, which
-          # is not published anywhere this repository can read; unpacking the same bundle where SwiftPM
-          # looks for it is the same install.
+          # swift.org's own install line for the Swift 6.4.1 SDK for Android (its getting-started
+          # article): the bundle is built for that toolchain version, and the checksum is published
+          # with it. The runner's Swift must be 6.4.1 for it to line up; scripts/build.sh picks up the
+          # result through the bundle path below.
+          SDK_URL=https://download.swift.org/swift-6.4.1-release/android-sdk/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE_android.artifactbundle.tar.gz
+          SDK_SHA=a356b79f8f1daa6ae3a66f4c556966ca20c0208b3659805cf30a83a0a31d6772
           SDK_ROOT="$HOME/.swiftpm/swift-sdks"
           BUNDLE="$SDK_ROOT/swift-6.4.1-RELEASE_android.artifactbundle"
-          mkdir -p "$SDK_ROOT"
+          : >/tmp/swift-sdk.log
           if [ ! -d "$BUNDLE" ]; then
-            swift sdk list 2>/dev/null | sed 's/^/installed Swift SDK: /' || true
-            : >/tmp/swift-sdk.log
-            for url in \
-              https://download.swift.org/swift-6.4.1-release/android/6.4.1/swift-6.4.1-RELEASE_android.artifactbundle.tar.gz \
-              https://download.swift.org/swift-6.4.1-release/android/swift-6.4.1-RELEASE_android.artifactbundle.tar.gz \
-              https://download.swift.org/swift-6.4.1-release/android/6.4.1/swift-6.4.1-RELEASE_android.artifactbundle.zip ; do
-              echo "Swift SDK: $url" | tee -a /tmp/swift-sdk.log
-              curl -fsSL --retry 1 -o /tmp/swift-sdk.bundle "$url" >>/tmp/swift-sdk.log 2>&1 || continue
-              case "$url" in
-                *.zip) unzip -q -o /tmp/swift-sdk.bundle -d "$SDK_ROOT" >>/tmp/swift-sdk.log 2>&1 ;;
-                *) tar -xzf /tmp/swift-sdk.bundle -C "$SDK_ROOT" >>/tmp/swift-sdk.log 2>&1 ;;
-              esac
-              [ -d "$BUNDLE" ] && break
-            done
-            ls "$SDK_ROOT" >>/tmp/swift-sdk.log 2>&1 || true
+            swift sdk list 2>/dev/null | sed 's/^/installed Swift SDK: /' >>/tmp/swift-sdk.log || true
+            # swift sdk install downloads through URLSession, which has crashed on Linux mid-install;
+            # fetching with curl and handing it the file keeps that out of the way.
+            echo "curl $SDK_URL" >>/tmp/swift-sdk.log
+            curl -fsSL --retry 2 -o /tmp/android-sdk.tar.gz "$SDK_URL" >>/tmp/swift-sdk.log 2>&1 \
+              || report /tmp/swift-sdk.log
+            echo "$SDK_SHA  /tmp/android-sdk.tar.gz" | sha256sum -c - >>/tmp/swift-sdk.log 2>&1 \
+              || report /tmp/swift-sdk.log
+            swift sdk install /tmp/android-sdk.tar.gz >>/tmp/swift-sdk.log 2>&1 || report /tmp/swift-sdk.log
             [ -d "$BUNDLE" ] || report /tmp/swift-sdk.log
+          fi
+          # The bundle cross-compiles against an NDK sysroot the setup script links in (LTS r30 in
+          # swift.org's guide, and the SDK's static runtime wants its libc++).
+          NDK30="$(sdkmanager --list 2>/dev/null | grep -o 'ndk;30[^ |]*' | sort -u | tail -1)"
+          if [ -z "$NDK30" ]; then echo "::error title=firmwarekit build::sdkmanager lists no NDK 30"; exit 0; fi
+          echo "NDK: $NDK30"
+          yes | sdkmanager "$NDK30" >/tmp/ndk30.log 2>&1 || report /tmp/ndk30.log
+          NDK30_PATH="$ANDROID_HOME/ndk/$(echo "$NDK30" | cut -d';' -f2)"
+          if [ -f "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" ]; then
+            ANDROID_NDK_HOME="$NDK30_PATH" bash "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" >/tmp/ndk-setup.log 2>&1 \
+              || report /tmp/ndk-setup.log
           fi
           cd "$GITHUB_WORKSPACE"
           JOBS="$LT_JOBS" LT_SWIFT_ANDROID_BUNDLE="$BUNDLE" bash scripts/build.sh firmwarekit-android >/tmp/firmwarekit.log 2>&1 \
