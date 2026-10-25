@@ -26,6 +26,9 @@ its public certificate is sent into the guest. The local guest TLS leg permits T
 1.0/SHA-1 for old iOS; origin TLS requires TLS 1.2 or newer with host trust and
 hostname verification. Android's trust store is never changed. Certificate-pinning
 apps can still reject interception.
+Identity creation uses a private file lock and atomic rename, since Android app
+storage can reject hard links. Interrupted or concurrent first starts preserve
+one persistent CA; an existing identity is read rather than replaced.
 
 When the guest agent is ready, typed portable operations atomically upload the
 bundled signed `ittrust` and `itproxy` helpers in bounded chunks, install the public
@@ -83,6 +86,8 @@ Typed helper uploads also have bounds/path-injection contract tests. Android uni
 tests cover default-off policy and invalid calendar dates.
 Regression cases also cover admission contention between uploads, lost mutation
 completions, interrupted first CA saves, and HTTP framing inside TLS tunnels.
+On Linux the network fixture explicitly denies `link`/`linkat`, and verifies
+first-save recovery, private key permissions and concurrent CA initialization.
 
 The raw NAT policy can also be checked against the engine's actual vendored
 libslirp on a native host (Meson and GLib development files required):

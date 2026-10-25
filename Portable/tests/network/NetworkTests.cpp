@@ -14,7 +14,13 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <cerrno>
+#include <sys/stat.h>
 using namespace lt::network;
+#ifdef LT_TEST_NO_HARD_LINKS
+extern "C" int __wrap_link(const char *, const char *) { errno=EPERM;return -1; }
+extern "C" int __wrap_linkat(int, const char *, int, const char *, int) { errno=EPERM;return -1; }
+#endif
 std::string exchange(Proxy &proxy, const std::string &wire, bool tls = false) {
     int sockets[2]; assert(!socketpair(AF_UNIX,SOCK_STREAM,0,sockets));
     std::thread worker([&]{proxy.serve(sockets[1]);close(sockets[1]);});
@@ -80,6 +86,20 @@ int main(int argc,char **argv) {
         std::string identity;
         { Proxy proxy(recovery,config);identity=proxy.fingerprint();assert(!identity.empty()); }
         { Proxy proxy(recovery,config);assert(proxy.fingerprint()==identity); }
+        struct stat saved{};assert(!stat((recovery+"/proxy-ca.pem").c_str(),&saved));
+        assert((saved.st_mode&0777)==0600);
+    }
+    {
+        // Concurrent first starts must settle on one persistent CA even on
+        // filesystems/platforms that deny link/linkat (the Linux fixture does).
+        std::string identities[2];std::atomic<int> ready{0};
+        auto start=[&](int index) {
+            ready++;while(ready.load()<2)std::this_thread::yield();
+            Proxy proxy(directory+"/concurrent",config);identities[index]=proxy.fingerprint();
+        };
+        std::thread first(start,0),second(start,1);first.join();second.join();
+        assert(!identities[0].empty() && identities[0]==identities[1]);
+        Proxy reopened(directory+"/concurrent",config);assert(reopened.fingerprint()==identities[0]);
     }
     {
         Proxy direct(directory+"/direct",config);fingerprint=direct.fingerprint();assert(!fingerprint.empty());

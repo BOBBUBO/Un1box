@@ -48,6 +48,12 @@ if(LIGHTTOUCH_BUILD_TESTS)
   add_executable(lighttouch_network_test tests/network/NetworkTests.cpp)
   target_link_libraries(lighttouch_network_test PRIVATE lighttouch_network)
   target_compile_options(lighttouch_network_test PRIVATE -Wall -Wextra -Werror -Wno-misleading-indentation -UNDEBUG)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+   # Android app storage may forbid hard links. Exercise identity persistence
+   # under the same restriction on the host, rather than requiring a phone.
+   target_compile_definitions(lighttouch_network_test PRIVATE LT_TEST_NO_HARD_LINKS=1)
+   target_link_options(lighttouch_network_test PRIVATE -Wl,--wrap=link -Wl,--wrap=linkat)
+  endif()
   add_test(NAME lighttouch_network COMMAND lighttouch_network_test)
  endif()
  add_executable(lighttouch_contract_test tests/Contracts.cpp)
