@@ -30,6 +30,7 @@
 #include <netdb.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <fcntl.h>
@@ -435,6 +436,22 @@ Proxy::Proxy(std::string directory, Configuration config, std::string roots) : s
     chmod(directory.c_str(),0700);
 #endif
     auto pem=directory+"/proxy-ca.pem";
+    {
+#ifndef _WIN32
+    // Android app storage can reject hard links. Serialize identity creation
+    // with the same process-safe file locks used for device storage, then
+    // publish the complete private file with an atomic rename. Keep the lock
+    // file: unlinking it could let different processes lock different inodes.
+    struct LockFile { int fd; ~LockFile() { if (fd>=0) close(fd); } } identity_lock{
+        open((directory+"/.proxy-ca.lock").c_str(),O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600)};
+    require(identity_lock.fd>=0,503,"Could not lock proxy identity");
+    struct stat lock_stat{};
+    require(!fstat(identity_lock.fd,&lock_stat) && S_ISREG(lock_stat.st_mode) &&
+            lock_stat.st_uid==getuid() && !(lock_stat.st_mode&077),503,"Proxy identity lock permissions are invalid");
+    int locked;
+    do { locked=flock(identity_lock.fd,LOCK_EX); } while (locked && errno==EINTR);
+    require(!locked,503,"Could not lock proxy identity");
+#endif
     auto load_identity = [&] {
 #ifndef _WIN32
         struct stat st{}; require(!lstat(pem.c_str(),&st) && S_ISREG(st.st_mode) && st.st_uid==getuid() && !(st.st_mode&077),503,"Proxy key permissions are invalid");
@@ -446,8 +463,8 @@ Proxy::Proxy(std::string directory, Configuration config, std::string roots) : s
     if (std::filesystem::exists(pem)) load_identity();
     else {
         state->key=new_key(); state->ca=make_cert(state->key.get(),state->key.get(),nullptr,"LightTouch Device Proxy");
-        // A unique staging name survives interrupted first launches. Never
-        // replace a concurrently installed identity: guests retain that CA.
+        // A unique staging name survives interrupted first launches. The lock
+        // above protects the existing identity, which guests may already trust.
         unsigned char random[16]; require(RAND_bytes(random,sizeof(random))==1,503,"Random source failed");
         std::string temp=pem+".tmp."; const char hex[]="0123456789abcdef";
         for (auto byte:random) { temp+=hex[byte>>4];temp+=hex[byte&15]; }
@@ -467,12 +484,13 @@ Proxy::Proxy(std::string directory, Configuration config, std::string roots) : s
 #endif
         ok=fclose(f)==0 && ok; require(ok,503,"Could not save proxy key");
 #ifndef _WIN32
-        if (link(temp.c_str(),pem.c_str())) { require(errno==EEXIST,503,"Could not install proxy key");load_identity(); }
+        if (rename(temp.c_str(),pem.c_str())) throw Error(503,std::string("Could not install proxy key: ")+strerror(errno));
 #else
         std::error_code error; std::filesystem::rename(temp,pem,error);
         if (error) { require(std::filesystem::exists(pem),503,"Could not install proxy key");load_identity(); }
 #endif
     }
+    } // Release the identity lock before preparing per-session TLS state.
     int size=i2d_X509(state->ca.get(),nullptr); require(size>0,503,"Could not encode proxy certificate");
     state->der.resize(size); auto bytes=reinterpret_cast<unsigned char *>(state->der.data()); i2d_X509(state->ca.get(),&bytes);
     std::ofstream(directory+"/proxy-ca.der",std::ios::binary).write(state->der.data(),state->der.size());
