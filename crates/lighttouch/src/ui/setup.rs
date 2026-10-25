@@ -66,6 +66,8 @@ pub fn show(app: &mut App, ui: &mut Ui, step: Step) {
             if widgets::primary(ui, &p, "Get started").clicked() {
                 app.page = Page::Setup(Step::Files);
             }
+            ui.add_space(4.0);
+            guide_link(ui, &p);
         }),
         Step::Files => centered(ui, 600.0, |ui| {
             ui.horizontal(|ui| {
@@ -239,7 +241,18 @@ fn files_card(app: &mut App, ui: &mut Ui) {
             app.model.add_device(request);
             app.page = Page::Setup(Step::Creating);
         }
+        ui.add_space(4.0);
+        guide_link(ui, &p);
     });
+}
+
+/// Where the firmware, device images and boot files come from (docs/ASSETS.md), as on Android.
+fn guide_link(ui: &mut Ui, p: &super::theme::Palette) {
+    if widgets::text_button(ui, p, "Where do I get these?").clicked() {
+        super::settings::open_path(std::path::Path::new(
+            "https://github.com/blake-lucas/LightTouch/blob/main/docs/ASSETS.md",
+        ));
+    }
 }
 
 fn file_name(path: &std::path::Path) -> String {

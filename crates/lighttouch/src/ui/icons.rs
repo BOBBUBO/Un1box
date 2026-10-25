@@ -39,3 +39,4 @@ pub const CLOCK: &str = "\u{E19A}";
 pub const MONITOR: &str = "\u{E32E}";
 pub const KEYBOARD: &str = "\u{E2D8}";
 pub const COPY: &str = "\u{E1CA}";
+pub const HEADPHONES: &str = "\u{E2A6}";

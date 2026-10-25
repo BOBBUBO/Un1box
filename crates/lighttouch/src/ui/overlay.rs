@@ -1,18 +1,83 @@
 //! The performance overlay over the guest screen (FPS, Basic, Full), MangoHud style: one hue per subsystem.
 use super::theme;
-use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, Ui, pos2, vec2};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, Ui, pos2, vec2};
 use lighttouch_model::Model;
-use lighttouch_model::session::FrameStats;
-use lighttouch_model::settings::{Corner, OverlayGraph, OverlayLevel};
+use lighttouch_model::inspector::LiveTiming;
+use lighttouch_model::session::{FrameStats, FrameSummary, Session};
+use lighttouch_model::settings::{Corner, OverlayGraph, OverlayLevel, Settings};
+
+/// What the overlay shows: a running session's numbers, or the settings preview's sample.
+struct Readings {
+    summary: FrameSummary,
+    cpu_percent: f32,
+    latency_ms: f32,
+    live: Option<LiveTiming>,
+    resident_bytes: u64,
+    /// Frame intervals in milliseconds, newest last.
+    intervals: Vec<f32>,
+}
+
+impl Readings {
+    fn of(session: &Session) -> Self {
+        let stats = &session.stats;
+        Self {
+            summary: stats.summary(),
+            cpu_percent: stats.cpu_percent,
+            latency_ms: stats.latency_ms,
+            live: session.live_timing,
+            resident_bytes: session.status.as_ref().map_or(0, |s| s.resident_bytes),
+            intervals: stats.intervals.iter().copied().collect(),
+        }
+    }
+}
 
 pub fn show(ui: &Ui, model: &Model, screen: Rect, scale: f32) {
-    let level = model.settings.overlay;
-    let Some(session) = &model.session else { return };
+    if let Some(session) = &model.session {
+        if model.settings.overlay != OverlayLevel::Off {
+            draw(ui, &model.settings, &Readings::of(session), screen, scale);
+        }
+    }
+}
+
+/// The settings page's preview, as on Android: the running device's numbers while it draws, else a sample.
+pub fn preview(ui: &mut Ui, settings: &Settings, session: Option<&Session>) {
+    let height = match settings.overlay {
+        OverlayLevel::Off => return,
+        OverlayLevel::Fps => 56.0,
+        OverlayLevel::Basic => 86.0,
+        OverlayLevel::Full => 236.0,
+    };
+    let live = session.filter(|s| !s.stats.summary().idle);
+    let readings = match live {
+        Some(session) => Readings::of(session),
+        None => Readings {
+            summary: FrameSummary { fps: 59.0, frame_ms: 16.9, low_1_percent: 48.0, worst_ms: 24.1, idle: false },
+            cpu_percent: 131.0,
+            latency_ms: 3.2,
+            live: settings.detailed_timing.then_some(LiveTiming {
+                gl_ms_per_frame: 3.1,
+                bql_ms_per_frame: 0.3,
+                run_percent: 82.0,
+                vcpu_percent: Some(86.0),
+            }),
+            resident_bytes: 412 << 20,
+            intervals: (0..160).map(|i| 16.7 + if i % 37 == 0 { 18.0 } else { 0.0 } + (i % 5) as f32 * 0.4).collect(),
+        },
+    };
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), egui::Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(14), Color32::from_rgb(0x1B, 0x3A, 0x4B));
+    draw(ui, settings, &readings, rect, 1.0);
+    if live.is_some() {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+    }
+}
+
+fn draw(ui: &Ui, settings: &Settings, readings: &Readings, screen: Rect, scale: f32) {
+    let level = settings.overlay;
     if level == OverlayLevel::Off {
         return;
     }
-    let stats = &session.stats;
-    let summary = stats.summary();
+    let summary = readings.summary;
     let mono = |size: f32| FontId::new(size * scale, egui::FontFamily::Monospace);
     let bold = |size: f32| FontId::new(size * scale, theme::semibold());
     let mut rows: Vec<Vec<(String, Color32, FontId)>> = Vec::new();
@@ -43,7 +108,7 @@ pub fn show(ui: &Ui, model: &Model, screen: Rect, scale: f32) {
                 (format!("  max {:.0} ms", summary.worst_ms), theme::LABEL, mono(11.0)),
             ]);
             // As on Android: the guest's vCPU and GL, lock and run time per frame come from detailed timing.
-            let live = session.live_timing;
+            let live = readings.live;
             rows.push(vec![
                 ("CPU  ".into(), theme::CPU, bold(11.0)),
                 ("guest ".into(), theme::LABEL, mono(10.0)),
@@ -56,7 +121,7 @@ pub fn show(ui: &Ui, model: &Model, screen: Rect, scale: f32) {
             rows.push(vec![
                 ("     ".into(), theme::CPU, bold(11.0)),
                 ("engine ".into(), theme::LABEL, mono(10.0)),
-                (format!("{:.0}%", stats.cpu_percent), Color32::WHITE, mono(12.0)),
+                (format!("{:.0}%", readings.cpu_percent), Color32::WHITE, mono(12.0)),
             ]);
             if let Some(l) = live {
                 rows.push(vec![
@@ -75,15 +140,15 @@ pub fn show(ui: &Ui, model: &Model, screen: Rect, scale: f32) {
                     (format!("{:.0}% of wall", l.run_percent), Color32::WHITE, mono(12.0)),
                 ]);
             } else {
-                let why = if !model.settings.detailed_timing { "detailed timing off" } else { "waiting for frames…" };
+                let why = if !settings.detailed_timing { "detailed timing off" } else { "waiting for frames…" };
                 rows.push(vec![("GPU  ".into(), theme::GPU, bold(11.0)), (why.into(), theme::LABEL, mono(10.0))]);
             }
             rows.push(vec![
                 ("PRES ".into(), theme::LABEL, bold(11.0)),
-                (format!("{:.1} ms", stats.latency_ms), Color32::WHITE, mono(12.0)),
+                (format!("{:.1} ms", readings.latency_ms), Color32::WHITE, mono(12.0)),
                 ("  latency".into(), theme::LABEL, mono(10.0)),
             ]);
-            if let Some(bytes) = session.status.as_ref().map(|s| s.resident_bytes).filter(|b| *b > 0) {
+            if let Some(bytes) = Some(readings.resident_bytes).filter(|b| *b > 0) {
                 rows.push(vec![
                     ("MEM  ".into(), theme::MEM, bold(11.0)),
                     (format!("{:.0} MiB", bytes as f64 / (1u64 << 20) as f64), Color32::WHITE, mono(12.0)),
@@ -106,14 +171,14 @@ pub fn show(ui: &Ui, model: &Model, screen: Rect, scale: f32) {
     let width = text_width.max(graph_size.map_or(0.0, |g| g.x)) + pad * 2.0;
     let height = rows_height + graph_size.map_or(0.0, |g| g.y + 6.0 * scale) + pad * 2.0;
     let margin = 8.0 * scale;
-    let min = match model.settings.overlay_corner {
+    let min = match settings.overlay_corner {
         Corner::TopLeft => screen.min + vec2(margin, margin),
         Corner::TopRight => pos2(screen.right() - width - margin, screen.top() + margin),
         Corner::BottomLeft => pos2(screen.left() + margin, screen.bottom() - height - margin),
         Corner::BottomRight => screen.max - vec2(width + margin, height + margin),
     };
     let rect = Rect::from_min_size(min, vec2(width, height));
-    let alpha = (model.settings.overlay_opacity.clamp(0.0, 0.9) * 255.0) as u8;
+    let alpha = (settings.overlay_opacity.clamp(0.0, 0.9) * 255.0) as u8;
     painter.rect_filled(rect, CornerRadius::same((6.0 * scale) as u8), Color32::from_black_alpha(alpha));
     let mut y = rect.top() + pad;
     for (index, row) in galleys.iter().enumerate() {
@@ -128,12 +193,11 @@ pub fn show(ui: &Ui, model: &Model, screen: Rect, scale: f32) {
     }
     if let Some(size) = graph_size {
         let area = Rect::from_min_size(pos2(rect.left() + pad, y + 6.0 * scale), size);
-        graph(&painter, area, stats, model.settings.overlay_graph, scale);
+        graph(&painter, area, &readings.intervals, settings.overlay_graph, scale);
     }
-    let _ = Align2::LEFT_TOP;
 }
 
-fn graph(painter: &egui::Painter, area: Rect, stats: &FrameStats, kind: OverlayGraph, scale: f32) {
+fn graph(painter: &egui::Painter, area: Rect, samples: &[f32], kind: OverlayGraph, scale: f32) {
     let (max, guides): (f32, [f32; 2]) = match kind {
         OverlayGraph::FrameTime => (50.0, [16.7, 33.3]),
         OverlayGraph::FrameRate => (60.0, [30.0, 60.0]),
@@ -145,7 +209,6 @@ fn graph(painter: &egui::Painter, area: Rect, stats: &FrameStats, kind: OverlayG
             Stroke::new(1.0, Color32::from_white_alpha(28)),
         );
     }
-    let samples: Vec<f32> = stats.intervals.iter().copied().collect();
     let n = FrameStats::GRAPH_SAMPLES as f32;
     let start = n - samples.len() as f32;
     let mut segment: Vec<Pos2> = Vec::new();

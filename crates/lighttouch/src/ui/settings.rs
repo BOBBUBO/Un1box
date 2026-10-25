@@ -1,5 +1,5 @@
 //! Settings: grouped cards like the Android app's settings screen.
-use super::{App, Page, icons, theme, widgets};
+use super::{App, Dialog, Page, icons, overlay, theme, widgets};
 use eframe::egui::{self, RichText, Ui};
 use lighttouch_model::session::Phase;
 use lighttouch_model::settings::{Corner, OverlayGraph, OverlayLevel, Scaling, Theme};
@@ -90,11 +90,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 widgets::setting_row(
                     ui,
                     &p,
-                    icons::WAVEFORM,
+                    icons::HEADPHONES,
                     "Headphones plugged in",
-                    "iOS skips speaker protection, which saves CPU in games. Applies at the next start.",
+                    "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
                     |ui| {
                         widgets::switch(ui, &p, &mut settings.headphones);
+                        if widgets::icon_button(ui, &p, icons::INFO, "About this setting").clicked() {
+                            app.dialog = Some(Dialog::Headphones);
+                        }
                     },
                 );
                 widgets::setting_row(ui, &p, icons::VOLUME_UP, "Mute", "Silence the device without pausing it", |ui| {
@@ -118,6 +121,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     );
                 });
                 if settings.overlay != OverlayLevel::Off {
+                    egui::Frame::new().inner_margin(egui::Margin { left: 30, right: 4, top: 4, bottom: 8 }).show(ui, |ui| {
+                        overlay::preview(ui, settings, app.model.session.as_ref());
+                    });
                     widgets::setting_row(ui, &p, icons::CHART, "Graph", "", |ui| {
                         widgets::segmented(
                             ui,

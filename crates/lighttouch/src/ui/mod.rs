@@ -42,8 +42,16 @@ pub enum Page {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Dialog {
     Stop,
-    Rename { id: String, name: String },
-    Delete { id: String, name: String },
+    Rename {
+        id: String,
+        name: String,
+    },
+    Delete {
+        id: String,
+        name: String,
+    },
+    /// What the headphones setting changes (from Settings).
+    Headphones,
 }
 
 pub struct App {
@@ -289,6 +297,24 @@ impl App {
                         self.dialog = Some(Dialog::Rename { id, name });
                     }
                 }
+                Dialog::Headphones => {
+                    ui.label(widgets::icon_text(icons::HEADPHONES, 26.0).color(p.primary));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Headphones or speaker").font(theme::title()));
+                    ui.add_space(4.0);
+                    ui.label(widgets::muted(&p, "With headphones, iOS plays games and music in stereo, unchanged."));
+                    ui.add_space(8.0);
+                    ui.label(widgets::muted(
+                        &p,
+                        "On the speaker, iOS reshapes the sound for the device's small built-in speaker: mono, with the bass cut and a limiter to protect it. That processing runs on the emulated CPU, so games run a little slower, and the sound is closer to an old iPod's speaker than to your computer's.",
+                    ));
+                    ui.add_space(16.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if widgets::text_button(ui, &p, "OK").clicked() {
+                            close = true;
+                        }
+                    });
+                }
                 Dialog::Delete { id, name } => {
                     ui.label(widgets::icon_text(icons::TRASH, 26.0).color(theme::DANGER));
                     ui.add_space(6.0);
@@ -300,8 +326,10 @@ impl App {
                         if widgets::danger(ui, "Delete").clicked() {
                             self.model.remove(&id);
                             close = true;
+                            // As on Android: straight to adding another, past the welcome.
                             if self.model.devices.is_empty() {
-                                self.page = Page::Setup(setup::Step::Welcome);
+                                self.setup = Default::default();
+                                self.page = Page::Setup(setup::Step::Files);
                             }
                         }
                         if widgets::text_button(ui, &p, "Cancel").clicked() {
