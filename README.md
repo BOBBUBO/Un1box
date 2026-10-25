@@ -1,5 +1,5 @@
 # Un1box emulator 
-
+<p align="center"><img src="./Picsart_26-10-25_03-23-04-384.jpg" alt="Senses" width="700"></p>
 
 Un1box emulator runs classic iPhone OS and iOS in an emulator on **Android, Linux, Windows and macOS**. It is a fork of [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac), built around a shared [qemu-ios engine](https://github.com/blake-lucas/qemu-ios).
 
