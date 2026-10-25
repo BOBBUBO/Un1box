@@ -18,9 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -105,6 +105,7 @@ internal fun formatBytes(bytes: Long): String = when {
 }
 
 /** A page of what LightTouch knows about one device: its model and iOS, the hardware it stands for, the space it takes. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun DeviceDetails(device: DeviceSummary, onClose: () -> Unit) {
     val context = LocalContext.current
@@ -112,59 +113,57 @@ internal fun DeviceDetails(device: DeviceSummary, onClose: () -> Unit) {
     var space by remember { mutableStateOf<DeviceFacts.Space?>(null) }
     LaunchedEffect(device.id) { facts = withContext(Dispatchers.IO) { runCatching { DeviceFacts.read(context, device.id) }.getOrNull() } }
     LaunchedEffect(device.id) { space = withContext(Dispatchers.IO) { runCatching { DeviceFacts.space(context, device.id) }.getOrNull() } }
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        BackHandler(onBack = onClose)
-        Surface(Modifier.fillMaxSize().testTag("device_details"), color = MaterialTheme.colorScheme.background) {
-            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-                Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onClose, modifier = Modifier.testTag("details_back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-                    Text(device.name, style = MaterialTheme.typography.titleLarge, maxLines = 1)
-                }
-                SelectionContainer {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                        val f = facts
-                        val identity = f?.identity
-                        Section("Device") {
-                            Fact("Model", device.model + (identity?.optString("model-number")?.takeIf { it.isNotEmpty() }
-                                ?.let { " ($it${identity.optString("region-info").let { r -> if (r.isNotEmpty()) " $r" else "" }})" } ?: ""))
-                            Fact("iOS", device.target?.let { "${it.ios} (${device.build})" } ?: device.build)
-                            Fact("Board", device.board)
-                            identity?.optString("serial-number")?.takeIf { it.isNotEmpty() }?.let { Fact("Serial number", it) }
-                            identity?.optString("udid")?.takeIf { it.isNotEmpty() }?.let { Fact("UDID", it) }
-                            identity?.optString("wifi-mac")?.takeIf { it.isNotEmpty() }?.let { Fact("Wi-Fi address", it) }
-                        }
-                        boardSpecs(device.board)?.let { s ->
-                            Section("Hardware", "As on the real device; LightTouch emulates it, so speed depends on your phone.") {
-                                Fact("Chip", s.chip)
-                                Fact("CPU", s.cpu)
-                                Fact("GPU", s.gpu)
-                                Fact("Memory", s.memory)
-                                Fact("Screen", s.screen)
-                                Fact("Motion sensors", listOfNotNull("accelerometer".takeIf { device.accelerometer }, "gyroscope".takeIf { device.gyroscope })
-                                    .joinToString(" and ").replaceFirstChar { it.uppercase() }.ifEmpty { "None" })
-                            }
-                        }
-                        Section("Storage", "Space iOS frees is not given back to your phone yet, so a device's changes only grow.") {
-                            f?.flashBytes?.let { Fact("Disk size", formatBytes(it) + " of flash") }
-                            val u = space
-                            if (u == null) Fact("On this phone", "Measuring…") else {
-                                Fact("On this phone", formatBytes(u.totalBytes))
-                                Fact("Prepared system", formatBytes(u.baseBytes))
-                                Fact("Changes since then", formatBytes(u.changesBytes))
-                                if (u.logBytes > 0) Fact("Engine logs", formatBytes(u.logBytes))
-                            }
-                        }
-                        Section("LightTouch") {
-                            f?.toolsSerial?.let { Fact("Guest tools", "Serial $it" + if (f.toolsVerdict == "good") "" else " (${f.toolsVerdict})") }
-                            f?.created?.let { created ->
-                                Fact("Prepared", runCatching { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
-                                    .format(Instant.parse(created).atZone(ZoneId.systemDefault())) }.getOrDefault(created))
-                            }
-                            Fact("Record", device.id)
-                            if (device.dirty) Fact("State", "Not shut down cleanly; it recovers at the next start")
-                        }
-                        Spacer(Modifier.height(24.dp))
+    BackHandler(onBack = onClose)
+    Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }.testTag("device_details"), color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+            Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose, modifier = Modifier.testTag("details_back")) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                Text(device.name, style = MaterialTheme.typography.titleLarge, maxLines = 1)
+            }
+            SelectionContainer {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+                    val f = facts
+                    val identity = f?.identity
+                    Section("Device") {
+                        Fact("Model", device.model + (identity?.optString("model-number")?.takeIf { it.isNotEmpty() }
+                            ?.let { " ($it${identity.optString("region-info").let { r -> if (r.isNotEmpty()) " $r" else "" }})" } ?: ""))
+                        Fact("iOS", device.target?.let { "${it.ios} (${device.build})" } ?: device.build)
+                        Fact("Board", device.board)
+                        identity?.optString("serial-number")?.takeIf { it.isNotEmpty() }?.let { Fact("Serial number", it) }
+                        identity?.optString("udid")?.takeIf { it.isNotEmpty() }?.let { Fact("UDID", it) }
+                        identity?.optString("wifi-mac")?.takeIf { it.isNotEmpty() }?.let { Fact("Wi-Fi address", it) }
                     }
+                    boardSpecs(device.board)?.let { s ->
+                        Section("Hardware", "As on the real device; LightTouch emulates it, so speed depends on your phone.") {
+                            Fact("Chip", s.chip)
+                            Fact("CPU", s.cpu)
+                            Fact("GPU", s.gpu)
+                            Fact("Memory", s.memory)
+                            Fact("Screen", s.screen)
+                            Fact("Motion sensors", listOfNotNull("accelerometer".takeIf { device.accelerometer }, "gyroscope".takeIf { device.gyroscope })
+                                .joinToString(" and ").replaceFirstChar { it.uppercase() }.ifEmpty { "None" })
+                        }
+                    }
+                    Section("Storage", "Space iOS frees is not given back to your phone yet, so a device's changes only grow.") {
+                        f?.flashBytes?.let { Fact("Disk size", formatBytes(it) + " of flash") }
+                        val u = space
+                        if (u == null) Fact("On this phone", "Measuring…") else {
+                            Fact("On this phone", formatBytes(u.totalBytes))
+                            Fact("Prepared system", formatBytes(u.baseBytes))
+                            Fact("Changes since then", formatBytes(u.changesBytes))
+                            if (u.logBytes > 0) Fact("Engine logs", formatBytes(u.logBytes))
+                        }
+                    }
+                    Section("LightTouch") {
+                        f?.toolsSerial?.let { Fact("Guest tools", "Serial $it" + if (f.toolsVerdict == "good") "" else " (${f.toolsVerdict})") }
+                        f?.created?.let { created ->
+                            Fact("Prepared", runCatching { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
+                                .format(Instant.parse(created).atZone(ZoneId.systemDefault())) }.getOrDefault(created))
+                        }
+                        Fact("Record", device.id)
+                        if (device.dirty) Fact("State", "Not shut down cleanly; it recovers at the next start")
+                    }
+                    Spacer(Modifier.height(24.dp))
                 }
             }
         }

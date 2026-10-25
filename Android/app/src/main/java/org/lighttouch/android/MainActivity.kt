@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         private set
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
+    private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
     private val installer by lazy { StoreInstaller.of(applicationContext) }
@@ -315,7 +316,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
             // A full page hides the guest surface: the presenter stops drawing into it and drops its 60 Hz request.
-            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE)
+            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.DETAILS)
             LaunchedEffect(guestCovered, engine) {
                 val worker = engine ?: return@LaunchedEffect
                 Thread({ try { worker.setPresentVisible(!guestCovered) } catch (_: RemoteException) { } }, "present-visibility").start()
@@ -363,6 +364,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             onCreate = ::createDevice, onPrepare = { openPreparation() },
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
+                        Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
                         Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
                             onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { overlay = null }
                         Screen.HITCH -> HitchInspector(hitchData, hitchError, onResume = ::closeHitch, onSave = ::saveHitch, saving = hitchSaving,
@@ -402,6 +404,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }
     }
     override fun openDevices() { refreshDevices(); devicesOpen = true }
+    // A full page like Settings, so it sits inside the window's insets; Back returns to the devices list.
+    override fun openDetails(device: DeviceSummary) { detailsDevice = device; devicesOpen = false; overlay = Screen.DETAILS }
     override fun addDevice() { setup.reset(firstRun = false); overlay = Screen.SETUP }
     override fun openLicenses() { licensesOpen = true }
     override fun openPreparation() {

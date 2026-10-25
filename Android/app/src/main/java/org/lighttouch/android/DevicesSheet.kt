@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.dp
 internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
     var renaming by remember { mutableStateOf<DeviceSummary?>(null) }
     var deleting by remember { mutableStateOf<DeviceSummary?>(null) }
-    var details by remember { mutableStateOf<DeviceSummary?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), modifier = DialogTags.testTag("devices_sheet")) {
         SheetSystemBars()
@@ -55,7 +54,7 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
                     DeviceRow(device, switchable = !host.active && !host.busy, editable = !(host.active && device.selected),
                         needsRecovery = device.dirty && !(host.active && device.selected),
                         onSelect = { host.selectDevice(device.id); onDismiss() },
-                        onDetails = { details = device }, onRename = { renaming = device }, onDelete = { deleting = device })
+                        onDetails = { host.openDetails(device) }, onRename = { renaming = device }, onDelete = { deleting = device })
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(14.dp))
@@ -72,7 +71,6 @@ internal fun DevicesSheet(host: GuestHost, onDismiss: () -> Unit) {
             }
         }
     }
-    details?.let { device -> DeviceDetails(device) { details = null } }
     renaming?.let { device -> RenameDialog(device, { renaming = null }) { host.renameDevice(device.id, it); renaming = null } }
     deleting?.let { device ->
         AlertDialog(onDismissRequest = { deleting = null }, modifier = DialogTags, icon = { Icon(Icons.Filled.Delete, null) },
