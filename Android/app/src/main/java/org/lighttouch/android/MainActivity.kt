@@ -107,8 +107,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     // A jailbreak is its own one-shot firmware worker, so it never disturbs a preparation's state.
     private var edit: IFirmware? = null
     private var editBound = false
-    private var jailbreaking by mutableStateOf(false)
-    private var jailbreakStage by mutableStateOf("")
+    private var jailbreakRunning by mutableStateOf(false)
+    private var jailbreakStep by mutableStateOf("")
     private var firmwareRestarting by mutableStateOf(false)
     private var pendingFirmwareStart = false
     private var firmwareExpectedExit = false
@@ -147,8 +147,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         override fun onServiceDisconnected(name: ComponentName) { edit = null }
     }
 
-    override val jailbreaking: Boolean get() = jailbreaking
-    override val jailbreakStage: String get() = jailbreakStage
+    override val jailbreaking: Boolean get() = jailbreakRunning
+    override val jailbreakStage: String get() = jailbreakStep
 
     /**
      * Cydia on a device that is already in the library: firmwarekit edit --action jailbreak, the same edits a
@@ -157,22 +157,22 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
      */
     override fun jailbreakSelected() {
         // The device must be stopped: a running guest holds its volume, and the edit copies it.
-        if (jailbreaking || busy || status in listOf("running", "paused", "starting", "stopping") || preparationActive()) return
+        if (jailbreakRunning || busy || status in listOf("running", "paused", "starting", "stopping") || preparationActive()) return
         val device = selected ?: return
         val folder = File(filesDir, "library/records/${device.id}")
         if (!folder.isDirectory) { error = "The device's folder is missing; start it once, then try again"; return }
         if (!CydiaBootstrap.ready(this)) {
             // The bootstrap is downloaded and checked here, before firmwarekit runs, so the edit needs no network.
-            jailbreaking = true; jailbreakStage = "Downloading Cydia"; error = ""
+            jailbreakRunning = true; jailbreakStep = "Downloading Cydia"; error = ""
             CydiaBootstrap.start(this) { failure ->
                 handler.post {
-                    if (failure.isNotEmpty()) { jailbreaking = false; jailbreakStage = ""; error = failure }
-                    else { jailbreaking = false; jailbreakStage = ""; jailbreakSelected() }
+                    if (failure.isNotEmpty()) { jailbreakRunning = false; jailbreakStep = ""; error = failure }
+                    else { jailbreakRunning = false; jailbreakStep = ""; jailbreakSelected() }
                 }
             }
             return
         }
-        jailbreaking = true; jailbreakStage = "Starting"; error = ""
+        jailbreakRunning = true; jailbreakStep = "Starting"; error = ""
         if (editBound) { unbindService(editConnection); editBound = false }
         edit = null
         editBound = bindService(Intent(this, FirmwareService::class.java), editConnection, BIND_AUTO_CREATE)
@@ -185,11 +185,11 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     val state = worker.status()
                     val phase = state.getString("state") ?: "idle"
                     val stage = state.getString("stage") ?: ""
-                    handler.post { if (jailbreaking) jailbreakStage = stage }
+                    handler.post { if (jailbreakRunning) jailbreakStep = stage }
                     if (phase in listOf("complete", "failed", "cancelled")) {
                         val message = state.getString("error") ?: ""
                         handler.post {
-                            jailbreaking = false; jailbreakStage = ""
+                            jailbreakRunning = false; jailbreakStep = ""
                             if (phase == "complete") notice = "Jailbroken. Start ${device.name} to finish installing Cydia."
                             else error = message.ifEmpty { "The jailbreak did not finish" }
                             releaseEdit()
@@ -200,7 +200,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 }
             } catch (e: Exception) {
                 handler.post {
-                    jailbreaking = false; jailbreakStage = ""
+                    jailbreakRunning = false; jailbreakStep = ""
                     error = e.message ?: "The jailbreak did not start"
                     releaseEdit()
                 }

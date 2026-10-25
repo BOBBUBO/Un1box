@@ -365,15 +365,28 @@ jobs:
           }
           command -v swift >/dev/null 2>&1 || { echo "::warning::the runner has no Swift toolchain; the APK keeps the released firmwarekit"; exit 0; }
           swift --version
-          BUNDLE="$HOME/.swiftpm/swift-sdks/swift-6.4.1-RELEASE_android.artifactbundle"
+          # `swift sdk install <url>` refuses a remote bundle without the distributor's checksum, which
+          # is not published anywhere this repository can read; unpacking the same bundle where SwiftPM
+          # looks for it is the same install.
+          SDK_ROOT="$HOME/.swiftpm/swift-sdks"
+          BUNDLE="$SDK_ROOT/swift-6.4.1-RELEASE_android.artifactbundle"
+          mkdir -p "$SDK_ROOT"
           if [ ! -d "$BUNDLE" ]; then
             swift sdk list 2>/dev/null | sed 's/^/installed Swift SDK: /' || true
+            : >/tmp/swift-sdk.log
             for url in \
+              https://download.swift.org/swift-6.4.1-release/android/6.4.1/swift-6.4.1-RELEASE_android.artifactbundle.tar.gz \
               https://download.swift.org/swift-6.4.1-release/android/swift-6.4.1-RELEASE_android.artifactbundle.tar.gz \
-              https://download.swift.org/swift-6.4.1-release/android/swift-6.4.1-RELEASE_android.artifactbundle.zip ; do
-              echo "swift sdk install $url"
-              if swift sdk install "$url" >>/tmp/swift-sdk.log 2>&1; then break; fi
+              https://download.swift.org/swift-6.4.1-release/android/6.4.1/swift-6.4.1-RELEASE_android.artifactbundle.zip ; do
+              echo "Swift SDK: $url" | tee -a /tmp/swift-sdk.log
+              curl -fsSL --retry 1 -o /tmp/swift-sdk.bundle "$url" >>/tmp/swift-sdk.log 2>&1 || continue
+              case "$url" in
+                *.zip) unzip -q -o /tmp/swift-sdk.bundle -d "$SDK_ROOT" >>/tmp/swift-sdk.log 2>&1 ;;
+                *) tar -xzf /tmp/swift-sdk.bundle -C "$SDK_ROOT" >>/tmp/swift-sdk.log 2>&1 ;;
+              esac
+              [ -d "$BUNDLE" ] && break
             done
+            ls "$SDK_ROOT" >>/tmp/swift-sdk.log 2>&1 || true
             [ -d "$BUNDLE" ] || report /tmp/swift-sdk.log
           fi
           cd "$GITHUB_WORKSPACE"
@@ -525,13 +538,20 @@ jobs:
               --dependency-verification="$DECLARED_DEPENDENCY_VERIFICATION" \
               -Pdebuggable="$DECLARED_DEBUGGABLE" "$@"
           }
+          # The compiler's own lines come back through check-run annotations on failure: the run's
+          # log is not readable everywhere, and a Kotlin error there is otherwise invisible.
+          LOG="$RUNNER_TEMP/preflight.log"
+          report() {
+            sed -n 's/^/::error title=preflight::/p' <(grep -E '^e: |What went wrong|^Caused by|^> Task .*FAILED' "$LOG" | head -n 20)
+            exit 1
+          }
           # Resolving the runtime classpath checks the pinned dependency verification; the dry
           # run configures every task without running it.
-          gradlew :app:dependencies --configuration debugRuntimeClasspath > /dev/null
-          gradlew --dry-run :app:assembleDebug
+          gradlew :app:dependencies --configuration debugRuntimeClasspath >"$LOG" 2>&1 || report
+          gradlew --dry-run :app:assembleDebug >>"$LOG" 2>&1 || report
           # AIDL first (Kotlin compiles against its generated interfaces), then Kotlin and Java:
           # what the APK step compiles, none of what it packages.
-          gradlew :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac
+          gradlew :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac >>"$LOG" 2>&1 || report
 
       # A cache hit is a tree the scripts' own recorded recipe accepts (the key is that recipe), so
       # there is nothing to rebuild. Without the skip this step spent ~3.5 minutes on every run
