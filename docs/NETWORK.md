@@ -32,6 +32,10 @@ bundled signed `ittrust` and `itproxy` helpers in bounded chunks, install the pu
 CA and configure the Wi-Fi proxy. This supports installed packages that omit the
 helpers. A lost or timed-out mutation is reported rather than replayed. Guests
 without a working agent cannot complete automatic configuration.
+Setup retries only requests explicitly refused before admission (busy guest tools
+or a guest agent that is still starting), so other guest-tools clients can run
+between uploads without aborting setup. Once accepted, a mutation is polled and
+never resubmitted automatically.
 
 The engine's bundled libslirp uses a native private Unix socket forward at
 `10.0.2.100:3128`, with no subprocess or host TCP listener. Off restricts guest
@@ -77,6 +81,8 @@ hostname verification, off-mode identity isolation, LAN policy, chunk decoding,
 multiple response cookies, credential stripping and archive method isolation.
 Typed helper uploads also have bounds/path-injection contract tests. Android unit
 tests cover default-off policy and invalid calendar dates.
+Regression cases also cover admission contention between uploads, lost mutation
+completions, interrupted first CA saves, and HTTP framing inside TLS tunnels.
 
 The raw NAT policy can also be checked against the engine's actual vendored
 libslirp on a native host (Meson and GLib development files required):
@@ -89,3 +95,20 @@ sh Portable/tests/network/check-slirp-policy.sh /path/to/qemu-ios-net \
 This runs libslirp's ping, guest-forward and NCSI suites, then checks Direct-mode
 public/LAN routing, host-loopback refusal and the private Android DNS exemption.
 It opens no outbound connections.
+
+## Android acceptance checks
+
+For an installable non-debug APK, use the existing Android release packaging
+workflow (`LT_DEBUGGABLE=false`, `LT_PROFILEABLE=false` in `scripts/build.sh
+android`). Verify the APK signature and its final manifest's `debuggable=false`
+before handing it off. Keep source and engine revision receipts beside the APK.
+
+Device acceptance still requires a stopped guest with current guest tools. Check
+Settings → Network is off on fresh app data, enable Direct, start the guest and
+wait for **Ready** under Current session. Browse an HTTP and an HTTPS page in
+Safari. Stop the guest, select Wayback with date **9 September 2009**, start again
+and verify a page with a capture on a nearby day loads (for example,
+`http://example.com/`, whose nearby capture is 10 September 2009). Also check a
+missing capture gives an archive error. Return networking to off and stop the guest
+after testing. Host HTTP/TLS tests do not establish Safari or guest trust-store
+acceptance; those checks need the physical device.

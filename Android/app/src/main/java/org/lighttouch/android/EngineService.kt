@@ -342,29 +342,10 @@ class EngineService : Service() {
      * mutation is reported once and is never silently replayed after a timeout. */
     private fun configureGuestNetwork() {
         try {
-            val deadline = SystemClock.elapsedRealtime() + 120_000
-            fun operation(kind: Int, argument: String = "", waiting: Boolean = false): String {
-                var admitted: Array<String>
-                do {
-                    check(alive.get() && !stopping.get()) { "Network setup stopped" }
-                    admitted = Native.guestRequest(kind, argument, 20_000)
-                    if (admitted[0] != "0") break
-                    if (!waiting || SystemClock.elapsedRealtime() >= deadline) error(admitted[1].ifEmpty { "Guest tools did not become available" })
-                    Thread.sleep(500)
-                } while (true)
-                val id = admitted[0].toLong()
-                while (alive.get() && !stopping.get()) {
-                    val reply = Native.guestPoll(id)
-                    when (reply[0].toIntOrNull()) {
-                        1 -> Thread.sleep(100)
-                        2 -> return reply[2]
-                        else -> error(reply[3].ifEmpty { "Guest network setup step $kind failed (${reply[1]}). Update guest tools and restart." })
-                    }
-                }
-                Native.guestCancel(id)
-                error("Network setup stopped")
-            }
-            operation(0, waiting = true)
+            val operations = GuestNetworkOperation(Native::guestRequest, Native::guestPoll, Native::guestCancel,
+                { alive.get() && !stopping.get() }, SystemClock::elapsedRealtime, Thread::sleep)
+            fun operation(kind: Int, argument: String = "") = operations.execute(kind, argument)
+            operations.execute(0, admissionWaitMs = 120_000)
             // Use the app's matching signed helpers, including on older installed
             // packages that have an agent but omit ittrust/itproxy. Chunk uploads
             // are atomic in the guest and never replayed after a lost completion.

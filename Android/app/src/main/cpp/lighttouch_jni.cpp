@@ -1148,8 +1148,9 @@ JNI(guestRequest) jobjectArray JNICALL Java_org_lighttouch_android_Native_guestR
     std::lock_guard<std::mutex> lock(guard);Utf text(env,argument);lt_error error=LT_INIT(lt_error);uint64_t id=0;
     lt_guest_request request=LT_INIT(lt_guest_request);request.operation=operation;request.timeout_ms=timeout;request.argument=text.value;
     auto status=runtime?lt_runtime_guest_request(runtime,&request,&id,&error):LT_AGAIN;
-    auto output=env->NewObjectArray(2,env->FindClass("java/lang/String"),nullptr);
-    env->SetObjectArrayElement(output,0,string(env,std::to_string(id)));env->SetObjectArrayElement(output,1,string(env,result(status,error)));return output;
+    auto output=env->NewObjectArray(3,env->FindClass("java/lang/String"),nullptr);
+    env->SetObjectArrayElement(output,0,string(env,std::to_string(id)));env->SetObjectArrayElement(output,1,string(env,result(status,error)));
+    env->SetObjectArrayElement(output,2,string(env,std::to_string(status)));return output;
 }
 JNI(guestPoll) jobjectArray JNICALL Java_org_lighttouch_android_Native_guestPoll(JNIEnv *env,jobject,jlong id) {
     std::lock_guard<std::mutex> lock(guard);lt_error error=LT_INIT(lt_error);lt_guest_result completed=LT_INIT(lt_guest_result);
