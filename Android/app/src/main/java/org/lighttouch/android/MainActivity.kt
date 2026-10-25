@@ -161,6 +161,15 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         val device = selected ?: return
         val folder = File(filesDir, "library/records/${device.id}")
         if (!folder.isDirectory) { error = "The device's folder is missing; start it once, then try again"; return }
+        // firmwarekit's stopped editor reads its own device store (device.plist beside base and work). This
+        // library keeps devices in the engine's layout (record.json, base, state), so the edit refuses with a
+        // file-not-found from deep inside; say so here instead, before anything runs.
+        if (!File(folder, "device.plist").isFile) {
+            error = "This build can't jailbreak a device it has already prepared: firmwarekit's editor and " +
+                "this app's device storage use different layouts. Turn on Cydia (jailbreak) while preparing " +
+                "a system from an IPSW instead."
+            return
+        }
         if (!CydiaBootstrap.ready(this)) {
             // The bootstrap is downloaded and checked here, before firmwarekit runs, so the edit needs no network.
             jailbreakRunning = true; jailbreakStep = "Downloading Cydia"; error = ""
