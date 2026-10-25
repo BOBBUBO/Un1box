@@ -391,22 +391,28 @@ jobs:
           fi
           # The bundle cross-compiles against an NDK sysroot the setup script links in (LTS r30 in
           # swift.org's guide, and the SDK's static runtime wants its libc++).
-          # `bash -e` is the runner's shell: every pipeline here is guarded, or a picker that finds
-          # nothing would end the step before report() could say what happened.
-          { sdkmanager --list >/tmp/sdkmanager.log 2>&1 || true; }
+          # `bash -e` is the runner's shell: every picker here is guarded, or one that finds nothing
+          # would end the step before report() could say what happened. sdkmanager is not on PATH; the
+          # NDK install step uses this same path.
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          { "$SDKMANAGER" --list >/tmp/sdkmanager.log 2>&1 || true; }
           NDK30="$(grep -o 'ndk;3[0-9][^ |]*' /tmp/sdkmanager.log | sort -u | tail -1 || true)"
-          if [ -z "$NDK30" ]; then
-            echo "::error title=firmwarekit build::the SDK manager lists no NDK 30; it offers:"
-            grep -o 'ndk;[0-9][^ |]*' /tmp/sdkmanager.log | sort -u | sed 's/^/::error title=installed NDK::/'
-            echo "::warning::firmwarekit was not built from this branch; the APK keeps the released one"
-            exit 0
+          if [ -n "$NDK30" ]; then
+            echo "NDK: $NDK30"
+            { yes | "$SDKMANAGER" --install "$NDK30" >/tmp/ndk30.log 2>&1; } || report /tmp/ndk30.log
+            NDK_ROOT="$ANDROID_HOME/ndk/$(echo "$NDK30" | cut -d';' -f2)"
+          else
+            # swift.org's guide asks for LTS r30; the image's own NDK links the sysroot just the same.
+            echo "::warning title=firmwarekit build::the image offers no NDK 30; linking the SDK to NDK $ANDROID_NDK_VERSION"
+            NDK_ROOT="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
           fi
-          echo "NDK: $NDK30"
-          { yes | sdkmanager "$NDK30" >/tmp/ndk30.log 2>&1; } || report /tmp/ndk30.log
-          NDK30_PATH="$ANDROID_HOME/ndk/$(echo "$NDK30" | cut -d';' -f2)"
+          # The bundle cross-compiles against an NDK sysroot its setup script links in.
+          echo "NDK root: $NDK_ROOT"
           if [ -f "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" ]; then
-            ANDROID_NDK_HOME="$NDK30_PATH" bash "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" >/tmp/ndk-setup.log 2>&1 \
+            ANDROID_NDK_HOME="$NDK_ROOT" bash "$BUNDLE/swift-android/scripts/setup-android-sdk.sh" >/tmp/ndk-setup.log 2>&1 \
               || report /tmp/ndk-setup.log
+          else
+            echo "no setup-android-sdk.sh in the bundle" >>/tmp/ndk-setup.log
           fi
           cd "$GITHUB_WORKSPACE"
           JOBS="$LT_JOBS" LT_SWIFT_ANDROID_BUNDLE="$BUNDLE" bash scripts/build.sh firmwarekit-android >/tmp/firmwarekit.log 2>&1 \
