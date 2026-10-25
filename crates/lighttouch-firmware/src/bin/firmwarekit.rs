@@ -8,6 +8,10 @@
 //!                                              symlink:PATH=TARGET rm:PATH mv:FROM=TO chmod:PATH=OCTAL
 //!   firmwarekit hfs-grow IMG BYTES
 //!   firmwarekit hfs-format IMG BYTES NAME [--journaled]
+//!   firmwarekit k48-build --mbr FILE --system IMG [--data IMG] [--s3 IMG] --out DIR --kernelcache FILE
+//!                         [--epoch N | --ipsw FILE --board BOARD] [--plain] [--sig-flags N] [--vendor-type N]
+//!   firmwarekit k48-rebuild --store DIR [--overlay DIR] --system IMG [--data IMG] --out DIR [--work DIR]
+//!   firmwarekit k48-check DIR [--mbr FILE] [--system IMG]
 //!   firmwarekit write-n72-nand VOLUME OUT --blocks N --epoch E
 //!   firmwarekit write-n45-nand VOLUME OUT (--fil-id 0xN | --iboot FILE) [--banks N] [--bbt-map]
 //!   firmwarekit build-n72-nor --ipsw FILE --identity JSON --out FILE [--board B] [--types A,B] [--wrap all|A,B]
@@ -110,6 +114,74 @@ fn number(s: &str) -> Result<u32, String> {
     r.map_err(|_| format!("not a number: {s}"))
 }
 
+fn k48_build(args: &[String]) -> Result<(), String> {
+    use lighttouch_firmware::k48nand::{self, Build, DataVolume, Geometry};
+    let kc = PathBuf::from(required(args, "--kernelcache")?);
+    let data = option(args, "--data").map_or(DataVolume::None, |d| DataVolume::Image(PathBuf::from(d)));
+    let mut b = Build::new(
+        &PathBuf::from(required(args, "--mbr")?),
+        k48nand::kernel_version(&kc).map_err(|e| e.to_string())?,
+        &PathBuf::from(required(args, "--system")?),
+        data,
+        &PathBuf::from(required(args, "--out")?),
+    );
+    b.geometry = Geometry::for_vendor_type(option(args, "--vendor-type").map(|v| number(&v)).transpose()?.map(i64::from));
+    // as the K48 recipe picks it: an explicit one, else the IPSW's SCEP for --board (the S5L8920 boards), else the
+    // kernel's FIL
+    let scep = match (option(args, "--ipsw"), option(args, "--board")) {
+        (Some(ipsw), Some(board)) => {
+            let ipsw = Ipsw::open(&PathBuf::from(ipsw)).map_err(|e| e.to_string())?;
+            k48nand::restore_epoch_of(&ipsw, &board).map_err(|e| e.to_string())?
+        }
+        _ => None,
+    };
+    b.epoch = match (option(args, "--epoch"), scep) {
+        (Some(e), _) => number(&e)? as u8,
+        (None, Some(scep)) => scep,
+        (None, None) => k48nand::signature_epoch(&kc).map_err(|e| e.to_string())?,
+    };
+    eprintln!("NAND signature epoch {}", b.epoch);
+    b.s3 = option(args, "--s3").map(PathBuf::from);
+    b.whitening = !args.iter().any(|a| a == "--plain");
+    b.sig_flags = option(args, "--sig-flags").map(|f| number(&f)).transpose()?;
+    let started = std::time::Instant::now();
+    let r = k48nand::build(&b, &|line| eprintln!("{line}")).map_err(|e| e.to_string())?;
+    eprintln!("{} records in {:.1} s", r.records, started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+fn k48_rebuild(args: &[String]) -> Result<(), String> {
+    let out = PathBuf::from(required(args, "--out")?);
+    let work = option(args, "--work").map(PathBuf::from).unwrap_or_else(|| out.with_extension("work"));
+    std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+    let started = std::time::Instant::now();
+    let r = lighttouch_firmware::k48nand::rebuild(
+        &PathBuf::from(required(args, "--store")?),
+        option(args, "--overlay").map(PathBuf::from).as_deref(),
+        &PathBuf::from(required(args, "--system")?),
+        option(args, "--data").map(PathBuf::from).as_deref(),
+        &out,
+        &work,
+        &|line| eprintln!("{line}"),
+    )
+    .map_err(|e| e.to_string())?;
+    eprintln!("{} records in {:.1} s", r.records, started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+fn k48_check(args: &[String]) -> Result<(), String> {
+    let Some(dir) = args.first() else { return Err("k48-check DIR [--mbr FILE] [--system IMG]".into()) };
+    let mbr = option(args, "--mbr").map(PathBuf::from);
+    let system = option(args, "--system").map(PathBuf::from);
+    let passed = lighttouch_firmware::k48nand_check::check(
+        &PathBuf::from(dir),
+        mbr.as_deref(),
+        system.as_deref(),
+        &|line| println!("{line}"),
+    )
+    .map_err(|e| e.to_string())?;
+    if passed { Ok(()) } else { Err("the store failed its check".into()) }
+}
 
 fn write_n72_nand(args: &[String]) -> Result<(), String> {
     let (Some(volume), Some(out)) = (args.first(), args.get(1)) else {
@@ -123,7 +195,6 @@ fn write_n72_nand(args: &[String]) -> Result<(), String> {
     eprintln!("{written} filesystem pages, {meta} metadata pages (epoch {epoch}) in {:.1} s", started.elapsed().as_secs_f64());
     Ok(())
 }
-
 
 fn write_n45_nand(args: &[String]) -> Result<(), String> {
     use lighttouch_firmware::n45nand;
@@ -146,13 +217,11 @@ fn write_n45_nand(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-
 fn identity_file(args: &[String]) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let path = required(args, "--identity")?;
     let text = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
     serde_json::from_slice(&text).map_err(|e| format!("{path}: {e}"))
 }
-
 
 fn build_n72_nor(args: &[String]) -> Result<(), String> {
     use lighttouch_firmware::n72nor;
@@ -185,7 +254,6 @@ fn build_n72_nor(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-
 fn build_n45_nor(args: &[String]) -> Result<(), String> {
     use lighttouch_firmware::img3::{apple8900, img2};
     let ipsw = Ipsw::open(&PathBuf::from(required(args, "--ipsw")?)).map_err(|e| e.to_string())?;
@@ -209,6 +277,9 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("decrypt") => decrypt(&args[1..]),
         Some("extract-rootfs") => extract_rootfs(&args[1..]),
+        Some("k48-build") => k48_build(&args[1..]),
+        Some("k48-rebuild") => k48_rebuild(&args[1..]),
+        Some("k48-check") => k48_check(&args[1..]),
         Some("hfs-list") => hfs_list(&args[1..]),
         Some("hfs-edit") => hfs_edit(&args[1..]),
         Some("hfs-grow") => hfs_grow(&args[1..]),

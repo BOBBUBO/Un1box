@@ -18,6 +18,7 @@
 //!   page_nand  the page NAND image store (n72, s5l8900 boards)
 //!   n72nand    the iPod touch 2G NAND writer;  n72nor  its NOR
 //!   n45nand    the iPod touch 1G / iPhone NAND writer;  n45ftl  its FTL read back;  n45nor  its NOR
+//!   k48nand    the K48-family NAND store (iPad 1, iPod touch 3G/4G, iPhone 3GS/4): writer, reader, check
 pub mod activation;
 pub mod assets;
 pub mod cache;
@@ -30,6 +31,9 @@ pub mod guest_package;
 pub mod hfs;
 pub mod img3;
 pub mod ipsw;
+pub mod k48nand;
+pub mod k48nand_check;
+pub mod k48nand_image;
 pub mod keyboards;
 pub mod lzss;
 pub mod n45ftl;
