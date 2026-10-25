@@ -294,6 +294,8 @@ pub fn setting_row<R>(
         ui.label(icon_text(icon, 20.0).color(p.on_surface_variant));
         ui.add_space(6.0);
         ui.vertical(|ui| {
+            // Leave the trailing control its room: a long subtitle wraps instead of running under it.
+            ui.set_max_width((ui.available_width() - 150.0).max(160.0));
             ui.add_space(if subtitle.is_empty() { 14.0 } else { 4.0 });
             ui.label(RichText::new(title).size(14.5));
             if !subtitle.is_empty() {

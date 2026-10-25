@@ -77,6 +77,13 @@ pub struct Session {
     /// A pause was asked for (the worker confirms it with its next status).
     pause_requested: bool,
     tilt: crate::tilt::Tilt,
+    /// The inspector's pause waits for the guest tools to name the app in front (they answer only while iOS runs):
+    /// when it was asked.
+    frontmost_asked: Option<Instant>,
+    /// The app in front as the guest tools last named it (bundle id, name).
+    pub frontmost: Option<(String, String)>,
+    /// A profile recorded on request (Settings > Diagnostics): its folder and when it started.
+    pub recording: Option<(PathBuf, Instant)>,
     last_motion: Option<Instant>,
     stop_requested: Option<Instant>,
 }
@@ -178,6 +185,9 @@ impl Session {
             capture: None,
             pause_requested: false,
             tilt: Default::default(),
+            recording: None,
+            frontmost_asked: None,
+            frontmost: None,
             last_motion: None,
             stop_requested: None,
         };
@@ -250,6 +260,13 @@ impl Session {
             }
             Event::Error { command, message } => self.last_error = Some(format!("{command}: {message}")),
             Event::InputRejected { message } => self.last_error = Some(message),
+            Event::GuestResult { state, status, output, .. } if self.frontmost_asked.is_some() => {
+                let lines: Vec<&str> = output.trim_end().lines().collect();
+                if state == 2 && status == 0 && lines.len() >= 2 && !lines[1].trim().is_empty() {
+                    self.frontmost = Some((lines[0].trim().to_string(), lines[1].trim().to_string()));
+                }
+                self.pause_after_frontmost();
+            }
             Event::GuestResult { .. } | Event::Screenshot { .. } => {}
             Event::Exit { clean, dirty, message } => {
                 let _ = self.child.wait();
@@ -318,7 +335,30 @@ impl Session {
         }
     }
 
+    /// Pause for the frame inspector: first ask the guest tools which app is in front, then pause when they answer
+    /// (or after 2.5 s; `kill_if_overdue` checks).
+    pub fn pause_for_inspector(&mut self) {
+        if !matches!(self.phase, Phase::Running) {
+            return;
+        }
+        self.pause_requested = true;
+        self.frontmost = None;
+        self.frontmost_asked = Some(Instant::now());
+        self.send(&Command::Guest {
+            operation: lighttouch_core::sys::LT_GUEST_FRONTMOST,
+            argument: String::new(),
+            timeout_ms: 2000,
+        });
+    }
+
+    fn pause_after_frontmost(&mut self) {
+        if self.frontmost_asked.take().is_some() {
+            self.set_paused(true);
+        }
+    }
+
     pub fn set_paused(&mut self, paused: bool) {
+        self.frontmost_asked = None;
         if matches!(self.phase, Phase::Running | Phase::Paused) {
             self.pause_requested = paused;
             self.send(&Command::Pause { paused });
@@ -343,6 +383,31 @@ impl Session {
         }
     }
 
+    /// Save the newest guest frame as a PNG at `path`, encoded off the UI thread. Err when there's no frame yet.
+    pub fn save_png(&self, path: &Path, done: impl FnOnce(Result<(), String>) + Send + 'static) -> Result<(), String> {
+        let mut bgra = Vec::new();
+        let meta = self.frames.read(0, &mut bgra).ok_or("no frame yet")?;
+        let path = path.to_path_buf();
+        std::thread::spawn(move || {
+            let (w, h, stride) = (meta.width as usize, meta.height as usize, meta.stride as usize);
+            let mut rgb = Vec::with_capacity(w * h * 3);
+            for row in bgra.chunks(stride).take(h) {
+                for px in row[..w * 4].chunks_exact(4) {
+                    rgb.extend_from_slice(&[px[2], px[1], px[0]]);
+                }
+            }
+            let write = || -> Result<(), String> {
+                let file = std::io::BufWriter::new(std::fs::File::create(&path).map_err(|e| e.to_string())?);
+                let mut encoder = png::Encoder::new(file, meta.width, meta.height);
+                encoder.set_color(png::ColorType::Rgb);
+                encoder.set_depth(png::BitDepth::Eight);
+                encoder.write_header().and_then(|mut w| w.write_image_data(&rgb)).map_err(|e| e.to_string())
+            };
+            done(write());
+        });
+        Ok(())
+    }
+
     pub fn screenshot(&mut self, path: &Path) {
         self.send(&Command::Screenshot { path: path.to_path_buf() });
     }
@@ -365,7 +430,7 @@ impl Session {
                 self.capture = None;
             }
         }
-        if wanted && running && self.capture.is_none() {
+        if wanted && running && self.capture.is_none() && self.recording.is_none() {
             let dir = root.join(format!("{:020}", lighttouch_core::monotonic_ns()));
             if std::fs::create_dir_all(&dir).is_ok() {
                 self.profile(Some(dir.join("events.tsv")));
@@ -386,6 +451,26 @@ impl Session {
         }
     }
 
+    /// Record an engine profile into a new folder under `root` until `stop_recording`, as Android's "Record a
+    /// profile": the same capture detailed timing makes, so only while that is off. The folder is kept.
+    pub fn start_recording(&mut self, root: &Path, stamp: &str) -> Result<(), String> {
+        if !matches!(self.phase, Phase::Running) || self.capture.is_some() || self.recording.is_some() {
+            return Err("the device isn't running, or a capture is already on".into());
+        }
+        let dir = root.join(format!("recorded {stamp}"));
+        std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("keep"), b"")).map_err(|e| e.to_string())?;
+        self.profile(Some(dir.join("events.tsv")));
+        self.recording = Some((dir, Instant::now()));
+        Ok(())
+    }
+
+    /// Stop a requested recording; its folder.
+    pub fn stop_recording(&mut self) -> Option<PathBuf> {
+        let (dir, _) = self.recording.take()?;
+        self.profile(None);
+        Some(dir)
+    }
+
     /// Stop the detailed timing capture and keep it (for the frame inspector); its events file.
     pub fn claim_timing(&mut self) -> Option<PathBuf> {
         let (dir, _) = self.capture.take()?;
@@ -401,6 +486,9 @@ impl Session {
 
     /// Last resort when the worker ignores Stop beyond the grace period: kill it. The device stays dirty.
     pub fn kill_if_overdue(&mut self) {
+        if self.frontmost_asked.is_some_and(|at| at.elapsed() > Duration::from_millis(2500)) {
+            self.pause_after_frontmost();
+        }
         let grace = Duration::from_millis(lighttouch_core::sys::LT_SHUTDOWN_GRACE_MS as u64 + 10_000);
         if self.stop_requested.is_some_and(|at| at.elapsed() > grace) && self.phase.active() {
             let _ = self.child.kill();

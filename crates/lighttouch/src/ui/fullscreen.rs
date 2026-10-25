@@ -1,7 +1,7 @@
 //! Full screen: the guest centred on black, with a button bar docked below it when there is room, or floating over
 //! it (hiding after a few seconds without the mouse) when there is not. Esc leaves.
 use super::device_frame::{self, Skin};
-use super::{App, Dialog, home, icons, overlay, theme, widgets};
+use super::{App, Dialog, Page, home, icons, overlay, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Rect, Sense, Ui, vec2};
 use lighttouch_model::session::Phase;
 use std::time::{Duration, Instant};
@@ -124,6 +124,18 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
             );
         }
     }
+    // The frame inspector, when its button is on (as on the home view's dock).
+    if app.model.settings.inspect_button {
+        let c = center + vec2(205.0, 0.0);
+        let rect = Rect::from_center_size(c, vec2(44.0, 44.0));
+        let response =
+            ui.interact(rect, ui.scope_id().with("fs-inspect"), Sense::click()).on_hover_text("Inspect frames");
+        ui.painter().circle_filled(c, 22.0, Color32::from_white_alpha(if response.hovered() { 34 } else { 20 }));
+        ui.painter().text(c, Align2::CENTER_CENTER, icons::CHART, FontId::new(20.0, theme::icons()), Color32::WHITE);
+        if response.clicked() {
+            open_inspector(app, ui);
+        }
+    }
     // More: leave full screen, pause, stop.
     let more = Rect::from_center_size(center + vec2(150.0, 0.0), vec2(44.0, 44.0));
     let response = ui.interact(more, ui.scope_id().with("fs-more"), Sense::click()).on_hover_text("More");
@@ -166,9 +178,27 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
             app.model.settings.overlay = level.next();
             app.model.save_settings();
         }
+        if ui.button(widgets::icon_label(icons::CHART, "Inspect frames", None)).clicked() {
+            open_inspector(app, ui);
+        }
+        if ui.button(widgets::icon_label(icons::GEAR, "Settings", None)).clicked() {
+            let ctx = ui.ctx().clone();
+            app.set_fullscreen(&ctx, false);
+            app.page = Page::Settings;
+        }
         ui.separator();
         if ui.button(widgets::icon_label(icons::POWER, "Stop", Some(theme::DANGER))).clicked() {
             app.dialog = Some(Dialog::Stop);
         }
     });
+}
+
+/// Pause the guest and open the frame inspector, out of full screen.
+fn open_inspector(app: &mut App, ui: &Ui) {
+    if let Some((snapshot, paused)) = app.model.inspect() {
+        let ctx = ui.ctx().clone();
+        app.set_fullscreen(&ctx, false);
+        app.inspector = Some(super::inspector::InspectorState::new(snapshot, paused));
+        app.page = Page::Inspector;
+    }
 }

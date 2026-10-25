@@ -340,9 +340,19 @@ impl RangeStats {
 
 /// Write the range `from..=to` as a report folder in `dir`: summary.txt, selection.tsv (its frames), frames.tsv (the
 /// whole snapshot), report.json, and the end of the session log. Returns the folder.
-pub fn save_report(snapshot: &Snapshot, from: u64, to: u64, dir: &Path, stamp: &str) -> Result<PathBuf, String> {
+/// `app`: the iOS app in front when the inspector opened, as the guest tools named it; the report is named for it.
+pub fn save_report(
+    snapshot: &Snapshot,
+    app: Option<&str>,
+    from: u64,
+    to: u64,
+    dir: &Path,
+    stamp: &str,
+) -> Result<PathBuf, String> {
     let fail = |e: std::io::Error| format!("Couldn't save the report: {e}");
-    let name: String = snapshot.device.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    // Named for the app it measured, so reports from different games tell apart at a glance.
+    let subject = app.filter(|a| !a.is_empty()).unwrap_or(&snapshot.device);
+    let name: String = subject.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).take(40).collect();
     let name = name.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
     let folder = dir.join(format!("frames-{name}-{}", stamp.replace([' ', '.'], "-")));
     std::fs::create_dir_all(&folder).map_err(fail)?;
@@ -359,6 +369,9 @@ pub fn save_report(snapshot: &Snapshot, from: u64, to: u64, dir: &Path, stamp: &
         std::env::consts::OS,
         snapshot.device
     );
+    if let Some(app) = app {
+        let _ = writeln!(summary, "App in front: {app}");
+    }
     let _ =
         writeln!(summary, "Selection: {:.3} s to {:.3} s of the timeline (monotonic {from}..{to})", at(from), at(to));
     let _ = writeln!(
@@ -494,10 +507,15 @@ mod tests {
     fn report() {
         let s = snapshot(&[16, 17, 50, 16]);
         let dir = std::env::temp_dir().join(format!("lt-inspector-{}", std::process::id()));
-        let folder = save_report(&s, s.start_ns(), s.end_ns(), &dir, "2026-10-25 at 06.30.00").unwrap();
+        let folder = save_report(&s, None, s.start_ns(), s.end_ns(), &dir, "2026-10-25 at 06.30.00").unwrap();
         let summary = std::fs::read_to_string(folder.join("summary.txt")).unwrap();
         assert!(summary.contains("Frames 4 over"), "{summary}");
         assert_eq!(std::fs::read_to_string(folder.join("selection.tsv")).unwrap().lines().count(), 5);
+        assert!(folder.ends_with("frames-iPod-touch-2G-2026-10-25-at-06-30-00"), "{}", folder.display());
+        let folder =
+            save_report(&s, Some("Doodle Jump"), s.start_ns(), s.end_ns(), &dir, "2026-10-25 at 06.31.00").unwrap();
+        assert!(folder.ends_with("frames-Doodle-Jump-2026-10-25-at-06-31-00"), "{}", folder.display());
+        assert!(std::fs::read_to_string(folder.join("summary.txt")).unwrap().contains("App in front: Doodle Jump"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

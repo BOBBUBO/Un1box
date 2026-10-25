@@ -130,6 +130,8 @@ pub struct Model {
     library: Option<Library>,
     task: Option<(Activity, Task<Finished>)>,
     finished: Option<Finished>,
+    /// Screenshots being written: the folder, and whether it worked.
+    screenshots: (std::sync::mpsc::Sender<Result<PathBuf, String>>, std::sync::mpsc::Receiver<Result<PathBuf, String>>),
     waker: Waker,
 }
 
@@ -149,6 +151,7 @@ impl Model {
             library: None,
             task: None,
             finished: None,
+            screenshots: std::sync::mpsc::channel(),
             waker,
         };
         match Library::open(&model.dirs.library()) {
@@ -165,6 +168,12 @@ impl Model {
 
     /// Apply background results. Call once per frame.
     pub fn tick(&mut self) {
+        while let Ok(result) = self.screenshots.1.try_recv() {
+            match result {
+                Ok(dir) => self.notify(format!("Screenshot saved to {}", dir.display())),
+                Err(e) => self.error = Some(format!("Couldn't save the screenshot: {e}")),
+            }
+        }
         let mut ended = false;
         if let Some(session) = &mut self.session {
             session.poll();
@@ -376,7 +385,7 @@ impl Model {
         let session = self.session.as_mut()?;
         let pause = matches!(session.phase, Phase::Running);
         if pause {
-            session.set_paused(true);
+            session.pause_for_inspector();
         }
         let events = session.claim_timing();
         let mut snapshot = session.timeline.snapshot(&session.name, Some(session.log_path.clone()));
@@ -386,7 +395,8 @@ impl Model {
 
     /// Save an inspector range as a report folder; returns it.
     pub fn save_frame_report(&mut self, snapshot: &inspector::Snapshot, from: u64, to: u64) -> Option<PathBuf> {
-        match inspector::save_report(snapshot, from, to, &self.dirs.reports(), &chrono_like_stamp()) {
+        let app = self.session.as_ref().and_then(|s| s.frontmost.as_ref()).map(|(_, name)| name.clone());
+        match inspector::save_report(snapshot, app.as_deref(), from, to, &self.dirs.reports(), &chrono_like_stamp()) {
             Ok(folder) => Some(folder),
             Err(e) => {
                 self.error = Some(e);
@@ -409,6 +419,42 @@ impl Model {
         }
     }
 
+    /// Install `pack` (an .itpack) into the selected device, as Android's "Update guest tools": iOS installs it at
+    /// the device's next start.
+    pub fn update_guest_tools(&mut self, pack: &Path) {
+        let Some(device) = self.selected().cloned() else { return };
+        if self.session_active() {
+            self.error = Some(format!("Stop {} first", device.name));
+            return;
+        }
+        let result =
+            self.library().and_then(|library| library.set_guest_package(&device.id, pack).map_err(|e| e.to_string()));
+        match result {
+            Ok(_) => {
+                self.notify("Guest tools updated; they install at the next start");
+                self.refresh();
+            }
+            Err(e) => self.error = Some(format!("Couldn't update the guest tools: {e}")),
+        }
+    }
+
+    /// Start or stop recording an engine profile of the running device (Settings > Diagnostics).
+    pub fn toggle_recording(&mut self) {
+        let Some(session) = &mut self.session else { return };
+        if let Some(dir) = session.stop_recording() {
+            self.notify(format!("Profile saved to {}", dir.display()));
+        } else if let Err(e) = session.start_recording(&self.dirs.profiles(), &chrono_like_stamp()) {
+            self.error = Some(format!("Couldn't record a profile: {e}"));
+        }
+    }
+
+    /// While a profile records: how long, and how big so far.
+    pub fn recording_status(&self) -> Option<String> {
+        let (dir, started) = self.session.as_ref()?.recording.as_ref()?;
+        let bytes = std::fs::metadata(dir.join("events.tsv")).map_or(0, |m| m.len());
+        Some(format!("Recording… {} s, {:.1} MB", started.elapsed().as_secs(), bytes as f64 / 1e6))
+    }
+
     /// Save the current guest screen into the Pictures folder.
     pub fn screenshot(&mut self) {
         let dir = self.dirs.screenshots();
@@ -417,10 +463,14 @@ impl Model {
             return;
         }
         let stamp = chrono_like_stamp();
-        let path = dir.join(format!("LightTouch {stamp}.bmp"));
-        if let Some(session) = &mut self.session {
-            session.screenshot(&path);
-            self.notify(format!("Screenshot saved to {}", dir.display()));
+        let path = dir.join(format!("LightTouch {stamp}.png"));
+        let Some(session) = &self.session else { return };
+        let (tx, waker) = (self.screenshots.0.clone(), self.waker.clone());
+        if let Err(e) = session.save_png(&path, move |result| {
+            let _ = tx.send(result.map(|_| dir));
+            waker();
+        }) {
+            self.error = Some(format!("Couldn't save the screenshot: {e}"));
         }
     }
 

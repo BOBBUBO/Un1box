@@ -1,6 +1,7 @@
 //! Settings: grouped cards like the Android app's settings screen.
 use super::{App, Page, icons, theme, widgets};
 use eframe::egui::{self, RichText, Ui};
+use lighttouch_model::session::Phase;
 use lighttouch_model::settings::{Corner, OverlayGraph, OverlayLevel, Scaling, Theme};
 
 pub fn show(app: &mut App, ui: &mut Ui) {
@@ -18,6 +19,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 ui.label(RichText::new("Settings").font(theme::headline()));
             });
             let before = app.model.settings.clone();
+            let recording = app.model.recording_status();
+            let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
+            let mut toggle_recording = false;
             let settings = &mut app.model.settings;
 
             widgets::section(ui, &p, "Display");
@@ -74,7 +78,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                     &p,
                     icons::KEYBOARD,
                     "Tilt with the arrow keys",
-                    "Leans the device toward the arrow, for games you steer by tilting. H is Home, P Sleep/Wake, + and - the volume.",
+                    "Leans the device toward the arrow, for games you steer by tilting",
                     |ui| {
                         widgets::switch(ui, &p, &mut settings.tilt);
                     },
@@ -173,6 +177,25 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                         widgets::switch(ui, &p, &mut settings.detailed_timing);
                     },
                 );
+                if !settings.detailed_timing {
+                    let status = &recording;
+                    let (title, detail) = match status {
+                        Some(s) => ("Stop profile recording", s.as_str()),
+                        None => (
+                            "Record a profile",
+                            "Capture engine timing for the app on screen, for tools/perf/profile.py",
+                        ),
+                    };
+                    widgets::setting_row(ui, &p, icons::CLOCK, title, detail, |ui| {
+                        let label = if status.is_some() { "Stop" } else { "Record" };
+                        if widgets::tonal_enabled(ui, &p, label, running || status.is_some()).clicked() {
+                            toggle_recording = true;
+                        }
+                    });
+                    if status.is_some() {
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                    }
+                }
                 widgets::setting_row(ui, &p, icons::FILE, "Session logs", "What each device session printed", |ui| {
                     if widgets::tonal(ui, &p, "Open folder").clicked() {
                         let dir = app.model.dirs.logs();
@@ -200,7 +223,24 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                             }
                         },
                     );
-                    let _ = device;
+                    widgets::setting_row(
+                        ui,
+                        &p,
+                        icons::PACKAGE,
+                        "Update guest tools",
+                        &format!("Install a newer .itpack into {}; it applies at the next start", device.name),
+                        |ui| {
+                            if widgets::tonal_enabled(ui, &p, "Choose", !session_active).clicked() {
+                                if let Some(file) = rfd::FileDialog::new()
+                                    .set_title("Choose guest tools")
+                                    .add_filter("Guest tools", &["itpack"])
+                                    .pick_file()
+                                {
+                                    app.model.update_guest_tools(&file);
+                                }
+                            }
+                        },
+                    );
                 }
             });
 
@@ -233,6 +273,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             });
             ui.add_space(28.0);
 
+            if toggle_recording {
+                app.model.toggle_recording();
+            }
             if app.model.settings != before {
                 let muted_changed = app.model.settings.muted != before.muted;
                 app.model.save_settings();
