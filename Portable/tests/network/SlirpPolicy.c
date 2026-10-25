@@ -46,8 +46,20 @@ int main(void) {
         assert(!route(&slirp, "0.0.0.1", false));
         assert(!route(&slirp, "::1", false));
         assert(!route(&slirp, "::ffff:127.0.0.1", false));
-        assert(route(&slirp, "192.168.1.1", false) == !!local);
-        assert(route(&slirp, "fd00::1", false) == !!local);
+        assert(!route(&slirp, "64:ff9b::7f00:1", false));
+        assert(!route(&slirp, "::ffff:0:127.0.0.1", false));
+        for (size_t i = 0; i < 3; i++) {
+            const char *public4[] = {"::ffff:93.184.216.34", "64:ff9b::5db8:d822", "::ffff:0:93.184.216.34"};
+            assert(route(&slirp, public4[i], false));
+        }
+        const char *private[] = {
+            "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.1.1",
+            "100.64.0.1", "198.18.0.1", "240.0.0.1", "fd00::1", "fed0::1",
+            "::ffff:192.168.1.1", "64:ff9b::c0a8:101", "::ffff:0:192.168.1.1"
+        };
+        for (size_t i = 0; i < sizeof(private) / sizeof(private[0]); i++) {
+            assert(route(&slirp, private[i], false) == !!local);
+        }
     }
     puts("PASS: actual slirp NAT LAN policy, host-loopback isolation and Android DNS forwarding");
 }

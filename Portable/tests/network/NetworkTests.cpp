@@ -11,6 +11,7 @@
 #include <cassert>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <thread>
 using namespace lt::network;
@@ -71,6 +72,16 @@ int main(int argc,char **argv) {
     }
     Configuration config;config.mode=Mode::direct;std::string fingerprint;
     {
+        // A killed first launch can leave an incomplete staging file. The next
+        // launch must recover, then keep the same identity across later boots.
+        auto recovery=directory+"/recovery";
+        std::filesystem::create_directory(recovery);
+        std::ofstream(recovery+"/proxy-ca.pem.tmp")<<"incomplete private key";
+        std::string identity;
+        { Proxy proxy(recovery,config);identity=proxy.fingerprint();assert(!identity.empty()); }
+        { Proxy proxy(recovery,config);assert(proxy.fingerprint()==identity); }
+    }
+    {
         Proxy direct(directory+"/direct",config);fingerprint=direct.fingerprint();assert(!fingerprint.empty());
         assert(exchange(direct,"GET http://127.0.0.1/ HTTP/1.1\r\n\r\n").find("403")!=std::string::npos);
         assert(exchange(direct,"GET http://[::ffff:127.0.0.1]/ HTTP/1.1\r\n\r\n").find("403")!=std::string::npos);
@@ -86,14 +97,18 @@ int main(int argc,char **argv) {
         int listener=socket(AF_INET,SOCK_STREAM,0);assert(listener>=0);
         sockaddr_in a{};a.sin_family=AF_INET;a.sin_addr.s_addr=htonl(INADDR_ANY);assert(!bind(listener,reinterpret_cast<sockaddr *>(&a),sizeof(a)));assert(!listen(listener,1));
         socklen_t len=sizeof(a);assert(!getsockname(listener,reinterpret_cast<sockaddr *>(&a),&len));
+        for (bool drop_cookie:{false,true}) {
         std::string observed;
         std::thread origin([&]{int peer=accept(listener,nullptr,nullptr);assert(peer>=0);char c;while(observed.find("\r\n\r\n")==std::string::npos){assert(recv(peer,&c,1,0)==1);observed+=c;}
-            std::string r="HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\nSet-Cookie: first=1; Path=/\r\nSet-Cookie: second=2; Path=/\r\nContent-Type: text/plain\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
-            assert(send(peer,r.data(),r.size(),0)==ssize_t(r.size()));close(peer);close(listener);});
+            std::string r=std::string("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close")+(drop_cookie?", Set-Cookie":"")+"\r\nSet-Cookie: first=1; Path=/\r\nSet-Cookie: second=2; Path=/\r\nContent-Type: text/plain\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+            assert(send(peer,r.data(),r.size(),0)==ssize_t(r.size()));close(peer);});
         auto r=exchange(direct,"GET http://"+local_address()+":"+std::to_string(ntohs(a.sin_port))+"/ HTTP/1.1\r\nProxy-Authorization: secret\r\nConnection: X-Drop\r\nX-Drop: hidden\r\n\r\n");origin.join();
         assert(r.find("200")!=std::string::npos && r.substr(r.size()-5)=="hello");assert(r.find("Content-Length: 5")!=std::string::npos);
         assert(observed.find("secret")==std::string::npos && observed.find("hidden")==std::string::npos);
-        assert(r.find("Set-Cookie: first=1; Path=/\r\n")!=std::string::npos && r.find("Set-Cookie: second=2; Path=/\r\n")!=std::string::npos);
+        assert((r.find("Set-Cookie: first=1; Path=/\r\n")!=std::string::npos)==!drop_cookie);
+        assert((r.find("Set-Cookie: second=2; Path=/\r\n")!=std::string::npos)==!drop_cookie);
+        }
+        close(listener);
         // Host loopback remains refused even after LAN opt-in.
         assert(exchange(direct,"GET http://127.1/ HTTP/1.1\r\n\r\n").find("403")!=std::string::npos);
         assert(exchange(direct,"GET http://[::ffff:127.0.0.1]/ HTTP/1.1\r\n\r\n").find("403")!=std::string::npos);
@@ -102,6 +117,9 @@ int main(int argc,char **argv) {
         config.mode=Mode::archive;config.archive_date="20090909";Proxy archive(directory+"/archive",config);
         auto r=exchange(archive,"POST /login HTTP/1.1\r\nHost: example.com\r\nContent-Length: 0\r\n\r\n",true);
         assert(r.find("405")!=std::string::npos && r.find("Wayback browsing")!=std::string::npos);
+        for (auto line:{"POST /login HTTP/2.0", "POST /login HTTP/1.1 unexpected", "POST /login"}) {
+            assert(exchange(archive,std::string(line)+"\r\nHost: example.com\r\n\r\n",true).find("400")!=std::string::npos);
+        }
         assert(exchange(archive,"CONNECT example.com:22 HTTP/1.1\r\n\r\n").find("403")!=std::string::npos);
     }
     std::filesystem::remove_all(directory);

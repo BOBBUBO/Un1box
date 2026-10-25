@@ -52,6 +52,7 @@ internal object Native {
     external fun audioInfo(): IntArray
     external fun profile(path: String): String
     external fun profileStatus(): Int
+    /** Request id (zero if unaccepted), error text, and portable lt_status code. */
     external fun guestRequest(operation: Int, argument: String, timeoutMs: Int): Array<String>
     external fun guestPoll(requestId: Long): Array<String>
     external fun guestCancel(requestId: Long)

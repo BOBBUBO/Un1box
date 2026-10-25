@@ -355,7 +355,7 @@ struct Proxy::State {
     Configuration config;
     Key key{nullptr,EVP_PKEY_free}, leaf_key{nullptr,EVP_PKEY_free};
     Cert ca{nullptr,X509_free};
-    SSL_CTX *client = nullptr;
+    std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> client{nullptr,SSL_CTX_free};
     std::string der, socket_path;
     std::atomic<bool> stopping{false};
     std::atomic<Socket> listener{invalid_socket};
@@ -373,7 +373,7 @@ struct Proxy::State {
     Reply fetch(const std::string &url, const std::string &method, const Headers &request_headers = {}, const std::string &upload = "") {
         Address address = Address::parse(url); Connection origin(connect_to(address, config.local_network && config.mode == Mode::direct));
         if (address.scheme == "https") {
-            origin.tls = SSL_new(client); require(origin.tls,503,"TLS allocation failed");
+            origin.tls = SSL_new(client.get()); require(origin.tls,503,"TLS allocation failed");
             SSL_set_fd(origin.tls,int(origin.fd)); SSL_set_tlsext_host_name(origin.tls,address.host.c_str());
             auto param = SSL_get0_param(origin.tls);
             unsigned char ip[16]; bool numeric = inet_pton(AF_INET,address.host.c_str(),ip)==1 || inet_pton(AF_INET6,address.host.c_str(),ip)==1;
@@ -396,7 +396,7 @@ struct Proxy::State {
         require(reply.status>=200,502,"Too many interim responses");
         if (method!="HEAD" && reply.status!=204 && reply.status!=304) reply.body=body(origin,reply.headers,true,body_limit);
         // Remove headers explicitly named by Connection, too.
-        if (reply.headers.count("connection")) { std::istringstream words(lower(reply.headers["connection"])); std::string token; while (std::getline(words,token,',')) { token=trim(token); if (token!="connection") reply.headers.erase(token); } }
+        if (reply.headers.count("connection")) { std::istringstream words(lower(reply.headers["connection"])); std::string token; while (std::getline(words,token,',')) { token=trim(token); if (token=="set-cookie") reply.cookies.clear(); if (token!="connection") reply.headers.erase(token); } }
         return reply;
     }
     Reply archived(const std::string &target, const std::string &method) {
@@ -435,38 +435,57 @@ Proxy::Proxy(std::string directory, Configuration config, std::string roots) : s
     chmod(directory.c_str(),0700);
 #endif
     auto pem=directory+"/proxy-ca.pem";
-    if (std::filesystem::exists(pem)) {
+    auto load_identity = [&] {
 #ifndef _WIN32
         struct stat st{}; require(!lstat(pem.c_str(),&st) && S_ISREG(st.st_mode) && st.st_uid==getuid() && !(st.st_mode&077),503,"Proxy key permissions are invalid");
 #endif
         FILE *f=fopen(pem.c_str(),"rb"); require(f,503,"Could not read proxy certificate");
         state->key.reset(PEM_read_PrivateKey(f,nullptr,nullptr,nullptr)); state->ca.reset(PEM_read_X509(f,nullptr,nullptr,nullptr)); fclose(f);
         require(state->key && state->ca && X509_check_private_key(state->ca.get(),state->key.get())==1,503,"Saved proxy identity is invalid");
-    } else {
+    };
+    if (std::filesystem::exists(pem)) load_identity();
+    else {
         state->key=new_key(); state->ca=make_cert(state->key.get(),state->key.get(),nullptr,"LightTouch Device Proxy");
-        auto temp=pem+".tmp";
+        // A unique staging name survives interrupted first launches. Never
+        // replace a concurrently installed identity: guests retain that CA.
+        unsigned char random[16]; require(RAND_bytes(random,sizeof(random))==1,503,"Random source failed");
+        std::string temp=pem+".tmp."; const char hex[]="0123456789abcdef";
+        for (auto byte:random) { temp+=hex[byte>>4];temp+=hex[byte&15]; }
+        struct Cleanup { std::string path; ~Cleanup() { std::error_code error; std::filesystem::remove(path,error); } };
 #ifndef _WIN32
-        int fd=open(temp.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600); require(fd>=0,503,"Could not save proxy key"); FILE *f=fdopen(fd,"wb");
+        int fd=open(temp.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600); require(fd>=0,503,"Could not save proxy key");
+        FILE *f=fdopen(fd,"wb"); if (!f) close(fd);
 #else
-        FILE *f=fopen(temp.c_str(),"wb");
+        FILE *f=fopen(temp.c_str(),"wbx");
 #endif
         require(f,503,"Could not save proxy key");
+        Cleanup cleanup{temp};
         bool ok=PEM_write_PrivateKey(f,state->key.get(),nullptr,nullptr,0,nullptr,nullptr)==1 && PEM_write_X509(f,state->ca.get())==1;
-        ok=fclose(f)==0 && ok; require(ok,503,"Could not save proxy key"); std::filesystem::rename(temp,pem);
+        ok=fflush(f)==0 && ok;
+#ifndef _WIN32
+        ok=fsync(fileno(f))==0 && ok;
+#endif
+        ok=fclose(f)==0 && ok; require(ok,503,"Could not save proxy key");
+#ifndef _WIN32
+        if (link(temp.c_str(),pem.c_str())) { require(errno==EEXIST,503,"Could not install proxy key");load_identity(); }
+#else
+        std::error_code error; std::filesystem::rename(temp,pem,error);
+        if (error) { require(std::filesystem::exists(pem),503,"Could not install proxy key");load_identity(); }
+#endif
     }
     int size=i2d_X509(state->ca.get(),nullptr); require(size>0,503,"Could not encode proxy certificate");
     state->der.resize(size); auto bytes=reinterpret_cast<unsigned char *>(state->der.data()); i2d_X509(state->ca.get(),&bytes);
     std::ofstream(directory+"/proxy-ca.der",std::ios::binary).write(state->der.data(),state->der.size());
     state->leaf_key=new_key();
-    state->client=SSL_CTX_new(TLS_client_method()); require(state->client,503,"Host TLS initialization failed");
-    SSL_CTX_set_verify(state->client,SSL_VERIFY_PEER,nullptr); SSL_CTX_set_min_proto_version(state->client,TLS1_2_VERSION);
-    SSL_CTX_set_default_verify_paths(state->client);
+    state->client.reset(SSL_CTX_new(TLS_client_method())); require(bool(state->client),503,"Host TLS initialization failed");
+    SSL_CTX_set_verify(state->client.get(),SSL_VERIFY_PEER,nullptr); SSL_CTX_set_min_proto_version(state->client.get(),TLS1_2_VERSION);
+    SSL_CTX_set_default_verify_paths(state->client.get());
     if (!roots.empty()) {
         unsigned loaded=0;
         for (auto &file:std::filesystem::directory_iterator(roots)) {
             FILE *f=fopen(file.path().string().c_str(),"rb"); if (!f) continue;
             X509 *c=PEM_read_X509(f,nullptr,nullptr,nullptr); fclose(f);
-            if (c) { if (X509_STORE_add_cert(SSL_CTX_get_cert_store(state->client),c)==1) loaded++; X509_free(c); }
+            if (c) { if (X509_STORE_add_cert(SSL_CTX_get_cert_store(state->client.get()),c)==1) loaded++; X509_free(c); }
         }
         require(loaded,503,"Android's trusted HTTPS certificates are unavailable");
     }
@@ -481,7 +500,6 @@ Proxy::~Proxy() {
     state->idle.wait(lock,[&]{return state->active.empty();});
     lock.unlock();
     if (!state->socket_path.empty()) std::filesystem::remove(state->socket_path);
-    if (state->client) SSL_CTX_free(state->client);
 }
 std::string Proxy::certificate() const { return state->der; }
 std::string Proxy::fingerprint() const {
@@ -549,7 +567,10 @@ void Proxy::serve(std::intptr_t socket) {
                 char reason[256]; ERR_error_string_n(ERR_get_error(),reason,sizeof(reason));
                 throw Error(502,std::string("Guest TLS handshake failed: ")+reason);
             }
-            line=guest.line(); std::istringstream secure(line); secure>>method>>target>>version; h=headers(guest);
+            line=guest.line(); std::istringstream secure(line);
+            method.clear(); target.clear(); version.clear(); extra.clear(); secure>>method>>target>>version>>extra;
+            require((version=="HTTP/1.0" || version=="HTTP/1.1") && extra.empty(),400,"Invalid HTTP request");
+            h=headers(guest);
             require(target.size() && target[0]=='/' && !starts(target,"//"),400,"Invalid HTTPS request target");
             target="https://"+authority(address)+target;
         }
