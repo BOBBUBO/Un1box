@@ -63,6 +63,10 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 Group("Performance") {
                     SwitchRow(LtIcons.Speed, "Fewer pauses when opening iOS apps", "Skips large emulator-code cleanups after app changes. Uses more RAM and may slightly lower steady-state game speed; applies after restarting the emulated iPhone.", s.reduceAppSwitchPauses, "reduce_app_switch_pauses") { s.reduceAppSwitchPauses = it }
                 }
+                if (BuildConfig.DEBUG) Group("Graphics") {
+                    ChoiceRow(LtIcons.Chip, "GPU driver", GraphicsProvider.entries, s.graphicsProvider, { it.label },
+                        "ANGLE uses the bundled graphics translation layer instead of Android's GPU driver. It may improve or reduce speed; applies on the next fresh guest start.", tag = "graphics_provider") { s.graphicsProvider = it }
+                }
                 Group("Performance overlay") {
                     ChoiceRow(LtIcons.Speed, "Detail", OverlayLevel.entries, s.overlay, { it.label }, tag = "overlay_level") { s.overlay = it }
                     if (s.overlay != OverlayLevel.OFF) {
