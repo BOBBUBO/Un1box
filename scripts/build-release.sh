@@ -11,6 +11,8 @@
 #   linux     engine, frontend and tests in the Debian 11 image (Docker), then the AppImage
 #   macos     engine and app on the Mac ($LT_MAC) over ssh, from the pushed commits
 #   finish    source archives, guest tools, SHA256SUMS, RELEASE-MANIFEST.json, NOTES.md checksums
+#   desktop   the Rust desktop app (docs/DESKTOP.md) as a Linux AppImage and a Windows zip in desktop/, from the
+#             engine and USB pieces the linux and windows steps built; only when named, and not published
 #   publish   push both tags and create the GitHub release from out/NOTES.md (a pre-release unless
 #             LT_PRERELEASE=false)
 #
@@ -42,11 +44,12 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_MAC_VENDOR:=/Applications/Light Touch.app/Contents}"         # LightTouchMac app: firmwarekit, vendor files
 : "${LT_MAC_PYTHON_RUNTIME:=\$HOME/Documents/LightTouch-Python-ActualInterpreter12/runtime}"
 : "${LT_PRERELEASE:=true}"
+: "${LT_DESKTOP_NOTICES:=$D/desktop/notices}"                        # linux/ and windows/, each engine/ and usb/
 : "${ANDROID_HOME:=$HOME/Android/Sdk}"
 export QEMU_IOS LT_INPUTS ANDROID_HOME
 
-[ $# -ge 1 ] || { sed -n 2,21p "$0"; exit 2; }
-case "$1" in -h|--help) sed -n 2,21p "$0"; exit 0 ;; esac
+[ $# -ge 1 ] || { sed -n 2,23p "$0"; exit 2; }
+case "$1" in -h|--help) sed -n 2,23p "$0"; exit 0 ;; esac
 VER=${1#v}; V=v$VER; shift
 R=$LT_RELEASE_ROOT/release-$VER
 OUTD=$R/out
@@ -185,6 +188,44 @@ step_macos() {
     echo "$OUTD/$zip"
 }
 
+step_desktop() {
+    local d=$R/desktop a=$R/linux-build/runtime/LightTouch.AppDir sysroot=$R/win-deps/sysroot
+    local tools=${LT_GUEST_TOOLS:-$R/app/build/firmware-tools} n=$LT_DESKTOP_NOTICES libs=() l
+    need "$a/usr/lib/lighttouch/libqemu-arm.so" "Linux engine (run the linux step)"
+    need "$R/win-cross/engine/qemu-system-arm.exe.rsp" "Windows engine build (run the windows step)"
+    need "$R/engine/contrib/portable/make-shared-windows.py" "the engine's Windows DLL relink (qemu-ios dev/desktop)"
+    need "$tools" "guest tools"
+    rm -rf "$d"; mkdir -p "$d"
+    bash "$R/app/scripts/release/build-desktop-linux.sh" > "$R/desktop-linux.log" 2>&1 ||
+        { tail -30 "$R/desktop-linux.log" >&2; exit 1; }
+    # The engine and the USB bridge from the AppImage's runtime, with the libraries they load beyond the base system.
+    for l in libfdt.so.1 libimobiledevice-1.0.so.6 libimobiledevice-glue-1.0.so.0 libplist-2.0.so.4 \
+             libusbmuxd-2.0.so.7 libssl.so.1.1 libcrypto.so.1.1; do need "$a/usr/lib/$l" "Linux library"; libs+=(--lib "$a/usr/lib/$l"); done
+    python3 "$R/app/scripts/release/package-desktop.py" "$d/LightTouch-$V-Desktop-Linux-x86_64" --os linux \
+        --app "$R/app/target/bullseye/release/lighttouch" --firmwarekit "$R/app/target/bullseye/release/firmwarekit" \
+        --engine "$a/usr/lib/lighttouch/libqemu-arm.so" --usbmuxd "$a/usr/bin/usbmuxd-qemu" --guest-tools "$tools" \
+        "${libs[@]}" --notices "engine=$n/linux/engine" --notices "usb=$n/linux/usb" --group-source "engine=$GH_ENGINE" \
+        --appimage "$LT_APPIMAGE_TOOLS" > "$R/desktop-linux-package.log" 2>&1 ||
+        { tail -30 "$R/desktop-linux-package.log" >&2; exit 1; }
+    # Windows: the windows step's engine build relinked as a DLL, its DLL closure, and the app cross-built.
+    python3 "$R/engine/contrib/portable/make-shared-windows.py" "$R/win-cross/engine" "$d/win-engine" \
+        > "$R/desktop-windows.log" 2>&1 || { tail -30 "$R/desktop-windows.log" >&2; exit 1; }
+    python3 "$R/app/Windows/tools/package-runtime.py" --engine "$d/win-engine/libqemu-arm.dll" \
+        --dll-dir "$sysroot/mingw64/bin" --dll-dir "$sysroot/codec/bin" --destination "$d/win-runtime" \
+        >> "$R/desktop-windows.log" 2>&1 || { tail -30 "$R/desktop-windows.log" >&2; exit 1; }
+    (cd "$R/app" && CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc-posix CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++-posix \
+        AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar cargo build --release --locked --target x86_64-pc-windows-gnu \
+        -p lighttouch -p lighttouch-firmware --features lighttouch-services/vendored-openssl) >> "$R/desktop-windows.log" 2>&1 ||
+        { tail -30 "$R/desktop-windows.log" >&2; exit 1; }
+    local w=$R/app/target/x86_64-pc-windows-gnu/release services=$LT_WIN_INPUTS/services-mobile01/bin
+    python3 "$R/app/scripts/release/package-desktop.py" "$d/LightTouch-$V-Desktop-Windows-x86_64" --os windows \
+        --app "$w/lighttouch.exe" --firmwarekit "$w/firmwarekit.exe" --engine "$d/win-engine/libqemu-arm.dll" \
+        --usbmuxd "$services/lighttouch-usbmuxd.exe" --guest-tools "$tools" --lib "$d/win-runtime" --lib "$services" \
+        --notices "engine=$n/windows/engine" --notices "usb=$n/windows/usb" --group-source "engine=$GH_ENGINE" --zip \
+        > "$R/desktop-windows-package.log" 2>&1 || { tail -30 "$R/desktop-windows-package.log" >&2; exit 1; }
+    ls -1 "$d"/*.AppImage "$d"/*.zip
+}
+
 step_finish() {
     python3 "$R/app/scripts/release/finish.py" "$R" "$V" "${LT_GUEST_TOOLS:-$R/app/build/firmware-tools}"
     (cd "$OUTD" && sha256sum -c --quiet SHA256SUMS)
@@ -210,7 +251,7 @@ step_publish() {
 steps=("$@"); auto=0
 if [ ${#steps[@]} = 0 ]; then steps=(prepare android windows linux macos finish); auto=1; fi
 for s in "${steps[@]}"; do
-    case "$s" in prepare|android|windows|linux|macos|finish|publish) ;; *) echo "unknown step: $s" >&2; exit 2 ;; esac
+    case "$s" in prepare|android|windows|linux|macos|finish|publish|desktop) ;; *) echo "unknown step: $s" >&2; exit 2 ;; esac
 done
 mkdir -p "$R"
 for s in "${steps[@]}"; do

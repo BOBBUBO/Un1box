@@ -161,10 +161,12 @@ def main():
             shutil.rmtree(merged)
         if "engine" in groups:
             shutil.copytree(groups["engine"], merged)
-        for keg in kegs:
+        for name, keg in kegs:
             for f in sorted(keg.iterdir()):
-                if f.is_file() and re.match(r"(LICEN[SC]E|COPYING|NOTICE|COPYRIGHT)", f.name, re.I):
-                    copy(f, merged / keg.parent.name / f.name)
+                # Also SPDX-named texts, as glib's LGPL-2.1-or-later.txt.
+                if f.is_file() and re.match(r"(LICEN[SC]E|COPYING|NOTICE|COPYRIGHT|.*(GPL|MIT|BSD|Apache|MPL).*\.txt$)",
+                                            f.name, re.I):
+                    copy(f, merged / name / f.name)
         groups["engine"] = merged
     for group, folder in groups.items():
         notices(licenses / group, folder, sources.get(group, args.source_reference))
@@ -190,7 +192,8 @@ def main():
 
 def bundle_dylibs(binaries, frameworks):
     """Copy the non-system dylibs `binaries` load (recursively) into `frameworks`, point every load command at the
-    copies, and return the Homebrew kegs they came from (for their licences)."""
+    copies, and return (name, folder) for the licence files of what they came from: Homebrew kegs, or the
+    share/licenses/<name> folders of another prefix."""
     def deps(path):
         lines = subprocess.check_output(["otool", "-L", str(path)], text=True).splitlines()
         # Universal binaries list each architecture under its own "FILE (architecture X):" header.
@@ -211,7 +214,12 @@ def bundle_dylibs(binaries, frameworks):
                 parts = real.parts
                 if "Cellar" in parts:
                     i = parts.index("Cellar")
-                    kegs.add(Path(*parts[: i + 3]))
+                    kegs.add((parts[i + 1], Path(*parts[: i + 3])))
+                else:
+                    # A prefix built for the engine (build-engine.py --ffmpeg-archive) keeps them in share/licenses.
+                    shared = real.parent.parent / "share/licenses"
+                    for d in sorted(shared.iterdir()) if shared.is_dir() else []:
+                        kegs.add((d.name, d))
             prefix = "@loader_path/" if path.parent == frameworks else "@loader_path/../Frameworks/"
             subprocess.run(["install_name_tool", "-change", dep, prefix + local.name, str(path)], check=True,
                            stderr=subprocess.DEVNULL)
