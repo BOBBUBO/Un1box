@@ -253,8 +253,13 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   instantiated. `python3 tests/camera/run.py --engine qemu-ios` (`--sanitize` adds ASan/UBSan) checks
   the tap and the scaler against the real device code, a planar and a semi-planar `ImageReader` frame through
   the JNI conversion, the portable API, and the wiring — including that the camera is asked *before* the
-  pattern, which is the ordering that made the first microphone build silent. **Not measured and not yet
-  seen on a device**; to check, open the guest's Camera app and switch cameras in it, then take a still.
+  pattern, which is the ordering that made the first microphone build silent. Two device findings shaped the
+  model: a sensor change clears the output buffers for a moment, and the frame timer used to die there —
+  the stream stopped for good and the guest hung — and the scaler divided twice per pixel, 19 ms of the
+  host's only vCPU thread for a 5 MP still, which starved the guest; it is 1.9 ms now (0.12 ms for a
+  640×480 preview that needs no scaling). The front sensor's picture is spun 180° because its module is
+  mounted that way. **Seen on a device**: the front camera's live picture, upside down before the rotation
+  was added; the back camera and the stills are still to be checked, as is the hang on switching sensors.
 
 ## Audio
 
