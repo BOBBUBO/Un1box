@@ -44,6 +44,7 @@ internal class CameraCapture(private val context: Context, private val onError: 
     private var session: CameraCaptureSession? = null
     private var reader: ImageReader? = null
     private val switching = AtomicBoolean(false)
+    @Volatile private var retries = 0
 
     /** The camera id for a lens facing, or null on a phone without that camera (an iPod touch has one). */
     private fun cameraId(lens: Int): String? = try {
@@ -75,13 +76,28 @@ internal class CameraCapture(private val context: Context, private val onError: 
         if (!wanted) return
         val lens = if (sensor == Native.CAMERA_FRONT) CameraCharacteristics.LENS_FACING_FRONT
                    else CameraCharacteristics.LENS_FACING_BACK
-        if (lens == facing || !switching.compareAndSet(false, true)) return
+        if (lens == facing) {
+            // Already pointing at the camera the guest wants: the only reason to act is a capture that died,
+            // and the worker's half-second poll then doubles as the supervisor that brings it back. Without
+            // this a single refused open left the guest waiting for frames for the rest of the session.
+            handler?.post {
+                if (wanted && device == null && !switching.get()) {
+                    retries = 0
+                    closeQuietly()
+                    open()
+                }
+            }
+            return
+        }
+        if (!switching.compareAndSet(false, true)) return
         handler?.post {
             switching.set(false)
             if (!wanted) return@post
             facing = lens
             closeQuietly()
-            open()
+            // The camera service releases the old device asynchronously; opening the other one in the same
+            // breath is refused with CAMERA_IN_USE on some phones. A short gap is enough, and open() retries.
+            handler?.postDelayed({ if (wanted) open() }, REOPEN_GAP_MS)
         }
     }
 
@@ -133,19 +149,42 @@ internal class CameraCapture(private val context: Context, private val onError: 
                 override fun onOpened(camera: CameraDevice) {
                     if (!wanted) { camera.close(); return }
                     device = camera
+                    retries = 0
                     startSession(camera, reader)
                 }
                 override fun onDisconnected(camera: CameraDevice) {
                     camera.close(); if (device === camera) device = null
+                    // Being disconnected is not fatal: the camera may come back, and the guest is waiting.
+                    retry("the camera was disconnected")
                 }
                 override fun onError(camera: CameraDevice, error: Int) {
                     camera.close(); if (device === camera) device = null
-                    onError("Camera stopped (error $error); the device shows its test pattern.")
+                    retry("the camera reported error $error")
                 }
             }, handler)
         } catch (failure: Exception) {
-            onError("Camera unavailable: ${failure.message ?: "the camera could not be opened"}")
+            retry(failure.message ?: "the camera could not be opened")
         }
+    }
+
+    /**
+     * Try the same camera again a few times. Android refuses a camera that is still being released
+     * (CAMERA_IN_USE) and a phone's camera service can be busy for a moment after a switch: one refusal used to
+     * leave this capture dead for the rest of the session, and the guest then waits for frames that never come
+     * -- which is a frozen picture and a core spinning. After the last try the reason is reported.
+     */
+    private fun retry(reason: String) {
+        if (!wanted) return
+        if (retries >= MAX_OPEN_RETRIES) {
+            onError("Camera unavailable: $reason")
+            return
+        }
+        retries++
+        handler?.postDelayed({
+            if (!wanted) return@postDelayed
+            closeQuietly()
+            open()
+        }, REOPEN_GAP_MS)
     }
 
     /** Up to three sizes to try, closest to 640x480 first: what iOS previews at, and 4:3 before widescreen, so
@@ -172,6 +211,7 @@ internal class CameraCapture(private val context: Context, private val onError: 
                 override fun onConfigured(ready: CameraCaptureSession) {
                     if (!wanted) { ready.close(); return }
                     session = ready
+                    retries = 0
                     try {
                         ready.setRepeatingRequest(request, null, handler)
                     } catch (failure: Exception) {
@@ -179,7 +219,7 @@ internal class CameraCapture(private val context: Context, private val onError: 
                     }
                 }
                 override fun onConfigureFailed(ready: CameraCaptureSession) {
-                    onError("Camera stopped: this phone refused the capture session.")
+                    retry("this phone refused the capture session")
                 }
             }, handler)
         } catch (failure: Exception) {
@@ -217,6 +257,11 @@ internal class CameraCapture(private val context: Context, private val onError: 
     }
 
     companion object {
+        /** How long to let the camera service release the camera before taking it (or the other one) again. */
+        private const val REOPEN_GAP_MS = 300L
+        /** Enough tries to ride out a camera service that is busy, few enough to fail visibly. */
+        private const val MAX_OPEN_RETRIES = 5
+
         fun choice(key: String?): Choice = Choice.entries.firstOrNull { it.key == key } ?: Choice.FOLLOW
     }
 

@@ -135,6 +135,50 @@ def engine_patch_waits_for_the_guest_to_acknowledge():
     require("timer_mod(" in branch, "the acknowledgement wait stops the frame timer instead of skipping a frame")
 
 
+def engine_patch_ends_a_poll_nothing_can_answer():
+    """A register the model never implements must not be polled for ever.
+
+    The guest's camera kext polls command registers until the firmware takes them. A register this model does
+    not act on keeps the value the host wrote, so such a poll never ends: the vCPU spins at 100%, the picture
+    freezes and the phone heats up. Nothing else can move that register, so the register file is where it has
+    to be moved -- after enough identical reads, and never for a register the model does act on."""
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    require("static bool isp_command_known(" in body,
+            "the mailbox no longer has one answer to 'does this model act on this register', so a polled "
+            "register it never implements can be mistaken for one it handles")
+    require("} else {\n            uint8_t value = s->file[cat][reg];" in body,
+            "the mailbox's read path no longer keeps the value it returns, so a poll of an unread register "
+            "cannot be counted")
+    reads = body.split("uint8_t value = s->file[cat][reg];", 1)[1].split("isp_log(s, \"mbx R", 1)[0]
+    require("isp_command_known(cat, reg)" in reads,
+            "a read of an unimplemented register is not recognised as a poll that can never be answered")
+    require("s->file[cat][reg] = 0;" in reads and "spin_reads" in reads,
+            "a register nothing can move keeps its value for ever: the guest's poll never ends and a core "
+            "spins at 100% (the frozen picture and the 53-degree phone)")
+    write = body.split("if (write) {", 1)[1].split("} else {", 1)[0]
+    require("s->spin_reads = 0;" in write,
+            "a write does not restart the poll count, so a host that writes between reads can be mistaken for "
+            "one that is stuck")
+
+
+def engine_patch_does_not_storm_an_unacknowledged_frame():
+    """A guest that stopped acknowledging frames must not take the interrupt for ever."""
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    branch = body.split("if (r[ISP_INT_STATUS / 4] & INT_FRAME) {", 1)[1].split("return;", 1)[0]
+    require("unacked_ticks" in branch,
+            "an unacknowledged frame keeps the interrupt line asserted with no way out: the guest takes the same "
+            "interrupt 15 times a second for ever, at 100% of a core")
+    require("r[ISP_INT_STATUS / 4] &= ~INT_FRAME;" in branch,
+            "the model waits for an acknowledgement it can no longer get and never drops the frame")
+
+
+def engine_patch_refuses_a_size_that_is_not_a_mode():
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    require("w & 1 || h & 1 || w < 16 || h < 16" in body,
+            "a frame size the sensors never had is still drawn: the guest's half-written mode becomes an "
+            "allocation and a DMA, which is a hang rather than a skipped frame")
+
+
 def engine_patch_forgets_a_stopped_camera():
     extras = added_lines(CAMERA_PATCH)
     require("host_camera_flush();" in extras, "stopping the capture does not drop the frame the guest never took")
@@ -234,6 +278,33 @@ def android_switch_reaches_the_worker():
     require("Native.cameraInfo(" in service, "the camera's counters are not read from the engine")
 
 
+def android_a_refused_camera_comes_back():
+    """A camera Android refuses must be retried, not left dead for the session.
+
+    Android refuses a camera that is still being released (CAMERA_IN_USE), and switching sensors releases one
+    camera before taking the other. A single refusal used to end the capture: the guest then waited for frames
+    that never came -- a frozen picture, and a core spinning. Opening again is the fix, and the worker's
+    half-second poll doubles as the supervisor that catches a capture that died later.
+    """
+    capture = read("Android/app/src/main/java/org/lighttouch/android/CameraCapture.kt")
+    require("MAX_OPEN_RETRIES" in capture and "private fun retry(" in capture,
+            "an open that Android refuses is not retried: the guest waits for frames from a capture that is "
+            "never coming back")
+    require("onConfigureFailed" in capture and capture.split("onConfigureFailed", 1)[1].split("}", 1)[0]
+            .find("retry(") >= 0,
+            "a refused capture session ends the capture instead of being retried")
+    require("onDisconnected" in capture and capture.split("onDisconnected", 1)[1].split("}")[0].find("retry(")
+            >= 0,
+            "a disconnected camera is dropped instead of being reopened")
+    follow = capture.split("fun follow(sensor: Int)", 1)[1].split("fun stop(", 1)[0]
+    require("device == null" in follow,
+            "follow() does nothing when the capture is already pointing at the right lens, so a capture that "
+            "died is never brought back by the worker's poll")
+    require("postDelayed" in capture,
+            "the switch opens the new camera in the same breath as closing the old one: Android refuses a "
+            "camera it is still releasing")
+
+
 def android_jni_names_match():
     native = read("Android/app/src/main/java/org/lighttouch/android/Native.kt")
     jni = read("Android/app/src/main/cpp/lighttouch_jni.cpp")
@@ -296,6 +367,9 @@ CHECKS = [
     ("engine patch: the guest's switch picks the sensor, both exist", engine_patch_lets_the_guest_choose_the_sensor),
     ("engine patch: the frame timer survives a bufferless frame", engine_patch_never_stops_the_frame_timer),
     ("engine patch: a frame waits for the guest's acknowledgement", engine_patch_waits_for_the_guest_to_acknowledge),
+    ("engine patch: a poll nothing can answer ends", engine_patch_ends_a_poll_nothing_can_answer),
+    ("engine patch: an unacknowledged frame does not storm", engine_patch_does_not_storm_an_unacknowledged_frame),
+    ("engine patch: a size that is not a mode is refused", engine_patch_refuses_a_size_that_is_not_a_mode),
     ("engine patch: a stopped camera is forgotten", engine_patch_forgets_a_stopped_camera),
     ("portable: the API is declared and typed", portable_declares_the_api),
     ("portable: the engine's entry points are resolved, and optional", portable_resolves_exactly_the_exported_names),
@@ -303,5 +377,6 @@ CHECKS = [
     ("android: the capture reads YUV_420_888 with the device's strides", android_capture_matches_the_api),
     ("android: the front camera follows the guest's switch", android_follows_the_guests_camera_switch),
     ("android: the switch and the choice reach the worker", android_switch_reaches_the_worker),
+    ("android: a camera Android refuses is opened again", android_a_refused_camera_comes_back),
     ("android: Kotlin externals all have JNI bodies", android_jni_names_match),
 ]

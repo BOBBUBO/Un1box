@@ -180,6 +180,14 @@ def main():
                 [ENGINE / "hw/arm/host-camera.c"],
                 [HERE / "stub", ENGINE / "include", ROOT], scratch))
 
+        print("device ISP mailbox")
+        if ENGINE is None:
+            report.add("isp poll", True, "skipped: no engine checkout")
+        else:
+            report.run("isp poll: a register nothing can move stops being polled for ever", lambda: compile_and_run(
+                report, "isp poll", HERE / "isp-poll.c", shutil.which("cc") or "cc",
+                ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"], [], [HERE / "stub"], scratch))
+
         print("portable and JNI glue")
         report.run("portable API: NV12 shape, sensors, LT_AGAIN, LT_UNSUPPORTED", lambda: compile_and_run(
             report, "portable api", HERE / "portable-api.cpp", (shutil.which("c++") or "c++"),
