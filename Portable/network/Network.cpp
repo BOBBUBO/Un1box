@@ -279,9 +279,13 @@ Cert make_cert(EVP_PKEY *key, EVP_PKEY *issuer_key, X509 *issuer, const std::str
     // A guest may keep its historical RTC; validity starts before all supported iOS releases.
     ASN1_TIME_set_string(X509_getm_notBefore(cert.get()), "20000101000000Z");
     X509_gmtime_adj(X509_getm_notAfter(cert.get()), issuer ? 30L*86400 : 3650L*86400);
-    auto subject = X509_get_subject_name(cert.get());
-    X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char *>(name.c_str()), -1, -1, 0);
-    X509_set_issuer_name(cert.get(), issuer ? X509_get_subject_name(issuer) : subject);
+    // Built apart and copied in: OpenSSL 4 hands out a certificate's own names as const.
+    std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)> subject(X509_NAME_new(), X509_NAME_free);
+    require(subject && X509_NAME_add_entry_by_txt(subject.get(), "CN", MBSTRING_ASC,
+                                                  reinterpret_cast<const unsigned char *>(name.c_str()), -1, -1, 0) == 1,
+            503, "Could not encode certificate");
+    X509_set_subject_name(cert.get(), subject.get());
+    X509_set_issuer_name(cert.get(), issuer ? X509_get_subject_name(issuer) : subject.get());
     extension(cert.get(), issuer ? issuer : cert.get(), NID_basic_constraints, issuer ? "critical,CA:FALSE" : "critical,CA:TRUE,pathlen:0");
     extension(cert.get(), issuer ? issuer : cert.get(), NID_key_usage, issuer ? "critical,digitalSignature,keyEncipherment" : "critical,keyCertSign,cRLSign");
     if (issuer) {
