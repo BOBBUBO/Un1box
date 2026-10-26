@@ -218,13 +218,19 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         override fun onServiceDisconnected(name: ComponentName) { workerExited() }
     }
     private var pollInFlight = false
+    // One thread for the status polls, not a new one twice a second: the poll runs for as long as the app is
+    // open, and creating a thread for each turn of it was a wake, a stack and a teardown every half second
+    // for as long as the guest runs -- including the whole of its boot.
+    private val pollThread = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread(task, "status-poll").apply { isDaemon = true }
+    }
     private val poll = object : Runnable {
         override fun run() {
             if (!active || pollInFlight) return
             pollInFlight = true
             val observedEngine = engine
             val observedFirmware = if (preparationOpen && !firmwareRestarting) firmware else null
-            Thread({
+            pollThread.execute {
                 var engineState: Bundle? = null
                 var firmwareState: Bundle? = null
                 var engineFailure: String? = null
@@ -267,7 +273,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                     }
                     handler.postDelayed(this, 500)
                 }
-            }, "worker-status").start()
+            }
         }
     }
     /**
@@ -1283,5 +1289,5 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         pausedByBackground = true
         Thread({ try { worker.pause(true) } catch (_: RemoteException) { } }, "install-idle-pause").start()
     }
-    override fun onDestroy() { if (installer.onIdle === idleHook) installer.onIdle = null; buttonCalls.shutdown(); monitor.close(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
+    override fun onDestroy() { if (installer.onIdle === idleHook) installer.onIdle = null; buttonCalls.shutdown(); monitor.close(); displayView?.retireDisplay(); DisplayOwners.active.stopped(this, displayOwnerTicket); workerEvidenceDelivery.advance(); handler.removeCallbacksAndMessages(null); pollThread.shutdownNow(); stopSensors(); if (bound) unbindService(connection); if (firmwareBound) unbindService(firmwareConnection); super.onDestroy() }
 }

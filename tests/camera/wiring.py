@@ -394,6 +394,28 @@ def android_capture_is_rate_limited():
             "throws away: half a megabyte of copy each, in the app's own process")
 
 
+def android_idle_work_is_bounded():
+    """Nothing in the app may wake a hundred times a second to find nothing to do.
+
+    Two loops did. The audio pull asked the engine for samples every 10 ms for the whole of the OS boot,
+    while the guest played nothing; it now backs off to 60 ms and returns the moment a packet arrives. And
+    the status poll created a thread twice a second for as long as the guest ran; it uses one thread now."""
+    service = read("Android/app/src/main/java/org/lighttouch/android/EngineService.kt")
+    require("AUDIO_IDLE_MIN_MS" in service and "AUDIO_IDLE_MAX_MS" in service,
+            "the audio pull loop has no idle backoff: it asks a hundred times a second for silence")
+    loop = service.split("var idleWaitMs", 1)[1].split("\"guest-audio\"", 1)[0]
+    require("idleWaitMs = minOf(idleWaitMs * 2, AUDIO_IDLE_MAX_MS)" in loop,
+            "the audio wait never grows, so an idle guest still costs a hundred wakes a second")
+    require("idleWaitMs = AUDIO_IDLE_MIN_MS" in loop.split("if (count > 0)")[1][:200],
+            "a packet does not reset the audio wait, so sound would start late for ever")
+    activity = read("Android/app/src/main/java/org/lighttouch/android/MainActivity.kt")
+    require("pollThread" in activity and '"status-poll"' in activity,
+            "the status poll still creates a thread for every turn instead of reusing one")
+    require('}, "worker-status").start()' not in activity,
+            "the poll still starts a new worker-status thread each time")
+    require("pollThread.shutdownNow()" in activity, "the poll thread is never shut down with the activity")
+
+
 def android_jni_names_match():
     native = read("Android/app/src/main/java/org/lighttouch/android/Native.kt")
     jni = read("Android/app/src/main/cpp/lighttouch_jni.cpp")
@@ -472,5 +494,6 @@ CHECKS = [
     ("android: a camera Android refuses is opened again", android_a_refused_camera_comes_back),
     ("engine patch: frames nobody draws are not copied", engine_patch_throttles_idle_pushes),
     ("android: the capture is rate-limited to what the device draws", android_capture_is_rate_limited),
+    ("android: nothing wakes a hundred times a second for nothing", android_idle_work_is_bounded),
     ("android: Kotlin externals all have JNI bodies", android_jni_names_match),
 ]
