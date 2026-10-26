@@ -112,6 +112,20 @@ impl Mux {
         }
     }
 
+    /// Store a pairing (a binary plist) for the daemon to keep in its pairing folder.
+    pub fn save_pair_record(&self, device: &MuxDevice, record: &[u8]) -> Result<()> {
+        let reply = self.request(Dictionary::from_iter([
+            ("MessageType", Value::from("SavePairRecord")),
+            ("PairRecordID", Value::from(device.udid.as_str())),
+            ("PairRecordData", Value::Data(record.to_vec())),
+            ("DeviceID", Value::from(device.id)),
+        ]))?;
+        match reply.get("Number").and_then(|v| v.as_unsigned_integer()) {
+            Some(0) => Ok(()),
+            other => Err(Error(format!("the USB bridge couldn't save the pairing ({other:?})"))),
+        }
+    }
+
     pub fn buid(&self) -> Result<String> {
         let reply = self.request(Dictionary::from_iter([("MessageType", Value::from("ReadBUID"))]))?;
         string(&reply, "BUID").ok_or_else(|| Error("the USB bridge has no host identifier".into()))
