@@ -393,6 +393,11 @@ def android_a_refused_camera_comes_back():
             >= 0,
             "a disconnected camera is dropped instead of being reopened")
     follow = capture.split("fun follow(sensor: Int)", 1)[1].split("fun stop(", 1)[0]
+    require("opening" in capture and "STALLED_NS" in capture,
+            "the supervisor does not know whether an open is in flight: it tears down a camera that is still "
+            "coming up, which the camera service reports as CAMERA_DISCONNECTED and never recovers from")
+    require("opening" in follow or "!opening" in follow,
+            "the supervisor's recovery ignores an open that is already in flight")
     require("device == null" in follow,
             "follow() does nothing when the capture is already pointing at the right lens, so a capture that "
             "died is never brought back by the worker's poll")

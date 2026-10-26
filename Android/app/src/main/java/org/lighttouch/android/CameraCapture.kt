@@ -45,6 +45,9 @@ internal class CameraCapture(private val context: Context, private val onError: 
     private var reader: ImageReader? = null
     private val switching = AtomicBoolean(false)
     @Volatile private var retries = 0
+    /** An open is in flight: the supervisor must not tear down a camera that is still coming up. */
+    @Volatile private var opening = false
+    private var lastAttemptNs = 0L
     /** When the last frame was handed to the engine: the phone captures faster than the device draws. */
     private var lastDeliveredNs = 0L
 
@@ -83,7 +86,13 @@ internal class CameraCapture(private val context: Context, private val onError: 
             // and the worker's half-second poll then doubles as the supervisor that brings it back. Without
             // this a single refused open left the guest waiting for frames for the rest of the session.
             handler?.post {
-                if (wanted && device == null && !switching.get()) {
+                // Only a capture that is genuinely dead: an open in flight, a switch, or an attempt made a
+                // moment ago must be left alone. Poking one of those tore down a camera that was still coming
+                // up, which the camera service reports as CAMERA_DISCONNECTED -- and then the next poll did it
+                // again, so the phone's camera never settled.
+                val now = System.nanoTime()
+                if (wanted && device == null && !opening && !switching.get() &&
+                    now - lastAttemptNs > STALLED_NS) {
                     retries = 0
                     closeQuietly()
                     open()
@@ -138,6 +147,8 @@ internal class CameraCapture(private val context: Context, private val onError: 
             return
         }
         this.reader = reader
+        opening = true
+        lastAttemptNs = System.nanoTime()
         reader.setOnImageAvailableListener({ source ->
             val image = try { source.acquireLatestImage() } catch (_: IllegalStateException) { null } ?: return@setOnImageAvailableListener
             try {
@@ -149,22 +160,26 @@ internal class CameraCapture(private val context: Context, private val onError: 
         try {
             manager.openCamera(id, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
+                    opening = false
                     if (!wanted) { camera.close(); return }
                     device = camera
                     retries = 0
                     startSession(camera, reader)
                 }
                 override fun onDisconnected(camera: CameraDevice) {
+                    opening = false
                     camera.close(); if (device === camera) device = null
                     // Being disconnected is not fatal: the camera may come back, and the guest is waiting.
                     retry("the camera was disconnected")
                 }
                 override fun onError(camera: CameraDevice, error: Int) {
+                    opening = false
                     camera.close(); if (device === camera) device = null
                     retry("the camera reported error $error")
                 }
             }, handler)
         } catch (failure: Exception) {
+            opening = false
             retry(failure.message ?: "the camera could not be opened")
         }
     }
@@ -176,6 +191,7 @@ internal class CameraCapture(private val context: Context, private val onError: 
      * -- which is a frozen picture and a core spinning. After the last try the reason is reported.
      */
     private fun retry(reason: String) {
+        opening = false
         if (!wanted) return
         if (retries >= MAX_OPEN_RETRIES) {
             onError("Camera unavailable: $reason")
@@ -269,6 +285,8 @@ internal class CameraCapture(private val context: Context, private val onError: 
         private const val REOPEN_GAP_MS = 300L
         /** Enough tries to ride out a camera service that is busy, few enough to fail visibly. */
         private const val MAX_OPEN_RETRIES = 5
+        /** How long a capture must have been dead before the worker's poll brings it back. */
+        private const val STALLED_NS = 2_000_000_000L
         /** ~16 frames a second, which is what the emulated ISP draws: the rest would only be converted. */
         private const val DELIVER_GAP_NS = 60_000_000L
 
