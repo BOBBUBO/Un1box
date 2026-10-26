@@ -92,11 +92,13 @@ impl GuestView {
         self.texture.is_some()
     }
 
-    /// Draw the screen into `rect` and route input to the guest when `interactive`.
+    /// Draw the screen into `rect` and route input to the guest when `interactive`. An asleep display is black,
+    /// as on the device: the engine sends no frames then, so the last one would otherwise stay up.
     pub fn show(&mut self, ui: &mut Ui, rect: Rect, model: &mut Model, interactive: bool) -> egui::Response {
         let response = ui.interact(rect, ui.scope_id().with("guest-screen"), Sense::click_and_drag());
         ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
-        if let Some(texture) = &self.texture {
+        let asleep = model.session.as_ref().is_some_and(|s| s.display_asleep());
+        if let Some(texture) = self.texture.as_ref().filter(|_| !asleep) {
             let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
             ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
         }
@@ -104,7 +106,12 @@ impl GuestView {
             self.pointer_input(ui, rect, &response, model);
             self.keyboard_input(ui, model);
         } else {
-            self.release_all(model);
+            // Fingers only: the drawn device's Home and Sleep/Wake keep working (they wake an asleep screen), and
+            // so do their keys.
+            self.release_touches(model);
+            if asleep {
+                self.button_keys(ui, model);
+            }
         }
         response
     }
@@ -239,9 +246,15 @@ impl GuestView {
                 }
             }
         }
-        if typing {
+        self.button_keys(ui, model);
+    }
+
+    /// H, P, + and -: the hardware buttons, held while the key is.
+    fn button_keys(&mut self, ui: &Ui, model: &mut Model) {
+        if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
+        let key = |key| ui.input(|i| i.key_down(key) && i.modifiers.is_none());
         let keys = [
             (egui::Key::H, device_frame::HOME),
             (egui::Key::P, device_frame::POWER),
@@ -276,6 +289,24 @@ impl GuestView {
 
     pub fn is_held(&self, button: u32) -> bool {
         self.held.contains(&button)
+    }
+
+    /// Lift every finger, leaving hardware buttons as they are.
+    fn release_touches(&mut self, model: &mut Model) {
+        let mut ids: Vec<u32> = self.mouse.keys().chain(self.touches.values()).copied().collect();
+        if self.pair.take().is_some() {
+            ids.push(2);
+        }
+        if ids.is_empty() {
+            return;
+        }
+        self.mouse.clear();
+        self.touches.clear();
+        ids.sort_unstable();
+        ids.dedup();
+        if let Some(session) = &mut model.session {
+            session.touch(ids.into_iter().map(|id| Contact { id, phase: CANCEL, x: 0.5, y: 0.5 }).collect());
+        }
     }
 
     /// Release every contact and button (focus loss, the screen going away).

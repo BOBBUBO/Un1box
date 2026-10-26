@@ -160,7 +160,7 @@ fn search_field(app: &mut App, ui: &mut Ui) -> bool {
                     .hint_text("Search apps and games")
                     .frame(egui::Frame::NONE)
                     .desired_width(ui.available_width() - 24.0)
-                    .vertical_align(egui::Align::Center)
+                    .align(egui::Align2::LEFT_CENTER)
                     .margin(vec2(4.0, 2.0)),
             );
             submit = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));

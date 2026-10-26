@@ -342,7 +342,7 @@ pub fn setting_row<R>(
     trailing: impl FnOnce(&mut Ui) -> R,
 ) -> R {
     // The trailing control's width, as laid out last frame.
-    let id = ui.id().with(("setting-row", title));
+    let id = ui.scope_id().with(("setting-row", title));
     let reserved = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(150.0);
     ui.horizontal(|ui| {
         ui.set_min_height(48.0);
