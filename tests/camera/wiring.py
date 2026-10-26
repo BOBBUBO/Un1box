@@ -23,9 +23,9 @@ PATCHES = ROOT / "ci" / "engine-patches"
 CAMERA_PATCH = PATCHES / "0010-engine-camera-input.patch"
 
 ENGINE_SYMBOLS = ("qemu_ios_camera_write", "qemu_ios_camera_flush", "qemu_ios_camera_state",
-                  "qemu_ios_camera_sensor")
+                  "qemu_ios_camera_sensor", "qemu_ios_camera_diag")
 PORTABLE_SYMBOLS = ("lt_runtime_camera_write", "lt_runtime_camera_info", "lt_runtime_camera_flush",
-                    "lt_runtime_camera_sensor")
+                    "lt_runtime_camera_sensor", "lt_runtime_camera_diag")
 
 
 def read(relative):
@@ -78,7 +78,7 @@ def engine_patch_asks_the_camera_first():
     require(camera < pattern,
             "the frontend's camera must be asked BEFORE the test pattern: a fallback in front of the real "
             "source is the microphone's silence bug again")
-    require("if (camera && cw && ch)" in body,
+    require("drawn_from_phone = camera && cw && ch;" in body,
             "the camera's frame is not checked before use, so a take that failed would be drawn from NULL")
 
 
@@ -86,7 +86,8 @@ def engine_patch_exports_the_api():
     body = added_lines(CAMERA_PATCH)
     for symbol in ENGINE_SYMBOLS:
         require(re.search(r"\b" + symbol + r"\s*\(", body), f"the patch does not define {symbol}()")
-    require("(2u << 16) | 5u" in body, "QEMU_IOS_API_VERSION is not bumped to 2.5")
+    require("(2u << 16) | 6u" in body, "QEMU_IOS_API_VERSION is not bumped to 2.6")
+    require(re.search(r"\bqemu_ios_camera_diag\s*\(", body), "the patch does not define qemu_ios_camera_diag()")
 
 
 def engine_patch_lets_the_guest_choose_the_sensor():
@@ -291,7 +292,7 @@ def patch_stack(patch_dir, engine):
 CHECKS = [
     ("engine patch: the device code, its header and its build entry", engine_patch_adds_the_source),
     ("engine patch: the camera is asked before the test pattern", engine_patch_asks_the_camera_first),
-    ("engine patch: the four entry points and API 2.5", engine_patch_exports_the_api),
+    ("engine patch: the entry points and API 2.6", engine_patch_exports_the_api),
     ("engine patch: the guest's switch picks the sensor, both exist", engine_patch_lets_the_guest_choose_the_sensor),
     ("engine patch: the frame timer survives a bufferless frame", engine_patch_never_stops_the_frame_timer),
     ("engine patch: a frame waits for the guest's acknowledgement", engine_patch_waits_for_the_guest_to_acknowledge),

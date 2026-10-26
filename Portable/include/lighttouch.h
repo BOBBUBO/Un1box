@@ -385,6 +385,25 @@ lt_status lt_runtime_camera_flush(lt_runtime *, lt_error *);
  * camera switch does, so the app can stream that camera instead of guessing. LT_UNSUPPORTED for an engine
  * built before the camera tap; the value is the back sensor until the guest recognises one. */
 lt_status lt_runtime_camera_sensor(lt_runtime *, int *sensor, lt_error *);
+/* What the guest's ISP model is doing with one sensor's frames: the mode it asked for, the layout, and how
+ * many frames were drawn, came from the phone, were skipped waiting for the guest, wanted a chroma buffer the
+ * guest never named, or found no output buffer. This is the diagnosis for a camera that works on one sensor
+ * and hangs on the other; it says nothing about a guest that is not running. LT_UNSUPPORTED for an engine
+ * built before it. */
+typedef struct {
+    uint32_t size, version;
+    uint32_t sensor;
+    uint32_t mode_width, mode_height;   /* the output the guest asked for, 0 before its first frame */
+    uint32_t format;                    /* 0x11 NV12, 0x10 4:2:2 */
+    uint32_t active_sensor;             /* the sensor the guest's driver last recognised */
+    uint64_t drawn_frames;              /* frames written into the guest's buffers */
+    uint64_t phone_frames;              /* of those, drawn from a picture this phone sent */
+    uint64_t unacked_frames;            /* skipped: the guest had not cleared the previous interrupt */
+    uint64_t luma_only_frames;          /* drawn for a layout that wanted chroma the guest did not name */
+    uint64_t stalled_frames;            /* skipped: no output buffer, a mode being reprogrammed */
+    uint64_t stuck_commands;            /* commands the model cleared: the guest was polling them for ever */
+} lt_camera_diag;
+lt_status lt_runtime_camera_diag(lt_runtime *, int sensor, lt_camera_diag *, lt_error *);
 /* Small typed guest operations use the existing agent, never a host/guest shell.
  * Requests are async, at most one pending; caller polls completion. Lost/timeout
  * mutations are not retried. Launch builtin IDs are limited to com.apple.*;

@@ -11,7 +11,7 @@
  * camera can hand out any size and any stride, and the one place that can say no
  * before memory is written is this API.
  *
- * SLICE ./Portable/src/Runtime.cpp fn lt_runtime_camera_write lt_runtime_camera_info lt_runtime_camera_flush lt_runtime_camera_sensor
+ * SLICE ./Portable/src/Runtime.cpp fn lt_runtime_camera_write lt_runtime_camera_info lt_runtime_camera_flush lt_runtime_camera_sensor lt_runtime_camera_diag
  * CFLAGS -Wall -Werror -Wno-missing-field-initializers -Wno-unused-parameter
  */
 #include <algorithm>
@@ -33,6 +33,8 @@ struct Engine {
     void (*camera_flush)() = nullptr;
     int (*camera_state)(int, uint32_t *, uint32_t *, uint64_t *, uint64_t *, uint64_t *, uint64_t *) = nullptr;
     int (*camera_sensor)() = nullptr;
+    int (*camera_diag)(int, int *, int *, int *, int *, unsigned *, unsigned *, unsigned *, unsigned *,
+                       unsigned *, unsigned *) = nullptr;
 };
 }  // namespace lt
 
@@ -46,6 +48,7 @@ lt_status lt_runtime_camera_write(lt_runtime *, int, const uint8_t *, uint32_t, 
 lt_status lt_runtime_camera_info(lt_runtime *, int, lt_camera_info *, lt_error *);
 lt_status lt_runtime_camera_flush(lt_runtime *, lt_error *);
 lt_status lt_runtime_camera_sensor(lt_runtime *, int *, lt_error *);
+lt_status lt_runtime_camera_diag(lt_runtime *, int, lt_camera_diag *, lt_error *);
 
 namespace {
 lt_error fresh_error() { return LT_INIT(lt_error); }
@@ -64,6 +67,7 @@ struct FakeEngine {
     uint64_t state_pushed = 0, state_taken = 0, state_replaced = 0, state_rejected = 0;
     int state_waiting = 1;
     int device_sensor = LT_CAMERA_BACK;
+    bool diag_unknown = false;
 
     FakeEngine() {
         api.camera_write = [](int sensor, const uint8_t *nv12, int bytes, int width, int height) {
@@ -88,6 +92,23 @@ struct FakeEngine {
             if (replaced) *replaced = self.state_replaced;
             if (rejected) *rejected = self.state_rejected;
             return self.state_waiting;
+        };
+        api.camera_diag = [](int sensor, int *w, int *h, int *format, int *active, unsigned *drawn,
+                             unsigned *phone, unsigned *unacked, unsigned *luma, unsigned *stalled,
+                             unsigned *stuck) {
+            FakeEngine &self = *instance;
+            if (self.diag_unknown) return 0;
+            if (w) *w = 1280;
+            if (h) *h = 720;
+            if (format) *format = 0x11;
+            if (active) *active = sensor;
+            if (drawn) *drawn = 40;
+            if (phone) *phone = 39;
+            if (unacked) *unacked = 1;
+            if (luma) *luma = 0;
+            if (stalled) *stalled = 2;
+            if (stuck) *stuck = 0;
+            return 1;
         };
         api.camera_sensor = [] {
             instance->sensor_calls++;
@@ -237,6 +258,25 @@ int main(void)
         assert(lt_runtime_camera_sensor(&r.runtime, &sensor, &e) == LT_OK);
         assert(sensor == LT_CAMERA_BACK);
         assert(lt_runtime_camera_sensor(&r.runtime, nullptr, &e) == LT_INVALID);
+    }
+    {/* The diagnosis says what the guest did with the frames, field for field. */
+        Runtime r;
+        lt_camera_diag diag = LT_INIT(lt_camera_diag);
+        lt_error e = fresh_error();
+        assert(lt_runtime_camera_diag(&r.runtime, LT_CAMERA_BACK, &diag, &e) == LT_OK);
+        assert(diag.sensor == uint32_t(LT_CAMERA_BACK));
+        assert(diag.mode_width == 1280 && diag.mode_height == 720 && diag.format == 0x11);
+        assert(diag.drawn_frames == 40 && diag.phone_frames == 39 && diag.unacked_frames == 1);
+        assert(diag.stalled_frames == 2 && diag.stuck_commands == 0);
+        /* A sensor the engine does not have, an engine with no diagnosis, and a bad output. */
+        r.engine.diag_unknown = true;
+        assert(lt_runtime_camera_diag(&r.runtime, LT_CAMERA_BACK, &diag, &e) == LT_INVALID);
+        r.engine.diag_unknown = false;
+        assert(lt_runtime_camera_diag(&r.runtime, 7, &diag, &e) == LT_INVALID);
+        assert(lt_runtime_camera_diag(&r.runtime, LT_CAMERA_BACK, nullptr, &e) == LT_INVALID);
+        lt::Engine older;
+        r.runtime.engine = &older;
+        assert(lt_runtime_camera_diag(&r.runtime, LT_CAMERA_BACK, &diag, &e) == LT_UNSUPPORTED);
     }
     {/* Flush reaches the engine. */
         Runtime r;

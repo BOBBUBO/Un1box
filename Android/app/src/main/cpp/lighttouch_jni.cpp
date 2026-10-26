@@ -1167,6 +1167,20 @@ JNI(cameraInfo) jlongArray JNICALL Java_org_lighttouch_android_Native_cameraInfo
     jlongArray arr=env->NewLongArray(8);env->SetLongArrayRegion(arr,0,8,data);return arr;
 }
 
+// The camera path's diagnosis, one sensor at a time: mode, layout, and the counts that say whether the phone
+// is sending pictures the guest draws, or the guest is stuck before it draws any. Order: status, sensor,
+// modeWidth, modeHeight, format, activeSensor, drawn, phone, unacked, lumaOnly, stalled, stuck.
+JNI(cameraDiag) jlongArray JNICALL Java_org_lighttouch_android_Native_cameraDiag(JNIEnv *env,jobject,jint sensor) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_camera_diag diag=LT_INIT(lt_camera_diag);lt_error error=LT_INIT(lt_error);
+    const auto status=runtime?lt_runtime_camera_diag(runtime,sensor,&diag,&error):LT_AGAIN;
+    jlong data[12]={jlong(status),jlong(diag.sensor),jlong(diag.mode_width),jlong(diag.mode_height),
+                    jlong(diag.format),jlong(diag.active_sensor),jlong(diag.drawn_frames),
+                    jlong(diag.phone_frames),jlong(diag.unacked_frames),jlong(diag.luma_only_frames),
+                    jlong(diag.stalled_frames),jlong(diag.stuck_commands)};
+    jlongArray arr=env->NewLongArray(12);env->SetLongArrayRegion(arr,0,12,data);return arr;
+}
+
 JNI(profile) jstring JNICALL Java_org_lighttouch_android_Native_profile(JNIEnv *env,jobject,jstring path) {
     std::unique_ptr<ProfileWriter> stopped;
     std::unique_lock<std::mutex> lock(guard);Utf text(env,path);lt_error error=LT_INIT(lt_error);

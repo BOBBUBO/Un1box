@@ -80,4 +80,10 @@ internal object Native {
     external fun cameraInfo(sensor: Int): LongArray
     /** The camera the emulated device is using: 0 back, 1 front; -1 when the engine cannot say. */
     external fun cameraSensor(): Int
+    /**
+     * What the guest's ISP is doing with one sensor's frames: status, sensor, modeWidth, modeHeight, format,
+     * activeSensor, drawn, phone, unacked, lumaOnly, stalled, stuckCommands. The diagnosis for a camera that
+     * works on one sensor and hangs on the other.
+     */
+    external fun cameraDiag(sensor: Int): LongArray
 }

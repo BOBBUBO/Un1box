@@ -85,12 +85,12 @@ and the existing slice keeps its pattern assertions with the sensor reads added.
 
   hw/arm/host-camera.c, include/hw/arm/host-camera.h   the slots, the scaler, counters
   hw/arm/s5l8930_isp.c                                 sensor recognition picks the slot, frames come from it
-  contrib/macos-app/qemu-macos-extras.c/.h             qemu_ios_camera_write/flush/state/sensor (API 2.5)
+  contrib/macos-app/qemu-macos-extras.c/.h             qemu_ios_camera_write/flush/state/sensor/diag (API 2.6)
   hw/arm/meson.build                                   host-camera.c for the S5L8930 family
   tests/slice/ipad1-isp-mailbox.c                      the recognition reads, and that they clear
 ---
 diff --git a/contrib/macos-app/qemu-macos-extras.c b/contrib/macos-app/qemu-macos-extras.c
-index d08cfe1..262042f 100644
+index d08cfe1..7fcf66d 100644
 --- a/contrib/macos-app/qemu-macos-extras.c
 +++ b/contrib/macos-app/qemu-macos-extras.c
 @@ -38,6 +38,7 @@
@@ -101,7 +101,7 @@ index d08cfe1..262042f 100644
  #include "hw/arm/host-mic.h"
  
  /*
-@@ -1111,3 +1112,55 @@ int qemu_ios_microphone_state(uint32_t *rate, uint32_t *queued, uint64_t *pushed
+@@ -1111,3 +1112,102 @@ int qemu_ios_microphone_state(uint32_t *rate, uint32_t *queued, uint64_t *pushed
      }
      return state.capturing ? 1 : 0;
  }
@@ -121,6 +121,53 @@ index d08cfe1..262042f 100644
 +void qemu_ios_camera_flush(void)
 +{
 +    host_camera_flush();
++}
++
++/* hw/arm/s5l8930_isp.c keeps how many commands the firmware never took; a stuck one is the classic reason a
++ * guest hangs in a poll, so it belongs in the same report. */
++uint32_t s5l8930_isp_stuck_commands(void);
++
++int qemu_ios_camera_diag(int sensor, int *mode_width, int *mode_height, int *format, int *sensor_active,
++                         unsigned *drawn, unsigned *from_phone, unsigned *unacked, unsigned *no_chroma,
++                         unsigned *stalls, unsigned *stuck_commands)
++{
++    HostCameraState state;
++
++    if (sensor < 0 || sensor >= HOST_CAMERA_SENSORS) {
++        return 0;
++    }
++    host_camera_state(&state);
++    if (mode_width) {
++        *mode_width = int(state.sensor[sensor].mode_width);
++    }
++    if (mode_height) {
++        *mode_height = int(state.sensor[sensor].mode_height);
++    }
++    if (format) {
++        *format = int(state.sensor[sensor].format);
++    }
++    if (sensor_active) {
++        *sensor_active = qemu_ios_camera_sensor();
++    }
++    if (drawn) {
++        *drawn = unsigned(state.sensor[sensor].drawn);
++    }
++    if (from_phone) {
++        *from_phone = unsigned(state.sensor[sensor].from_phone);
++    }
++    if (unacked) {
++        *unacked = unsigned(state.sensor[sensor].unacked);
++    }
++    if (no_chroma) {
++        *no_chroma = unsigned(state.sensor[sensor].no_chroma);
++    }
++    if (stalls) {
++        *stalls = unsigned(state.sensor[sensor].stalls);
++    }
++    if (stuck_commands) {
++        *stuck_commands = s5l8930_isp_stuck_commands();
++    }
++    return 1;
 +}
 +
 +int qemu_ios_camera_sensor(void)
@@ -158,10 +205,10 @@ index d08cfe1..262042f 100644
 +    return state.sensor[sensor].width ? 1 : 0;
 +}
 diff --git a/contrib/macos-app/qemu-macos-extras.h b/contrib/macos-app/qemu-macos-extras.h
-index 4e31244..a2de31c 100644
+index 4e31244..fa23e30 100644
 --- a/contrib/macos-app/qemu-macos-extras.h
 +++ b/contrib/macos-app/qemu-macos-extras.h
-@@ -92,6 +92,24 @@ void qemu_ios_microphone_flush(void);
+@@ -92,6 +92,32 @@ void qemu_ios_microphone_flush(void);
   * began; every out pointer may be NULL. */
  int qemu_ios_microphone_state(uint32_t *rate, uint32_t *queued, uint64_t *pushed, uint64_t *dropped);
  
@@ -182,25 +229,33 @@ index 4e31244..a2de31c 100644
 +/* The sensor the guest's driver last recognised: 0 back, 1 front. The frontend streams that one, since a
 + * phone cannot usefully run both cameras at once. Any thread. */
 +int qemu_ios_camera_sensor(void);
++/* What the guest's ISP model is doing with this sensor's frames, for the app's own diagnosis: the mode it
++ * asked for, the layout (0x11 NV12, 0x10 4:2:2), how many frames were drawn, how many came from the phone,
++ * how many were skipped waiting for the guest to acknowledge the previous one, how many wanted a chroma
++ * buffer the guest never named, and how many found no output buffer at all. Any of the outputs may be NULL.
++ * Returns 1 when the sensor exists. Only a running guest has anything to say. */
++int qemu_ios_camera_diag(int sensor, int *mode_width, int *mode_height, int *format, int *sensor_active,
++                         unsigned *drawn, unsigned *from_phone, unsigned *unacked, unsigned *no_chroma,
++                         unsigned *stalls, unsigned *stuck_commands);
 +
  /* Queue UTF-8 text for the guest pasteboard (machine property "pasteboard"). */
  void qemu_ios_ui_paste(const char *utf8);
  /* The text last copied inside the guest (UTF-8, at most 64 KiB - 1 bytes: the guest agent's cap), when the
-@@ -127,7 +145,7 @@ const char *qemu_ios_build_id(void);
+@@ -127,7 +153,7 @@ const char *qemu_ios_build_id(void);
  /* This C API's version, major << 16 | minor. A minor bump only adds entry points;
   * a major bump removes or changes one, and a host built for another major refuses
   * the dylib. */
 -#define QEMU_IOS_API_VERSION ((2u << 16) | 4u)
-+#define QEMU_IOS_API_VERSION ((2u << 16) | 5u)
++#define QEMU_IOS_API_VERSION ((2u << 16) | 6u)
  uint32_t qemu_ios_api_version(void);
  
  /* Machine controls. */
 diff --git a/hw/arm/host-camera.c b/hw/arm/host-camera.c
 new file mode 100644
-index 0000000..54554ec
+index 0000000..fa82d3f
 --- /dev/null
 +++ b/hw/arm/host-camera.c
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,215 @@
 +/*
 + * The frontend's camera: the latest frame per sensor, and nothing else.
 + *
@@ -362,6 +417,31 @@ index 0000000..54554ec
 +    pthread_mutex_unlock(&host_camera_lock);
 +}
 +
++void host_camera_note(unsigned sensor, unsigned mode_width, unsigned mode_height, unsigned format,
++                      bool from_phone, bool unacked, bool no_chroma, bool stall)
++{
++    HostCameraSlot *s;
++
++    if (sensor >= HOST_CAMERA_SENSORS) {
++        return;
++    }
++    s = &host_camera_slots[sensor];
++    pthread_mutex_lock(&host_camera_lock);
++    s->state.mode_width = mode_width;
++    s->state.mode_height = mode_height;
++    s->state.format = format;
++    if (stall) {
++        s->state.stalls++;
++    } else if (unacked) {
++        s->state.unacked++;
++    } else {
++        s->state.drawn++;
++        s->state.from_phone += from_phone;
++        s->state.no_chroma += no_chroma;
++    }
++    pthread_mutex_unlock(&host_camera_lock);
++}
++
 +void host_camera_select(unsigned sensor)
 +{
 +    if (sensor >= HOST_CAMERA_SENSORS) {
@@ -405,7 +485,7 @@ index 526734d..4871a07 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
-index c2b6ecf..67136b4 100644
+index c2b6ecf..4108b4e 100644
 --- a/hw/arm/s5l8930_isp.c
 +++ b/hw/arm/s5l8930_isp.c
 @@ -25,6 +25,7 @@
@@ -416,7 +496,7 @@ index c2b6ecf..67136b4 100644
  #include "migration/vmstate.h"
  #include "system/address-spaces.h"
  #include "qemu/bswap.h"
-@@ -51,8 +52,19 @@
+@@ -51,10 +52,25 @@
  #define ISP_OUT_FORMAT  0xd3b20     /* 0x11: 4:2:0 biplanar (NV12), 0x10: 4:2:2 */
  
  #define INT_FRAME       0x1000
@@ -435,8 +515,14 @@ index c2b6ecf..67136b4 100644
 +
  OBJECT_DECLARE_SIMPLE_TYPE(S5L8930ISPState, S5L8930_ISP)
  
++/* The machine has one ISP, and the app asks it what it had to work around: set when the device is inited,
++ * cleared when it goes away. */
++static S5L8930ISPState *s5l8930_isp_live;
++
  struct S5L8930ISPState {
-@@ -67,10 +79,16 @@ struct S5L8930ISPState {
+     SysBusDevice parent_obj;
+     MemoryRegion cpu_mr, isp_mr;
+@@ -67,10 +83,16 @@ struct S5L8930ISPState {
      DeviceState *dart;
      QEMUTimer *frame_timer;
      uint32_t frames;
@@ -453,7 +539,7 @@ index c2b6ecf..67136b4 100644
  
      FILE *trace;
  };
-@@ -128,6 +146,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -128,6 +150,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
          s->file[0x00][0x91] = s->file[0x00][0x00];      /* requested sensor mode -> current mode */
          return;
      }
@@ -469,7 +555,7 @@ index c2b6ecf..67136b4 100644
      for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
          if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
              s->file[cat][reg] = 0;
-@@ -152,9 +179,35 @@ static void isp_mailbox(S5L8930ISPState *s)
+@@ -152,9 +183,35 @@ static void isp_mailbox(S5L8930ISPState *s)
          uint8_t cat = w >> 16, reg = w >> 8, val = w;
  
          if (write) {
@@ -505,7 +591,7 @@ index c2b6ecf..67136b4 100644
          } else {
              s->cpu[CPU_MBX0 / 4 + i] = (w & 0xffff00) | s->file[cat][reg];
              isp_log(s, "mbx R %02x:%02x = %02x", cat, reg, s->file[cat][reg]);
-@@ -257,6 +310,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
+@@ -257,6 +314,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
      }
  }
  
@@ -629,7 +715,7 @@ index c2b6ecf..67136b4 100644
  /*
   * The frame's statistics record (0x1a0 bytes; the kext copies it into H3ISPFrameMetaData), as H3ISP.mediacapture
   * reads it: AE converged at unity gains, AWB and AF settled, and the shutter flag that marks a still.
-@@ -290,7 +460,7 @@ static void isp_frame(void *opaque)
+@@ -290,24 +464,65 @@ static void isp_frame(void *opaque)
  {
      S5L8930ISPState *s = opaque;
      uint32_t *r = s->isp;
@@ -638,7 +724,9 @@ index c2b6ecf..67136b4 100644
      uint8_t *f = s->file[front ? 0x04 : 0x03];
      unsigned w = f[0x1b] << 8 | f[0x1c], h = f[0x1d] << 8 | f[0x1e];     /* the output's size; 17..1a the sensor's */
      bool nv12 = r[ISP_OUT_FORMAT / 4] == 0x11;
-@@ -299,15 +469,49 @@ static void isp_frame(void *opaque)
+     uint32_t y = r[ISP_CUR_Y / 4], c = r[ISP_CUR_C / 4];
+     uint8_t *meta = s->file[front ? 0xa3 : 0xa2];
++    bool drawn_from_phone = false;
      const uint8_t *m = &s->file[0x00][(s->frames & 1) ? 0xcf : 0xcb];
      size_t need = (size_t)w * h * 2;
  
@@ -648,6 +736,8 @@ index c2b6ecf..67136b4 100644
 +        return;     /* stopped: the guest's own enable write stopped the timer, its next one restarts it */
 +    }
 +    if (!y) {
++        host_camera_note(front ? HOST_CAMERA_FRONT : HOST_CAMERA_BACK, w, h, nv12 ? 0x11 : 0x10,
++                         false, false, false, true);
 +        /* Enabled but with no output buffer: the kext is halfway through reprogramming the block, which is
 +         * exactly what switching cameras does (it clears CUR/NEXT, swaps the mode's file, sets them again).
 +         * The timer has to keep running, or nothing ever draws a frame again: returning here without
@@ -668,6 +758,8 @@ index c2b6ecf..67136b4 100644
 +     * there is writing into memory it may already have reused. Real hardware overruns its buffer; this model
 +     * waits, which costs a frame at worst and cannot corrupt the guest. */
 +    if (r[ISP_INT_STATUS / 4] & INT_FRAME) {
++        host_camera_note(front ? HOST_CAMERA_FRONT : HOST_CAMERA_BACK, w, h, nv12 ? 0x11 : 0x10,
++                         false, true, false, false);
 +        timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
 +        return;
      }
@@ -683,7 +775,9 @@ index c2b6ecf..67136b4 100644
              s->pic_size = need;
          }
 -        isp_pattern(s, w, h, nv12);
-+        if (camera && cw && ch) {
++        drawn_from_phone = camera && cw && ch;
++
++        if (drawn_from_phone) {
 +            isp_from_camera(s, camera, cw, ch, w, h, nv12, front);
 +        } else {
 +            isp_pattern(s, w, h, nv12);
@@ -691,7 +785,18 @@ index c2b6ecf..67136b4 100644
          if (nv12) {
              isp_dma_write(s, y, s->pic, (size_t)w * h);
              if (c > 0x1000) {
-@@ -325,7 +529,8 @@ static void isp_frame(void *opaque)
+@@ -317,6 +532,10 @@ static void isp_frame(void *opaque)
+             isp_dma_write(s, y, s->pic, (size_t)w * h * 2);
+         }
+     }
++    /* What this frame was, for the diagnosis: the mode the guest asked for, the layout, and whether the
++     * picture came from the phone or from the model's own test pattern. */
++    host_camera_note(front ? HOST_CAMERA_FRONT : HOST_CAMERA_BACK, w, h, nv12 ? 0x11 : 0x10,
++                     drawn_from_phone, false, nv12 && c <= 0x1000 && drawn_from_phone, false);
+     s->frames++;
+     /* The finished frame's statistics, in the metadata buffer named by 00:cb (even frames) or 00:cf (odd). */
+     memcpy(&meta[0x78], m, 4);   /* a2/a3:58 stays 0: nonzero is the firmware still writing them */
+@@ -325,7 +544,8 @@ static void isp_frame(void *opaque)
      r[ISP_CUR_C / 4] = r[ISP_NEXT_C / 4];
      r[ISP_INT_STATUS / 4] |= INT_FRAME;
      isp_update_irq(s);
@@ -701,7 +806,15 @@ index c2b6ecf..67136b4 100644
      timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
  }
  
-@@ -385,6 +590,14 @@ static void isp_init(Object *obj)
+@@ -369,6 +589,7 @@ static void isp_init(Object *obj)
+     SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
+     const char *trace = getenv("IT_ISP_TRACE");
+ 
++    s5l8930_isp_live = s;
+     s->isp = g_new0(uint32_t, ISP_SIZE / 4);
+     s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, isp_frame, s);
+     memory_region_init_io(&s->isp_mr, obj, &isp_ops, s, "s5l8930.isp", ISP_SIZE);
+@@ -385,6 +606,24 @@ static void isp_init(Object *obj)
      }
  }
  
@@ -709,14 +822,24 @@ index c2b6ecf..67136b4 100644
 +{
 +    S5L8930ISPState *s = S5L8930_ISP(dev);
 +
++    if (s5l8930_isp_live == s) {
++        s5l8930_isp_live = NULL;
++    }
 +    g_free(s->xmap.x);
 +    g_free(s->pic);
++}
++
++/* How many commands the model had to clear because the firmware's driver kept polling an unimplemented one.
++ * Zero on every firmware this model was written against; nonzero is a guest that would otherwise hang. */
++uint32_t s5l8930_isp_stuck_commands(void)
++{
++    return s5l8930_isp_live ? s5l8930_isp_live->stuck_cleared : 0;
 +}
 +
  static void isp_reset(DeviceState *dev)
  {
      S5L8930ISPState *s = S5L8930_ISP(dev);
-@@ -395,6 +608,11 @@ static void isp_reset(DeviceState *dev)
+@@ -395,6 +634,11 @@ static void isp_reset(DeviceState *dev)
      timer_del(s->frame_timer);
      s->frames = 0;
      s->shutter = s->strobe = 0;
@@ -728,7 +851,7 @@ index c2b6ecf..67136b4 100644
  }
  
  static const VMStateDescription isp_vmstate = {
-@@ -417,6 +635,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
+@@ -417,6 +661,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
  {
      DeviceClass *dc = DEVICE_CLASS(klass);
  
@@ -738,10 +861,10 @@ index c2b6ecf..67136b4 100644
      dc->desc = "A4 camera ISP (H3) and its ISP CPU's firmware, high level";
 diff --git a/include/hw/arm/host-camera.h b/include/hw/arm/host-camera.h
 new file mode 100644
-index 0000000..075434b
+index 0000000..cfdc878
 --- /dev/null
 +++ b/include/hw/arm/host-camera.h
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,96 @@
 +/*
 + * The frontend's camera, as the ISP's output DMA sees it.
 + *
@@ -792,6 +915,16 @@ index 0000000..075434b
 +    uint64_t taken;             /* frames the guest's ISP took */
 +    uint64_t replaced;          /* frames the guest never saw: superseded before it asked */
 +    uint64_t rejected;          /* frames refused: too large, empty, or no such sensor */
++    /* What the guest's ISP is doing with them, as the ISP model last reported it: the mode it asked for, the
++     * layout, whether the last frame was the phone's picture or the test pattern, and how often the guest had
++     * not acknowledged the previous frame or had not given a chroma buffer. This is the diagnosis for "the
++     * camera works on one sensor and hangs on the other", which is otherwise invisible without a trace. */
++    uint32_t mode_width, mode_height, format;   /* 0x11 NV12, 0x10 4:2:2, 0 before the first frame */
++    uint64_t drawn;             /* frames the ISP wrote into the guest's buffers */
++    uint64_t from_phone;        /* of those, the ones drawn from a frame the phone sent */
++    uint64_t unacked;           /* frames skipped: the guest had not cleared the previous interrupt */
++    uint64_t no_chroma;         /* frames drawn for a layout that wanted chroma the guest did not name */
++    uint64_t stalls;            /* frames skipped: no output buffer (a mode being reprogrammed) */
 +} HostCameraSensorState;
 +
 +typedef struct HostCameraState {
@@ -821,6 +954,11 @@ index 0000000..075434b
 +int host_camera_selected(void);
 +
 +void host_camera_state(HostCameraState *out);
++
++/* The model's own view, reported per frame: what the guest asked for and what it got. Called by the ISP
++ * model; the frontend only reads it. */
++void host_camera_note(unsigned sensor, unsigned mode_width, unsigned mode_height, unsigned format,
++                      bool from_phone, bool unacked, bool no_chroma, bool stall);
 +
 +#endif
 diff --git a/tests/slice/ipad1-isp-mailbox.c b/tests/slice/ipad1-isp-mailbox.c

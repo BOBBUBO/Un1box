@@ -750,7 +750,15 @@ class EngineService : Service() {
         if (status.toInt() != 0) return "Camera: the engine refused the query ($status)"
         val facing = if (sensor == Native.CAMERA_FRONT) "front" else "back"
         val problem = cameraError.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""
-        return "Camera $facing: sent ${info[4]}, taken ${info[5]}, replaced ${info[6]}, refused ${info[7]}$problem"
+        val line = "Camera $facing: sent ${info[4]}, taken ${info[5]}, replaced ${info[6]}, refused ${info[7]}"
+        // What the guest's ISP did with them: the mode it asked for, and whether it is drawing the phone's
+        // pictures or waiting for something. This is the line that tells a hang apart from a wrong picture.
+        val diag = Native.cameraDiag(sensor)
+        if (diag.size < 12 || diag[0].toInt() != 0) return "$line$problem"
+        val mode = if (diag[2] > 0) "${diag[2]}x${diag[3]} ${if (diag[4] == 0x11L) "nv12" else "422"}" else "no frame yet"
+        val guest = "guest: $mode, drawn ${diag[6]} (phone ${diag[7]}), waiting ${diag[8]}, " +
+            "no-chroma ${diag[9]}, no-buffer ${diag[10]}, stuck ${diag[11]}"
+        return "$line · $guest$problem"
     }
     private fun stopCamera() {
         cameraOn = false

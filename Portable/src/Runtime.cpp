@@ -132,6 +132,7 @@ struct Engine {
     decltype(&qemu_ios_camera_flush) camera_flush = nullptr;
     decltype(&qemu_ios_camera_state) camera_state = nullptr;
     decltype(&qemu_ios_camera_sensor) camera_sensor = nullptr;
+    decltype(&qemu_ios_camera_diag) camera_diag = nullptr;
     decltype(&qemu_ios_profile_start) profile_start = nullptr;
     decltype(&qemu_ios_profile_stop) profile_stop = nullptr;
     decltype(&qemu_ios_profile_status) profile_status = nullptr;
@@ -202,6 +203,7 @@ struct Engine {
             camera_flush = reinterpret_cast<decltype(camera_flush)>(dlsym(library, "qemu_ios_camera_flush"));
             camera_state = reinterpret_cast<decltype(camera_state)>(dlsym(library, "qemu_ios_camera_state"));
             camera_sensor = reinterpret_cast<decltype(camera_sensor)>(dlsym(library, "qemu_ios_camera_sensor"));
+            camera_diag = reinterpret_cast<decltype(camera_diag)>(dlsym(library, "qemu_ios_camera_diag"));
             package_report =
                 reinterpret_cast<decltype(package_report)>(dlsym(library, "qemu_ios_guest_package_report"));
         } catch (...) {
@@ -1126,6 +1128,29 @@ lt_status lt_runtime_camera_sensor(lt_runtime *r, int *sensor, lt_error *e) {
         lt::require(r->engine->camera_sensor != nullptr, "engine has no camera input", LT_UNSUPPORTED);
         const int active = r->engine->camera_sensor();
         *sensor = active == LT_CAMERA_FRONT ? LT_CAMERA_FRONT : LT_CAMERA_BACK;
+    });
+}
+lt_status lt_runtime_camera_diag(lt_runtime *r, int sensor, lt_camera_diag *diag, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->engine->camera_diag != nullptr, "engine has no camera diagnosis", LT_UNSUPPORTED);
+        lt::require(sensor == LT_CAMERA_BACK || sensor == LT_CAMERA_FRONT, "camera sensor must be 0 (back) or 1 (front)");
+        lt::abi(diag);
+        int mode_w = 0, mode_h = 0, format = 0, active = 0;
+        unsigned drawn = 0, phone = 0, unacked = 0, luma_only = 0, stalled = 0, stuck = 0;
+        const int known = r->engine->camera_diag(sensor, &mode_w, &mode_h, &format, &active, &drawn, &phone,
+                                                 &unacked, &luma_only, &stalled, &stuck);
+        diag->sensor = uint32_t(sensor);
+        diag->mode_width = uint32_t(mode_w);
+        diag->mode_height = uint32_t(mode_h);
+        diag->format = uint32_t(format);
+        diag->active_sensor = uint32_t(active == LT_CAMERA_FRONT ? LT_CAMERA_FRONT : LT_CAMERA_BACK);
+        diag->drawn_frames = drawn;
+        diag->phone_frames = phone;
+        diag->unacked_frames = unacked;
+        diag->luma_only_frames = luma_only;
+        diag->stalled_frames = stalled;
+        diag->stuck_commands = stuck;
+        lt::require(known, "engine does not know that camera sensor", LT_INVALID);
     });
 }
 lt_status lt_runtime_guest_status(lt_runtime *r, uint32_t *out, lt_error *e) {
