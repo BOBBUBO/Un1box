@@ -332,6 +332,13 @@ pub fn spinner(ui: &mut Ui, p: &Palette, size: f32) {
     ui.add(egui::Spinner::new().size(size).color(p.primary));
 }
 
+/// A dialog's actions, right-aligned in a row of their own height (a right-to-left layout alone takes all the
+/// height a modal offers, which made dialogs tall with their buttons floating in the middle).
+pub fn dialog_buttons<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    ui.allocate_ui_with_layout(vec2(ui.available_width(), 40.0), layout, add).inner
+}
+
 /// A row in a settings card: icon, title, subtitle, and a trailing control.
 pub fn setting_row<R>(
     ui: &mut Ui,

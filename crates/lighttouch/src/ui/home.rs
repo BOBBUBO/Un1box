@@ -9,7 +9,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     top_bar(app, ui);
     let active = app.model.session_active();
-    let dock_height = if active { 92.0 } else { 0.0 };
+    // The dock's room stays while a device is selected, so starting, stopping or failing never resizes the device.
+    let dock_height = if app.model.current().is_some() { 92.0 } else { 0.0 };
     let space = Rect::from_min_max(ui.cursor().min, ui.max_rect().max - vec2(0.0, dock_height));
     // A soft glow behind the device.
     glow(ui, space, p.primary.gamma_multiply(if p.dark { 0.07 } else { 0.10 }));
@@ -65,9 +66,55 @@ fn top_bar(app: &mut App, ui: &mut Ui) {
                 if widgets::icon_button_sized(ui, &p, icons::BAG, "Legacy Store", 40.0, has_device).clicked() {
                     app.page = super::Page::Store;
                 }
+                error_chip(app, ui);
             });
         });
     });
+}
+
+/// The last error, in the header beside the device's name rather than over it: one line, the whole message on
+/// hover, dismissable.
+fn error_chip(app: &mut App, ui: &mut Ui) {
+    let p = app.palette;
+    let Some(error) = app.model.error.clone() else { return };
+    ui.add_space(8.0);
+    let close = 28.0;
+    let text = RichText::new(&error).size(12.5).color(p.on_error_container);
+    let galley = egui::WidgetText::from(text.clone()).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    // The frame's margins, the icon, the close button and the gaps between them.
+    let spacing = ui.spacing().item_spacing.x;
+    let chrome = 12.0 + 4.0 + 20.0 + close + 8.0 + 3.0 * spacing;
+    let width = (galley.size().x + chrome).min(ui.available_width() - 16.0).min(560.0);
+    if width < 120.0 {
+        return;
+    }
+    let mut dismiss = false;
+    ui.allocate_ui_with_layout(vec2(width, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        Frame::new()
+            .fill(p.error_container)
+            .corner_radius(CornerRadius::same(theme::radius::ROW))
+            .inner_margin(Margin { left: 12, right: 4, top: 2, bottom: 2 })
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(widgets::icon_text(icons::WARNING, 16.0).color(p.on_error_container));
+                    ui.scope(|ui| {
+                        ui.set_max_width((ui.available_width() - close - 8.0).max(40.0));
+                        ui.add(egui::Label::new(text).truncate()).on_hover_text(&error);
+                    });
+                    if widgets::icon_button_sized(ui, &p, icons::CLOSE, "Dismiss", close, true).clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+    });
+    if dismiss {
+        app.model.dismiss_error();
+    }
 }
 
 fn glow(ui: &Ui, rect: Rect, color: Color32) {
