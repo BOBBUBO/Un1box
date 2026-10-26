@@ -30,6 +30,8 @@ pub struct QueueItem {
     pub committed: bool,
     /// The whole item's progress (see `stages`); it only moves forward.
     pub overall: f32,
+    /// Items added while others were still going share a batch; one added to an idle queue starts the next.
+    pub batch: u64,
 }
 
 impl QueueItem {
@@ -66,13 +68,13 @@ pub mod stages {
     }
 }
 
-/// How far along the whole queue is, 0 to 1: finished items (installed or failed) count whole, until cleared.
+/// How far along the running batch is, 0 to 1: its finished items (installed or failed) count whole. Items from
+/// earlier batches, still listed until cleared, don't count, so a new install starts the ring at nothing.
 pub fn fraction(items: &[QueueItem]) -> f32 {
-    if items.is_empty() {
-        return 0.0;
-    }
-    let sum: f32 = items.iter().map(|i| if i.active() { i.overall.clamp(0.0, 1.0) } else { 1.0 }).sum();
-    sum / items.len() as f32
+    let Some(batch) = items.iter().filter(|i| i.active()).map(|i| i.batch).max() else { return 0.0 };
+    let current: Vec<&QueueItem> = items.iter().filter(|i| i.batch == batch).collect();
+    let sum: f32 = current.iter().map(|i| if i.active() { i.overall.clamp(0.0, 1.0) } else { 1.0 }).sum();
+    sum / current.len() as f32
 }
 
 /// What a running step reports back to its item.
@@ -111,8 +113,19 @@ struct Entry<P> {
 struct State<P> {
     entries: Vec<Entry<P>>,
     next_id: u64,
+    batch: u64,
     fetching: bool,
     installing: bool,
+}
+
+impl<P> State<P> {
+    /// The batch an item added now joins: the running one, or a new one when nothing is left to do.
+    fn next_batch(&mut self) -> u64 {
+        if !self.entries.iter().any(|e| e.item.active()) {
+            self.batch += 1;
+        }
+        self.batch
+    }
 }
 
 type Spawn = dyn Fn(&'static str, Box<dyn FnOnce() + Send>) + Send + Sync;
@@ -151,7 +164,13 @@ impl<P: Send + Sync + 'static> InstallQueue<P> {
         spawn: impl Fn(&'static str, Box<dyn FnOnce() + Send>) + Send + Sync + 'static,
     ) -> Self {
         Self {
-            state: Arc::new(Mutex::new(State { entries: Vec::new(), next_id: 1, fetching: false, installing: false })),
+            state: Arc::new(Mutex::new(State {
+                entries: Vec::new(),
+                next_id: 1,
+                batch: 0,
+                fetching: false,
+                installing: false,
+            })),
             work: Arc::new(work),
             spawn: Arc::new(spawn),
             on_change: Arc::new(on_change),
@@ -174,6 +193,7 @@ impl<P: Send + Sync + 'static> InstallQueue<P> {
                 return false;
             }
             state.entries.retain(|e| e.item.key != key);
+            let batch = state.next_batch();
             let id = state.next_id;
             state.next_id += 1;
             state.entries.push(Entry {
@@ -187,6 +207,7 @@ impl<P: Send + Sync + 'static> InstallQueue<P> {
                     error: None,
                     committed: false,
                     overall: 0.0,
+                    batch,
                 },
                 payload: Arc::new(payload),
                 file: None,
@@ -238,6 +259,7 @@ impl<P: Send + Sync + 'static> InstallQueue<P> {
                 return;
             };
             // Back of the line, like any newly added app.
+            let batch = state.next_batch();
             let mut entry = state.entries.remove(index);
             entry.cancelled.store(false, Ordering::SeqCst);
             entry.item = QueueItem {
@@ -247,6 +269,7 @@ impl<P: Send + Sync + 'static> InstallQueue<P> {
                 error: None,
                 committed: false,
                 overall: 0.0,
+                batch,
                 ..entry.item
             };
             state.entries.push(entry);
@@ -673,6 +696,7 @@ mod tests {
         h.log.lock().unwrap().failures.clear();
         h.queue.retry(h.item("a").id);
         assert_eq!(h.keys(), ["b", "a"]);
+        assert_eq!(h.item("a").batch, h.item("b").batch); // b was still going: same batch
         assert_eq!(h.item("a").error, None);
         h.run_all();
         assert_eq!(h.installed(), ["b", "a"]);
@@ -716,6 +740,18 @@ mod tests {
     }
 
     #[test]
+    fn an_install_added_to_an_idle_queue_starts_a_new_batch() {
+        let h = Harness::new();
+        h.add(&["a"]);
+        h.run_all();
+        h.add(&["b", "c"]);
+        assert_ne!(h.item("a").batch, h.item("b").batch);
+        assert_eq!(h.item("b").batch, h.item("c").batch);
+        // a, installed earlier, is still listed but the ring starts from nothing.
+        assert_eq!(fraction(&h.queue.snapshot()), 0.0);
+    }
+
+    #[test]
     fn the_ring_follows_overall_progress() {
         let item = |state, overall| QueueItem {
             id: 1,
@@ -727,6 +763,7 @@ mod tests {
             error: None,
             committed: false,
             overall,
+            batch: 1,
         };
         assert_eq!(fraction(&[]), 0.0);
         assert!((fraction(&[item(QueueState::Downloading, stages::download(0.5))]) - 0.2).abs() < 1e-3);
@@ -738,6 +775,10 @@ mod tests {
             item(QueueState::Pending, 0.0),
         ];
         assert!((fraction(&mixed) - 0.5).abs() < 1e-3);
+        // An earlier batch's finished installs don't count toward a new one.
+        let earlier = QueueItem { batch: 0, ..item(QueueState::Done, 1.0) };
+        assert_eq!(fraction(&[earlier.clone(), item(QueueState::Pending, 0.0)]), 0.0);
+        assert_eq!(fraction(&[earlier]), 0.0);
         assert!((stages::download(1.0) - stages::copy(0.0)).abs() < 1e-4);
         assert!((stages::copy(1.0) - stages::unpack(0.0)).abs() < 1e-4);
         assert!((stages::unpack(1.0) - stages::ios_percent(20)).abs() < 1e-4);

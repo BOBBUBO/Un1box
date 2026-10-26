@@ -42,7 +42,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             subtitle.push_str(" · needs recovery");
                         }
                         let dot = if running { running_phase.as_ref().map(phase_color) } else { None };
-                        let response = device_row(ui, &p, &device.name, &subtitle, device.selected, dot);
+                        let mut response = device_row(ui, &p, &device.name, &subtitle, device.selected, dot);
+                        if active && !device.selected {
+                            let name = app.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
+                            response = response.on_hover_text(format!("Stop {name} to switch to this device"));
+                        }
                         if response.clicked() && !active && !busy && !device.selected {
                             app.model.select(&device.id);
                             app.page = Page::Device;
@@ -71,18 +75,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 },
             );
 
-            if let Some(session) = &app.model.session {
-                if active {
-                    ui.add_space(6.0);
-                    ui.label(
-                        widgets::muted(&p, format!("Stop {} to switch to or add another.", session.name)).size(12.5),
-                    );
-                }
-            }
             ui.add_space(6.0);
             // One device is made at a time; the one being made is listed above, with its progress.
             let add = add_row(ui, &p, !active && !busy);
-            let add = if busy { add.on_hover_text("Wait for the device being prepared to finish") } else { add };
+            let running_name = app.model.session.as_ref().filter(|_| active).map(|s| s.name.clone());
+            let add = match (&running_name, busy) {
+                (_, true) => add.on_hover_text("Wait for the device being prepared to finish"),
+                (Some(name), false) => add.on_hover_text(format!("Stop {name} to add another device")),
+                (None, false) => add,
+            };
             if add.clicked() && !busy {
                 app.setup = setup::SetupState::default();
                 app.page = Page::Setup(setup::Step::Files);

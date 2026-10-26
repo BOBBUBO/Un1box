@@ -193,66 +193,91 @@ fn queue_button(app: &mut App, ui: &mut Ui) {
         ui.painter().circle_filled(response.rect.right_top() + vec2(-6.0, 6.0), 4.0, theme::DANGER);
     }
     if busy {
-        let fraction = queue::fraction(&items).clamp(0.02, 1.0);
+        // The share done; before any (fetching, preparing) a quarter arc going round.
+        let fraction = queue::fraction(&items);
+        let (start, sweep) = if fraction > 0.01 {
+            (0.0, fraction.min(1.0))
+        } else {
+            ((ui.input(|i| i.time) * 0.9).fract() as f32, 0.25)
+        };
         let radius = 17.0;
         ui.painter().circle_stroke(center, radius, Stroke::new(2.5, p.container_highest));
         let steps = 48;
-        let points: Vec<egui::Pos2> = (0..=((steps as f32 * fraction) as usize).max(1))
+        let points: Vec<egui::Pos2> = (0..=((steps as f32 * sweep) as usize).max(2))
             .map(|i| {
-                let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * (i as f32 / steps as f32);
+                let turn = start + sweep * i as f32 / (steps as f32 * sweep).max(2.0);
+                let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * turn;
                 center + vec2(angle.cos(), angle.sin()) * radius
             })
             .collect();
         ui.painter().add(egui::Shape::line(points, Stroke::new(2.5, p.primary)));
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+        if fraction > 0.01 {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+        } else {
+            ui.ctx().request_repaint();
+        }
     }
-    egui::Popup::menu(&response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-        ui.set_width(330.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(if busy { "Installing" } else { "Installs finished" }).font(theme::title()));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if items.iter().any(|i| !i.active()) && widgets::text_button(ui, &p, "Clear finished").clicked() {
-                    app.model.store.clear_finished();
+    egui::Popup::menu(&response)
+        .align(egui::RectAlign::BOTTOM_END)
+        .gap(6.0)
+        // Room around the contents, like Android's sheet; a menu's own margin is a few points.
+        .frame(
+            egui::Frame::popup(ui.style())
+                .inner_margin(Margin::symmetric(18, 14))
+                .corner_radius(CornerRadius::same(16)),
+        )
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_width(320.0);
+            ui.horizontal(|ui| {
+                ui.set_min_height(28.0);
+                let title = if busy { "Installing" } else { "Installs" };
+                ui.label(RichText::new(title).size(14.5).family(theme::semibold()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if items.iter().any(|i| !i.active()) && widgets::text_button(ui, &p, "Clear finished").clicked() {
+                        app.model.store.clear_finished();
+                    }
+                });
+            });
+            egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
+                for item in &items {
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(220.0);
+                            ui.add(egui::Label::new(RichText::new(&item.name).family(theme::medium())).truncate());
+                            match &item.error {
+                                Some(error) => {
+                                    ui.add(egui::Label::new(RichText::new(error).color(p.error).size(12.5)).wrap())
+                                }
+                                None => ui.add(egui::Label::new(widgets::muted(&p, &item.phase).size(12.5)).wrap()),
+                            };
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if item.cancellable() && widgets::text_button(ui, &p, "Cancel").clicked() {
+                                app.model.store.cancel(item.id);
+                            }
+                            if item.state == QueueState::Failed && widgets::text_button(ui, &p, "Retry").clicked() {
+                                app.model.store.retry(item.id);
+                            }
+                        });
+                    });
+                    if item.active() {
+                        // Nothing measured yet (waiting, preparing): a moving bar, not an empty one.
+                        ui.add_space(4.0);
+                        let fraction = item.progress.filter(|f| *f > 0.01);
+                        widgets::progress(ui, &p, fraction, ui.available_width());
+                    }
                 }
             });
-        });
-        egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
-            for item in &items {
+            if items.iter().any(|i| i.committed && i.active()) {
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width(220.0);
-                        ui.add(egui::Label::new(RichText::new(&item.name).family(theme::medium())).truncate());
-                        match &item.error {
-                            Some(error) => {
-                                ui.add(egui::Label::new(RichText::new(error).color(p.error).size(12.5)).wrap())
-                            }
-                            None => ui.add(egui::Label::new(widgets::muted(&p, &item.phase).size(12.5)).wrap()),
-                        };
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if item.cancellable() && widgets::text_button(ui, &p, "Cancel").clicked() {
-                            app.model.store.cancel(item.id);
-                        }
-                        if item.state == QueueState::Failed && widgets::text_button(ui, &p, "Retry").clicked() {
-                            app.model.store.retry(item.id);
-                        }
-                    });
-                });
-                if matches!(item.state, QueueState::Downloading | QueueState::Installing) {
-                    ui.add_space(4.0);
-                    widgets::progress(ui, &p, item.progress, ui.available_width());
-                }
+                ui.label(widgets::muted(&p, "Keep the device running until iOS finishes installing.").size(12.0));
             }
         });
-        if items.iter().any(|i| i.committed && i.active()) {
-            ui.add_space(6.0);
-            ui.label(widgets::muted(&p, "Keep the device running until iOS finishes installing.").size(12.0));
-        }
-    });
 }
 
-/// The crash report, and whether installs can reach the device.
+/// The crash report, and a guest USB bridge that couldn't start.
 fn notices(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     if let Some(crash) = app.model.store.crash.clone() {
@@ -269,15 +294,11 @@ fn notices(app: &mut App, ui: &mut Ui) {
         });
         ui.add_space(12.0);
     }
-    if !app.model.store.guest_ready() {
-        let text = match (&app.model.store.usb_problem, app.model.session_active()) {
-            (Some(problem), true) => problem.clone(),
-            (None, true) => "Apps can be installed once iOS has finished starting.".to_string(),
-            (_, false) => "You can browse now. Start the device to install apps.".to_string(),
-        };
+    // Waiting for iOS shows on the Install button; only a bridge that failed to start gets a line here.
+    if let Some(problem) = app.model.store.usb_problem.clone().filter(|_| app.model.session_active()) {
         ui.horizontal(|ui| {
-            ui.label(widgets::icon_text(icons::INFO, 16.0).color(p.on_surface_variant));
-            ui.label(widgets::muted(&p, text));
+            ui.label(widgets::icon_text(icons::WARNING, 16.0).color(p.error));
+            ui.add(egui::Label::new(RichText::new(problem).color(p.error)).wrap());
         });
         ui.add_space(10.0);
     }
@@ -935,9 +956,12 @@ fn details(app: &mut App, ui: &mut Ui) {
     let store = &app.model.store;
     let queued = store.queued(&chosen).filter(|q| q.active()).is_some();
     let ready = store.candidate.is_some() && store.guest_ready() && !queued;
+    let waiting = store.running() && !store.guest_ready() && !queued;
     ui.horizontal(|ui| {
         let label = if queued {
             "In the queue"
+        } else if waiting {
+            "Waiting for iOS…"
         } else if installed.is_some() {
             "Reinstall"
         } else {
