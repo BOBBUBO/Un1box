@@ -188,15 +188,6 @@ def main():
                 report, "isp poll", HERE / "isp-poll.c", shutil.which("cc") or "cc",
                 ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"], [], [HERE / "stub"], scratch))
 
-        print("device camera slot")
-        if ENGINE is None:
-            report.add("camera slot", True, "skipped: no engine checkout")
-        else:
-            report.run("camera slot: frames nobody takes stop costing a copy each", lambda: compile_and_run(
-                report, "camera idle", HERE / "camera-idle.c", shutil.which("cc") or "cc",
-                ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"],
-                [ENGINE / "hw/arm/host-camera.c"], [HERE / "stub", ENGINE / "include", ROOT], scratch))
-
         report.run("isp sensor: the kext can identify and configure its sensor", lambda: compile_and_run(
             report, "sensor i2c", HERE / "sensor-i2c.c", shutil.which("cc") or "cc",
             ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter", "-Wno-unused-label"],

@@ -247,6 +247,25 @@ def engine_patch_parks_a_stream_nobody_reads():
             "nothing wakes a parked stream: the guest's next write to the block would leave it silent for good")
 
 
+def engine_patch_holds_the_last_picture():
+    """Once the phone has sent a picture, the guest must never be shown the test pattern again.
+
+    Skipping a frame is right while the next camera frame is on its way -- real hardware holds the last one --
+    but drawing the model's colour bars instead makes the viewfinder alternate between the camera and bars
+    whenever the phone's frame rate drifts against the ISP's tick."""
+    body = file_body(CAMERA_PATCH, "hw/arm/host-camera.c")
+    require("bool host_camera_has_frame(" in body,
+            "the slot cannot say whether the phone has ever delivered a picture, so the ISP cannot tell an idle "
+            "camera from one that has never sent a frame")
+    isp = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    frame = isp.split("if (w && h && y > 0x1000) {", 1)[1]
+    require("host_camera_has_frame(" in frame.split("isp_pattern", 1)[0],
+            "a frame that arrives while the phone's next one is on its way falls back to the test pattern: the "
+            "viewfinder flickers between the camera and colour bars")
+    require("timer_mod(" in frame.split("host_camera_has_frame(", 1)[1].split("return;", 1)[0],
+            "holding the last picture must not stop the frame timer, or the stream dies instead of flickering")
+
+
 def engine_patch_forgets_a_stopped_camera():
     extras = added_lines(CAMERA_PATCH)
     require("host_camera_flush();" in extras, "stopping the capture does not drop the frame the guest never took")
@@ -382,20 +401,6 @@ def android_a_refused_camera_comes_back():
             "camera it is still releasing")
 
 
-def engine_patch_throttles_idle_pushes():
-    """A frame nobody draws must not be copied: half a megabyte at thirty a second is heat."""
-    body = file_body(CAMERA_PATCH, "hw/arm/host-camera.c")
-    require("HOST_CAMERA_IDLE_US" in body and "HOST_CAMERA_IDLE_EVERY" in body,
-            "the camera slot copies every arriving frame even when the guest has taken none for seconds")
-    push = body.split("bool host_camera_push(", 1)[1].split("const uint8_t *host_camera_take(", 1)[0]
-    require("idle_pushes" in push and "return true;" in push,
-            "the idle push path does not return before the copy")
-    take = body.split("const uint8_t *host_camera_take(", 1)[1].split("void host_camera_flush(", 1)[0]
-    require("taken_us" in take,
-            "taking a frame does not record when the guest last consumed one, so the slot can never tell "
-            "an idle guest from an active one")
-
-
 def android_capture_is_rate_limited():
     capture = read("Android/app/src/main/java/org/lighttouch/android/CameraCapture.kt")
     require("DELIVER_GAP_NS" in capture and "lastDeliveredNs" in capture,
@@ -493,6 +498,7 @@ CHECKS = [
     ("engine patch: an unacknowledged frame does not storm", engine_patch_does_not_storm_an_unacknowledged_frame),
     ("engine patch: a size that is not a mode is refused", engine_patch_refuses_a_size_that_is_not_a_mode),
     ("engine patch: the added code is C, not C++", engine_patches_stay_c),
+    ("engine patch: the last picture is held, not the pattern", engine_patch_holds_the_last_picture),
     ("engine patch: a stopped camera is forgotten", engine_patch_forgets_a_stopped_camera),
     ("portable: the API is declared and typed", portable_declares_the_api),
     ("portable: the engine's entry points are resolved, and optional", portable_resolves_exactly_the_exported_names),
@@ -501,7 +507,6 @@ CHECKS = [
     ("android: the front camera follows the guest's switch", android_follows_the_guests_camera_switch),
     ("android: the switch and the choice reach the worker", android_switch_reaches_the_worker),
     ("android: a camera Android refuses is opened again", android_a_refused_camera_comes_back),
-    ("engine patch: frames nobody draws are not copied", engine_patch_throttles_idle_pushes),
     ("android: the capture is rate-limited to what the device draws", android_capture_is_rate_limited),
     ("android: nothing wakes a hundred times a second for nothing", android_idle_work_is_bounded),
     ("android: Kotlin externals all have JNI bodies", android_jni_names_match),

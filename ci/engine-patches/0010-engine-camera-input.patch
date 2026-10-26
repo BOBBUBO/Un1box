@@ -124,6 +124,12 @@ register file of its own behind that command: a write stores, a read returns wha
 was stored, and the transfer's result byte says the transfer worked. That is the
 shape a real part has, and it is what a driver's read-back passes on.
 
+And a frame the guest asks for while the phone's next picture is still on its way
+must be the picture it already has: a real sensor holds the last frame, and
+falling back to the test pattern there made the viewfinder alternate between the
+camera and colour bars whenever the phone's frame rate drifted against the ISP's
+tick. The pattern now appears only for a sensor that has never delivered a frame.
+
 Two smaller holes in the same path. An unacknowledged frame kept the frame-done
 interrupt asserted with no way out -- the same interrupt, 15 times a second, for
 ever -- so after two seconds the model drops the acknowledgement it can no longer
@@ -303,10 +309,10 @@ index 4e31244..fa23e30 100644
  /* Machine controls. */
 diff --git a/hw/arm/host-camera.c b/hw/arm/host-camera.c
 new file mode 100644
-index 0000000..f758548
+index 0000000..001ec72
 --- /dev/null
 +++ b/hw/arm/host-camera.c
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,232 @@
 +/*
 + * The frontend's camera: the latest frame per sensor, and nothing else.
 + *
@@ -325,15 +331,6 @@ index 0000000..f758548
 +
 +#include <pthread.h>
 +
-+/* While nothing is consuming frames, a push still costs a full frame's copy: an NV12 preview is half a
-+ * megabyte, and the phone's camera offers thirty a second. A guest that has stopped taking them -- a stuck
-+ * camera app, which is exactly when a phone gets hot -- would then have half a megabyte copied and counted
-+ * thirty times a second for pictures nobody sees. So the slot remembers when the guest last took a frame:
-+ * after half a second without a take, only one push in eight is copied, and the other seven cost a counter.
-+ * The guest is never handed a picture older than that window. */
-+#define HOST_CAMERA_IDLE_US     (500 * 1000)
-+#define HOST_CAMERA_IDLE_EVERY  8
-+
 +/* Three buffers, and two of them can be held at once: the frame the guest has not taken yet, and the one
 + * it is copying right now (it takes a frame, then spends a while in the ISP's scaler with it). A push never
 + * fills either, so a camera faster than the guest cannot overwrite the picture it is reading -- which with
@@ -344,8 +341,6 @@ index 0000000..f758548
 +    uint8_t *buffer[HOST_CAMERA_BUFFERS];
 +    size_t capacity[HOST_CAMERA_BUFFERS];
 +    int write;                  /* where the next push goes */
-+    int64_t taken_us;           /* when the guest last took a frame, 0 before the first */
-+    unsigned idle_pushes;       /* pushes skipped since the guest last took one */
 +    int pending;                /* the buffer the guest has not taken, -1 when there is none */
 +    int busy;                   /* the buffer the guest took last and may still be reading, -1 when none */
 +    unsigned width, height;
@@ -398,17 +393,7 @@ index 0000000..f758548
 +        return false;
 +    }
 +    {
-+        int target;
-+        int64_t now = g_get_monotonic_time();
-+
-+        if (s->taken_us && now - s->taken_us > HOST_CAMERA_IDLE_US &&
-+            ++s->idle_pushes < HOST_CAMERA_IDLE_EVERY) {
-+            s->state.replaced++;    /* nobody is drawing these: do not copy another half megabyte */
-+            pthread_mutex_unlock(&host_camera_lock);
-+            return true;
-+        }
-+        s->idle_pushes = 0;
-+        target = host_camera_free_buffer(s);
++        int target = host_camera_free_buffer(s);
 +
 +        if (target < 0) {
 +            s->state.rejected++;
@@ -458,13 +443,28 @@ index 0000000..f758548
 +    }
 +    s->busy = s->pending;       /* the caller copies out of this one; pushes leave it alone */
 +    s->pending = -1;
-+    s->taken_us = g_get_monotonic_time();
-+    s->idle_pushes = 0;
 +    s->state.width = 0;
 +    s->state.height = 0;
 +    s->state.taken++;
 +    pthread_mutex_unlock(&host_camera_lock);
 +    return frame;
++}
++
++/* Has this sensor ever delivered a frame? The ISP asks before it falls back to its test pattern: once the
++ * phone has sent a picture, a frame the guest takes while the next one has not arrived must be the picture it
++ * already has -- not the pattern, which is what made the viewfinder alternate between the camera and bars
++ * whenever the phone's frame rate and the ISP's tick drifted apart. */
++bool host_camera_has_frame(unsigned sensor)
++{
++    bool seen;
++
++    if (sensor >= HOST_CAMERA_SENSORS) {
++        return false;
++    }
++    pthread_mutex_lock(&host_camera_lock);
++    seen = host_camera_slots[sensor].state.taken > 0;
++    pthread_mutex_unlock(&host_camera_lock);
++    return seen;
 +}
 +
 +void host_camera_flush(void)
@@ -559,7 +559,7 @@ index 526734d..4871a07 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
-index c2b6ecf..a65004c 100644
+index c2b6ecf..d5112d8 100644
 --- a/hw/arm/s5l8930_isp.c
 +++ b/hw/arm/s5l8930_isp.c
 @@ -25,6 +25,7 @@
@@ -931,7 +931,7 @@ index c2b6ecf..a65004c 100644
  /*
   * The frame's statistics record (0x1a0 bytes; the kext copies it into H3ISPFrameMetaData), as H3ISP.mediacapture
   * reads it: AE converged at unity gains, AWB and AF settled, and the shutter flag that marks a still.
-@@ -290,24 +585,90 @@ static void isp_frame(void *opaque)
+@@ -290,24 +585,100 @@ static void isp_frame(void *opaque)
  {
      S5L8930ISPState *s = opaque;
      uint32_t *r = s->isp;
@@ -960,7 +960,7 @@ index c2b6ecf..a65004c 100644
 +         * re-arming it is what froze the guest's camera and the sim it hangs in when the sensor changes. */
 +        timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
 +        return;
-+    }
+     }
 +    /* The sizes come from the guest's own register file. Before the kext has programmed a mode those bytes are
 +     * whatever it left there, and a drive that asks for a size the sensors never had is not a frame either.
 +     * Drawing one would mean allocating gigabytes and DMAing past the guest's buffer, so it is skipped -- and
@@ -968,7 +968,7 @@ index c2b6ecf..a65004c 100644
 +    if (w && h && (w & 1 || h & 1 || w < 16 || h < 16 || (uint64_t)w * h * 2 > ISP_FRAME_MAX)) {
 +        isp_log(s, "frame skipped: %ux%u is not a mode", w, h);
 +        w = h = 0;
-     }
++    }
 +    /* The guest has to have consumed the last frame before this one may overwrite anything. While it
 +     * reprograms the block -- which is what a sensor switch is: disable, clear the buffers, swap the mode,
 +     * set them again -- the output address in CUR still points at buffers it is tearing down, and writing
@@ -1018,6 +1018,16 @@ index c2b6ecf..a65004c 100644
 -        isp_pattern(s, w, h, nv12);
 +        drawn_from_phone = camera && cw && ch;
 +
++        if (!camera && host_camera_has_frame(front ? HOST_CAMERA_FRONT : HOST_CAMERA_BACK)) {
++            /* The phone has sent pictures for this sensor and the next one has not arrived yet. Real hardware
++             * holds the last frame; drawing the model's test pattern here is what made the viewfinder
++             * alternate between the camera and colour bars whenever the phone's frame rate drifted against
++             * the ISP's own tick. The buffer keeps what it had, and the timer keeps running. */
++            host_camera_note(front ? HOST_CAMERA_FRONT : HOST_CAMERA_BACK, w, h, nv12 ? 0x11 : 0x10,
++                             false, false, false, false);
++            timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
++            return;
++        }
 +        if (drawn_from_phone) {
 +            isp_from_camera(s, camera, cw, ch, w, h, nv12, front);
 +        } else {
@@ -1026,7 +1036,7 @@ index c2b6ecf..a65004c 100644
          if (nv12) {
              isp_dma_write(s, y, s->pic, (size_t)w * h);
              if (c > 0x1000) {
-@@ -317,6 +678,10 @@ static void isp_frame(void *opaque)
+@@ -317,6 +688,10 @@ static void isp_frame(void *opaque)
              isp_dma_write(s, y, s->pic, (size_t)w * h * 2);
          }
      }
@@ -1037,7 +1047,7 @@ index c2b6ecf..a65004c 100644
      s->frames++;
      /* The finished frame's statistics, in the metadata buffer named by 00:cb (even frames) or 00:cf (odd). */
      memcpy(&meta[0x78], m, 4);   /* a2/a3:58 stays 0: nonzero is the firmware still writing them */
-@@ -325,21 +690,68 @@ static void isp_frame(void *opaque)
+@@ -325,21 +700,68 @@ static void isp_frame(void *opaque)
      r[ISP_CUR_C / 4] = r[ISP_NEXT_C / 4];
      r[ISP_INT_STATUS / 4] |= INT_FRAME;
      isp_update_irq(s);
@@ -1108,7 +1118,7 @@ index c2b6ecf..a65004c 100644
      isp_log(s, "isp W %05x = %08x", (unsigned)addr, (uint32_t)val);
      if (addr == ISP_INT_STATUS) {
          s->isp[addr / 4] &= ~val;
-@@ -369,6 +781,7 @@ static void isp_init(Object *obj)
+@@ -369,6 +791,7 @@ static void isp_init(Object *obj)
      SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
      const char *trace = getenv("IT_ISP_TRACE");
  
@@ -1116,7 +1126,7 @@ index c2b6ecf..a65004c 100644
      s->isp = g_new0(uint32_t, ISP_SIZE / 4);
      s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, isp_frame, s);
      memory_region_init_io(&s->isp_mr, obj, &isp_ops, s, "s5l8930.isp", ISP_SIZE);
-@@ -385,6 +798,24 @@ static void isp_init(Object *obj)
+@@ -385,6 +808,24 @@ static void isp_init(Object *obj)
      }
  }
  
@@ -1141,7 +1151,7 @@ index c2b6ecf..a65004c 100644
  static void isp_reset(DeviceState *dev)
  {
      S5L8930ISPState *s = S5L8930_ISP(dev);
-@@ -395,6 +826,15 @@ static void isp_reset(DeviceState *dev)
+@@ -395,6 +836,15 @@ static void isp_reset(DeviceState *dev)
      timer_del(s->frame_timer);
      s->frames = 0;
      s->shutter = s->strobe = 0;
@@ -1157,7 +1167,7 @@ index c2b6ecf..a65004c 100644
  }
  
  static const VMStateDescription isp_vmstate = {
-@@ -417,6 +857,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
+@@ -417,6 +867,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
  {
      DeviceClass *dc = DEVICE_CLASS(klass);
  
@@ -1167,10 +1177,10 @@ index c2b6ecf..a65004c 100644
      dc->desc = "A4 camera ISP (H3) and its ISP CPU's firmware, high level";
 diff --git a/include/hw/arm/host-camera.h b/include/hw/arm/host-camera.h
 new file mode 100644
-index 0000000..cfdc878
+index 0000000..309afad
 --- /dev/null
 +++ b/include/hw/arm/host-camera.h
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,100 @@
 +/*
 + * The frontend's camera, as the ISP's output DMA sees it.
 + *
@@ -1252,6 +1262,10 @@ index 0000000..cfdc878
 +
 +/* Forget both sensors: the app stopped capturing, or the guest switched cameras. */
 +void host_camera_flush(void);
++
++/* True once this sensor has delivered a frame the guest took. The ISP holds that picture rather than
++ * falling back to its test pattern, which is what a real sensor does between frames. */
++bool host_camera_has_frame(unsigned sensor);
 +
 +/* The sensor the guest's driver last recognised: the ISP calls this when the kext announces one, and the
 + * frontend asks (host_camera_selected) so it can stream the camera the guest is actually using. A phone
