@@ -124,6 +124,13 @@ register file of its own behind that command: a write stores, a read returns wha
 was stored, and the transfer's result byte says the transfer worked. That is the
 shape a real part has, and it is what a driver's read-back passes on.
 
+Finally, the back sensor's path does not turn the block's output on itself: it asks
+the firmware for a mode and waits for pictures. This model is the firmware, so a
+mode change now starts the stream, and a guest that has named no mode is given the
+phone's own picture at the camera's size instead of nothing. That path produced
+exactly zero frames before -- taken 0, drawn 0, no-buffer 0 -- and the screen
+showed the buffer it had allocated but nobody had written: the purple frame.
+
 And a frame the guest asks for while the phone's next picture is still on its way
 must be the picture it already has: a real sensor holds the last frame, and
 falling back to the test pattern there made the viewfinder alternate between the
@@ -559,7 +566,7 @@ index 526734d..4871a07 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
-index c2b6ecf..d5112d8 100644
+index c2b6ecf..20e506c 100644
 --- a/hw/arm/s5l8930_isp.c
 +++ b/hw/arm/s5l8930_isp.c
 @@ -25,6 +25,7 @@
@@ -643,10 +650,25 @@ index c2b6ecf..d5112d8 100644
      if (cat == 0x24 && reg == 0x0c && s->file[cat][reg] == 5) {
          s->file[cat][reg] = 1;                          /* request 5 done: the host polls for 1 */
          return;
-@@ -128,6 +171,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -128,6 +171,30 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
          s->file[0x00][0x91] = s->file[0x00][0x00];      /* requested sensor mode -> current mode */
          return;
      }
++    if (cat == 0x00 && reg == 0x0a) {
++        /* A mode change is the firmware's cue to start the sensor-to-output path: it applies the mode and
++         * lets the block stream. This model has no firmware, so it does what the firmware would -- turns the
++         * output on if the guest has given it somewhere to write, and starts the frame timer. Without this a
++         * guest that leaves the enabling to the firmware never got a single frame: the back sensor's path
++         * asked for a mode change and then waited for pictures that could never come, which is the purple
++         * screen -- a buffer nothing had written. */
++        if (!(s->isp[ISP_OUT_ENABLE / 4] & 1) && s->isp[ISP_CUR_Y / 4] > 0x1000) {
++            s->isp[ISP_OUT_ENABLE / 4] |= 1;
++            isp_log(s, "mode change: the output is streaming");
++        }
++        if (s->isp[ISP_OUT_ENABLE / 4] & 1) {
++            timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
++        }
++    }
 +    if ((cat == 0x03 || cat == 0x04) && reg == 0x00) {
 +        /* Sensor recognition: the kext asks for the sensor it is about to drive, and asks again when
 +         * the app switches cameras. That is the only place it names one, so it is where the active
@@ -659,7 +681,7 @@ index c2b6ecf..d5112d8 100644
      for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
          if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
              s->file[cat][reg] = 0;
-@@ -139,6 +191,85 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -139,6 +206,85 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
      }
  }
  
@@ -745,7 +767,7 @@ index c2b6ecf..d5112d8 100644
  static void isp_mailbox(S5L8930ISPState *s)
  {
      uint32_t st = s->cpu[CPU_MBX_STATUS / 4];
-@@ -152,12 +283,59 @@ static void isp_mailbox(S5L8930ISPState *s)
+@@ -152,12 +298,59 @@ static void isp_mailbox(S5L8930ISPState *s)
          uint8_t cat = w >> 16, reg = w >> 8, val = w;
  
          if (write) {
@@ -807,7 +829,7 @@ index c2b6ecf..d5112d8 100644
          }
      }
      s->cpu[CPU_MBX_STATUS / 4] = (st & ~MBX_WRITE) | MBX_DONE;
-@@ -257,6 +435,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
+@@ -257,6 +450,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
      }
  }
  
@@ -931,7 +953,7 @@ index c2b6ecf..d5112d8 100644
  /*
   * The frame's statistics record (0x1a0 bytes; the kext copies it into H3ISPFrameMetaData), as H3ISP.mediacapture
   * reads it: AE converged at unity gains, AWB and AF settled, and the shutter flag that marks a still.
-@@ -290,24 +585,100 @@ static void isp_frame(void *opaque)
+@@ -290,24 +600,111 @@ static void isp_frame(void *opaque)
  {
      S5L8930ISPState *s = opaque;
      uint32_t *r = s->isp;
@@ -960,7 +982,7 @@ index c2b6ecf..d5112d8 100644
 +         * re-arming it is what froze the guest's camera and the sim it hangs in when the sensor changes. */
 +        timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
 +        return;
-     }
++    }
 +    /* The sizes come from the guest's own register file. Before the kext has programmed a mode those bytes are
 +     * whatever it left there, and a drive that asks for a size the sensors never had is not a frame either.
 +     * Drawing one would mean allocating gigabytes and DMAing past the guest's buffer, so it is skipped -- and
@@ -1001,16 +1023,28 @@ index c2b6ecf..d5112d8 100644
 +        }
 +        timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
 +        return;
-+    }
+     }
+-    if (w && h && y > 0x1000) {
 +    s->unacked_ticks = 0;
 +    s->unacked_drops = 0;
-     if (w && h && y > 0x1000) {
++    {
 +        unsigned cw = 0, ch = 0;
 +        /* What the frontend's camera captured for this sensor, if it pushed a frame since the last one; the
 +         * test pattern otherwise, so a headless engine (and a check boot, and a Mac) still shows a viewfinder
 +         * and the slices still have their frame. */
 +        const uint8_t *camera = host_camera_take(front ? HOST_CAMERA_FRONT : HOST_CAMERA_BACK, &cw, &ch);
 +
++        if ((!w || !h) && camera && cw && ch) {
++            /* The guest has named no output mode. The back sensor's path hands its mode to the firmware in a
++             * setfile this model does not parse, so the mode registers stay empty -- and the model used to
++             * draw nothing at all. The phone's own picture is a size this block can write, so it is drawn at
++             * that size rather than dropped. */
++            w = cw;
++            h = ch;
++            need = (size_t)w * h * 2;
++            isp_log(s, "no mode named: drawing the camera's own %ux%u", w, h);
++        }
++        if (w && h && y > 0x1000) {
          if (need > s->pic_size) {
              s->pic = g_realloc(s->pic, need);
              s->pic_size = need;
@@ -1036,9 +1070,11 @@ index c2b6ecf..d5112d8 100644
          if (nv12) {
              isp_dma_write(s, y, s->pic, (size_t)w * h);
              if (c > 0x1000) {
-@@ -317,6 +688,10 @@ static void isp_frame(void *opaque)
+@@ -316,7 +713,12 @@ static void isp_frame(void *opaque)
+         } else {
              isp_dma_write(s, y, s->pic, (size_t)w * h * 2);
          }
++        }
      }
 +    /* What this frame was, for the diagnosis: the mode the guest asked for, the layout, and whether the
 +     * picture came from the phone or from the model's own test pattern. */
@@ -1047,7 +1083,7 @@ index c2b6ecf..d5112d8 100644
      s->frames++;
      /* The finished frame's statistics, in the metadata buffer named by 00:cb (even frames) or 00:cf (odd). */
      memcpy(&meta[0x78], m, 4);   /* a2/a3:58 stays 0: nonzero is the firmware still writing them */
-@@ -325,21 +700,68 @@ static void isp_frame(void *opaque)
+@@ -325,21 +727,68 @@ static void isp_frame(void *opaque)
      r[ISP_CUR_C / 4] = r[ISP_NEXT_C / 4];
      r[ISP_INT_STATUS / 4] |= INT_FRAME;
      isp_update_irq(s);
@@ -1118,7 +1154,7 @@ index c2b6ecf..d5112d8 100644
      isp_log(s, "isp W %05x = %08x", (unsigned)addr, (uint32_t)val);
      if (addr == ISP_INT_STATUS) {
          s->isp[addr / 4] &= ~val;
-@@ -369,6 +791,7 @@ static void isp_init(Object *obj)
+@@ -369,6 +818,7 @@ static void isp_init(Object *obj)
      SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
      const char *trace = getenv("IT_ISP_TRACE");
  
@@ -1126,7 +1162,7 @@ index c2b6ecf..d5112d8 100644
      s->isp = g_new0(uint32_t, ISP_SIZE / 4);
      s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, isp_frame, s);
      memory_region_init_io(&s->isp_mr, obj, &isp_ops, s, "s5l8930.isp", ISP_SIZE);
-@@ -385,6 +808,24 @@ static void isp_init(Object *obj)
+@@ -385,6 +835,24 @@ static void isp_init(Object *obj)
      }
  }
  
@@ -1151,7 +1187,7 @@ index c2b6ecf..d5112d8 100644
  static void isp_reset(DeviceState *dev)
  {
      S5L8930ISPState *s = S5L8930_ISP(dev);
-@@ -395,6 +836,15 @@ static void isp_reset(DeviceState *dev)
+@@ -395,6 +863,15 @@ static void isp_reset(DeviceState *dev)
      timer_del(s->frame_timer);
      s->frames = 0;
      s->shutter = s->strobe = 0;
@@ -1167,7 +1203,7 @@ index c2b6ecf..d5112d8 100644
  }
  
  static const VMStateDescription isp_vmstate = {
-@@ -417,6 +867,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
+@@ -417,6 +894,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
  {
      DeviceClass *dc = DEVICE_CLASS(klass);
  

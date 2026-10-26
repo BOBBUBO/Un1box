@@ -247,6 +247,33 @@ def engine_patch_parks_a_stream_nobody_reads():
             "nothing wakes a parked stream: the guest's next write to the block would leave it silent for good")
 
 
+def engine_patch_streams_from_a_mode_change():
+    """A mode change has to start the stream, because that is what the firmware does.
+
+    The back sensor's path asks the ISP's firmware for a mode and then waits for pictures; it does not turn
+    the block's output on itself. This model is the firmware, so it does: on a mode change, if the guest has
+    given it a buffer, the output starts and the frame timer runs. Without it the back camera's path never
+    produced a single frame -- taken 0, drawn 0, no-buffer 0 -- and the screen showed the buffer it had
+    allocated, which is the purple frame."""
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    command = body.split("static void isp_command(", 1)[1].split("static bool isp_command_known(", 1)[0]
+    require("reg == 0x0a" in command,
+            "a mode change does nothing, so a guest that leaves the enabling to the firmware never streams")
+    branch = command.split("reg == 0x0a", 1)[1].split("return;", 1)[0]
+    require("ISP_OUT_ENABLE" in branch and "timer_mod(" in branch,
+            "a mode change does not start the output or the frame timer, so the stream cannot begin")
+
+
+def engine_patch_draws_without_a_named_mode():
+    """No mode named must not mean nothing drawn: the phone's own picture has a size."""
+    added = added_lines(CAMERA_PATCH)
+    require("if ((!w || !h) && camera && cw && ch) {" in added,
+            "a guest whose mode registers are empty gets no frames at all, even when the phone is sending "
+            "pictures of a size this block can write")
+    require("need = (size_t)w * h * 2;" in added.split("if ((!w || !h) && camera && cw && ch) {", 1)[1][:800],
+            "the fallback size does not resize the frame buffer, so the copy would be cut short")
+
+
 def engine_patch_holds_the_last_picture():
     """Once the phone has sent a picture, the guest must never be shown the test pattern again.
 
@@ -503,6 +530,8 @@ CHECKS = [
     ("engine patch: an unacknowledged frame does not storm", engine_patch_does_not_storm_an_unacknowledged_frame),
     ("engine patch: a size that is not a mode is refused", engine_patch_refuses_a_size_that_is_not_a_mode),
     ("engine patch: the added code is C, not C++", engine_patches_stay_c),
+    ("engine patch: a mode change starts the stream", engine_patch_streams_from_a_mode_change),
+    ("engine patch: no named mode still draws the camera", engine_patch_draws_without_a_named_mode),
     ("engine patch: the last picture is held, not the pattern", engine_patch_holds_the_last_picture),
     ("engine patch: a stopped camera is forgotten", engine_patch_forgets_a_stopped_camera),
     ("portable: the API is declared and typed", portable_declares_the_api),

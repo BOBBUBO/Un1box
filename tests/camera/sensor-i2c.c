@@ -19,7 +19,7 @@
  *     is not taken
  *   - the front sensor keeps behaving as it did, since that camera works today
  *
- * SLICE engine hw/arm/s5l8930_isp.c define SENSOR_
+ * SLICE engine hw/arm/s5l8930_isp.c define SENSOR_|ISP_OUT_ENABLE|ISP_CUR_Y|INT_FRAME
  * SLICE engine hw/arm/s5l8930_isp.c range static const struct { uint8_t cat, reg; } isp_commands | static void isp_sensor_transaction(
  * SLICE engine hw/arm/s5l8930_isp.c fn isp_sensor_transaction
  * SLICE engine hw/arm/s5l8930_isp.c fn isp_command
@@ -37,6 +37,8 @@
 
 typedef struct S5L8930ISPState {
     uint8_t file[256][256];
+    uint32_t isp[64];       /* the block's registers: a mode change reads the output's enable and buffer */
+    void *frame_timer;
     uint8_t sensor;
     uint8_t shutter;        /* frames still to flag as the still */
     uint8_t strobe;         /* the flagged frame's strobe capture count */
@@ -53,6 +55,23 @@ static void isp_log(S5L8930ISPState *s, const char *fmt, ...)
 {
     (void)s;
     (void)fmt;
+}
+
+/* The virtual clock and the timer, as the model uses them: this test only needs the calls to exist. */
+#define QEMU_CLOCK_VIRTUAL 1
+#define NANOSECONDS_PER_SECOND 1000000000LL
+static int64_t qemu_clock_get_ns(int clock)
+{
+    (void)clock;
+    return 0;
+}
+
+static int timer_armed;
+static void timer_mod(void *timer, int64_t when)
+{
+    (void)timer;
+    (void)when;
+    timer_armed++;
 }
 
 /* The frontend's camera selection, which is host-camera.c's in the engine. */
