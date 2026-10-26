@@ -399,6 +399,16 @@ def android_switch_reaches_the_worker():
             "the camera line is read from a different bundle than the one the worker writes it to")
     require('putString("cameraStatus"' in service, "the worker does not report the camera's counters")
     require("Native.cameraInfo(" in service, "the camera's counters are not read from the engine")
+    # Both slots, with the guest's own sensor named: the counters are per slot, and a line about the slot the
+    # guest is not using reads "taken 0" however healthy the path is -- which is exactly how a report was read
+    # as a fault.
+    summary = service.split("private fun cameraSummary()", 1)[1].split("private fun ", 1)[0]
+    require("Native.cameraSensor()" in summary,
+            "the camera report does not say which sensor the guest is using, so its numbers cannot be read")
+    require(summary.count("Native.cameraInfo(") == 1 and "one(Native.CAMERA_BACK)" in summary
+            and "one(Native.CAMERA_FRONT)" in summary,
+            "the camera report describes one sensor only: the other one's counters are invisible, and a healthy "
+            "idle slot reads as a fault")
 
 
 def android_a_refused_camera_comes_back():

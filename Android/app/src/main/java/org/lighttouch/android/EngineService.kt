@@ -754,26 +754,32 @@ class EngineService : Service() {
     private fun cameraSummary(): String {
         if (!cameraWanted) return "Camera off in Settings"
         if (!cameraOn) return if (cameraError.isNotEmpty()) cameraError else "Camera not started yet"
-        val sensor = when (cameraChoice) {
-            CameraCapture.Choice.FRONT -> Native.CAMERA_FRONT
-            CameraCapture.Choice.BACK -> Native.CAMERA_BACK
-            CameraCapture.Choice.FOLLOW -> { val t = Native.cameraSensor(); if (t >= 0) t else lastCameraSensor }
+        // Both sensors, every time, with the one the guest is actually using marked: the numbers are per slot,
+        // and a line about the slot the guest is not using reads "taken 0" however healthy everything is.
+        val active = Native.cameraSensor()
+        val one = { sensor: Int ->
+            val name = if (sensor == Native.CAMERA_FRONT) "front" else "back"
+            val info = Native.cameraInfo(sensor)
+            if (info.size < 8 || info[0].toInt() != 0) {
+                "$name: no report"
+            } else {
+                val diag = Native.cameraDiag(sensor)
+                val guest = if (diag.size < 12 || diag[0].toInt() != 0) {
+                    "guest: no report"
+                } else {
+                    val mode = if (diag[2] > 0) "${diag[2]}x${diag[3]}" else "no mode"
+                    "guest $mode, drawn ${diag[6]} (phone ${diag[7]}), no-buffer ${diag[10]}"
+                }
+                "$name: sent ${info[4]}, taken ${info[5]}, replaced ${info[6]} · $guest"
+            }
         }
-        val info = Native.cameraInfo(sensor)
-        if (info.size < 8) return cameraError.ifEmpty { "Camera: the engine cannot report" }
-        val status = info[0]
-        if (status.toInt() != 0) return "Camera: the engine refused the query ($status)"
-        val facing = if (sensor == Native.CAMERA_FRONT) "front" else "back"
+        val where = when {
+            active == Native.CAMERA_FRONT -> "the guest is on the front camera"
+            active == Native.CAMERA_BACK -> "the guest is on the back camera"
+            else -> "the guest has named no sensor"
+        }
         val problem = cameraError.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""
-        val line = "Camera $facing: sent ${info[4]}, taken ${info[5]}, replaced ${info[6]}, refused ${info[7]}"
-        // What the guest's ISP did with them: the mode it asked for, and whether it is drawing the phone's
-        // pictures or waiting for something. This is the line that tells a hang apart from a wrong picture.
-        val diag = Native.cameraDiag(sensor)
-        if (diag.size < 12 || diag[0].toInt() != 0) return "$line$problem"
-        val mode = if (diag[2] > 0) "${diag[2]}x${diag[3]} ${if (diag[4] == 0x11L) "nv12" else "422"}" else "no frame yet"
-        val guest = "guest: $mode, drawn ${diag[6]} (phone ${diag[7]}), waiting ${diag[8]}, " +
-            "no-chroma ${diag[9]}, no-buffer ${diag[10]}, stuck ${diag[11]}"
-        return "$line · $guest$problem"
+        return "$where · ${one(Native.CAMERA_BACK)} · ${one(Native.CAMERA_FRONT)}$problem"
     }
     private fun stopCamera() {
         cameraOn = false
