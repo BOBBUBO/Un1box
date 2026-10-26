@@ -2,7 +2,9 @@
 //! `LIGHTTOUCH_UI_SHOT=file.png` saves the window after `LIGHTTOUCH_UI_SHOT_AFTER` seconds (default 3), then closes
 //! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
 //! device. `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device,
-//! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog, `LIGHTTOUCH_UI_ERROR=text` shows an error.
+//! `LIGHTTOUCH_UI_DIALOG=stop` the Stop dialog, `LIGHTTOUCH_UI_ERROR=text` shows an error,
+//! `LIGHTTOUCH_UI_FIRMWARE=id` opens Prepare at that firmware's last step (with `LIGHTTOUCH_UI_IPSW=file`
+//! it starts preparing).
 use super::{App, Page};
 use eframe::egui;
 use lighttouch_model::queue::QueueState;
@@ -62,6 +64,28 @@ pub fn start_page() -> Option<Page> {
 pub fn start(app: &mut App) {
     if std::env::var_os("LIGHTTOUCH_UI_START").is_some() {
         app.model.start(false);
+    }
+    if let Some(firmware) = std::env::var("LIGHTTOUCH_UI_FIRMWARE")
+        .ok()
+        .and_then(|id| lighttouch_catalog::catalog::Catalog::get().find(&id).cloned())
+    {
+        app.prepare.product = Some(firmware.product_type.clone());
+        app.prepare.firmware = Some(firmware.id.clone());
+        app.prepare.step = super::prepare::Step::Files;
+        app.page = Page::Prepare;
+        // LIGHTTOUCH_UI_IPSW=file also starts preparing from it, and shows the device page meanwhile.
+        if let Some(ipsw) = std::env::var_os("LIGHTTOUCH_UI_IPSW").map(PathBuf::from) {
+            app.prepare.ipsw_file = Some(ipsw.clone());
+            app.model.prepare(lighttouch_model::prepare::PrepareRequest {
+                firmware_id: firmware.id.clone(),
+                ipsw: lighttouch_model::prepare::IpswSource::File(ipsw),
+                bootrom: None,
+                name: None,
+            });
+            app.prepare.started = Some(Instant::now());
+            app.prepare.step = super::prepare::Step::Progress;
+            app.page = Page::Device;
+        }
     }
     if let Ok(error) = std::env::var("LIGHTTOUCH_UI_ERROR") {
         app.model.error = Some(error);

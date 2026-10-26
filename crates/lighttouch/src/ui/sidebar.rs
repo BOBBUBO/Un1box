@@ -67,6 +67,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         });
                         ui.add_space(2.0);
                     }
+                    pending_row(app, ui);
                 },
             );
 
@@ -79,17 +80,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
             ui.add_space(6.0);
-            // While a device is being added, this goes back to its progress.
-            let add = add_row(ui, &p, !active || busy);
-            if add.clicked() {
-                app.page = match app.model.busy() {
-                    Some((lighttouch_model::Activity::Preparing(_), _)) => Page::Prepare,
-                    Some((lighttouch_model::Activity::AddingDevice, _)) => Page::Setup(setup::Step::Creating),
-                    None => {
-                        app.setup = setup::SetupState::default();
-                        Page::Setup(setup::Step::Files)
-                    }
-                };
+            // One device is made at a time; the one being made is listed above, with its progress.
+            let add = add_row(ui, &p, !active && !busy);
+            let add = if busy { add.on_hover_text("Wait for the device being prepared to finish") } else { add };
+            if add.clicked() && !busy {
+                app.setup = setup::SetupState::default();
+                app.page = Page::Setup(setup::Step::Files);
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
@@ -101,6 +97,58 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 });
             });
         });
+}
+
+/// The device being prepared or added, listed while that runs: its progress, and a way back to it.
+fn pending_row(app: &mut App, ui: &mut egui::Ui) {
+    let p = app.palette;
+    let Some((activity, progress)) = app.model.busy() else { return };
+    let (name, page) = match activity {
+        lighttouch_model::Activity::Preparing(id) => {
+            let firmware = lighttouch_catalog::catalog::Catalog::get().find(id);
+            let name = Some(app.prepare.name.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| {
+                firmware.map(|f| format!("{} {}", f.device_name(), f.label())).unwrap_or_else(|| "New device".into())
+            });
+            (name, Page::Prepare)
+        }
+        lighttouch_model::Activity::AddingDevice => ("New device".to_string(), Page::Setup(setup::Step::Creating)),
+    };
+    let fraction = progress.fraction();
+    // The stage itself is on the progress page; one line here.
+    let verb = if matches!(page, Page::Prepare) { "Preparing" } else { "Adding" };
+    let status = match fraction {
+        Some(f) => format!("{verb} · {:.0}%", f * 100.0),
+        None => format!("{verb}…"),
+    };
+    let showing = app.page == page;
+    let response = device_row(ui, &p, &name, &status, showing, Some(theme::WARNING));
+    // A thin bar along the row's foot.
+    let bar = egui::Rect::from_min_size(
+        response.rect.left_bottom() + vec2(54.0, -6.0),
+        vec2(response.rect.width() - 62.0, 3.0),
+    );
+    ui.painter().rect_filled(bar, CornerRadius::same(2), p.container_highest);
+    match fraction {
+        Some(f) => {
+            let done = egui::Rect::from_min_size(bar.min, vec2(bar.width() * f.clamp(0.0, 1.0), bar.height()));
+            ui.painter().rect_filled(done, CornerRadius::same(2), p.primary);
+        }
+        None => {
+            // No total yet: a segment sweeping across.
+            let t = ui.input(|i| i.time) as f32;
+            let x = (t * 0.8).fract() * (bar.width() + 40.0) - 40.0;
+            let segment = egui::Rect::from_min_max(
+                egui::pos2(bar.left() + x.max(0.0), bar.top()),
+                egui::pos2((bar.left() + x + 40.0).min(bar.right()), bar.bottom()),
+            );
+            ui.painter().rect_filled(segment, CornerRadius::same(2), p.primary);
+            ui.ctx().request_repaint();
+        }
+    }
+    if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        app.page = page;
+    }
+    ui.add_space(2.0);
 }
 
 pub fn phase_color(phase: &Phase) -> Color32 {

@@ -193,6 +193,10 @@ fn state_card(app: &mut App, ui: &mut Ui, screen: Rect) {
             Phase::Ended { .. } => Card::None,
         },
         None => match app.model.selected() {
+            None if app.model.busy().is_some() => {
+                let fraction = app.model.busy().and_then(|(_, progress)| progress.fraction());
+                Card::Busy("Preparing a device…".into(), fraction)
+            }
             None => Card::Action(icons::PLUS, "Add a device".into()),
             Some(d) if d.dirty => Card::Action(icons::RECOVER, "Recover and start".into()),
             Some(_) => Card::Action(icons::PLAY, "Start".into()),
