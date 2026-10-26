@@ -124,6 +124,16 @@ register file of its own behind that command: a write stores, a read returns wha
 was stored, and the transfer's result byte says the transfer worked. That is the
 shape a real part has, and it is what a driver's read-back passes on.
 
+And the sensor has to be findable at all. The camera's driver identifies the part
+over I2C before it will drive it, and no board in this tree had a camera sensor on
+any bus: every one of those transactions was NACKed, so a switch to the back camera
+had nothing to identify and the driver stopped there -- which is why the guest
+never even told the ISP that it had changed sensors. hw/arm/camera-sensor.c is that
+part: a register file that stores what the driver writes, returns what it read
+before, and answers the identity registers with the OV5650 these boards carry. It
+is placed on the buses an A4 board's camera hangs on, and costs nothing when the
+guest does not look at it.
+
 Finally, the back sensor's path does not turn the block's output on itself: it asks
 the firmware for a mode and waits for pictures. This model is the firmware, so a
 mode change now starts the stream, and a guest that has named no mode is given the
@@ -314,6 +324,197 @@ index 4e31244..fa23e30 100644
  uint32_t qemu_ios_api_version(void);
  
  /* Machine controls. */
+diff --git a/hw/arm/camera-sensor.c b/hw/arm/camera-sensor.c
+new file mode 100644
+index 0000000..cfd7091
+--- /dev/null
++++ b/hw/arm/camera-sensor.c
+@@ -0,0 +1,185 @@
++/*
++ * The camera sensor on its I2C bus.
++ *
++ * The A4's back camera is a MIPI part that the driver identifies over I2C before it will drive it: it addresses
++ * the sensor, writes a 16-bit register number, and reads a byte back. Until it has a chip identity it accepts,
++ * it never brings the sensor up -- and the Camera app, told to switch to the back camera, is left looking at a
++ * buffer nobody fills.
++ *
++ * No board in this tree had a camera sensor on any bus, so every one of those transactions was NACKed. This is
++ * that device: a register file that stores what the driver writes, returns what it read before, and answers the
++ * identity registers with the part these boards carry (an OmniVision OV5650: 0x56 0x50 at 0x300A and 0x300B).
++ * It costs nothing when the guest does not look at it, which is what makes it safe to place on the buses the
++ * camera may hang on.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#include "qemu/osdep.h"
++#include "hw/i2c/i2c.h"
++#include "hw/core/qdev-properties.h"
++#include "migration/vmstate.h"
++#include "qom/object.h"
++
++#define TYPE_CAMERA_SENSOR "camera-sensor"
++OBJECT_DECLARE_SIMPLE_TYPE(CameraSensorState, CAMERA_SENSOR)
++
++#define SENSOR_REGS 64
++
++struct CameraSensorState {
++    I2CSlave parent_obj;
++
++    struct {
++        bool taken;
++        uint16_t reg;
++        uint8_t value;
++    } regs[SENSOR_REGS];
++    unsigned next;              /* round-robin slot for a register not seen before */
++    uint16_t reg;               /* the register being addressed */
++    bool have_hi;               /* its first byte has arrived */
++    bool addressing;            /* the byte that names the register is next */
++    bool reading;               /* the driver has turned round to read */
++};
++
++/* Identity registers of the part the A4 boards carry. */
++#define SENSOR_ID_HI_REG 0x300a
++#define SENSOR_ID_HI_VAL 0x56
++#define SENSOR_ID_LO_REG 0x300b
++#define SENSOR_ID_LO_VAL 0x50
++
++static int camera_sensor_event(I2CSlave *i2c, enum i2c_event event)
++{
++    CameraSensorState *s = CAMERA_SENSOR(i2c);
++
++    switch (event) {
++    case I2C_START_SEND:
++        s->addressing = true;
++        s->have_hi = false;
++        s->reading = false;
++        break;
++    case I2C_START_RECV:
++        s->reading = true;
++        break;
++    case I2C_FINISH:
++        break;
++    default:
++        break;
++    }
++    return 0;
++}
++
++/* The register's value, stored or 0, except the identity registers, which are the part's. */
++static uint8_t camera_sensor_value(CameraSensorState *s)
++{
++    if (s->reg == SENSOR_ID_HI_REG) {
++        return SENSOR_ID_HI_VAL;
++    }
++    if (s->reg == SENSOR_ID_LO_REG) {
++        return SENSOR_ID_LO_VAL;
++    }
++    for (unsigned i = 0; i < SENSOR_REGS; i++) {
++        if (s->regs[i].taken && s->regs[i].reg == s->reg) {
++            return s->regs[i].value;
++        }
++    }
++    return 0;
++}
++
++static int camera_sensor_send(I2CSlave *i2c, uint8_t data)
++{
++    CameraSensorState *s = CAMERA_SENSOR(i2c);
++    unsigned slot = SENSOR_REGS;
++
++    if (s->addressing) {
++        /* The register number arrives as two bytes, high first; then the data bytes follow. */
++        if (!s->have_hi) {
++            s->reg = (uint16_t)(data << 8);
++            s->have_hi = true;
++            return 0;
++        }
++        s->reg = (uint16_t)((s->reg & 0xff00) | data);
++        s->addressing = false;
++        return 0;
++    }
++    for (unsigned i = 0; i < SENSOR_REGS; i++) {
++        if (s->regs[i].taken && s->regs[i].reg == s->reg) {
++            slot = i;
++            break;
++        }
++    }
++    if (slot == SENSOR_REGS) {
++        for (unsigned i = 0; i < SENSOR_REGS && slot == SENSOR_REGS; i++) {
++            if (!s->regs[i].taken) {
++                slot = i;
++            }
++        }
++        if (slot == SENSOR_REGS) {
++            slot = s->next++ % SENSOR_REGS;
++        }
++        s->regs[slot].taken = true;
++        s->regs[slot].reg = s->reg;
++        s->regs[slot].value = 0;
++    }
++    s->regs[slot].value = data;
++    return 0;
++}
++
++static uint8_t camera_sensor_recv(I2CSlave *i2c)
++{
++    CameraSensorState *s = CAMERA_SENSOR(i2c);
++    uint8_t value = camera_sensor_value(s);
++
++    /* A part like this walks its register number as it is read, the way the real one does. */
++    s->reg++;
++    return value;
++}
++
++static void camera_sensor_init(Object *obj)
++{
++    CameraSensorState *s = CAMERA_SENSOR(obj);
++
++    s->next = 0;
++    s->addressing = true;
++}
++
++static const VMStateDescription camera_sensor_vmstate = {
++    .name = TYPE_CAMERA_SENSOR,
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT16(reg, CameraSensorState),
++        VMSTATE_BOOL(have_hi, CameraSensorState),
++        VMSTATE_BOOL(addressing, CameraSensorState),
++        VMSTATE_BOOL(reading, CameraSensorState),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
++static void camera_sensor_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    I2CSlaveClass *sc = I2C_SLAVE_CLASS(klass);
++
++    sc->event = camera_sensor_event;
++    sc->send = camera_sensor_send;
++    sc->recv = camera_sensor_recv;
++    dc->desc = "The camera's sensor on its I2C bus, as a register file";
++    /* It is placed by the board next to the other slaves, which carry no user-creatable marker either. */
++    dc->user_creatable = false;
++    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
++    dc->vmsd = &camera_sensor_vmstate;
++}
++
++static const TypeInfo camera_sensor_info = {
++    .name = TYPE_CAMERA_SENSOR,
++    .parent = TYPE_I2C_SLAVE,
++    .instance_size = sizeof(CameraSensorState),
++    .instance_init = camera_sensor_init,
++    .class_init = camera_sensor_class_init,
++};
++
++static void camera_sensor_register_types(void)
++{
++    type_register_static(&camera_sensor_info);
++}
++
++type_init(camera_sensor_register_types)
 diff --git a/hw/arm/host-camera.c b/hw/arm/host-camera.c
 new file mode 100644
 index 0000000..001ec72
@@ -552,8 +753,42 @@ index 0000000..001ec72
 +    pthread_mutex_unlock(&host_camera_lock);
 +    return sensor;
 +}
+diff --git a/hw/arm/ipad1.c b/hw/arm/ipad1.c
+index f9cac94..40b1233 100644
+--- a/hw/arm/ipad1.c
++++ b/hw/arm/ipad1.c
+@@ -202,6 +202,9 @@ static const A4Board a4_k48 = {
+          */
+         { 0, 0x39, TYPE_CD3272MIKEY },
+         /* I2C2: LIS331DLH accelerometer and TSL2581 light sensor. */
++        /* The camera's sensor: the driver identifies it over I2C before it drives it. */
++        { 1, 0x3c, TYPE_CAMERA_SENSOR },
++        { 2, 0x3c, TYPE_CAMERA_SENSOR },
+         { 2, 0x19, TYPE_LIS302DL },
+         { 2, 0x39, TYPE_S5L8930_TSL2581, 0x25 },     /* DT als interrupt */
+     },
+@@ -249,6 +252,9 @@ static const A4Board a4_n81 = {
+         { 0, 0x74, TYPE_S5L8930_D1815, 0x0d },
+         /* CS42L59 (audio0): the same MAP register file the CS42L61 driver saw. */
+         { 0, 0x4a, TYPE_CS42L59, 0x0b },
++        /* The camera's sensor: the driver identifies it over I2C before it drives it. */
++        { 1, 0x3c, TYPE_CAMERA_SENSOR },
++        { 2, 0x3c, TYPE_CAMERA_SENSOR },
+         { 2, 0x19, TYPE_LIS302DL },
+         { 2, 0x49, TYPE_S5L8930_TSL2581, 0x25 },     /* DT als interrupt */
+         { 2, 0x68, TYPE_S5L8930_L3G4200D, 0x21, 0x05 },   /* gyro,ap3gdl: INT1, INT2 */
+@@ -309,6 +315,9 @@ static const A4Board a4_n90 = {
+          * The DT's akm8973s (0x1e) and compass2 (0x0d) nodes find nothing. */
+         { 0, 0x0c, TYPE_S5L8930_AK8975 },
+         { 0, 0x39, TYPE_CD3272MIKEY },           /* the codec waits for 'mikey' */
++        /* The camera's sensor: the driver identifies it over I2C before it drives it. */
++        { 1, 0x3c, TYPE_CAMERA_SENSOR },
++        { 2, 0x3c, TYPE_CAMERA_SENSOR },
+         { 2, 0x19, TYPE_LIS302DL },
+         { 2, 0x68, TYPE_S5L8930_L3G4200D, 0x21, 0x05 },   /* gyro,ap3gdl: INT1, INT2 */
+     },
 diff --git a/hw/arm/meson.build b/hw/arm/meson.build
-index 526734d..4871a07 100644
+index 526734d..7324309 100644
 --- a/hw/arm/meson.build
 +++ b/hw/arm/meson.build
 @@ -93,7 +93,7 @@ arm_common_ss.add(when: 'CONFIG_XEN', if_true: files(
@@ -561,7 +796,7 @@ index 526734d..4871a07 100644
  ))
  
 -arm_ss.add(when: 'CONFIG_IPAD1', if_true: files('ipad1.c', 's5l8930_dmc.c', 's5l8930_pmgr.c', 's5l8930_gpio.c', 's5l8930_iop.c', 's5l8930_iop_core.c', 's5l8930_sdio.c', 's5l8930_i2c.c', 's5l8930_display.c', 's5l8930_dart.c', 's5l8930_cdma.c', 's5l8930_bbspi.c', 's5l8930_h2fmi.c', 's5l8930_sha1.c', 's5l8930_ltc4099.c', 's5l8930_hdq.c', 's5l8930_i2s.c', 's5l8930_isp.c', 'host-mic.c'))
-+arm_ss.add(when: 'CONFIG_IPAD1', if_true: files('ipad1.c', 's5l8930_dmc.c', 's5l8930_pmgr.c', 's5l8930_gpio.c', 's5l8930_iop.c', 's5l8930_iop_core.c', 's5l8930_sdio.c', 's5l8930_i2c.c', 's5l8930_display.c', 's5l8930_dart.c', 's5l8930_cdma.c', 's5l8930_bbspi.c', 's5l8930_h2fmi.c', 's5l8930_sha1.c', 's5l8930_ltc4099.c', 's5l8930_hdq.c', 's5l8930_i2s.c', 's5l8930_isp.c', 'host-mic.c', 'host-camera.c'))
++arm_ss.add(when: 'CONFIG_IPAD1', if_true: files('ipad1.c', 's5l8930_dmc.c', 's5l8930_pmgr.c', 's5l8930_gpio.c', 's5l8930_iop.c', 's5l8930_iop_core.c', 's5l8930_sdio.c', 's5l8930_i2c.c', 's5l8930_display.c', 's5l8930_dart.c', 's5l8930_cdma.c', 's5l8930_bbspi.c', 's5l8930_h2fmi.c', 's5l8930_sha1.c', 's5l8930_ltc4099.c', 's5l8930_hdq.c', 's5l8930_i2s.c', 's5l8930_isp.c', 'camera-sensor.c', 'host-mic.c', 'host-camera.c'))
  arm_ss.add(when: 'CONFIG_IPAD1', if_true: files('s5l8920.c', 's5l8920_pmgr.c', 's5l8920_dart.c', 's5l8920_pwm.c', 's5l8920_vxd.c', 's5l8920_vxd_h264.c', 's5l8920_jpeg.c'))
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))

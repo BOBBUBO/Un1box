@@ -19,6 +19,8 @@ typedef struct DeviceClass {
     void (*legacy_reset)(DeviceState *dev);
     const struct VMStateDescription *vmsd;
     const char *desc;
+    bool user_creatable;
+    unsigned long categories[1];
 } DeviceClass;
 
 typedef struct TypeInfo {

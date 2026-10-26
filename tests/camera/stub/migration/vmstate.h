@@ -26,4 +26,7 @@ typedef struct VMStateDescription {
 #define VMSTATE_BUFFER_UNSAFE(field, state, start, size) { .name = #field, .elements = (size) }
 #define VMSTATE_BUFFER_POINTER_UNSAFE(field, state, start, size) { .name = #field, .elements = (size) }
 #define VMSTATE_TIMER_PTR(field, state) { .name = #field }
+#define VMSTATE_UINT16(field, state) { .name = #field, .size = 2 }
+#define VMSTATE_BOOL(field, state) { .name = #field, .size = 1 }
 #endif
+

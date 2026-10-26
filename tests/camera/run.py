@@ -128,6 +128,17 @@ def compile_and_run(report, name, test_file, compiler, flags, sources, includes,
     return ran.stdout.strip()
 
 
+def compile_model_file(source: Path) -> str:
+    """Type-check one engine source whole, against stub/, before any engine build happens."""
+    command = [shutil.which("cc") or "cc", "-fsyntax-only", "-std=gnu11", "-Wall", "-Wextra", "-Werror",
+               "-Wno-unused-parameter", "-I", str(HERE / "stub"), "-I", str(ENGINE / "hw/arm"),
+               "-I", str(ENGINE / "include"), str(source)]
+    built = sh(command)
+    if built.returncode:
+        raise Failure("does not compile:\n" + built.stderr.strip()[-4000:])
+    return f"{source.name}: {len(source.read_text(errors='ignore').splitlines())} lines"
+
+
 def compile_whole_model(engine: Path) -> str:
     """Type-check the model's whole file, not the slices of it.
 
@@ -192,6 +203,10 @@ def main():
             report, "sensor i2c", HERE / "sensor-i2c.c", shutil.which("cc") or "cc",
             ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter", "-Wno-unused-label"],
             [], [HERE / "stub"], scratch))
+
+        if ENGINE is not None:
+            report.run("camera sensor: the part on the I2C bus compiles whole", lambda: compile_model_file(
+                ENGINE / "hw/arm/camera-sensor.c"))
 
         print("device ISP registers")
         if ENGINE is None:
