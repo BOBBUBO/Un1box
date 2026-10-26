@@ -342,6 +342,15 @@ def android_switch_reaches_the_worker():
     require("host.useCameraFacing(" in screen, "the camera choice is not wired to the host")
     # The only view of the path that needs no adb: the stage of the switch that only works on the hardware.
     require("host.cameraStatus" in screen, "the camera's own counters are not shown in Settings")
+    # Shown unconditionally: a line that only appears once a session runs is a line nobody finds.
+    require("host.cameraStatus.ifEmpty" in screen,
+            "the camera's line is hidden until a session fills it in, so Settings shows nothing at all")
+    # And read from where the service actually writes it. The service puts the line in the observations
+    # bundle; reading it from the top level of the status bundle returned null for ever, which is why the
+    # line existed in the process and never reached the screen.
+    read_site = activity.split('getString("cameraStatus")', 1)[0][-120:]
+    require('getBundle("observations")' in read_site,
+            "the camera line is read from a different bundle than the one the worker writes it to")
     require('putString("cameraStatus"' in service, "the worker does not report the camera's counters")
     require("Native.cameraInfo(" in service, "the camera's counters are not read from the engine")
 

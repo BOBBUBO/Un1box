@@ -250,7 +250,10 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             val reportedError = b.getString("profileError")?.takeIf { it.isNotEmpty() } ?: b.getString("error") ?: ""
                             if (reportedError != dismissedError) dismissedError = ""
                             if (reportedError.isNotEmpty() || status == "running") error = if (reportedError == dismissedError) "" else reportedError
-                            cameraStatus = b.getString("cameraStatus") ?: ""
+                            // The camera's line is an observation: the service puts it in the bundle that
+                            // carries the engine's counters, not at the top level. Read there, or the line
+                            // exists in the process and never reaches the screen -- which is what happened.
+                            cameraStatus = b.getBundle("observations")?.getString("cameraStatus").orEmpty()
                             workerPid = b.getInt("pid")
                             profileRecording = b.getBoolean("profileRecording"); profileAutomatic = b.getBoolean("profileAutomatic")
                             profileNotice = b.getString("profileNotice") ?: ""
