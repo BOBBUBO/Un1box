@@ -265,7 +265,14 @@ internal class CameraCapture(private val context: Context, private val onError: 
             )
             // Negative: the engine refused the frame outright (a mismatched size, a sensor it does not have).
             // Zero is a dropped frame -- the guest is not running or is not capturing -- which is not an error.
-            if (taken < 0) onError("The engine could not take the camera frame (${-taken}).")
+            if (taken < 0) {
+                onError("The engine could not take the camera frame (${-taken}).")
+            } else {
+                // A camera that came back has to stop reporting the problem that took it down. The line in
+                // Settings kept a CAMERA_DISCONNECTED from a retry that then succeeded, which reads as a live
+                // fault next to a working picture; a frame that got through is the proof it is over.
+                onError("")
+            }
         } catch (failure: Exception) {
             onError("Camera frame failed: ${failure.message ?: "unknown error"}")
         }

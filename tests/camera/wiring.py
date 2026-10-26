@@ -173,8 +173,9 @@ def engine_patch_ends_a_poll_nothing_can_answer():
             "the mailbox's read path no longer keeps the value it returns, so a poll of an unread register "
             "cannot be counted")
     reads = body.split("uint8_t value = s->file[cat][reg];", 1)[1].split("isp_log(s, \"mbx R", 1)[0]
-    require("isp_command_known(cat, reg)" in reads,
-            "a read of an unimplemented register is not recognised as a poll that can never be answered")
+    require("isp_command_known(cat, reg, value)" in reads,
+            "a read of an unimplemented register is not recognised as a poll that can never be answered, or "
+            "the answer ignores the value the register holds")
     require("s->file[cat][reg] = 0;" in reads and "spin_reads" in reads,
             "a register nothing can move keeps its value for ever: the guest's poll never ends and a core "
             "spins at 100% (the frozen picture and the 53-degree phone)")
@@ -182,6 +183,30 @@ def engine_patch_ends_a_poll_nothing_can_answer():
     require("s->spin_reads = 0;" in write,
             "a write does not restart the poll count, so a host that writes between reads can be mistaken for "
             "one that is stuck")
+
+
+def engine_patch_answers_every_request_code():
+    """A register the timeout is told to leave alone has to be one the model really acts on.
+
+    The I2C engine's request register was answered for one code and no other, and it was advertised to the
+    poll timeout as one this model acts on -- so a code it did not know left the host's value in place for
+    ever, with nothing allowed to end the wait. That is a frozen app, not a missing feature.
+    """
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    require("i2c request %u taken" in body,
+            "the I2C engine still answers one request code only: every other code is a wait nothing ends")
+    require("isp_command_known(cat, reg, val)" in body and "isp_command_known(cat, reg, value)" in body,
+            "the timeout's list of registers the model acts on is asked without the value, so a request "
+            "code the model ignores is left to be polled for ever")
+    require("return val != 0;" in body,
+            "registers the model acts on for some values only are still advertised as acted on for every value")
+
+
+def engine_patch_applies_the_setfile_mode():
+    """The back sensor's mode arrives in a setfile; without applying it the output has no size at all."""
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    require("setfile: the output takes the sensor's" in body,
+            "a setfile load no longer gives the output a size, so the back path draws nothing")
 
 
 def engine_patch_does_not_storm_an_unacknowledged_frame():
@@ -561,6 +586,8 @@ CHECKS = [
     ("engine patch: a poll nothing can answer ends", engine_patch_ends_a_poll_nothing_can_answer),
     ("engine patch: a poll of a block register ends", engine_patch_ends_a_register_poll),
     ("engine patch: a stream nobody reads is parked", engine_patch_parks_a_stream_nobody_reads),
+    ("engine patch: every request code is answered", engine_patch_answers_every_request_code),
+    ("engine patch: a setfile gives the output its size", engine_patch_applies_the_setfile_mode),
     ("engine patch: an unacknowledged frame does not storm", engine_patch_does_not_storm_an_unacknowledged_frame),
     ("engine patch: a size that is not a mode is refused", engine_patch_refuses_a_size_that_is_not_a_mode),
     ("engine patch: the added code is C, not C++", engine_patches_stay_c),
