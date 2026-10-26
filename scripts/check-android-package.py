@@ -9,8 +9,13 @@ from pathlib import Path
 import re
 import struct
 import subprocess
+import sys
 import tempfile
 import zipfile
+
+# The symbol check lives beside this file, so it also works when this module is loaded by path (tests).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import android_symbols  # noqa: E402
 
 
 MACHINES = {"arm64-v8a": 183, "x86_64": 62}
@@ -78,6 +83,9 @@ def inspect_apk(apk, sdk, build_tools, readelf, expected_abis=None):
         require(present == expected_abis, f"required ABI set {sorted(expected_abis)} differs from packaged {sorted(present)}")
         library_sets = [packaged[abi] for abi in sorted(present)]
         require(all(libraries == library_sets[0] for libraries in library_sets), "ABI library sets differ")
+        # The libraries of one ABI share one process (the engine dlopens firmwarekit's neighbour libraries, the
+        # frontend and the helpers run in it): one C++ runtime has to serve all of them.
+        staged = {abi: {} for abi in sorted(present)}
         with apk.open("rb") as source:
             for member in native:
                 _, abi, name = member.filename.split("/")
@@ -100,8 +108,23 @@ def inspect_apk(apk, sdk, build_tools, readelf, expected_abis=None):
                 needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic)
                 require(all(library in SYSTEM_LIBRARIES or library in packaged[abi] for library in needed),
                         f"unpackaged native dependency in {member.filename}: {needed}")
+                staged[abi][name] = path
                 results.append({"path": member.filename, "sha256": hashlib.sha256(data).hexdigest(),
                                 "zip_offset": data_offset, "loads": loads, "needed": needed})
+        # Still inside the unpacked files' lifetime: what each ABI's libraries import from C++.
+        runtime = {}
+        for abi, libraries in staged.items():
+            missing, duplicates = android_symbols.check(libraries, readelf)
+            for name, symbols in missing.items():
+                raise ValueError(
+                    f"{abi}/{name} needs {len(symbols)} C++ symbol(s) no packaged library defines "
+                    f"({', '.join(symbols[:3])}): it cannot be loaded as packaged"
+                )
+            runtime[abi] = {"libraries": sorted(libraries),
+                            "duplicate_runtime": {name: symbols[:3] for name, symbols in duplicates.items()}}
+            for name, symbols in duplicates.items():
+                print(f"warning: {abi}/{name} carries a second libc++ beside {android_symbols.SHARED_CXX} "
+                      f"({', '.join(symbols[:3])})", file=sys.stderr)
     tools = sdk / "build-tools" / build_tools
     alignment = command([str(tools / "zipalign"), "-c", "-P", "16", "4", str(apk)])
     signature = command([str(tools / "apksigner"), "verify", "--verbose", str(apk)])
@@ -109,7 +132,7 @@ def inspect_apk(apk, sdk, build_tools, readelf, expected_abis=None):
             "result": "PASS", "scope": "package-only", "abis": sorted(expected_abis),
             "initial_abi_coverage": "COMPLETE" if expected_abis == set(MACHINES) else "PARTIAL",
             "runtime_guest_acceptance": "NOT_TESTED",
-            "libraries": results, "zipalign": alignment.strip(), "signature": signature.strip()}
+            "libraries": results, "runtime_symbols": runtime, "zipalign": alignment.strip(), "signature": signature.strip()}
 
 
 def main():

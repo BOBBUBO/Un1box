@@ -33,6 +33,10 @@ android {
     if (!providers.gradleProperty("prebuiltNativeDir").isPresent) externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     // Guest app-services executables and firmwarekit run from nativeLibraryDir, which holds files only when extracted.
     packaging { jniLibs { useLegacyPackaging = providers.gradleProperty("mobileServicesArm64").isPresent || providers.gradleProperty("firmwareKitDir").isPresent || providers.gradleProperty("prebuiltNativeDir").isPresent } }
+    // With a firmwarekit build (-PfirmwareKitDir) its directory also brings the C++ runtime it was linked
+    // against, and that copy wins over the NDK's own: one libc++_shared.so for the whole APK (the checks in
+    // scripts/check-android-package.py verify every packaged library can be loaded against it).
+    if (providers.gradleProperty("firmwareKitDir").isPresent) packaging { jniLibs { pickFirsts += "**/libc++_shared.so" } }
 }
 providers.gradleProperty("prebuiltNativeDir").orNull?.let { android.sourceSets["main"].jniLibs.srcDir(file(it)) }
 providers.gradleProperty("prebuiltAssetsDir").orNull?.let { android.sourceSets["main"].assets.srcDir(file(it)) }
@@ -114,6 +118,11 @@ providers.gradleProperty("firmwareKitDir").orNull?.let { input ->
     val stage = tasks.register<Copy>("prepareFirmwareKit") {
         from(kit) { include("firmwarekit"); rename { "libfirmwarekit.so" } }
         from(kit) { include("lighttouch-oneshot"); rename { "liblighttouch_oneshot.so" } }
+        // The C++ runtime firmwarekit was linked against (scripts/build.sh firmwarekit-android, or the workflow,
+        // which builds with the newest NDK the Swift SDK needs). It has to be the copy in the APK: the NDK this
+        // module compiles with otherwise lends its own libc++_shared.so, which can be older than the symbols
+        // firmwarekit imports, and an unresolved import ends the process when it is loaded -- before it prints.
+        from(kit) { include("libc++_shared.so") }
         into(firmwareKitJniLibs.map { it.dir("arm64-v8a") })
     }
     val notices = tasks.register<Copy>("prepareFirmwareKitNotices") {

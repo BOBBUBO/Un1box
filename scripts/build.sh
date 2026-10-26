@@ -139,6 +139,8 @@ build_android_engine() {
     local e="$OUT/android/engine/arm64-v8a"
     rm -rf "$e"; mkdir -p "$e"
     cp "$dir/libqemu-arm.so" "$e/"
+    # build_firmwarekit_android replaces this with the NDK copy firmwarekit is linked against when it runs after
+    # this step (build_android calls it before Gradle), so every library in the APK shares one runtime.
     cp "$LT_ENGINE_KIT/libc++_shared.so" "$e/"
     cp "$dir/portable-manifest.json" "$e/" 2>/dev/null || cp "$LT_ENGINE_KIT/portable-manifest.json" "$e/"
     cp -rL "$LT_ENGINE_KIT/notices" "$e/notices"
@@ -186,6 +188,11 @@ build_android() {
         -Pdebuggable="$LT_DEBUGGABLE" -Pprofileable="$LT_PROFILEABLE" "${guest[@]}" "${lint[@]}" :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
         { grep -A12 "What went wrong" "$OBJ/android-gradle.out" >&2 || tail -30 "$OBJ/android-gradle.out" >&2; exit 1; }
     cp "$OBJ/android-gradle/app/outputs/apk/debug/app-debug.apk" "$OUT/android/LightTouch-debug.apk"
+    # Every packaged library has to be loadable against the APK's one libc++_shared.so; a mismatch ends the
+    # process on the phone with nothing in any log.
+    python3 "$REPO/scripts/android_symbols.py" \
+        --readelf "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
+        "$OUT/android/LightTouch-debug.apk"
     echo "$OUT/android/LightTouch-debug.apk"
 }
 
@@ -211,7 +218,8 @@ build_firmwarekit() {
 }
 
 # The Swift SDK for Android's static runtime wants NDK r30's libc++ (setup-android-sdk.sh with ANDROID_NDK_HOME at
-# r30); build-support/android-pkgconfig keeps the host's zlib off the link and takes libc++ statically.
+# r30); build-support/android-pkgconfig keeps the host's zlib off the link. The C++ runtime is the NDK's
+# libc++_shared.so, the one the APK ships: the engine and the app use the same copy in the same process.
 build_firmwarekit_android() {
     log "firmwarekit (android arm64)"
     . "$LT_SWIFT_ENV"
@@ -219,11 +227,20 @@ build_firmwarekit_android() {
     [ -z "${LT_SWIFT_SDKS_PATH:-}" ] || sdk_path=(--swift-sdks-path "$LT_SWIFT_SDKS_PATH")
     export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
     export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+    # The shared C++ runtime, not a static one: the process dlopens the engine (libqemu-arm.so), which uses
+    # libc++_shared.so, and a second runtime inside firmwarekit makes that dlopen crash. The APK ships this copy
+    # (into firmwareKitDir, below), so it is also the one the engine module links and runs against.
+    local ndk_lib="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
     (cd "$REPO/Packages/FirmwareKit" && swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" "${sdk_path[@]}" --jobs "$JOBS" \
         --scratch-path .build-android --static-swift-stdlib --pkg-config-path build-support/android-pkgconfig \
+        -Xlinker -L"$ndk_lib" -Xlinker -lc++_shared \
         -Xlinker -lssl -Xlinker -lcrypto -Xlinker -z -Xlinker max-page-size=16384 2>&1 | tail -3)
     mkdir -p "$OUT/firmwarekit/android"
     cp "$REPO/Packages/FirmwareKit/.build-android/out/Products/Release-android-aarch64/firmwarekit" "$OUT/firmwarekit/android/"
+    cp "$ndk_lib/libc++_shared.so" "$OUT/firmwarekit/android/"
+    # The engine directory the APK's CMake globs, when the engine is built in this run (before this step): it is
+    # the same runtime, so the engine and firmwarekit cannot end up with two.
+    if [ -d "$OUT/android/engine/arm64-v8a" ]; then cp "$ndk_lib/libc++_shared.so" "$OUT/android/engine/arm64-v8a/"; fi
     "$NDK_BIN/llvm-strip" "$OUT/firmwarekit/android/firmwarekit"
     "$NDK_BIN/aarch64-linux-android29-clang" -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/android/lighttouch-oneshot" \
         "$REPO/Portable/oneshot/lighttouch-oneshot.c"

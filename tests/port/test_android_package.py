@@ -46,5 +46,59 @@ class NativePackageContract(unittest.TestCase):
             CHECK.inspect_elf(elf()[:-1], "arm64-v8a")
 
 
+class CppRuntimeContract(unittest.TestCase):
+    """The APK ships one libc++_shared.so: every other library must be able to load against it."""
+
+    READELF = """Symbol table '.dynsym' contains 3 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND 
+     1: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND _ZNSt6__ndk112__hash_memoryEPKvm
+     2: 0000000000001109    11 FUNC    GLOBAL DEFAULT   10 _Z8consumerv
+"""
+
+    def test_parses_readelf_dynamic_symbols(self):
+        defined, undefined = CHECK.android_symbols.parse_dynsyms(self.READELF)
+        self.assertEqual(defined, {"_Z8consumerv"})
+        self.assertEqual(undefined, {"_ZNSt6__ndk112__hash_memoryEPKvm"})
+
+    def test_names_a_symbol_no_packaged_library_defines(self):
+        check = CHECK.android_symbols
+        original = check.dynamic_symbols
+        check.dynamic_symbols = lambda path, readelf="readelf": check.parse_dynsyms(self.READELF)
+        try:
+            missing, duplicates = check.check({"libfirmwarekit.so": Path("libfirmwarekit.so")}, "readelf")
+        finally:
+            check.dynamic_symbols = original
+        self.assertEqual(missing, {"libfirmwarekit.so": ["_ZNSt6__ndk112__hash_memoryEPKvm"]})
+        self.assertEqual(duplicates, {})
+
+    def test_accepts_the_same_symbol_when_libcxx_defines_it(self):
+        check = CHECK.android_symbols
+        provider = """Symbol table '.dynsym' contains 2 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND 
+     1: 0000000000000ab0    24 FUNC    GLOBAL DEFAULT   13 _ZNSt6__ndk112__hash_memoryEPKvm
+"""
+
+        def symbols(path, readelf="readelf"):
+            return check.parse_dynsyms(provider if str(path).endswith("libc++_shared.so") else self.READELF)
+
+        original = check.dynamic_symbols
+        check.dynamic_symbols = symbols
+        try:
+            missing, duplicates = check.check(
+                {"libc++_shared.so": Path("libc++_shared.so"), "libfirmwarekit.so": Path("libfirmwarekit.so")},
+                "readelf",
+            )
+        finally:
+            check.dynamic_symbols = original
+        self.assertEqual(missing, {})
+        self.assertEqual(duplicates, {})
+
+    def test_ignores_bionic_cxa_symbols(self):
+        self.assertEqual(CHECK.android_symbols.cpp_symbols({"__cxa_finalize", "__cxa_atexit", "_Z3foov"}),
+                         {"_Z3foov"})
+
+
 if __name__ == "__main__":
     unittest.main()

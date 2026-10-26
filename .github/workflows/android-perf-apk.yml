@@ -513,15 +513,23 @@ jobs:
           # beside both). A second, static libc++ inside firmwarekit gives the process two runtimes, and
           # dlopen'ing libqemu-arm.so -- which is what `create` does to boot -- crashes the loader.
           NDK_LIB="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
+          # One libc++_shared.so ships in the APK and serves the engine, the frontend, the helpers and
+          # firmwarekit, so it is this NDK's copy: the one firmwarekit below is linked against. It has to be --
+          # the Swift runtime calls std::__ndk1::__hash_memory, which not every NDK has, and resolving that
+          # import is the first thing the loader does on the phone: with another copy the process ends before it
+          # can print a single word. The APK build stages this file (Android/app/build.gradle.kts), the package
+          # check reads the symbols back, and scripts/build.sh does the same for a local build.
+          LT_CXX_SHARED="$NDK_LIB/libc++_shared.so"
+          [ -f "$LT_CXX_SHARED" ] || report /tmp/firmwarekit.log
+          echo "LT_CXX_SHARED=$LT_CXX_SHARED" >> "$GITHUB_ENV"
+          echo "c++ runtime to ship: $LT_CXX_SHARED ($(grep -c __hash_memory "$LT_CXX_SHARED" || true) __hash_memory)" \
+            >> /tmp/linknote.txt
           # Use the same SDK directory as installation; the runner's default store is empty.
           swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" --swift-sdks-path "$SDK_ROOT" \
             --scratch-path .build-android --static-swift-stdlib \
             --pkg-config-path build-support/android-pkgconfig \
             -Xlinker -L"$NDK_LIB" -Xlinker -lc++_shared \
             -Xlinker -lssl -Xlinker -lcrypto >/tmp/firmwarekit.log 2>&1 || report /tmp/firmwarekit.log
-          echo "c++ runtime the link named: $(grep -o -- '-lc\+\+[a-z_]*' /tmp/firmwarekit.log | sort -u | tr '\n' ' ')" >> /tmp/linknote.txt
-          echo "c++ libs the link named: $(grep -o -- '-lc++[a-z_]*' /tmp/firmwarekit.log | sort -u | tr '\n' ' ')" \
-            >> /tmp/linknote.txt
           PRODUCT=".build-android/out/Products/Release-android-aarch64/firmwarekit"
           [ -f "$PRODUCT" ] || report /tmp/firmwarekit.log
           TOOLS="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -530,6 +538,8 @@ jobs:
           mkdir -p "$OUT"
           cp "$PRODUCT" "$OUT/firmwarekit"
           "$TOOLS/llvm-strip" "$OUT/firmwarekit"
+          # Gradle stages whatever kit directory it is given; the C++ runtime travels with firmwarekit.
+          cp "$LT_CXX_SHARED" "$OUT/libc++_shared.so"
           # The one-shot the preparation boots through (Portable/oneshot), as build.sh builds it.
           "$TOOLS/aarch64-linux-android29-clang" -O2 -Wall -Wextra -Werror -o "$OUT/lighttouch-oneshot" \
             "$GITHUB_WORKSPACE/Portable/oneshot/lighttouch-oneshot.c" >>/tmp/firmwarekit.log 2>&1 \
@@ -831,13 +841,35 @@ jobs:
           if-no-files-found: ignore
 
       - name: Stage the engine next to the NDK C++ runtime
+        env:
+          LT_FIRMWAREKIT_DIR: ${{ steps.firmwarekit.outputs.dir }}
         run: |
           mkdir -p ci/engine/arm64-v8a
           cp ci/engine-build/libqemu-arm.so ci/engine/arm64-v8a/
-          cp ci/engine-build/libc++_shared.so ci/engine/arm64-v8a/
+          # Not the engine build's copy: firmwarekit was linked against the NDK's own libc++ (see the
+          # firmwarekit step), and one libc++_shared.so serves every library in the APK.
+          : "${LT_CXX_SHARED:?the firmwarekit step names the C++ runtime the APK ships}"
+          cp "$LT_CXX_SHARED" ci/engine/arm64-v8a/libc++_shared.so
+          # The app module compiles with its own ndkVersion, and AGP puts that NDK's libc++_shared.so beside the
+          # copies above. Two files of one name in one APK, and the merge picks one of them: pin every copy in
+          # that NDK to this file, so whichever it picks is the runtime firmwarekit was linked against. (An
+          # older copy costs the Swift runtime __hash_memory, and the import resolves to nothing.)
+          while IFS= read -r copy; do
+            cmp -s "$LT_CXX_SHARED" "$copy" && continue
+            echo "pinning the module NDK's $copy"
+            cp -f "$LT_CXX_SHARED" "$copy" 2>/dev/null || sudo cp -f "$LT_CXX_SHARED" "$copy"
+          done < <(find "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" -name libc++_shared.so -type f)
           cp ci/engine-build/portable-manifest.json ci/engine/arm64-v8a/ 2>/dev/null || true
           ls -la ci/engine/arm64-v8a
           file ci/engine/arm64-v8a/libqemu-arm.so
+          # Every one of these lands in one process: refuse a set that cannot be loaded together.
+          TOOLS="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          STAGE="$(mktemp -d)"
+          cp ci/engine/arm64-v8a/libqemu-arm.so ci/engine/arm64-v8a/libc++_shared.so "$STAGE/"
+          cp "$LT_FIRMWAREKIT_DIR/firmwarekit" "$STAGE/libfirmwarekit.so"
+          cp "$LT_FIRMWAREKIT_DIR/lighttouch-oneshot" "$STAGE/liblighttouch_oneshot.so"
+          python3 scripts/android_symbols.py --readelf "$TOOLS/llvm-readelf" "$STAGE"/*.so
+          rm -rf "$STAGE"
 
       - name: Build the APK
         working-directory: Android
@@ -900,6 +932,18 @@ jobs:
           # packaged-ANGLE ones, which hold either way.
           python3 Android/scripts/check-apk.py --legacy-packaging "$APK" ||
             echo "::warning::check-apk.py reported a problem with this APK above (the build still produced one)"
+          # A hard gate: every packaged library has to be loadable against the one libc++_shared.so in the APK.
+          # A library whose C++ imports that copy does not define ends the process the moment it is loaded, on
+          # the phone, with nothing in any log -- so it is caught here instead.
+          NDK_TOOLS="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          python3 scripts/android_symbols.py --readelf "$NDK_TOOLS/llvm-readelf" "$APK"
+          # Every other import too, against the platform's own stub libraries for the app's API level: a
+          # function that nothing provides still loads under lazy binding, and its first call jumps to address
+          # zero -- a SIGSEGV with no message in any log, exactly like the one this check exists for.
+          SYSROOT_LIBS="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
+          python3 scripts/android_symbols.py --readelf "$NDK_TOOLS/llvm-readelf" \
+            --system-libs "$SYSROOT_LIBS/aarch64-linux-android/29" "$APK" ||
+            echo "::warning::a packaged library imports something neither the package nor the platform defines (the names are above): on a phone that call cannot work"
           {
             echo "# LightTouch perf APK"
             echo
