@@ -467,19 +467,39 @@ jobs:
       - name: Preflight the Gradle build
         working-directory: Android
         run: |
+          # A Kotlin error used to reach the run as "exit code 1" and nothing else: the step log lives
+          # behind an endpoint this sandbox cannot reach, and the annotations are the only thing left.
+          # So the compiler's own words go there, one line each, escaped for the command protocol.
+          LOG="$RUNNER_TEMP/gradle-preflight.log"
+          : > "$LOG"
           gradlew() {
             ./gradlew --no-daemon --max-workers="$LT_JOBS" \
               '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' \
               --dependency-verification="$DECLARED_DEPENDENCY_VERIFICATION" \
               -Pdebuggable="$DECLARED_DEBUGGABLE" "$@"
           }
+          step() {
+            echo "+ gradlew $*" >> "$LOG"
+            gradlew "$@" >> "$LOG" 2>&1
+          }
+          status=0
           # Resolving the runtime classpath checks the pinned dependency verification; the dry
           # run configures every task without running it.
-          gradlew :app:dependencies --configuration debugRuntimeClasspath > /dev/null
-          gradlew --dry-run :app:assembleDebug
+          step :app:dependencies --configuration debugRuntimeClasspath || status=$?
+          if [ "$status" -eq 0 ]; then step --dry-run :app:assembleDebug || status=$?; fi
           # AIDL first (Kotlin compiles against its generated interfaces), then Kotlin and Java:
           # what the APK step compiles, none of what it packages.
-          gradlew :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac
+          if [ "$status" -eq 0 ]; then
+            step :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac || status=$?
+          fi
+          if [ "$status" -ne 0 ]; then
+            grep -aE '^e: |error:|FAILED|Caused by:|What went wrong' "$LOG" | head -8 | while IFS= read -r line; do
+              echo "::error title=gradle preflight::$(printf '%s' "$line" | cut -c1-900 | sed -e 's/%/%25/g' -e 's/\r/%0D/g')"
+            done || true   # no match, or head closing the pipe, is not itself a failure
+            echo "---- last 60 lines of $LOG ----"
+            tail -60 "$LOG"
+            exit "$status"
+          fi
 
       # A cache hit is a tree the scripts' own recorded recipe accepts (the key is that recipe), so
       # there is nothing to rebuild. Without the skip this step spent ~3.5 minutes on every run
