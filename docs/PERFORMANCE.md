@@ -187,6 +187,8 @@ the guest (AP ~90%, jump-cache misses ~10%). A remaining 4G cost is the IOP roun
 | --- | --- | --- |
 | The display's vsync latch waits for the GL thread's presents without the BQL (`LT_LATCH_WAIT_UNLOCKED=off` for A/B) | `d20877104e` | The latch waited for every issued present to reach guest memory before planning its layers, with the BQL held, so the vCPU waited as long as the GL thread took to get through the game's queued calls: in Epic Citadel's guided tour on the Poco, `vbl_tick` held the lock for 2 ms or more on ~5% of vsyncs, up to 20 ms. Measured with the next row. |
 | AMC (hardware audio decoder): libavcodec decodes without the BQL (`LT_AMC_DECODE_UNLOCKED=off` for A/B) | `7ba03a85fd` | A game's music decoded up to 64 KiB of PCM at a time on the main loop with the BQL held, up to 6.5 ms. **With the row above, Poco, Epic Citadel guided tour, last 120 s of an engine profile, both off → both on: vCPU BQL waits of 0.5 ms or more 2.01 → 0.78 s (1474 → 794; 4 ms or more 28 → 7), frames of 50 ms or more 820 → 679, 27.9 → 29.4 fps, p99 frame 67.5 → 67.1 ms** (a hot phone, ~1.9 GHz). Plain fcbench pairs with the latch change alone (phone at 47 °C): 30.2/30.8 vs 30.0/30.0 fps, 1% low 15 either way, hitch time 11.9/11.2 vs 12.4/12.4 s per minute. |
+| Scaler: an exact 1:1 quarter turn goes through a 4×4 NEON transpose and is written to the guest a 32-row band at a time (arm64 hosts; `LT_SCALER_TURN4=off` for A/B) | `d58ecd7e9c` | CoreAnimation has the scaler turn every frame of a landscape game and backboardd swaps only once the turn is done, so a turn still running at the vblank loses the game a refresh. A turn of 640×960 took the Poco 2.8 ms at the median (p90 4.3) against the 0.6 ms the model allows; the per-pixel offset tables are gone for the 1:1 case, about a third less time on one mid core (1.6 → 1.05 ms with the copies). **Poco, Jetpack title, 8 interleaved 60 s runs at the same clock (1.76–1.83 GHz): 51.6 → 55.7 fps (49.8–53.4 → 55.0–56.6), frames shown after two refreshes 16.2% → 7.7%, time at ≥55 fps 26% → 66%.** The 1% low stays 28–29: the late frames left are still more than 1%. Other geometries and x86 hosts (no faster there) keep the old path. **Pixel 10, the user's hitch bundles of the same title (one session each, not interleaved): 50.1 and 53.3 fps with 19.4% and 11.9% of frames ≥25 ms (engine `7ba03a85fd`) → 56.7 fps, 5.8%, worst frame 40 ms (was 69 and 172), 1% low 27 → 28.4.** |
+| ↳ The turn reads and writes the surfaces in guest RAM directly (arm64 hosts; `LT_SCALER_DIRECT=off` for A/B) | `e15a9a95e2` | The turn copied the source in (0.8 ms on a Poco mid core) and its result out through the bus a page at a time. When both surfaces are guest RAM it now works on them in place and marks the written pages dirty. **Poco, Jetpack title, ABBAAB 60 s at the same clock (1.77–1.82 GHz): 55.7 → 57.1 fps, frames shown after two refreshes 7.4% → 4.8% (every direct run below every copy run).** 1% low 28–29 → 29. |
 | PL192: an input call that leaves a line's level unchanged does nothing (`LT_PL192_SAME_LEVEL=off` for A/B) | `56505fbfdb` | The iPod touch 4G's CDMA re-asserts its unchanged interrupt level on every register write, thousands per storage request on the IOP; each ran a full priority sort and lowered the CPU's FIQ, ~20% of the IOP thread during reads. Desktop, 4G 6.1.6, LT Bench, three interleaved pairs (best, on vs off): `fs-read` 14.4/15.5/13.1 vs 19.0/15.9/15.6 µs/KiB (~15%), `fs-read-16k` 661/837/601 vs 902/777/754 µs (~14%), IOP time per request 122/173/123 vs 183/151/150 µs. |
 | iPod touch 2G flash: a transmit's busy bit clears at once (`LT_FMSS_TX_DONE=off` for A/B) | `3b4f4a67c3` | The stock write program polls FMC 0x40 bit 0 after loading each page's spare bytes; the model never cleared it, so every write program ran to the 100 000-step limit (~4 ms on the vCPU, ~250 times a second while iOS writes). Desktop, 2G 3.1.3, LT Bench: `fs-write` 381 → 148–198 µs/KiB, storage pass 19.1 → 12.1 s, data intact after a reboot. Not yet measured on a phone. |
 | `glDrawElements` fetches only the vertices between its smallest and largest index, with the indices rebased (`LT_GLES_INDEX_RANGE=off` for A/B) | `f4eeeab129` | The fetch ran from vertex 0 to the largest index, a bug from the first GLES bring-up. Asphalt 5 keeps a whole track in one array and makes ~125 draws a frame that reach ~70 of its ~15 000 vertices: ~173 MB of vertex data a frame was copied (a third of it widened from `GL_FIXED`) where ~1 MB was needed, and the Adreno driver allocated and filled GPU memory for all of it per draw (`kgsl` ioctl, mmap/munmap). **Poco, Asphalt 5 Aspen race (`fcbench.py APK 30 asphalt5`): 8.2–8.6 → 24.8 fps; GL 54–66 → 5.4 ms a frame.** |
@@ -301,7 +303,35 @@ its MBX GPU model (only stock OpenGLES composites on it; with our GL front end S
 the NAND image store (a storage format change for the Mac app's records) and the n72 boot-args rework (7E18
 boots unchanged).
 
+### Un1box review of 2026-10-25
+
+[KlugKlugTG/Un1box](https://github.com/KlugKlugTG/Un1box), a fork of this repository, carries its engine
+changes as patch files applied in CI, all unmeasured there. Each was checked against the iPod touch 4G on the
+Poco F3 and written into our own sources where it helps:
+
+| Their change | What we did |
+| --- | --- |
+| The Android presenter swaps R and B four pixels at a time on arm64 (`978bbefe`) | Taken, app `e1ade586`, for any unscaled row (not only a buffer whose stride equals its width). A 960x640 frame: 0.58 → 0.17 ms on a big core, 0.71 → 0.19 ms on a mid core, identical output. The presenter thread is ~5% of a core in Jetpack. |
+| `APPLE_fence` as EGL fence syncs instead of a `glFinish` per call (`478fbe51`) | Taken, engine `b6d540caf9` (`LT_GLES_APPLE_FENCE=glfinish` for A/B). No measured gain: Jetpack makes no fence calls, and Epic Citadel, Infinity Blade II, Asphalt 5 and 8 and Battle Bears do not import the extension. It only helps a game that uses fences. |
+| The inlined TB lookup and the indirect side table on by default (`a02def4c`) | Not yet. Jetpack title, ABBAAB 60 s at 2.24 GHz: 58.9/58.9/58.9 → 59.0/58.3/58.8 fps, 29.7 → 29.4 Mcycles a frame, late frames and p99 unchanged. Still an open lead in [TODO.md](TODO.md). |
+| Huge pages for guest RAM (same commit) | Not taken: the Poco's kernel has no transparent huge pages, so it would do nothing there. The Pixel is not checked yet. |
+| A misaligned `LDM`/`STM` performed instead of faulting (`2f0c5ac5`) | Not taken. Their evidence is our iPod touch 2G measurement ("Hitches in Jetpack's title" below). Jetpack's title on the 4G takes no alignment faults, with audio playing (150 s on the desktop), so there is nothing to win there, and it departs from the hardware. |
+| Presenter and vsync threads at display priority (`478fbe51`) | Not taken yet: unmeasured there, and the presenter is ~5% of a core here. |
+| The synchronous present waits on a native fence; a frame's pages mapped once; no `glFinish` before the readback (`7ea1b8a8`, `59da7ef0`) | Not taken: these are fallback paths (`LT_PRESENT_ASYNC=off`, 16-bit surfaces, drivers without AHardwareBuffer). The 4G's default present is the asynchronous one. |
+| "Fewer pauses when opening iOS apps" (`f84b1bec`) | Not taken: it turns off the two code-cache flushes measured above as gains (`LT_FLUSH_ON_APP`, `LT_FLUSH_SETTLE`). |
+
 ### Measured and rejected
+
+**iPod touch 4G, 2026-10-25 (TLB and jump-cache sizes).** Poco, Epic Citadel's tour, 120 s windows, eight runs
+interleaved ABCDDCBA, vCPU cycles per frame (vCPU time × core clock, so a hot phone's lower clock cancels out) and
+frames ≥60 ms per minute. Default sizing 59.5/58.9 Mcycles, 39/36 slow frames a minute. A 4096-entry floor on every
+softmmu TLB (it halves desktop refills, 32K → 14K/s with 16K entries) 62.0/60.6 and 58.5/34: the bigger tables miss the
+phone's caches more than the refills cost. A 256-entry cap 75.3/74.0 and 175/164. A 4K-entry TB jump cache instead of
+16K 61.4/58.4 and 46/41. Patch: `perf/ec/rejected-tlb-min-max-bits.patch`. Delivering IRQs and FIQs without the BQL when nothing else is
+pending (`perf/ec/rejected-irq-unlocked.patch`; desktop: 373K lock acquisitions → 1): Poco, six runs ABBAAB, on
+59.6/61.9/61.9 vs off 59.5/58.7/61.6 Mcycles a frame. iOS's handler reads the interrupt controller at once, and
+that read waits for the lock instead. Same-engine runs still differ by up to
+~4% across a session, so compare interleaved arms only.
 
 **iPod touch 4G, 2026-10-25.** The IOP's flash page `pread`/`pwrite` without the BQL (`perf/ec/rejected-nand-io-unlocked.patch`
 in the development folder): Poco, Real Racing's attract demo with its scene load, four runs ABBA, vCPU BQL waits 0.37/0.32 s
@@ -488,10 +518,28 @@ when the phone is hot. What was checked:
   `429e0a3551`). What still stopped the guest was main-loop work holding the BQL: the two rows above
   removed ~60% of the vCPU's lock waits. What is left (~0.65% of the time) is spread over device timers.
 - The tour reads only tens of flash pages per 5 s once running; storage is not what slows it.
-- Still unexplained: a few kernel threads that run in bursts (one took ~10% of the guest for three seconds
-  of the tour). Sampling the guest PC at interrupts cannot say what they do, since interrupts are taken only
-  where the kernel unmasks them (after a context switch, at a timebase read); that needs a sampler that
-  stops the vCPU on a host timer.
+- **The slowest frames are iOS's audio cycle, not the game.** In them the game takes ~20 ms, as in a median
+  frame. The other 30+ ms are iOS's own work. Every ~0.83 s the audio decoder (AMC) finishes a block, the music
+  file's next pages are read and decrypted (a burst of DMA interrupts), and mediaserverd, kernel threads and
+  backboardd run for 20–30 ms. Almost every frame over 45 ms in a 20 s Poco trace falls on one of those cycles.
+  The AMC's register reads are only ~0.2% of the time.
+- **The tail follows guest throughput.** Making the vCPU 26% slower per frame (the rejected TLB cap below) gave
+  4.5× as many ≥60 ms frames, so cycles per frame is what moves the 1% low. Tool: `cyc.py` in the development
+  folder's `perf/ec/scripts` (with `abn.sh`, interleaved arms; `slowframes.py` splits each slow frame by process).
+- **Jetpack Joyride's title holds ~57 fps with a 1% low of 28–29 on both phones.** Its 1% low is a whole
+  refresh missed: p99 is 35 ms, two refreshes. Poco, four valid interleaved 60 s runs with the two stall fixes
+  above on and off: 57.5/57.5 vs 57.7/57.3 fps, 1% low 29 in all four, so they do not move it. The Pixel 10's two
+  hitch bundles (engine `7ba03a85fd`): 50.2 and 53.3 fps, 1% low 27, with ~13% of frames holding 20–22 ms of guest
+  work against 11 ms and shown at 30–36 ms, on the same big cores at the same clock as the fast frames.
+- **What makes a Jetpack frame miss its refresh is the scaler, not the game.** A Poco trace (414 frames: 301 shown
+  after one refresh, 106 after two): the game's own work (~7 ms) comes before the vblank and is the same in both.
+  The late ones wait after it, ~10 ms of it idle. Jetpack is landscape, so CoreAnimation has the scaler turn every
+  640×960 frame and backboardd swaps only once that is done. The host took 2.8 ms for a turn at the median
+  (p90 4.3, p99 6.6) against the 0.6 ms the model allows, and 50 of 414 turns ended after the next vblank (45 of
+  them would have been in time at the model's speed). A faster turn (`d58ecd7e9c`, table above) halves the late
+  frames, and turning in place (`e15a9a95e2`) takes them from 7.7% to under 5%. After both, a trace
+  (tracing inflates late frames to 12%) has the turn past the vblank on 20 of 629 frames; the other late frames are
+  the game presenting a refresh late, behind idle time and background daemons (pasteboardd, sandboxd), not the scaler. Tool: `presentsplit.py` (work before and after the vblank per frame).
 
 ### Guest benchmarks
 

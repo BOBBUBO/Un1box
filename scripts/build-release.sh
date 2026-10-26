@@ -10,7 +10,8 @@
 #   windows   engine + FFmpeg cross-built with MinGW, then the worker, runtime and zip
 #   linux     engine, frontend and tests in the Debian 11 image (Docker), then the AppImage
 #   macos     engine and app on the Mac ($LT_MAC) over ssh, from the pushed commits
-#   finish    source archives, guest tools, SHA256SUMS, RELEASE-MANIFEST.json, NOTES.md checksums
+#   finish    source archives, guest tools, SHA256SUMS, RELEASE-MANIFEST.json (status from
+#             LT_PRERELEASE), NOTES.md checksums
 #   desktop   the Rust desktop app (docs/DESKTOP.md) as a Linux AppImage and a Windows zip in desktop/, from the
 #             engine and USB pieces the linux and windows steps built; only when named, and not published
 #   publish   push both tags and create the GitHub release from out/NOTES.md (a pre-release unless
@@ -33,7 +34,7 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_LINUX_IMAGE:=lighttouch-bullseye-collector08}"               # Debian 11 build image
 : "${LT_APPIMAGE_TOOLS:=$LT_INPUTS/linux-desktop/dependencies/appimagetool-pinned01}"
 : "${LT_LINUX_CPUS:=$(nproc)}"                                       # the Linux build container's CPUs and jobs"
-: "${LT_WIN_DEPS:=$D/release-0.0.8/win-deps}"                        # MinGW sysroot (copied; FFmpeg installs into it)
+: "${LT_WIN_DEPS:=$D/release-0.0.10/win-deps}"                       # MinGW sysroot (copied; FFmpeg installs into it)
 : "${LT_WIN_INPUTS:=$LT_INPUTS/windows-native}"                      # python-tk01/, services-mobile01/, FFmpeg archive
 : "${LT_WIN_HELPER:=}"                                               # published LightTouchWin helper; empty: published here from app/
 : "${LT_FFMPEG_ARCHIVE:=$LT_INPUTS/backend/deps-linux/ffmpeg-9.0.1.tar.xz}"   # checked by its SHA-256
@@ -47,10 +48,10 @@ D=$HOME/Documents/LightTouch-Development
 : "${LT_PRERELEASE:=true}"
 : "${LT_DESKTOP_NOTICES:=$D/desktop/notices}"                        # linux/ and windows/, each engine/ and usb/
 : "${ANDROID_HOME:=$HOME/Android/Sdk}"
-export QEMU_IOS LT_INPUTS ANDROID_HOME
+export QEMU_IOS LT_INPUTS ANDROID_HOME LT_PRERELEASE
 
-[ $# -ge 1 ] || { sed -n 2,23p "$0"; exit 2; }
-case "$1" in -h|--help) sed -n 2,23p "$0"; exit 0 ;; esac
+[ $# -ge 1 ] || { sed -n 2,22p "$0"; exit 2; }
+case "$1" in -h|--help) sed -n 2,22p "$0"; exit 0 ;; esac
 VER=${1#v}; V=v$VER; shift
 R=$LT_RELEASE_ROOT/release-$VER
 OUTD=$R/out

@@ -65,8 +65,13 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         private set
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
+    private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
+    override var networkSessionStatus by mutableStateOf(NetworkSessionStatus())
+        private set
+    override var networkChangeNotice by mutableStateOf("")
+        private set
     private val installer by lazy { StoreInstaller.of(applicationContext) }
     private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
     // Android 13+ shows an install queue's progress and result in notifications only once allowed.
@@ -230,6 +235,20 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
                             if (socket != muxSocket) { muxSocket = socket; store.guestChanged(); if (socket.isNotEmpty() && overlay == Screen.STORE) store.refreshGuest() }
                             appServicesError = b.getString("appServicesError") ?: ""
+                            networkSessionStatus = NetworkSessionStatus(
+                                available = b.containsKey("networkSetup"),
+                                mode = b.getInt("networkMode"),
+                                archiveDate = b.getString("networkArchiveDate").orEmpty(),
+                                setup = b.getString("networkSetup").orEmpty(),
+                                setupError = b.getBoolean("networkSetupError"),
+                                activity = b.getString("networkActivity").orEmpty(),
+                                connections = b.getLong("networkConnections"),
+                                completed = b.getLong("networkCompleted"),
+                                failed = b.getLong("networkFailed"),
+                                lastResult = b.getString("networkLastResult").orEmpty(),
+                                lastResultError = b.getBoolean("networkLastResultError"),
+                            )
+                            networkChangeNotice = b.getString("networkChangeNotice") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
                         }
@@ -315,7 +334,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
             // A full page hides the guest surface: the presenter stops drawing into it and drops its 60 Hz request.
-            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE)
+            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.DETAILS)
             LaunchedEffect(guestCovered, engine) {
                 val worker = engine ?: return@LaunchedEffect
                 Thread({ try { worker.setPresentVisible(!guestCovered) } catch (_: RemoteException) { } }, "present-visibility").start()
@@ -363,6 +382,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             onCreate = ::createDevice, onPrepare = { openPreparation() },
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
+                        Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
                         Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
                             onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { overlay = null }
                         Screen.HITCH -> HitchInspector(hitchData, hitchError, onResume = ::closeHitch, onSave = ::saveHitch, saving = hitchSaving,
@@ -402,7 +422,9 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }
     }
     override fun openDevices() { refreshDevices(); devicesOpen = true }
-    override fun addDevice() { setup.reset(firstRun = false); overlay = Screen.SETUP }
+    // A full page like Settings, so it sits inside the window's insets; Back returns to the devices list.
+    override fun openDetails(device: DeviceSummary) { detailsDevice = device; devicesOpen = false; overlay = Screen.DETAILS }
+    override fun addDevice() = openPreparation()
     override fun openLicenses() { licensesOpen = true }
     override fun openPreparation() {
         if (!preparationActive() && prep.preparation?.getString("state") != "complete")
@@ -414,7 +436,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()
         val worker = engine ?: return
         val scale = settings.scaling.native; val detailed = settings.detailedTiming
-        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed) } catch (_: RemoteException) { } }, "apply-settings").start()
+        Thread({ try { worker.setPresentScale(scale); worker.setDetailedTiming(detailed); worker.applyNetworkSettings() } catch (_: RemoteException) { } }, "apply-settings").start()
     }
     override fun selectDevice(id: String) {
         busy = true
@@ -702,9 +724,15 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             onChooseRom = { prepRom.launch(arrayOf("application/octet-stream", "*/*")) }, onDownloadRom = ::downloadBootrom, onPrepare = ::beginPreparation,
             onChoosePrepared = { preparedCopy.launch(null) },
             onCancel = { firmware?.cancel(); prep.preparation = prep.preparation?.apply { putString("state", "cancelling") } },
-            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onClose = ::closePreparation)
+            onRetryImport = { prep.preparation?.let { importPreparedOutput(it) } }, onAdvanced = ::openDeviceFiles, onClose = ::closePreparation)
     }
-    /** A firmware prepared on a computer, chosen in the prepare flow: added through Add a device's import. */
+    /** The advanced path from the device list: add device files the user already has (the setup wizard's import). */
+    private fun openDeviceFiles() {
+        if (busy || preparationActive()) return
+        preparationOpen = false; releaseFirmware()
+        setup.reset(firstRun = false); overlay = Screen.SETUP
+    }
+    /** A firmware prepared on a computer, chosen in the prepare flow: added through the device files import. */
     private fun addPreparedCopy(uri: Uri) {
         if (busy || preparationActive()) return
         preparationOpen = false; releaseFirmware()
@@ -906,7 +934,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 }
                 handler.post {
                     records = loaded; recordsLoaded = true
-                    if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = false); overlay = Screen.SETUP }
+                    if (afterDelete && loaded.isEmpty()) { setup.reset(firstRun = true); overlay = Screen.SETUP }
                 }
             } catch (e: RemoteException) { handler.post { error = "Device library unavailable: ${e.message}" } }
         }, "device-library").start()

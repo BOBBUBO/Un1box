@@ -1479,6 +1479,16 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         if (c->headphones)
             option("headphones", "on");
         d->args = {"LightTouch", "-M", machine};
+        lt::require(c->network_mode <= 2, "Invalid network mode");
+        std::string network = "user,id=wifi0,lan=" + std::string(c->network_local && c->network_mode == 1 ? "on" : "off") +
+            ",restrict=" + (c->network_mode == 1 ? "off" : "on");
+        if (c->network_mode) {
+            lt::require(c->network_socket && c->network_socket[0] == '/' &&
+                        std::strlen(c->network_socket) < 104 &&
+                        std::strchr(c->network_socket, '\n') == nullptr, "Invalid private network endpoint");
+            network += ",guestfwd=tcp:10.0.2.100:3128-unix:" + escape(c->network_socket);
+        }
+        d->args.insert(d->args.end(), {"-netdev", network});
         // Chain TCG jumps across guest pages: iOS never remaps a code page to other code
         // in place (the engine's cross-page-chain property documents the assumption).
         // Interleaved A/B: Poco F3 Flight Control 19.8 -> 24.5 fps (6 pairs), Pixel 10

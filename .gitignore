@@ -22,6 +22,7 @@ docs/*
 !docs/PROFILING.md
 !docs/COMPATIBILITY.md
 !docs/DESKTOP.md
+!docs/NETWORK.md
 scripts/build.env
 *.profraw
 

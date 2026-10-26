@@ -15,12 +15,12 @@ android {
         applicationId = "org.lighttouch.android"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.0.10"
+        versionCode = 11
+        versionName = "0.0.11"
         buildConfigField("long", "SHUTDOWN_GRACE_MS", "${shutdownGraceMs}L")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += providers.gradleProperty("targetAbis").orElse("arm64-v8a,x86_64").get().split(",") }
-        externalNativeBuild { cmake { arguments += listOf("-DLT_NATIVE_JOBS=" + providers.gradleProperty("nativeJobs").orElse("2").get(), "-DANDROID_STL=c++_shared", "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get()) } }
+        externalNativeBuild { cmake { arguments += listOf("-DLT_NATIVE_JOBS=" + providers.gradleProperty("nativeJobs").orElse("2").get(), "-DANDROID_STL=c++_shared", "-DLT_PORTABLE_DIR=" + providers.gradleProperty("portableDir").orElse(file("../../Portable").absolutePath).get(), "-DLT_ENGINE_ROOT=" + providers.gradleProperty("engineRoot").orElse("").get(), "-DLIGHTTOUCH_QEMU_SOURCE=" + providers.gradleProperty("qemuSource").orElse("").get(), "-DOPENSSL_ROOT_DIR=" + providers.gradleProperty("networkDeps").orElse("").get()) } }
     }
     // -Pdebuggable=false makes a debug APK the runtime may compile ahead of time. Phones with the
     // JIT off (GrapheneOS) otherwise interpret a debuggable app's whole UI.
@@ -58,12 +58,32 @@ val prepareCatalog = tasks.register<Copy>("prepareFirmwareCatalog") {
 android.sourceSets["main"].assets.srcDir(catalogAssets)
 tasks.named("preBuild").configure { dependsOn(prepareCatalog) }
 
+// The shared network backend links the same pinned OpenSSL producer prefix as
+// the engine dependencies; include its own notice even when the engine uses gcrypt.
+val networkNoticeAssets = layout.buildDirectory.dir("generated/networkNoticeAssets")
+val prepareNetworkNotices = tasks.register<Exec>("prepareNetworkNotices") {
+    val prefix = providers.gradleProperty("networkDeps")
+    val source = providers.gradleProperty("qemuSource")
+    inputs.file(rootProject.file("scripts/stage-network-notices.py"))
+    inputs.property("prefix", prefix.orElse(""))
+    inputs.files(prefix.map { file("$it/lib/libssl.a") }, prefix.map { file("$it/lib/libcrypto.a") })
+    inputs.file(source.map { file("$it/contrib/portable/dependencies.json") })
+    outputs.dir(networkNoticeAssets)
+    doFirst {
+        commandLine("python3", rootProject.file("scripts/stage-network-notices.py").absolutePath,
+            networkNoticeAssets.get().dir("licenses/network").asFile.absolutePath,
+            "--prefix", prefix.get(), "--pins", source.get() + "/contrib/portable/dependencies.json")
+    }
+}
+android.sourceSets["main"].assets.srcDir(networkNoticeAssets)
+tasks.named("preBuild").configure { dependsOn(prepareNetworkNotices) }
+
 // Guest tools (-PguestToolsDir: scripts/build.sh firmware-tools, qemu-ios contrib/export-guest-artifacts.sh's
 // ipad-guest-tools). New devices get the armv6/armv7.itpack whose families cover their board and build; firmwarekit
 // bakes the helpers beside them into each system it prepares.
 providers.gradleProperty("guestToolsDir").orNull?.let { input ->
     val packs = file(input)
-    require(listOf("armv6.itpack", "armv7.itpack", "it_seal").all { packs.resolve(it).isFile }) { "guestToolsDir must hold the guest packages and helpers (scripts/build.sh firmware-tools)" }
+    require(listOf("armv6.itpack", "armv7.itpack", "it_seal", "ittrust", "itproxy").all { packs.resolve(it).isFile }) { "guestToolsDir must hold the guest packages and network helpers (scripts/build.sh firmware-tools)" }
     val guestToolAssets = layout.buildDirectory.dir("generated/guestToolAssets")
     val stage = tasks.register<Copy>("prepareGuestTools") {
         from(packs)

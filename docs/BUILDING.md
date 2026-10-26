@@ -3,6 +3,10 @@
 `scripts/build.sh` builds what day-to-day work needs, with outputs saved under `build/` in this
 repository (ignored by git). Object trees go in `build/obj/` and build incrementally.
 
+For the `dev/net` branch, point `QEMU_IOS` at the matching engine `dev/net`
+checkout and export fresh firmware tools, including `ittrust`/`itproxy`. See
+[Guest networking](NETWORK.md) for OpenSSL inputs and portable verification.
+
 ```sh
 scripts/build.sh linux                 # build/linux/libqemu-arm.so + build/linux/lighttouch-linux
 scripts/build.sh android               # build/android/engine/arm64-v8a/ + build/android/LightTouch-debug.apk
@@ -70,7 +74,6 @@ tracked). The defaults are the development machine's paths.
 | --- | --- | --- |
 | `QEMU_IOS` | `~/git-projects/qemu-ios` | the engine source (github.com/samhenrigold/qemu-ios fork, `dev/perf`) |
 | `LT_INPUTS` | `~/Documents/LightTouch-Development/port-workspace/builds` | prebuilt inputs: `backend/deps/arm64-v8a/prefix` and `backend/deps-linux/prefix` (glib, pixman and the rest), plus `backend/crypto/*` (gcrypt), built by qemu-ios `contrib/portable/build-deps.py` and `build-crypto-deps.py` (see that directory's README); `mobile-android/arm64-v8a` (the USB bridge helpers `libusbmuxd_qemu.so` and `liblt_appservice.so`, from `Android/packaging/build-mobile-android.py`); `graphics/angle-android-arm64-gl-build-01/candidate-01` (ANGLE for arm64, with its ELF closure and notices); `product/frontend-inputs-15` (the frontend notice bundle). The APK build checks the ANGLE and frontend bundles against the SHA-256 pins in the script. |
-| `LT_ENGINE_KIT` | `~/Documents/LightTouch-Development/perf/engine-api29/arm64-v8a` | the NDK's `libc++_shared.so`, the engine notice bundle and a fallback `portable-manifest.json`, which go next to an Android engine |
 | `ANDROID_HOME`, `ANDROID_NDK_VERSION`, `JAVA_HOME` | `~/Android/Sdk`, `28.2.13676358`, JDK 17 | Android SDK, NDK and JDK (`Android/README.md` lists the pinned tool versions) |
 | `LT_GUEST_TOOLS` | `build/firmware-tools` | the guest tools the APK carries (`-PguestToolsDir`): `armv6.itpack` and `armv7.itpack`, which new devices get, and the helpers IPSW preparation installs (`it_seal` and the rest; `scripts/build.sh firmware-tools` on the Mac) |
 | `LT_MAC` | unset | `user@host` of a Mac for `guest-package` and `ltbench` |
