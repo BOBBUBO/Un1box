@@ -188,6 +188,14 @@ def main():
                 report, "isp poll", HERE / "isp-poll.c", shutil.which("cc") or "cc",
                 ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"], [], [HERE / "stub"], scratch))
 
+        print("device ISP registers")
+        if ENGINE is None:
+            report.add("isp registers", True, "skipped: no engine checkout")
+        else:
+            report.run("isp registers: a poll of hardware that is not modelled ends", lambda: compile_and_run(
+                report, "isp spin", HERE / "isp-spin.c", shutil.which("cc") or "cc",
+                ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"], [], [HERE / "stub"], scratch))
+
         print("portable and JNI glue")
         report.run("portable API: NV12 shape, sensors, LT_AGAIN, LT_UNSUPPORTED", lambda: compile_and_run(
             report, "portable api", HERE / "portable-api.cpp", (shutil.which("c++") or "c++"),

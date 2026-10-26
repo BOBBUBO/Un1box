@@ -204,6 +204,30 @@ def engine_patches_stay_c():
     require(not offenders, "a C++ functional cast in a C file compiles nowhere:\n  " + "\n  ".join(offenders[:5]))
 
 
+def engine_patch_ends_a_register_poll():
+    """The block's own registers are the other place a guest can wait for ever.
+
+    The ISP's register block is plain memory: for the addresses the model does not drive, nothing ever
+    changes. The back camera's driver polls one while it brings its sensor up, so the guest spins at 100% and
+    the phone heats -- the front camera's path does not poll that address. The model answers both shapes of
+    wait after 200 identical reads, and never touches a register it drives itself."""
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    require("static bool isp_register_model_drives(" in body,
+            "the block's read path has no list of the registers the model keeps up to date, so a poll of one "
+            "it does drive could be answered on the guest's behalf")
+    read = body.split("static uint64_t isp_read(", 1)[1].split("static void isp_write(", 1)[0]
+    require("poll_reads >= 200" in read and "0xffffffffu" in read,
+            "nothing ends a guest's poll of a block register the model never changes: that poll is a core at "
+            "100% and a battery at 50 degrees")
+    require("s->isp[addr / 4] = answer;" in read,
+            "the polled register is answered on the way out but not stored, so the very next read starts the "
+            "wait again")
+    write = body.split("static void isp_write(", 1)[1].split("static const MemoryRegionOps isp_ops", 1)[0]
+    require("s->poll_reads = 0;" in write,
+            "a write does not restart the poll count, so a guest that writes between reads can be mistaken "
+            "for one that is stuck")
+
+
 def engine_patch_forgets_a_stopped_camera():
     extras = added_lines(CAMERA_PATCH)
     require("host_camera_flush();" in extras, "stopping the capture does not drop the frame the guest never took")
@@ -393,6 +417,7 @@ CHECKS = [
     ("engine patch: the frame timer survives a bufferless frame", engine_patch_never_stops_the_frame_timer),
     ("engine patch: a frame waits for the guest's acknowledgement", engine_patch_waits_for_the_guest_to_acknowledge),
     ("engine patch: a poll nothing can answer ends", engine_patch_ends_a_poll_nothing_can_answer),
+    ("engine patch: a poll of a block register ends", engine_patch_ends_a_register_poll),
     ("engine patch: an unacknowledged frame does not storm", engine_patch_does_not_storm_an_unacknowledged_frame),
     ("engine patch: a size that is not a mode is refused", engine_patch_refuses_a_size_that_is_not_a_mode),
     ("engine patch: the added code is C, not C++", engine_patches_stay_c),
