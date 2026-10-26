@@ -222,6 +222,7 @@ fn run(
         serial_log: Some(record.state_path.join("serial.log")),
         audio: args.audio,
         headphones,
+        network: None,
     };
     let _bridge = match usb {
         Some(Ok(bridge)) => {

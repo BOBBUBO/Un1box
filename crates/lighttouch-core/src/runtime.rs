@@ -119,6 +119,36 @@ pub struct BootOptions {
     pub serial_log: Option<PathBuf>,
     pub audio: bool,
     pub headphones: bool,
+    /// Guest networking; `None` boots with egress blocked.
+    pub network: Option<NetworkBoot>,
+}
+
+/// How the guest reaches the network. The proxy endpoint is created at boot, so a session started offline needs a
+/// restart before networking can be turned on.
+#[derive(Debug, Clone)]
+pub struct NetworkBoot {
+    pub mode: NetworkMode,
+    pub local_network: bool,
+    /// The private proxy's Unix socket, which the engine forwards `10.0.2.100:3128` to.
+    pub proxy_socket: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkMode {
+    Off,
+    Direct,
+    Archive,
+}
+
+impl NetworkMode {
+    fn raw(self) -> u32 {
+        match self {
+            Self::Off => 0,
+            Self::Direct => 1,
+            Self::Archive => 2,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,6 +237,7 @@ impl Runtime {
         let rom = opt_cpath(options.bootrom.as_deref())?;
         let package = opt_cpath(options.guest_package.as_deref())?;
         let serial = opt_cpath(options.serial_log.as_deref())?;
+        let socket = opt_cpath(options.network.as_ref().map(|n| n.proxy_socket.as_path()))?;
         let mut config = sys::lt_runtime_config::new();
         config.engine_library = engine.as_ptr();
         config.device = device.raw;
@@ -216,6 +247,11 @@ impl Runtime {
         config.boot.serial_path = ptr(&serial);
         config.boot.audio_enabled = options.audio as u32;
         config.boot.headphones = options.headphones as u32;
+        if let Some(network) = &options.network {
+            config.boot.network_mode = network.mode.raw();
+            config.boot.network_local = network.local_network as u32;
+            config.boot.network_socket = ptr(&socket);
+        }
         let mut raw = std::ptr::null_mut();
         let mut error = sys::lt_error::new();
         check(unsafe { sys::lt_runtime_create(&config, &mut raw, &mut error) }, &error)?;
@@ -255,6 +291,11 @@ impl Runtime {
             backlight_level: d.backlight_level,
             shutdown_phase: d.shutdown_phase,
         })
+    }
+
+    /// Change the route live. Needs a proxy endpoint made at boot; `LT_AGAIN` until the engine is ready.
+    pub fn network_policy(&self, mode: NetworkMode, local_network: bool) -> Result<()> {
+        self.call(|r, e| unsafe { sys::lt_runtime_network_policy(r, mode.raw(), local_network as u32, e) })
     }
 
     pub fn pause(&self, paused: bool) -> Result<()> {

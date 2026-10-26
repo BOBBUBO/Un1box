@@ -34,6 +34,12 @@ pub const LT_GUEST_FRONTMOST: u32 = 1;
 pub const LT_GUEST_LAUNCH_BUILTIN: u32 = 2;
 pub const LT_GUEST_TYPE_TEXT: u32 = 3;
 pub const LT_GUEST_SYNC: u32 = 4;
+pub const LT_GUEST_LAUNCH_GYRO_PROBE: u32 = 5;
+pub const LT_GUEST_NETWORK_CERTIFICATE: u32 = 6;
+pub const LT_GUEST_NETWORK_TRUST: u32 = 7;
+pub const LT_GUEST_NETWORK_ROUTE: u32 = 8;
+pub const LT_GUEST_NETWORK_TRUST_CHUNK: u32 = 9;
+pub const LT_GUEST_NETWORK_ROUTE_CHUNK: u32 = 10;
 
 macro_rules! abi_struct {
     ($name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
@@ -136,6 +142,9 @@ abi_struct!(lt_boot_config {
     serial_path: *const c_char,
     audio_enabled: u32,
     headphones: u32,
+    network_mode: u32,
+    network_local: u32,
+    network_socket: *const c_char,
 });
 abi_struct!(lt_runtime_status {
     state: u32,
@@ -316,6 +325,12 @@ unsafe extern "C" {
     pub fn lt_runtime_profile(runtime: *mut lt_runtime, path: *const c_char, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_profile_status(runtime: *mut lt_runtime, status: *mut i32, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_pause(runtime: *mut lt_runtime, paused: u32, error: *mut lt_error) -> lt_status;
+    pub fn lt_runtime_network_policy(
+        runtime: *mut lt_runtime,
+        mode: u32,
+        local_network: u32,
+        error: *mut lt_error,
+    ) -> lt_status;
     pub fn lt_runtime_request_shutdown(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_destroy(runtime: *mut lt_runtime, error: *mut lt_error) -> lt_status;
     pub fn lt_runtime_copy_frame(
