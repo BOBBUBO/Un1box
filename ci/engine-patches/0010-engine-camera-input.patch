@@ -42,6 +42,18 @@ and whichever of the two output layouts the guest asked for. Frames must be
 even-sized NV12 and at most 1280x960; anything else is refused and counted
 rather than half-written into the output buffer.
 
+The front module is mounted rotated 180 degrees against the back one, and the
+guest draws whatever it is handed, so the front sensor's picture is spun
+upright here. On a device the first build showed the front camera's preview
+upside down.
+
+Two frames are also what broke the first device run: isp_frame() returned
+without re-arming its own timer when the block was enabled but had no output
+buffer, and switching cameras clears those buffers for a moment. The stream then
+stopped for good -- the guest froze on its last picture and the sim hung waiting
+for a frame that could never come. The timer now re-arms on that path too; only
+the guest's own disable write stops it.
+
 No new device: the ISP model already has all of the guest-visible plumbing,
 and the existing slice keeps its pattern assertions with the sensor reads added.
 
@@ -326,7 +338,7 @@ index 526734d..4871a07 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
-index c2b6ecf..2107716 100644
+index c2b6ecf..f408947 100644
 --- a/hw/arm/s5l8930_isp.c
 +++ b/hw/arm/s5l8930_isp.c
 @@ -25,6 +25,7 @@
@@ -361,7 +373,7 @@ index c2b6ecf..2107716 100644
      for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
          if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
              s->file[cat][reg] = 0;
-@@ -257,6 +268,51 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
+@@ -257,6 +268,71 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
      }
  }
  
@@ -372,7 +384,7 @@ index c2b6ecf..2107716 100644
 + * for, which is what keeps colours from bleeding on the odd pixel.
 + */
 +static void isp_from_camera(S5L8930ISPState *s, const uint8_t *src, unsigned sw, unsigned sh, unsigned w,
-+                            unsigned h, bool nv12)
++                            unsigned h, bool nv12, bool rotate)
 +{
 +    uint8_t *p = s->pic;
 +
@@ -383,13 +395,24 @@ index c2b6ecf..2107716 100644
 +            unsigned sx = (unsigned)((uint64_t)x * sw / w);
 +
 +            if (nv12) {
-+                p[y * w + x] = src[sy * sw + sx];
++                p[y * w + x] = rotate ? src[(sh - 1 - sy) * sw + (sw - 1 - sx)] : src[sy * sw + sx];
 +            } else {
 +                uint8_t *q = p + (y * w + x) * 2;
 +                unsigned cx = sx & ~1u;
 +
-+                q[0] = src[sy * sw + sx];                                     /* Y */
-+                q[1] = src[sw * sh + (sy >> 1) * sw + cx + (x & 1)];           /* 'yuvs': Y0 Cb Y1 Cr */
++                if (rotate) {
++                    /* The front sensor's picture arrives the other way up (its module is mounted rotated
++                     * 180 degrees against the back one), and the guest draws what it is given. Spinning it
++                     * here keeps both sensors upright. Chroma stays inside its pair: the mirrored column is
++                     * still even, and the pair's own order flips, which is the offset below. */
++                    unsigned rx = sw - 1 - sx, ry = sh - 1 - sy;
++
++                    q[0] = src[ry * sw + rx];                                  /* Y */
++                    q[1] = src[sw * sh + (ry >> 1) * sw + (rx & ~1u) + (1 - (x & 1))];
++                } else {
++                    q[0] = src[sy * sw + sx];                                  /* Y */
++                    q[1] = src[sw * sh + (sy >> 1) * sw + cx + (x & 1)];        /* 'yuvs': Y0 Cb Y1 Cr */
++                }
 +            }
 +        }
 +    }
@@ -401,10 +424,19 @@ index c2b6ecf..2107716 100644
 +
 +            for (unsigned x = 0; x < w; x += 2) {
 +                unsigned sx = (unsigned)((uint64_t)x * sw / w) & ~1u;
-+                const uint8_t *c = src + sw * sh + (sy >> 1) * sw + sx;
 +
-+                uv[y * w + x] = c[0];       /* Cb */
-+                uv[y * w + x + 1] = c[1];   /* Cr */
++                if (rotate) {
++                    /* Both sizes are even, so mirroring an even column and row lands on an even one: the
++                     * block a chroma sample stands for stays whole, and its Cb/Cr keep their order. */
++                    sx = sw - 2 - sx;
++                    sy = sh - 2 - sy;
++                }
++                {
++                    const uint8_t *c = src + sw * sh + (sy >> 1) * sw + sx;
++
++                    uv[y * w + x] = c[0];       /* Cb */
++                    uv[y * w + x + 1] = c[1];   /* Cr */
++                }
 +            }
 +        }
 +    }
@@ -413,7 +445,7 @@ index c2b6ecf..2107716 100644
  /*
   * The frame's statistics record (0x1a0 bytes; the kext copies it into H3ISPFrameMetaData), as H3ISP.mediacapture
   * reads it: AE converged at unity gains, AWB and AF settled, and the shutter flag that marks a still.
-@@ -290,7 +346,7 @@ static void isp_frame(void *opaque)
+@@ -290,7 +366,7 @@ static void isp_frame(void *opaque)
  {
      S5L8930ISPState *s = opaque;
      uint32_t *r = s->isp;
@@ -422,8 +454,22 @@ index c2b6ecf..2107716 100644
      uint8_t *f = s->file[front ? 0x04 : 0x03];
      unsigned w = f[0x1b] << 8 | f[0x1c], h = f[0x1d] << 8 | f[0x1e];     /* the output's size; 17..1a the sensor's */
      bool nv12 = r[ISP_OUT_FORMAT / 4] == 0x11;
-@@ -303,11 +359,21 @@ static void isp_frame(void *opaque)
-         return;     /* stopped: no buffer, no frame */
+@@ -299,15 +375,33 @@ static void isp_frame(void *opaque)
+     const uint8_t *m = &s->file[0x00][(s->frames & 1) ? 0xcf : 0xcb];
+     size_t need = (size_t)w * h * 2;
+ 
+-    if (!r[ISP_OUT_ENABLE / 4] || !y) {
+-        return;     /* stopped: no buffer, no frame */
++    if (!r[ISP_OUT_ENABLE / 4]) {
++        return;     /* stopped: the guest's own enable write stopped the timer, its next one restarts it */
++    }
++    if (!y) {
++        /* Enabled but with no output buffer: the kext is halfway through reprogramming the block, which is
++         * exactly what switching cameras does (it clears CUR/NEXT, swaps the mode's file, sets them again).
++         * The timer has to keep running, or nothing ever draws a frame again: returning here without
++         * re-arming it is what froze the guest's camera and the sim it hangs in when the sensor changes. */
++        timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
++        return;
      }
      if (w && h && y > 0x1000) {
 +        unsigned cw = 0, ch = 0;
@@ -438,14 +484,14 @@ index c2b6ecf..2107716 100644
          }
 -        isp_pattern(s, w, h, nv12);
 +        if (camera && cw && ch) {
-+            isp_from_camera(s, camera, cw, ch, w, h, nv12);
++            isp_from_camera(s, camera, cw, ch, w, h, nv12, front);
 +        } else {
 +            isp_pattern(s, w, h, nv12);
 +        }
          if (nv12) {
              isp_dma_write(s, y, s->pic, (size_t)w * h);
              if (c > 0x1000) {
-@@ -325,7 +391,8 @@ static void isp_frame(void *opaque)
+@@ -325,7 +419,8 @@ static void isp_frame(void *opaque)
      r[ISP_CUR_C / 4] = r[ISP_NEXT_C / 4];
      r[ISP_INT_STATUS / 4] |= INT_FRAME;
      isp_update_irq(s);
@@ -455,7 +501,7 @@ index c2b6ecf..2107716 100644
      timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
  }
  
-@@ -395,6 +462,11 @@ static void isp_reset(DeviceState *dev)
+@@ -395,6 +490,11 @@ static void isp_reset(DeviceState *dev)
      timer_del(s->frame_timer);
      s->frames = 0;
      s->shutter = s->strobe = 0;

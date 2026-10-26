@@ -106,6 +106,20 @@ def engine_patch_lets_the_guest_choose_the_sensor():
             "sensor recognition returns early, so the loop below never clears the register the kext polls")
 
 
+def engine_patch_never_stops_the_frame_timer():
+    """A frame with no output buffer must not be the end of the stream.
+
+    Switching cameras clears the block's output buffers for a moment. The first version returned there
+    without re-arming the timer, so the ISP stopped producing frames for good: the guest's camera froze on
+    its last picture and the sim hung waiting for a frame that could never arrive."""
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    require("if (!y) {" in body, "isp_frame() no longer distinguishes 'no output buffer' from 'stopped'")
+    branch = body.split("if (!y) {", 1)[1].split("return;", 1)[0]
+    require("timer_mod(" in branch,
+            "a frame with no output buffer returns without re-arming the frame timer, so the stream dies "
+            "for good -- the guest freezes when the sensor changes")
+
+
 def engine_patch_forgets_a_stopped_camera():
     extras = added_lines(CAMERA_PATCH)
     require("host_camera_flush();" in extras, "stopping the capture does not drop the frame the guest never took")
@@ -261,6 +275,7 @@ CHECKS = [
     ("engine patch: the camera is asked before the test pattern", engine_patch_asks_the_camera_first),
     ("engine patch: the four entry points and API 2.5", engine_patch_exports_the_api),
     ("engine patch: the guest's switch picks the sensor, both exist", engine_patch_lets_the_guest_choose_the_sensor),
+    ("engine patch: the frame timer survives a bufferless frame", engine_patch_never_stops_the_frame_timer),
     ("engine patch: a stopped camera is forgotten", engine_patch_forgets_a_stopped_camera),
     ("portable: the API is declared and typed", portable_declares_the_api),
     ("portable: the engine's entry points are resolved, and optional", portable_resolves_exactly_the_exported_names),

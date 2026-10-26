@@ -40,7 +40,7 @@ typedef struct S5L8930ISPState {
 } S5L8930ISPState;
 
 static void isp_from_camera(S5L8930ISPState *s, const uint8_t *src, unsigned sw, unsigned sh, unsigned w,
-                            unsigned h, bool nv12);
+                            unsigned h, bool nv12, bool rotate);
 
 /* A frame of one flat luma, and a chroma plane whose every byte is its own index,
  * so an out-of-place sample is visible rather than plausible. */
@@ -225,7 +225,7 @@ static void test_nv12_scales_by_the_nearest_pixel(void)
         src[4 * 4 + i] = (uint8_t)(0x80 + i);
     }
     render(&s, 4, 4, 2, 2, true);
-    isp_from_camera(&s, src, 4, 4, 2, 2, true);
+    isp_from_camera(&s, src, 4, 4, 2, 2, true, false);
     assert(s.pic[0] == 0 && s.pic[1] == 20);                /* row 0: columns 0 and 2 */
     assert(s.pic[2] == 80 && s.pic[3] == 100);              /* row 2: columns 0 and 2 */
     /* Chroma of an output row comes from the source's row 0, both pixels of a pair from one
@@ -238,7 +238,7 @@ static void test_nv12_scales_by_the_nearest_pixel(void)
         uint8_t small[2 * 2 + 2] = { 1, 2, 3, 4, 0x10, 0x20 };
 
         render(&up, 2, 2, 4, 4, true);
-        isp_from_camera(&up, small, 2, 2, 4, 4, true);
+        isp_from_camera(&up, small, 2, 2, 4, 4, true, false);
         assert(up.pic[0] == 1 && up.pic[1] == 1 && up.pic[2] == 2 && up.pic[3] == 2);   /* row 0 */
         assert(up.pic[4 * 2] == 3 && up.pic[4 * 2 + 3] == 4);                           /* row 2 */
         /* Chroma: 2x2 blocks, so the whole output's chroma is the source's one block. The output's
@@ -267,11 +267,56 @@ static void test_nv12_chroma_never_lands_on_an_odd_source_column(void)
         src[6 * 2 + i] = (uint8_t)(0x40 + i);               /* 0x40 0x41 0x42 0x43 0x44 0x45 */
     }
     render(&s, 6, 2, 4, 2, true);
-    isp_from_camera(&s, src, 6, 2, 4, 2, true);
+    isp_from_camera(&s, src, 6, 2, 4, 2, true, false);
     assert(s.pic[8] == 0x40 && s.pic[9] == 0x41);           /* x = 0 -> 0 */
     assert(s.pic[10] == 0x42 && s.pic[11] == 0x43);         /* x = 2 -> 2 */
 
     free(s.pic);
+}
+
+
+static void test_the_front_sensor_is_spun_upright(void)
+{
+    /* The front module is mounted 180 degrees against the back one, and the guest draws what it is given:
+     * without this the front camera's preview is upside down on the device. Both output layouts, and the
+     * chroma has to land on the mirrored block, not on a neighbour. */
+    S5L8930ISPState s = {0};
+    uint8_t src[4 * 4 + 8];
+    size_t i;
+
+    for (i = 0; i < 4 * 4; i++) {
+        src[i] = (uint8_t)(i + 1);                          /* 1..16, so every position is distinct */
+    }
+    for (i = 0; i < 8; i++) {
+        src[4 * 4 + i] = (uint8_t)(0x80 + i);               /* four chroma pairs, in order */
+    }
+
+    render(&s, 4, 4, 4, 4, true);
+    isp_from_camera(&s, src, 4, 4, 4, 4, true, true);
+    /* 180 degrees: the guest's last pixel is the source's first, and its first the source's last. */
+    assert(s.pic[0] == 16 && s.pic[15] == 1);
+    assert(s.pic[4] == 12 && s.pic[11] == 5);               /* row 1 starts at source row 2, from the right */
+    assert(s.pic[1] == 15 && s.pic[3] == 13);               /* the row runs backwards too */
+    /* Chroma: the source's last block comes first, and its Cb/Cr keep their order (a rotation does not
+     * swap the channels). */
+    assert(s.pic[16] == 0x86 && s.pic[17] == 0x87);       /* bottom-right block comes first */
+    assert(s.pic[18] == 0x80 && s.pic[19] == 0x81);       /* top-right block */
+    assert(s.pic[20] == 0x82 && s.pic[21] == 0x83);       /* bottom-left block, from the top row */
+    assert(s.pic[22] == 0x84 && s.pic[23] == 0x85);       /* top-left block */
+    free(s.pic);
+
+    /* The same picture in the 4:2:2 layout: Y and its chroma byte both mirrored, the pair's order flipped. */
+    {
+        S5L8930ISPState t = {0};
+
+        render(&t, 4, 4, 4, 4, false);
+        isp_from_camera(&t, src, 4, 4, 4, 4, false, true);
+        assert(t.pic[0] == 16 && t.pic[2] == 15);           /* pixels run backwards, luma-wise */
+        /* Source row 3's chroma is the pair at columns 0..1 = 0x80 (Cb) 0x81 (Cr), and the mirrored pixel
+         * is an odd source column, so it takes the pair's second byte first. */
+        assert(t.pic[1] == 0x87 && t.pic[3] == 0x86);
+        free(t.pic);
+    }
 }
 
 static void test_yuvs_interleaves_luma_and_chroma_per_pixel(void)
@@ -291,7 +336,7 @@ static void test_yuvs_interleaves_luma_and_chroma_per_pixel(void)
     src[11] = 0xcb;     /* Cr, x = 2 */
 
     render(&s, 4, 2, 4, 2, false);
-    isp_from_camera(&s, src, 4, 2, 4, 2, false);
+    isp_from_camera(&s, src, 4, 2, 4, 2, false, false);
 
     /* Row 0: Y0 Cb Y1 Cr Y2 Cb Y3 Cr, from source row 0 and chroma row 0. */
     assert(s.pic[0] == 0x10 && s.pic[1] == 0xc8);
@@ -316,6 +361,7 @@ int main(void)
     test_nv12_scales_by_the_nearest_pixel();
     test_nv12_chroma_never_lands_on_an_odd_source_column();
     test_yuvs_interleaves_luma_and_chroma_per_pixel();
-    puts("camera tap: newest frame wins, both sensors apart, and both output layouts scaled correctly");
+    test_the_front_sensor_is_spun_upright();
+    puts("camera tap: newest frame wins, both sensors apart, both output layouts scaled, the front one upright");
     return 0;
 }
