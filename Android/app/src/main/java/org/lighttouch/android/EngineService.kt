@@ -40,6 +40,7 @@ class EngineService : Service() {
     @Volatile private var cameraError = ""
     @Volatile private var cameraFollows = true
     private var cameraChoice = CameraCapture.Choice.FOLLOW
+    @Volatile private var lastCameraSensor = Native.CAMERA_BACK
     private var camera: CameraCapture? = null
     private var cameraWatch: Thread? = null
     private val buttonDownAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
@@ -583,6 +584,7 @@ class EngineService : Service() {
         putBoolean("microphoneOn", microphoneOn); putString("microphoneError", microphoneError)
         putBoolean("cameraOn", cameraOn); putString("cameraError", cameraError)
         putString("cameraFacing", cameraChoice.key)
+        putString("cameraStatus", cameraSummary())
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
         putLong("buttonRejections", buttonRejections.get())
@@ -724,9 +726,31 @@ class EngineService : Service() {
                 // The guest's own front/back switch: its driver recognises the other sensor, the engine says
                 // which, and the session reopens on that camera. -1: an engine without the camera tap.
                 val sensor = Native.cameraSensor()
-                if (sensor >= 0) capture.follow(sensor)
+                if (sensor >= 0) { lastCameraSensor = sensor; capture.follow(sensor) }
             }
         }, "camera-watch").apply { start() }
+    }
+    /**
+     * What the engine's camera tap has done, in one line for Settings: the frames the phone handed over, the
+     * ones the guest's ISP took, the ones it replaced before the guest asked, and the ones it refused. It is
+     * the only view of the path that needs no adb: frames sent but never taken means the guest is not drawing
+     * them, nothing sent means the phone's capture never started, and a frozen line means the worker stopped.
+     */
+    private fun cameraSummary(): String {
+        if (!cameraWanted) return "Camera off in Settings"
+        if (!cameraOn) return if (cameraError.isNotEmpty()) cameraError else "Camera not started yet"
+        val sensor = when (cameraChoice) {
+            CameraCapture.Choice.FRONT -> Native.CAMERA_FRONT
+            CameraCapture.Choice.BACK -> Native.CAMERA_BACK
+            CameraCapture.Choice.FOLLOW -> { val t = Native.cameraSensor(); if (t >= 0) t else lastCameraSensor }
+        }
+        val info = Native.cameraInfo(sensor)
+        if (info.size < 8) return cameraError.ifEmpty { "Camera: the engine cannot report" }
+        val status = info[0]
+        if (status.toInt() != 0) return "Camera: the engine refused the query ($status)"
+        val facing = if (sensor == Native.CAMERA_FRONT) "front" else "back"
+        val problem = cameraError.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""
+        return "Camera $facing: sent ${info[4]}, taken ${info[5]}, replaced ${info[6]}, refused ${info[7]}$problem"
     }
     private fun stopCamera() {
         cameraOn = false

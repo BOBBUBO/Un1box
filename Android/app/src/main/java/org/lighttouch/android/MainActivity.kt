@@ -77,6 +77,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     /** The phone's camera into the guest, read by the worker at the next guest start. */
     override val camera: Boolean get() = settings.camera
     override val cameraFacing: String get() = settings.cameraFacing
+    override var cameraStatus by mutableStateOf("")
+        private set
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         settings.camera = granted
         if (!granted) error = "Without the camera permission the emulated device keeps its test pattern."
@@ -242,6 +244,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             val reportedError = b.getString("profileError")?.takeIf { it.isNotEmpty() } ?: b.getString("error") ?: ""
                             if (reportedError != dismissedError) dismissedError = ""
                             if (reportedError.isNotEmpty() || status == "running") error = if (reportedError == dismissedError) "" else reportedError
+                            cameraStatus = b.getString("cameraStatus") ?: ""
                             workerPid = b.getInt("pid")
                             profileRecording = b.getBoolean("profileRecording"); profileAutomatic = b.getBoolean("profileAutomatic")
                             profileNotice = b.getString("profileNotice") ?: ""

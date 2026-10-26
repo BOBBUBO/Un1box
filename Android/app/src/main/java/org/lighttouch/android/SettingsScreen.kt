@@ -65,6 +65,10 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         if (host.cameraFacing == CameraCapture.Choice.FOLLOW.key) "The device decides, as its own front/back switch does"
                         else "This phone's ${CameraCapture.choice(host.cameraFacing).label.lowercase()} camera only; the device's switch changes nothing",
                         tag = "camera_facing") { host.useCameraFacing(it.key) }
+                    if (host.cameraStatus.isNotEmpty())
+                        Text(host.cameraStatus, style = MaterialTheme.typography.bodySmall,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                             modifier = Modifier.padding(start = 54.dp, end = 16.dp, bottom = 10.dp).testTag("camera_status"))
                 }
                 Group("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }

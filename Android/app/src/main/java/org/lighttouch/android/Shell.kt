@@ -78,6 +78,8 @@ interface GuestHost {
     /** CameraCapture.Choice.key: "follow" (the device's own front/back switch), "back" or "front". */
     val cameraFacing: String
     fun useCameraFacing(key: String)
+    /** One line from the running worker: what the engine's camera tap has sent and what the guest took. */
+    val cameraStatus: String
     fun pickGuestTools()
     fun openLicenses()
     fun openPreparation()

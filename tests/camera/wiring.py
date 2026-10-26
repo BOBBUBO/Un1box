@@ -120,6 +120,20 @@ def engine_patch_never_stops_the_frame_timer():
             "for good -- the guest freezes when the sensor changes")
 
 
+def engine_patch_waits_for_the_guest_to_acknowledge():
+    """Never DMA into a buffer the guest has not finished with.
+
+    A sensor switch is a disable, a clear of the output buffers, a mode swap and a re-enable. In between, the
+    address in CUR still names buffers the guest is tearing down, so a frame written there is a write into
+    memory it may have reused. The model waits for the guest to clear the frame-done bit instead."""
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    require("if (r[ISP_INT_STATUS / 4] & INT_FRAME) {" in body,
+            "isp_frame() no longer waits for the guest to acknowledge the previous frame before writing the "
+            "next one")
+    branch = body.split("if (r[ISP_INT_STATUS / 4] & INT_FRAME) {", 1)[1].split("return;", 1)[0]
+    require("timer_mod(" in branch, "the acknowledgement wait stops the frame timer instead of skipping a frame")
+
+
 def engine_patch_forgets_a_stopped_camera():
     extras = added_lines(CAMERA_PATCH)
     require("host_camera_flush();" in extras, "stopping the capture does not drop the frame the guest never took")
@@ -213,6 +227,10 @@ def android_switch_reaches_the_worker():
     screen = read("Android/app/src/main/java/org/lighttouch/android/SettingsScreen.kt")
     require("host.useCamera(" in screen, "the camera switch is not wired to the host")
     require("host.useCameraFacing(" in screen, "the camera choice is not wired to the host")
+    # The only view of the path that needs no adb: the stage of the switch that only works on the hardware.
+    require("host.cameraStatus" in screen, "the camera's own counters are not shown in Settings")
+    require('putString("cameraStatus"' in service, "the worker does not report the camera's counters")
+    require("Native.cameraInfo(" in service, "the camera's counters are not read from the engine")
 
 
 def android_jni_names_match():
@@ -276,6 +294,7 @@ CHECKS = [
     ("engine patch: the four entry points and API 2.5", engine_patch_exports_the_api),
     ("engine patch: the guest's switch picks the sensor, both exist", engine_patch_lets_the_guest_choose_the_sensor),
     ("engine patch: the frame timer survives a bufferless frame", engine_patch_never_stops_the_frame_timer),
+    ("engine patch: a frame waits for the guest's acknowledgement", engine_patch_waits_for_the_guest_to_acknowledge),
     ("engine patch: a stopped camera is forgotten", engine_patch_forgets_a_stopped_camera),
     ("portable: the API is declared and typed", portable_declares_the_api),
     ("portable: the engine's entry points are resolved, and optional", portable_resolves_exactly_the_exported_names),
