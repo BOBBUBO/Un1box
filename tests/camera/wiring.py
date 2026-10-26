@@ -131,7 +131,7 @@ def engine_patch_waits_for_the_guest_to_acknowledge():
     require("if (r[ISP_INT_STATUS / 4] & INT_FRAME) {" in body,
             "isp_frame() no longer waits for the guest to acknowledge the previous frame before writing the "
             "next one")
-    branch = body.split("if (r[ISP_INT_STATUS / 4] & INT_FRAME) {", 1)[1].split("return;", 1)[0]
+    branch = body.split("if (r[ISP_INT_STATUS / 4] & INT_FRAME) {", 1)[1].split("\n    s->unacked_ticks = 0;", 1)[0]
     require("timer_mod(" in branch, "the acknowledgement wait stops the frame timer instead of skipping a frame")
 
 
@@ -226,6 +226,25 @@ def engine_patch_ends_a_register_poll():
     require("s->poll_reads = 0;" in write,
             "a write does not restart the poll count, so a guest that writes between reads can be mistaken "
             "for one that is stuck")
+
+
+def engine_patch_parks_a_stream_nobody_reads():
+    """A guest that has stopped taking frames must stop costing the phone.
+
+    A stuck camera app leaves the ISP producing fifteen frames a second that nobody draws: a scaler pass, two
+    DMA writes into guest memory and a vCPU wake each time, which on a phone is heat from the battery. After
+    six seconds of unacknowledged frames the model stops its own timer, and the guest's next write to the
+    block starts it again."""
+    body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
+    branch = body.split("if (r[ISP_INT_STATUS / 4] & INT_FRAME) {", 1)[1].split("\n    s->unacked_ticks = 0;", 1)[0]
+    require("s->parked = true;" in branch and "unacked_drops" in branch,
+            "a guest that has taken no frame for seconds still gets one drawn for it fifteen times a second: "
+            "the host pays for pictures nobody sees")
+    require("return;" in branch.split("s->parked = true;", 1)[1],
+            "the timer is re-armed even after the model decides to park it, so parking never happens")
+    write = body.split("static void isp_write(", 1)[1].split("static const MemoryRegionOps isp_ops", 1)[0]
+    require("if (s->parked) {" in write and "timer_mod(" in write,
+            "nothing wakes a parked stream: the guest's next write to the block would leave it silent for good")
 
 
 def engine_patch_forgets_a_stopped_camera():
@@ -418,6 +437,7 @@ CHECKS = [
     ("engine patch: a frame waits for the guest's acknowledgement", engine_patch_waits_for_the_guest_to_acknowledge),
     ("engine patch: a poll nothing can answer ends", engine_patch_ends_a_poll_nothing_can_answer),
     ("engine patch: a poll of a block register ends", engine_patch_ends_a_register_poll),
+    ("engine patch: a stream nobody reads is parked", engine_patch_parks_a_stream_nobody_reads),
     ("engine patch: an unacknowledged frame does not storm", engine_patch_does_not_storm_an_unacknowledged_frame),
     ("engine patch: a size that is not a mode is refused", engine_patch_refuses_a_size_that_is_not_a_mode),
     ("engine patch: the added code is C, not C++", engine_patches_stay_c),

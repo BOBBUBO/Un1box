@@ -102,6 +102,13 @@ all ones ("everything has happened"), and a value it wrote itself reads 0 ("it
 was taken"). The registers the model drives are never touched, and a write
 restarts the count.
 
+A third cost is on this side of the fence: a stuck camera app leaves the model
+producing fifteen frames a second that nobody draws, each one a scaler pass, two
+DMA writes into guest memory and a vCPU wake. After six seconds of frames the
+guest never acknowledged, the timer stops, and the guest's next write to the
+block starts it again -- a phone that has given up on the camera stops being
+warmed by the emulator too.
+
 Two smaller holes in the same path. An unacknowledged frame kept the frame-done
 interrupt asserted with no way out -- the same interrupt, 15 times a second, for
 ever -- so after two seconds the model drops the acknowledgement it can no longer
@@ -514,7 +521,7 @@ index 526734d..4871a07 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
-index c2b6ecf..1bc015c 100644
+index c2b6ecf..dc11831 100644
 --- a/hw/arm/s5l8930_isp.c
 +++ b/hw/arm/s5l8930_isp.c
 @@ -25,6 +25,7 @@
@@ -551,7 +558,7 @@ index c2b6ecf..1bc015c 100644
  struct S5L8930ISPState {
      SysBusDevice parent_obj;
      MemoryRegion cpu_mr, isp_mr;
-@@ -67,10 +83,20 @@ struct S5L8930ISPState {
+@@ -67,10 +83,22 @@ struct S5L8930ISPState {
      DeviceState *dart;
      QEMUTimer *frame_timer;
      uint32_t frames;
@@ -561,6 +568,8 @@ index c2b6ecf..1bc015c 100644
 +    uint32_t stuck_cat, stuck_reg, stuck_val, stuck_count, stuck_cleared;
 +    uint32_t spin_cat, spin_reg, spin_val, spin_reads;
 +    uint32_t unacked_ticks;         /* frames in a row the guest left unacknowledged */
++    uint32_t unacked_drops;         /* acknowledgements dropped in a row: nobody is consuming frames */
++    bool parked;                    /* the frame timer is stopped until the guest writes again */
 +    hwaddr poll_addr;               /* the last block register read, and how often in a row with that value */
 +    uint32_t poll_value, poll_reads;
 +    uint8_t sensor;                 /* the active sensor: HOST_CAMERA_BACK or HOST_CAMERA_FRONT */
@@ -572,7 +581,7 @@ index c2b6ecf..1bc015c 100644
  
      FILE *trace;
  };
-@@ -128,6 +154,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -128,6 +156,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
          s->file[0x00][0x91] = s->file[0x00][0x00];      /* requested sensor mode -> current mode */
          return;
      }
@@ -588,7 +597,7 @@ index c2b6ecf..1bc015c 100644
      for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
          if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
              s->file[cat][reg] = 0;
-@@ -139,6 +174,19 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -139,6 +176,19 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
      }
  }
  
@@ -608,7 +617,7 @@ index c2b6ecf..1bc015c 100644
  static void isp_mailbox(S5L8930ISPState *s)
  {
      uint32_t st = s->cpu[CPU_MBX_STATUS / 4];
-@@ -152,12 +200,59 @@ static void isp_mailbox(S5L8930ISPState *s)
+@@ -152,12 +202,59 @@ static void isp_mailbox(S5L8930ISPState *s)
          uint8_t cat = w >> 16, reg = w >> 8, val = w;
  
          if (write) {
@@ -670,7 +679,7 @@ index c2b6ecf..1bc015c 100644
          }
      }
      s->cpu[CPU_MBX_STATUS / 4] = (st & ~MBX_WRITE) | MBX_DONE;
-@@ -257,6 +352,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
+@@ -257,6 +354,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
      }
  }
  
@@ -794,7 +803,7 @@ index c2b6ecf..1bc015c 100644
  /*
   * The frame's statistics record (0x1a0 bytes; the kext copies it into H3ISPFrameMetaData), as H3ISP.mediacapture
   * reads it: AE converged at unity gains, AWB and AF settled, and the shutter flag that marks a still.
-@@ -290,24 +502,78 @@ static void isp_frame(void *opaque)
+@@ -290,24 +504,90 @@ static void isp_frame(void *opaque)
  {
      S5L8930ISPState *s = opaque;
      uint32_t *r = s->isp;
@@ -831,7 +840,7 @@ index c2b6ecf..1bc015c 100644
 +    if (w && h && (w & 1 || h & 1 || w < 16 || h < 16 || (uint64_t)w * h * 2 > ISP_FRAME_MAX)) {
 +        isp_log(s, "frame skipped: %ux%u is not a mode", w, h);
 +        w = h = 0;
-+    }
+     }
 +    /* The guest has to have consumed the last frame before this one may overwrite anything. While it
 +     * reprograms the block -- which is what a sensor switch is: disable, clear the buffers, swap the mode,
 +     * set them again -- the output address in CUR still points at buffers it is tearing down, and writing
@@ -850,11 +859,23 @@ index c2b6ecf..1bc015c 100644
 +            isp_update_irq(s);
 +            s->unacked_ticks = 0;
 +            isp_log(s, "frame-done was never acknowledged: dropped after %u ticks", 30);
++            /* Three drops in a row is six seconds of a guest that is not consuming frames at all -- a stuck
++             * camera app leaves the phone exactly like that. Drawing for it costs the host a scaler, two DMA
++             * writes into guest memory and a vCPU wake, fifteen times a second, for pictures nobody sees: on a
++             * phone that is heat from the battery. The timer stops instead, and the guest's next write to the
++             * block starts it again, so a guest that comes back is not stranded. */
++            if (++s->unacked_drops >= 3) {
++                s->parked = true;
++                s->unacked_drops = 0;
++                isp_log(s, "guest has taken no frame for 6s: frame timer stopped until it writes again");
++                return;
++            }
 +        }
 +        timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
 +        return;
-     }
++    }
 +    s->unacked_ticks = 0;
++    s->unacked_drops = 0;
      if (w && h && y > 0x1000) {
 +        unsigned cw = 0, ch = 0;
 +        /* What the frontend's camera captured for this sensor, if it pushed a frame since the last one; the
@@ -877,7 +898,7 @@ index c2b6ecf..1bc015c 100644
          if (nv12) {
              isp_dma_write(s, y, s->pic, (size_t)w * h);
              if (c > 0x1000) {
-@@ -317,6 +583,10 @@ static void isp_frame(void *opaque)
+@@ -317,6 +597,10 @@ static void isp_frame(void *opaque)
              isp_dma_write(s, y, s->pic, (size_t)w * h * 2);
          }
      }
@@ -888,7 +909,7 @@ index c2b6ecf..1bc015c 100644
      s->frames++;
      /* The finished frame's statistics, in the metadata buffer named by 00:cb (even frames) or 00:cf (odd). */
      memcpy(&meta[0x78], m, 4);   /* a2/a3:58 stays 0: nonzero is the firmware still writing them */
-@@ -325,21 +595,60 @@ static void isp_frame(void *opaque)
+@@ -325,21 +609,68 @@ static void isp_frame(void *opaque)
      r[ISP_CUR_C / 4] = r[ISP_NEXT_C / 4];
      r[ISP_INT_STATUS / 4] |= INT_FRAME;
      isp_update_irq(s);
@@ -948,10 +969,18 @@ index c2b6ecf..1bc015c 100644
      S5L8930ISPState *s = opaque;
  
 +    s->poll_reads = 0;      /* a write is the guest doing something, not waiting for it */
++    if (s->parked) {
++        /* The guest is touching the block again after abandoning frames: start the stream it asked for. */
++        s->parked = false;
++        s->unacked_ticks = s->unacked_drops = 0;
++        if (s->isp[ISP_OUT_ENABLE / 4] & 1) {
++            timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
++        }
++    }
      isp_log(s, "isp W %05x = %08x", (unsigned)addr, (uint32_t)val);
      if (addr == ISP_INT_STATUS) {
          s->isp[addr / 4] &= ~val;
-@@ -369,6 +678,7 @@ static void isp_init(Object *obj)
+@@ -369,6 +700,7 @@ static void isp_init(Object *obj)
      SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
      const char *trace = getenv("IT_ISP_TRACE");
  
@@ -959,7 +988,7 @@ index c2b6ecf..1bc015c 100644
      s->isp = g_new0(uint32_t, ISP_SIZE / 4);
      s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, isp_frame, s);
      memory_region_init_io(&s->isp_mr, obj, &isp_ops, s, "s5l8930.isp", ISP_SIZE);
-@@ -385,6 +695,24 @@ static void isp_init(Object *obj)
+@@ -385,6 +717,24 @@ static void isp_init(Object *obj)
      }
  }
  
@@ -984,10 +1013,14 @@ index c2b6ecf..1bc015c 100644
  static void isp_reset(DeviceState *dev)
  {
      S5L8930ISPState *s = S5L8930_ISP(dev);
-@@ -395,6 +723,11 @@ static void isp_reset(DeviceState *dev)
+@@ -395,6 +745,15 @@ static void isp_reset(DeviceState *dev)
      timer_del(s->frame_timer);
      s->frames = 0;
      s->shutter = s->strobe = 0;
++    s->unacked_ticks = s->unacked_drops = 0;
++    s->parked = false;
++    s->poll_reads = 0;
++    s->poll_addr = (hwaddr)-1;
 +    /* Which camera is active is host-side and not in the vmstate (a field there would change what a saved
 +     * state of an earlier build restores); a reset starts on the back camera, and the kext's next sensor
 +     * recognition picks the one the app asked for. */
@@ -996,7 +1029,7 @@ index c2b6ecf..1bc015c 100644
  }
  
  static const VMStateDescription isp_vmstate = {
-@@ -417,6 +750,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
+@@ -417,6 +776,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
  {
      DeviceClass *dc = DEVICE_CLASS(klass);
  
