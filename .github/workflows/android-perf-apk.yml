@@ -93,7 +93,7 @@ permissions:
 concurrency:
   # One run per pull request (or per branch of a manual run), so a pull request's build never queues behind a
   # manual run of another branch.
-  group: android-perf-apk-${{ github.event.pull_request.number || github.ref }}
+  group: android-perf-apk-c-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
