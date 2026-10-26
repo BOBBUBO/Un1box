@@ -438,6 +438,11 @@ impl Runtime {
         })
     }
 
+    /// Withdraw a pending guest request (a mutation the guest already ran stays done).
+    pub fn guest_cancel(&self, request_id: u64) -> Result<()> {
+        self.call(|r, e| unsafe { sys::lt_runtime_guest_cancel(r, request_id, e) })
+    }
+
     /// Destroy after a terminal state (`LT_BUSY` otherwise). On success the device lease is released too.
     pub fn destroy(mut self) -> std::result::Result<(), (Self, Error)> {
         let mut error = sys::lt_error::new();

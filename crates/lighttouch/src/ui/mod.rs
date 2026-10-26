@@ -8,6 +8,7 @@ mod home;
 pub mod icons;
 mod inspector;
 mod licenses;
+mod network;
 mod overlay;
 mod prepare;
 mod settings;
@@ -31,6 +32,8 @@ pub enum Page {
     Settings,
     /// Open source licenses (from Settings).
     Licenses,
+    /// Settings → Network.
+    Network,
     /// The frame inspector (the guest is paused; its state is `App::inspector`).
     Inspector,
     Setup(setup::Step),
@@ -476,6 +479,7 @@ impl eframe::App for App {
                     Page::Device => home::show(self, ui),
                     Page::Settings => settings::show(self, ui),
                     Page::Licenses => licenses::show(self, ui),
+                    Page::Network => network::show(self, ui),
                     Page::Inspector => inspector::show(self, ui),
                     Page::Setup(step) => setup::show(self, ui, step),
                     Page::Prepare => prepare::show(self, ui),

@@ -41,3 +41,6 @@ pub const KEYBOARD: &str = "\u{E2D8}";
 pub const COPY: &str = "\u{E1CA}";
 pub const HEADPHONES: &str = "\u{E2A6}";
 pub const CARET_LEFT: &str = "\u{E138}";
+pub const GLOBE: &str = "\u{E288}";
+pub const CLOCK_COUNTER: &str = "\u{E1A0}";
+pub const WIFI: &str = "\u{E4EA}";

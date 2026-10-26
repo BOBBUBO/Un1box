@@ -1,5 +1,6 @@
 //! The worker protocol: one JSON object per line. Commands go to the worker's stdin, events come from its stdout,
 //! and its stderr is the session log. Frames travel separately through shared memory (`frames`).
+use crate::network::NetworkConfig;
 use crate::runtime::{BoardInfo, Contact, State};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -22,6 +23,19 @@ pub struct WorkerArgs {
     /// The guest's USB link for app services; `None` boots without a cable.
     #[serde(default)]
     pub usb: Option<UsbArgs>,
+    /// Guest networking; `None` boots offline and reports nothing about it.
+    #[serde(default)]
+    pub network: Option<NetworkArgs>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkArgs {
+    /// As saved; off makes no proxy, and turning it on then needs a restart.
+    pub config: NetworkConfig,
+    /// This device's private proxy folder (its CA).
+    pub directory: PathBuf,
+    /// The bundled guest helpers (`ittrust`, `itproxy`) the worker installs.
+    pub guest_tools: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +92,10 @@ pub enum Command {
     Mute {
         muted: bool,
     },
+    /// Change the route, archive date or LAN access live (the settings were saved already).
+    Network {
+        config: NetworkConfig,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +142,8 @@ pub enum Event {
     Screenshot {
         path: PathBuf,
     },
+    /// The session's networking, sent when it changes.
+    Network(NetworkStatus),
     /// The worker is about to exit. `clean` means iOS confirmed shutdown and the state is clean.
     Exit {
         clean: bool,
@@ -147,6 +167,26 @@ pub struct StatusEvent {
     /// The worker's resident memory, for the performance overlay.
     #[serde(default)]
     pub resident_bytes: u64,
+}
+
+/// What this session's networking is doing, apart from the saved settings: the route it applied, the guest's setup,
+/// and the proxy's activity (like Android's Current session).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkStatus {
+    /// The session started with networking on, so it has a proxy and can change route live.
+    pub proxy: bool,
+    pub applied: NetworkConfig,
+    /// "Waiting for guest tools…", "Ready", or what went wrong.
+    pub setup: String,
+    pub setup_error: bool,
+    pub activity: String,
+    pub connections: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub last_result: String,
+    pub last_result_error: bool,
+    /// About a requested change: waiting for the engine, needs a restart, or failed.
+    pub notice: String,
 }
 
 impl Command {

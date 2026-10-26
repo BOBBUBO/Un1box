@@ -110,6 +110,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 });
             });
 
+            widgets::section(ui, &p, "Connection");
+            widgets::card(ui, &p, |ui| {
+                widgets::setting_row(ui, &p, icons::GLOBE, "Network", &settings.network.summary(), |ui| {
+                    if widgets::tonal(ui, &p, "Open").clicked() {
+                        app.page = Page::Network;
+                    }
+                });
+            });
+
             widgets::section(ui, &p, "Performance overlay");
             widgets::card(ui, &p, |ui| {
                 widgets::setting_row(ui, &p, icons::CHART, "Detail", "", |ui| {

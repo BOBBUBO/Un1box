@@ -2,6 +2,7 @@
 //! settings and background work. A frontend renders the public state and calls the methods; `tick()` once per
 //! frame applies background results. `Waker` lets background threads ask the frontend to redraw.
 pub mod inspector;
+pub mod network;
 pub mod notices;
 pub mod prepare;
 pub mod queue;
@@ -319,6 +320,7 @@ impl Model {
         match result {
             Ok(()) => {
                 let _ = std::fs::remove_dir_all(self.dirs.pairing(id));
+                let _ = std::fs::remove_dir_all(self.dirs.network().join(id));
                 self.notify("Device deleted");
                 self.refresh();
             }
@@ -357,6 +359,11 @@ impl Model {
             log_dir: self.dirs.logs(),
             extra_env: Vec::new(),
             usb: usb_args(&self.dirs, &self.resources, &device.id),
+            network: network::supported().is_ok().then(|| lighttouch_core::protocol::NetworkArgs {
+                config: self.settings.network.config(),
+                directory: self.dirs.network().join(&device.id),
+                guest_tools: self.resources.guest_tools(),
+            }),
         };
         match Session::start(options, self.waker.clone()) {
             Ok(session) => {
@@ -415,6 +422,24 @@ impl Model {
         self.save_settings();
         if let Some(session) = &mut self.session {
             session.set_muted(muted);
+        }
+    }
+
+    /// Save Settings → Network and apply it to the running session (a session started offline reports that it
+    /// needs a restart).
+    pub fn set_network(&mut self, network: network::NetworkSettings) {
+        if let Err(e) = network.validate(network::Day::today()) {
+            self.error = Some(e);
+            return;
+        }
+        if network == self.settings.network {
+            return;
+        }
+        self.settings.network = network;
+        self.save_settings();
+        let config = self.settings.network.config();
+        if let Some(session) = &mut self.session {
+            session.set_network(config);
         }
     }
 

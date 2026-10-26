@@ -4,10 +4,13 @@
 use crate::audio;
 use lighttouch_core::frames::{FrameMeta, FrameWriter};
 use lighttouch_core::library::Library;
-use lighttouch_core::protocol::{Command, Event, StatusEvent, WorkerArgs};
-use lighttouch_core::runtime::{self, BootOptions, Device, Runtime, State};
+use lighttouch_core::network::{NetworkConfig, Proxy, SocketDir};
+use lighttouch_core::protocol::{Command, Event, NetworkArgs, NetworkStatus, StatusEvent, WorkerArgs};
+use lighttouch_core::runtime::{self, BootOptions, Device, NetworkBoot, NetworkMode, Runtime, State};
 use lighttouch_core::{monotonic_ns, process_cpu_ns, sys};
+use lighttouch_model::network::{self as guest_network, GuestAgent, NetworkSession};
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex};
@@ -31,6 +34,13 @@ pub fn main(args: &[String]) -> i32 {
         }
         bridge
     });
+    // OpenSSL reads SSL_CERT_FILE when the proxy is made: the host's trusted roots, where its own defaults have none.
+    if let Some(network) = parsed.network.as_ref().filter(|n| n.config.mode != NetworkMode::Off) {
+        let cache = network.directory.parent().unwrap_or(&network.directory);
+        if let Some(roots) = lighttouch_core::network::trust_roots(cache) {
+            set_engine_env("SSL_CERT_FILE", &roots.to_string_lossy());
+        }
+    }
     let events = spawn_event_writer(take_stdout());
     let commands = spawn_command_reader();
     match run(parsed, &events, commands, usb) {
@@ -215,6 +225,7 @@ fn run(
     let board = runtime::board_info(&args.engine, &record.board).map_err(|e| format!("engine: {e}"))?;
     let _ = events.send(Event::Board { info: board.clone() });
     let headphones = args.headphones && board.has(runtime::BoardInfo::HEADPHONES);
+    let mut network = args.network.as_ref().map(Networking::prepare);
     let options = BootOptions {
         engine: args.engine.clone(),
         bootrom: record.bootrom_path.clone(),
@@ -222,7 +233,7 @@ fn run(
         serial_log: Some(record.state_path.join("serial.log")),
         audio: args.audio,
         headphones,
-        network: None,
+        network: network.as_ref().and_then(Networking::boot),
     };
     let _bridge = match usb {
         Some(Ok(bridge)) => {
@@ -303,6 +314,9 @@ fn run(
 
     runtime.start().map_err(|e| format!("Couldn't start iOS: {e}"))?;
     let _ = events.send(Event::Started);
+    if let Some(network) = &mut network {
+        network.start_guest_setup(&runtime);
+    }
 
     let trace_input = std::env::var_os("LIGHTTOUCH_TRACE_INPUT").is_some();
     let mut pcm = vec![0i16; 4096 * 2];
@@ -359,6 +373,9 @@ fn run(
                         Ok(())
                     } else {
                         stopping_since = Some(Instant::now());
+                        if let Some(network) = &network {
+                            network.stop.store(true, Ordering::Relaxed);
+                        }
                         runtime.request_shutdown()
                     }
                 }
@@ -374,6 +391,12 @@ fn run(
                 Command::Mute { muted } => {
                     if let Some(a) = &audio {
                         a.set_muted(muted);
+                    }
+                    Ok(())
+                }
+                Command::Network { config } => {
+                    if let Some(network) = &mut network {
+                        network.session.request(config);
                     }
                     Ok(())
                 }
@@ -417,6 +440,10 @@ fn run(
                     let _ = events.send(Event::Error { command: "guest".into(), message: e.to_string() });
                 }
             }
+        }
+
+        if let Some(network) = &mut network {
+            network.tick(&runtime, events);
         }
 
         let status = runtime.poll().map_err(|e| format!("engine status: {e}"))?;
@@ -507,6 +534,9 @@ fn run(
         a.clear();
     }
     drop(audio);
+    if let Some(network) = &mut network {
+        network.join_setup();
+    }
     match Arc::try_unwrap(runtime) {
         // A failed or timed-out engine may refuse; the process exits either way and the state stays dirty.
         Ok(runtime) => {
@@ -516,8 +546,168 @@ fn run(
         }
         Err(_) => eprintln!("runtime still referenced at exit"),
     }
+    // The proxy goes after the engine, which forwarded to it.
+    drop(network);
     eprintln!("session ended: clean={} dirty={} {}", outcome.clean, outcome.dirty, outcome.message);
     Ok(outcome)
+}
+
+/// The session's guest networking: the proxy and its socket (when it started with networking on), what it applied,
+/// and the guest setup, which runs on its own thread once iOS starts.
+struct Networking {
+    proxy: Option<Arc<Proxy>>,
+    socket: Option<SocketDir>,
+    session: NetworkSession,
+    guest_tools: PathBuf,
+    /// The guest setup's step, and whether it failed.
+    setup: Arc<Mutex<(String, bool)>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+    last_try: Option<Instant>,
+    sent: Option<(NetworkStatus, Instant)>,
+}
+
+impl Networking {
+    /// Make the proxy before boot (the engine forwards to its socket). If that fails the device starts offline and
+    /// the status says why.
+    fn prepare(args: &NetworkArgs) -> Self {
+        let mut this = Self {
+            proxy: None,
+            socket: None,
+            session: NetworkSession::begin(args.config.clone(), false),
+            guest_tools: args.guest_tools.clone(),
+            setup: Arc::new(Mutex::new(("Off".into(), false))),
+            stop: Arc::new(AtomicBool::new(false)),
+            thread: None,
+            last_try: None,
+            sent: None,
+        };
+        if args.config.mode == NetworkMode::Off {
+            return this;
+        }
+        let made = SocketDir::create().and_then(|socket| {
+            let proxy = Proxy::create(&args.directory, &args.config)?;
+            proxy.listen(&socket.socket)?;
+            Ok((proxy, socket))
+        });
+        match made {
+            Ok((proxy, socket)) => {
+                eprintln!(
+                    "network: {:?} proxy at {} (CA {})",
+                    args.config.mode,
+                    socket.socket.display(),
+                    proxy.fingerprint()
+                );
+                this.proxy = Some(Arc::new(proxy));
+                this.socket = Some(socket);
+                this.session = NetworkSession::begin(args.config.clone(), true);
+                *this.setup.lock().unwrap() = ("Waiting for guest tools…".into(), false);
+            }
+            Err(e) => {
+                eprintln!("network: {e}");
+                let off = NetworkConfig { mode: NetworkMode::Off, ..args.config.clone() };
+                this.session = NetworkSession::begin(off, false);
+                *this.setup.lock().unwrap() = (format!("Couldn't start networking: {e}"), true);
+            }
+        }
+        this
+    }
+
+    fn boot(&self) -> Option<NetworkBoot> {
+        let socket = self.socket.as_ref()?;
+        let config = self.session.active();
+        Some(NetworkBoot {
+            mode: config.mode,
+            local_network: config.local_network,
+            proxy_socket: socket.socket.clone(),
+        })
+    }
+
+    /// Install the CA and Wi-Fi proxy in the guest when its tools answer (fixed typed operations only).
+    fn start_guest_setup(&mut self, runtime: &Arc<Runtime>) {
+        let Some(proxy) = &self.proxy else { return };
+        let certificate = proxy.certificate();
+        let agent = RuntimeAgent { runtime: runtime.clone(), stop: self.stop.clone(), epoch: Instant::now() };
+        let (setup, tools) = (self.setup.clone(), self.guest_tools.clone());
+        self.thread = thread::Builder::new()
+            .name("network-setup".into())
+            .spawn(move || {
+                let report = |step: &str| *setup.lock().unwrap() = (step.to_string(), false);
+                if let Err(e) = guest_network::configure_guest(&agent, &tools, &certificate, &report) {
+                    eprintln!("network setup: {e}");
+                    *setup.lock().unwrap() = (e, true);
+                }
+            })
+            .ok();
+    }
+
+    /// Apply a pending live change (retried while the engine starts) and report the status when it changes.
+    fn tick(&mut self, runtime: &Runtime, events: &Sender<Event>) {
+        if self.session.pending() && self.last_try.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
+            self.last_try = Some(Instant::now());
+            let proxy = self.proxy.clone();
+            self.session.refresh(|config| {
+                // NAT first, then the proxy: a refused policy leaves both as they were.
+                runtime.network_policy(config.mode, config.local_network)?;
+                match &proxy {
+                    Some(proxy) => proxy.configure(config),
+                    None => Ok(()),
+                }
+            });
+        }
+        let setup = self.setup.lock().unwrap().clone();
+        let status =
+            guest_network::status(&self.session, (&setup.0, setup.1), self.proxy.as_ref().map(|p| p.activity()));
+        let due = match &self.sent {
+            None => true,
+            Some((last, at)) => {
+                *last != status
+                    && (at.elapsed() >= Duration::from_millis(250)
+                        || last.setup != status.setup
+                        || last.notice != status.notice)
+            }
+        };
+        if due {
+            let _ = events.send(Event::Network(status.clone()));
+            self.sent = Some((status, Instant::now()));
+        }
+    }
+
+    fn join_setup(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// The guest agent through the runtime, for the setup thread. The core serializes it with the session's own guest
+/// requests: one is pending at a time, and a busy agent refuses before admission.
+struct RuntimeAgent {
+    runtime: Arc<Runtime>,
+    stop: Arc<AtomicBool>,
+    epoch: Instant,
+}
+
+impl GuestAgent for RuntimeAgent {
+    fn request(&self, operation: u32, argument: &str, timeout_ms: u32) -> lighttouch_core::Result<u64> {
+        self.runtime.guest_request(operation, argument, timeout_ms)
+    }
+    fn poll(&self, id: u64) -> lighttouch_core::Result<(u32, i32, String)> {
+        self.runtime.guest_poll(id).map(|r| (r.state, r.guest_status, r.output))
+    }
+    fn cancel(&self, id: u64) {
+        let _ = self.runtime.guest_cancel(id);
+    }
+    fn active(&self) -> bool {
+        !self.stop.load(Ordering::Relaxed)
+    }
+    fn now_ms(&self) -> u64 {
+        self.epoch.elapsed().as_millis() as u64
+    }
+    fn sleep_ms(&self, ms: u64) {
+        thread::sleep(Duration::from_millis(ms));
+    }
 }
 
 fn command_name(command: &Command) -> &'static str {
@@ -532,5 +722,6 @@ fn command_name(command: &Command) -> &'static str {
         Command::Guest { .. } => "guest",
         Command::Profile { .. } => "profile",
         Command::Mute { .. } => "mute",
+        Command::Network { .. } => "network",
     }
 }

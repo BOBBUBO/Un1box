@@ -44,6 +44,7 @@ pub fn start_page() -> Option<Page> {
     match std::env::var("LIGHTTOUCH_UI_PAGE").ok()?.as_str() {
         "settings" => Some(Page::Settings),
         "licenses" => Some(Page::Licenses),
+        "network" => Some(Page::Network),
         "prepare" => Some(Page::Prepare),
         "store" => Some(Page::Store),
         _ => None,
