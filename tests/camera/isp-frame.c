@@ -19,7 +19,7 @@
  * tests/slice/ipad1-isp-mailbox.c still checks the guest sees a frame when the
  * frontend pushes nothing.
  *
- * SLICE engine hw/arm/s5l8930_isp.c fn isp_from_camera
+ * SLICE engine hw/arm/s5l8930_isp.c fn isp_map_x isp_from_camera
  * CFLAGS -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-parameter
  */
 #include <assert.h>
@@ -30,14 +30,27 @@
 #include <string.h>
 
 #include "hw/arm/host-camera.h"
+/* The slice's stand-in for qemu/osdep.h: g_renew(), which the scaler uses to grow its column map. The
+ * test builds with the engine's include paths, where the test's stub comes first. */
+#include "qemu/osdep.h"
 
-/* hw/arm/s5l8930_isp.c's state, reduced to the field isp_from_camera() writes
- * the frame into. The model keeps one host buffer and grows it when the guest
- * asks for a bigger mode; the same here. */
+/* hw/arm/s5l8930_isp.c's scaler state, reduced to what isp_from_camera() and
+ * isp_map_x() touch: the frame buffer the model grows when the guest asks for a
+ * bigger mode, and the column map the scaler keeps between frames. */
+struct ISPFrameMap {
+    uint32_t *x;
+    size_t count;
+    unsigned sw, w;
+};
+
 typedef struct S5L8930ISPState {
     uint8_t *pic;
     size_t pic_size;
+    struct ISPFrameMap xmap;
 } S5L8930ISPState;
+
+/* The engine names the map's type for the two functions the slice copies. */
+typedef struct ISPFrameMap ISPFrameMap;
 
 static void isp_from_camera(S5L8930ISPState *s, const uint8_t *src, unsigned sw, unsigned sh, unsigned w,
                             unsigned h, bool nv12, bool rotate);
@@ -58,6 +71,18 @@ static uint8_t *frame(unsigned w, unsigned h, uint8_t luma)
 }
 
 /* The state the guest is about to be given a frame from, and the buffer it lands in. */
+/* The scaler keeps two things alive between frames: the frame buffer and its column map. Both are the
+ * model's, so the tests release them together. */
+static void release(S5L8930ISPState *s)
+{
+    free(s->pic);
+    free(s->xmap.x);
+    s->pic = NULL;
+    s->xmap.x = NULL;
+    s->xmap.count = 0;
+    s->pic_size = 0;
+}
+
 static void render(S5L8930ISPState *s, unsigned sw, unsigned sh, unsigned w, unsigned h, bool nv12)
 {
     size_t need = nv12 ? (size_t)w * h * 3 / 2 : (size_t)w * h * 2;
@@ -246,9 +271,9 @@ static void test_nv12_scales_by_the_nearest_pixel(void)
         for (i = 16; i < 24; i += 2) {
             assert(up.pic[i] == 0x10 && up.pic[i + 1] == 0x20);
         }
-        free(up.pic);
+        release(&up);
     }
-    free(s.pic);
+    release(&s);
 }
 
 static void test_nv12_chroma_never_lands_on_an_odd_source_column(void)
@@ -271,7 +296,7 @@ static void test_nv12_chroma_never_lands_on_an_odd_source_column(void)
     assert(s.pic[8] == 0x40 && s.pic[9] == 0x41);           /* x = 0 -> 0 */
     assert(s.pic[10] == 0x42 && s.pic[11] == 0x43);         /* x = 2 -> 2 */
 
-    free(s.pic);
+    release(&s);
 }
 
 
@@ -299,11 +324,13 @@ static void test_the_front_sensor_is_spun_upright(void)
     assert(s.pic[1] == 15 && s.pic[3] == 13);               /* the row runs backwards too */
     /* Chroma: the source's last block comes first, and its Cb/Cr keep their order (a rotation does not
      * swap the channels). */
-    assert(s.pic[16] == 0x86 && s.pic[17] == 0x87);       /* bottom-right block comes first */
-    assert(s.pic[18] == 0x80 && s.pic[19] == 0x81);       /* top-right block */
-    assert(s.pic[20] == 0x82 && s.pic[21] == 0x83);       /* bottom-left block, from the top row */
-    assert(s.pic[22] == 0x84 && s.pic[23] == 0x85);       /* top-left block */
-    free(s.pic);
+    /* The 2x2 chroma blocks are rotated with the picture: the bottom-right one comes first, and each
+     * row's blocks run right to left. */
+    assert(s.pic[16] == 0x86 && s.pic[17] == 0x87);       /* bottom-right */
+    assert(s.pic[18] == 0x84 && s.pic[19] == 0x85);       /* bottom-left */
+    assert(s.pic[20] == 0x82 && s.pic[21] == 0x83);       /* top-right */
+    assert(s.pic[22] == 0x80 && s.pic[23] == 0x81);       /* top-left */
+    release(&s);
 
     /* The same picture in the 4:2:2 layout: Y and its chroma byte both mirrored, the pair's order flipped. */
     {
@@ -315,7 +342,7 @@ static void test_the_front_sensor_is_spun_upright(void)
         /* Source row 3's chroma is the pair at columns 0..1 = 0x80 (Cb) 0x81 (Cr), and the mirrored pixel
          * is an odd source column, so it takes the pair's second byte first. */
         assert(t.pic[1] == 0x87 && t.pic[3] == 0x86);
-        free(t.pic);
+        release(&t);
     }
 }
 
@@ -347,7 +374,7 @@ static void test_yuvs_interleaves_luma_and_chroma_per_pixel(void)
     assert(s.pic[8] == 0x14 && s.pic[9] == 0xc8);
     assert(s.pic[10] == 0x15 && s.pic[11] == 0xc9);
 
-    free(s.pic);
+    release(&s);
 }
 
 int main(void)
