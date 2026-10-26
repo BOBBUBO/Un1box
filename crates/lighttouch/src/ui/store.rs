@@ -147,37 +147,32 @@ fn search_field(app: &mut App, ui: &mut Ui) -> bool {
     if width < 150.0 {
         return false;
     }
-    let size = vec2(width, 36.0);
+    // A fixed-height pill with its contents centred in it: a frame sized by its contents sat taller than the
+    // text in the header's row and left the text near its top.
+    let (rect, pill) = ui.allocate_exact_size(vec2(width, 36.0), Sense::click());
+    ui.painter().rect_filled(rect, CornerRadius::same(theme::radius::PILL), p.container_high);
     let layout = egui::Layout::left_to_right(egui::Align::Center);
-    let pill = ui
-        .allocate_ui_with_layout(size, layout, |ui| {
-            egui::Frame::new()
-                .fill(p.container_high)
-                .corner_radius(CornerRadius::same(theme::radius::PILL))
-                .inner_margin(Margin::symmetric(12, 6))
-                .show(ui, |ui| {
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.label(widgets::icon_text(icons::SEARCH, 16.0).color(p.on_surface_variant));
-                        let edit = ui.add(
-                            egui::TextEdit::singleline(&mut app.model.store.query)
-                                .hint_text("Search apps and games")
-                                .frame(egui::Frame::NONE)
-                                .desired_width(ui.available_width() - 24.0)
-                                .margin(vec2(4.0, 2.0)),
-                        );
-                        submit = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if app.model.store.searching {
-                            widgets::spinner(ui, &p, 14.0);
-                        }
-                        edit
-                    })
-                    .inner
-                })
+    let edit = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(12.0, 0.0))).layout(layout), |ui| {
+            ui.label(widgets::icon_text(icons::SEARCH, 16.0).color(p.on_surface_variant));
+            let edit = ui.add(
+                egui::TextEdit::singleline(&mut app.model.store.query)
+                    .hint_text("Search apps and games")
+                    .frame(egui::Frame::NONE)
+                    .desired_width(ui.available_width() - 24.0)
+                    .vertical_align(egui::Align::Center)
+                    .margin(vec2(4.0, 2.0)),
+            );
+            submit = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if app.model.store.searching {
+                widgets::spinner(ui, &p, 14.0);
+            }
+            edit
         })
         .inner;
     // The whole pill focuses the field, not just its text.
-    if pill.response.interact(Sense::click()).clicked() {
-        pill.inner.request_focus();
+    if pill.clicked() {
+        edit.request_focus();
     }
     submit
 }

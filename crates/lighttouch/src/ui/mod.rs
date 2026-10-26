@@ -83,8 +83,9 @@ pub fn run() -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
         .with_title("LightTouch")
         .with_app_id("org.lighttouch.LightTouch")
-        .with_inner_size([1120.0, 780.0])
-        .with_min_inner_size([760.0, 560.0])
+        .with_inner_size(devshot::window_size().unwrap_or([1120.0, 780.0]))
+        // The sidebar takes 268 points; narrower, the pages' cards get cramped.
+        .with_min_inner_size([880.0, 600.0])
         // Unused, and on Windows winit panics when OLE won't register the drop target.
         .with_drag_and_drop(false);
     let options = eframe::NativeOptions { viewport, centered: true, ..Default::default() };

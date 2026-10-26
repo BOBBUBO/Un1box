@@ -187,18 +187,38 @@ pub fn switch(ui: &mut Ui, p: &Palette, on: &mut bool) -> Response {
 /// A row of mutually exclusive choices. Returns true when the choice changed.
 pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, p: &Palette, value: &mut T, options: &[(T, &str)]) -> bool {
     let mut changed = false;
-    Frame::new().fill(p.container_highest).corner_radius(CornerRadius::same(18)).inner_margin(Margin::same(3)).show(
-        ui,
-        |ui| {
-            // Always left to right, even inside a right-aligned row.
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+    let label = |text: &str, selected: bool| {
+        RichText::new(text).color(if selected { p.on_primary } else { p.on_surface }).size(13.0)
+    };
+    // Sized to its buttons up front: a frame grown from its contents spans the whole free width of a
+    // right-aligned row.
+    let padding = ui.spacing().button_padding.x;
+    let width = options
+        .iter()
+        .map(|(_, text)| {
+            let galley = egui::WidgetText::from(label(text, false)).into_galley(
+                ui,
+                Some(egui::TextWrapMode::Extend),
+                f32::INFINITY,
+                egui::TextStyle::Button,
+            );
+            galley.size().x + 2.0 * padding
+        })
+        .sum::<f32>()
+        + 2.0 * options.len().saturating_sub(1) as f32
+        + 6.0;
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    ui.allocate_ui_with_layout(vec2(width, 36.0), layout, |ui| {
+        Frame::new()
+            .fill(p.container_highest)
+            .corner_radius(CornerRadius::same(18))
+            .inner_margin(Margin::same(3))
+            .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                for (option, label) in options {
+                for (option, text) in options {
                     let selected = *value == *option;
-                    let text =
-                        RichText::new(*label).color(if selected { p.on_primary } else { p.on_surface }).size(13.0);
                     let r = ui.add(
-                        egui::Button::new(text)
+                        egui::Button::new(label(text, selected))
                             .fill(if selected { p.primary } else { Color32::TRANSPARENT })
                             .corner_radius(CornerRadius::same(15))
                             .min_size(vec2(0.0, 30.0)),
@@ -209,8 +229,7 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, p: &Palette, value: &mut T, o
                     }
                 }
             });
-        },
-    );
+    });
     changed
 }
 
@@ -322,6 +341,9 @@ pub fn setting_row<R>(
     subtitle: &str,
     trailing: impl FnOnce(&mut Ui) -> R,
 ) -> R {
+    // The trailing control's width, as laid out last frame.
+    let id = ui.id().with(("setting-row", title));
+    let reserved = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(150.0);
     ui.horizontal(|ui| {
         ui.set_min_height(48.0);
         ui.add_space(2.0);
@@ -329,14 +351,20 @@ pub fn setting_row<R>(
         ui.add_space(6.0);
         ui.vertical(|ui| {
             // Leave the trailing control its room: a long subtitle wraps instead of running under it.
-            ui.set_max_width((ui.available_width() - 150.0).max(160.0));
+            ui.set_max_width((ui.available_width() - reserved - 16.0).max(120.0));
             ui.add_space(if subtitle.is_empty() { 14.0 } else { 4.0 });
             ui.label(RichText::new(title).size(14.5));
             if !subtitle.is_empty() {
                 ui.label(RichText::new(subtitle).size(12.5).color(p.on_surface_variant));
             }
         });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), trailing).inner
+        let trailing = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), trailing);
+        let width = trailing.response.rect.width();
+        if (width - reserved).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(id, width));
+            ui.ctx().request_discard("a settings row's control changed width");
+        }
+        trailing.inner
     })
     .inner
 }

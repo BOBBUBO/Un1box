@@ -1,7 +1,7 @@
 //! Developer hook for checking the UI where nothing can capture the screen (over ssh on macOS or Windows):
 //! `LIGHTTOUCH_UI_SHOT=file.png` saves the window after `LIGHTTOUCH_UI_SHOT_AFTER` seconds (default 3), then closes
 //! it. `LIGHTTOUCH_UI_PAGE` (settings, prepare, store) opens that page first; `LIGHTTOUCH_UI_START` starts the selected
-//! device.
+//! device. `LIGHTTOUCH_UI_SIZE=WxH` sets the window's size, and `LIGHTTOUCH_UI_PAGE=add` opens Add a device.
 use super::{App, Page};
 use eframe::egui;
 use lighttouch_model::queue::QueueState;
@@ -40,8 +40,15 @@ impl DevShot {
     }
 }
 
+pub fn window_size() -> Option<[f32; 2]> {
+    let text = std::env::var("LIGHTTOUCH_UI_SIZE").ok()?;
+    let (w, h) = text.split_once('x')?;
+    Some([w.parse().ok()?, h.parse().ok()?])
+}
+
 pub fn start_page() -> Option<Page> {
     match std::env::var("LIGHTTOUCH_UI_PAGE").ok()?.as_str() {
+        "add" => Some(Page::Setup(super::setup::Step::Files)),
         "settings" => Some(Page::Settings),
         "licenses" => Some(Page::Licenses),
         "prepare" => Some(Page::Prepare),
