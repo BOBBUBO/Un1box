@@ -12,8 +12,14 @@ import Foundation
 import os
 #endif
 
-/// Native stream I/O preserves JSON-line ordering without holding cancellation
-/// state across a blocking pipe write or occupying a cooperative worker.
+/// A command's stream: one JSON line per event on stdout, diagnostics on stderr.
+///
+/// On Darwin a dispatch channel carries it, so a blocked write never occupies the caller; a closed reader is an
+/// error the caller can join (`finish()`). Elsewhere -- and on Android in particular -- the write is the write:
+/// `write(2)` to the descriptor, synchronously, with EPIPE and the like recorded the same way. There is no
+/// dispatch thread to start before the first event, which is the difference that matters for a short-lived
+/// command whose very first event is the one that says what it is doing.
+#if canImport(Darwin)
 public final class PipeOutput: Sendable {
     private struct State {
         var cancelled = false
@@ -73,3 +79,49 @@ public final class PipeOutput: Sendable {
         }
     }
 }
+#else
+/// `write(2)`, apart from the class's own method of that name.
+private func streamWrite(_ descriptor: Int32, _ buffer: UnsafeRawPointer, _ count: Int) -> Int {
+    write(descriptor, buffer, count)
+}
+
+public final class PipeOutput: Sendable {
+    private struct State {
+        var cancelled = false
+        var failure: Int32?
+    }
+    private let descriptor: Int32
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    public init(fileDescriptor: Int32) {
+        // SIGPIPE is ignored process-wide off Darwin (see suppressSIGPIPE), so a reader that is gone is EPIPE
+        // from write(2), not a signal.
+        descriptor = fileDescriptor
+    }
+
+    public func stop() { state.withLock { $0.cancelled = true } }
+
+    public func write(_ data: Data) {
+        guard !data.isEmpty else { return }
+        data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            guard let base = buffer.baseAddress else { return }
+            var offset = 0
+            while offset < buffer.count {
+                let n = streamWrite(descriptor, base + offset, buffer.count - offset)
+                guard n >= 0 else {
+                    if errno == EINTR { continue }
+                    let failure = errno
+                    state.withLock { current in
+                        if !current.cancelled { current.failure = failure }
+                    }
+                    return
+                }
+                offset += n
+            }
+        }
+    }
+
+    /// Nothing is queued: a write has landed by the time it returns. True means no write failed.
+    public func finish() async -> Bool { state.withLock { $0.failure == nil } }
+}
+#endif
