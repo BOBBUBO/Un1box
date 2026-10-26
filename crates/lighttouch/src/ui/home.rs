@@ -19,12 +19,12 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let skin = Skin::for_board(board.as_deref());
     let device_space = space.shrink2(vec2(24.0, 16.0));
     let screen = if app.model.settings.device_frame {
-        let layout = device_frame::layout(&skin, device_space);
+        let layout = device_frame::layout_turned(&skin, device_space, app.model.settings.rotation);
         device_frame::paint(ui.painter(), &skin, &layout, |b| app.guest.is_held(b));
         hardware_buttons(app, ui, &layout);
         layout.screen
     } else {
-        fit_aspect(device_space, skin.screen_aspect())
+        fit_aspect(device_space, skin.shown_aspect(app.model.settings.rotation))
     };
     let running = app.model.session.as_ref().is_some_and(|s| matches!(s.phase, Phase::Running));
     let asleep = app.model.session.as_ref().is_some_and(|s| s.display_asleep());
@@ -302,7 +302,7 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
     let paused = matches!(phase, Phase::Paused);
     let can_stop = !matches!(phase, Phase::Stopping);
     let show_inspect = app.model.settings.inspect_button;
-    let count = if show_inspect { 6.0 } else { 5.0 };
+    let count = if show_inspect { 7.0 } else { 6.0 };
     let width = count * 72.0 + 32.0;
     let dock = Rect::from_center_size(area.center() - vec2(0.0, 6.0), vec2(width, 70.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(dock), |ui| {
@@ -325,6 +325,13 @@ fn dock_bar(app: &mut App, ui: &mut Ui, area: Rect) {
                     if widgets::dock_button(ui, &p, icons::FULLSCREEN, "Full screen", true, None).clicked() {
                         let ctx = ui.ctx().clone();
                         app.set_fullscreen(&ctx, true);
+                    }
+                    let rotation = app.model.settings.rotation;
+                    let rotate = widgets::dock_button(ui, &p, icons::ROTATE, "Rotate", true, None)
+                        .on_hover_text(format!("{} (turns to {})", rotation.label(), rotation.next().label()));
+                    if rotate.clicked() {
+                        app.model.settings.rotation = rotation.next();
+                        app.model.save_settings();
                     }
                     if widgets::dock_button(ui, &p, icons::CAMERA, "Screenshot", running || paused, None).clicked() {
                         app.model.screenshot();

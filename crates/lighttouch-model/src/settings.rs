@@ -91,6 +91,8 @@ pub struct Settings {
     /// Show the frame inspector button.
     pub inspect_button: bool,
     pub detailed_timing: bool,
+    /// How the device is turned on the home view and in full screen.
+    pub rotation: crate::rotation::Rotation,
 }
 
 impl Default for Settings {
@@ -110,6 +112,7 @@ impl Default for Settings {
             overlay_in_device_view: true,
             inspect_button: false,
             detailed_timing: false,
+            rotation: crate::rotation::Rotation::Portrait,
         }
     }
 }
