@@ -193,6 +193,11 @@ class EngineService : Service() {
                 cameraFollows = cameraChoice == CameraCapture.Choice.FOLLOW
             }
             cameraError = ""
+            // The ISP is the engine's `camera` machine property, off by default: off, the board unmatches the
+            // device tree's isp node and the guest has no camera at all, so the phone's frames would have nowhere
+            // to go. IT_CAMERA is the engine's own switch for a session the app starts, and it has to be set
+            // before the machine is created, which is what the start below does.
+            android.system.Os.setenv("IT_CAMERA", if (cameraWanted) "1" else "0", true)
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()

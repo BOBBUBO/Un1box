@@ -246,7 +246,11 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   model records it and tells the frontend (`qemu_ios_camera_sensor`), and `CameraCapture.kt` reopens the
   phone's matching camera. Settings has the switch and Follow/Back/Front; with Follow the device decides.
   The test pattern is still the fallback, so a headless engine, a Mac and a phone without a camera behave
-  exactly as before. `python3 tests/camera/run.py --engine qemu-ios` (`--sanitize` adds ASan/UBSan) checks
+  exactly as before. The model itself is off by default — `camera=off` unmatches the device tree's `isp` node
+  and the board reads as camera-less — and the app starts the machine without `camera=`, so the worker sets
+  `IT_CAMERA` from the switch before it starts. That one line is why the first build of this changed nothing
+  on the phone: the switch opened the phone's camera and pushed frames into an ISP that had never been
+  instantiated. `python3 tests/camera/run.py --engine qemu-ios` (`--sanitize` adds ASan/UBSan) checks
   the tap and the scaler against the real device code, a planar and a semi-planar `ImageReader` frame through
   the JNI conversion, the portable API, and the wiring — including that the camera is asked *before* the
   pattern, which is the ordering that made the first microphone build silent. **Not measured and not yet

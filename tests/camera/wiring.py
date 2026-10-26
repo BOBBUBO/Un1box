@@ -180,6 +180,19 @@ def android_switch_reaches_the_worker():
             "the worker reads the switch from a different store than the settings write it to")
     require('getString("camera_facing"' in service,
             "the worker reads the camera choice from a different store than the settings write it to")
+    # The ISP is the engine's `camera` machine property and it is off by default: off, the board unmatches the
+    # device tree's isp node and the guest has no camera at all. This is the check whose absence let the phone
+    # push frames into a model that was never instantiated: the switch opened the camera and nothing else.
+    require('Os.setenv("IT_CAMERA"' in service,
+            "the worker never turns the engine's ISP on, so the guest's board reads as camera-less and the "
+            "phone's frames have nowhere to go")
+    require('if (cameraWanted) "1" else "0"' in service,
+            "the ISP is not switched with the Settings camera switch")
+    turned_on = service.find('Os.setenv("IT_CAMERA"')
+    started = min(index for index in (service.find("Native.start("), service.find("Native.recoverStart("))
+                  if index >= 0)
+    require(turned_on < started,
+            "IT_CAMERA is set after the machine is created: the ISP would follow the previous session's switch")
     activity = read("Android/app/src/main/java/org/lighttouch/android/MainActivity.kt")
     require("permission.CAMERA" in activity and "cameraPermission.launch" in activity,
             "turning the switch on does not ask Android for the camera permission")

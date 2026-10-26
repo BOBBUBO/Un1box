@@ -107,10 +107,20 @@ internal class CameraCapture(private val context: Context, private val onError: 
         val manager = context.getSystemService(CameraManager::class.java)
         val map = manager.getCameraCharacteristics(id).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             as? StreamConfigurationMap
-        val size = chooseSize(map)
-        val target = ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2)
-        reader = target
-        target.setOnImageAvailableListener({ source ->
+        // A phone lists the sizes it will give YUV_420_888, and one that refuses the size it listed is a real
+        // failure mode, so the candidates are tried in turn rather than one size being trusted.
+        var target: ImageReader? = null
+        for (size in candidateSizes(map)) {
+            target = runCatching { ImageReader.newInstance(size.width, size.height, ImageFormat.YUV_420_888, 2) }
+                .getOrNull()
+            if (target != null) break
+        }
+        val reader = target ?: run {
+            onError("Camera unavailable: this phone refused every preview size it lists.")
+            return
+        }
+        this.reader = reader
+        reader.setOnImageAvailableListener({ source ->
             val image = try { source.acquireLatestImage() } catch (_: IllegalStateException) { null } ?: return@setOnImageAvailableListener
             try {
                 deliver(image)
@@ -123,7 +133,7 @@ internal class CameraCapture(private val context: Context, private val onError: 
                 override fun onOpened(camera: CameraDevice) {
                     if (!wanted) { camera.close(); return }
                     device = camera
-                    startSession(camera, target)
+                    startSession(camera, reader)
                 }
                 override fun onDisconnected(camera: CameraDevice) {
                     camera.close(); if (device === camera) device = null
@@ -138,12 +148,15 @@ internal class CameraCapture(private val context: Context, private val onError: 
         }
     }
 
-    /** The closest to 640x480 the camera lists, preferring 4:3 so the picture is not letterboxed. */
-    private fun chooseSize(map: StreamConfigurationMap?): Size {
+    /** Up to three sizes to try, closest to 640x480 first: what iOS previews at, and 4:3 before widescreen, so
+      * the picture is not letterboxed. The engine scales whatever arrives to the size the guest asks for. */
+    private fun candidateSizes(map: StreamConfigurationMap?): List<Size> {
         val sizes = map?.getOutputSizes(ImageFormat.YUV_420_888) ?: emptyArray()
-        val usable = sizes.filter { it.width * it.height <= 1280 * 960 && it.width % 2 == 0 && it.height % 2 == 0 }
-        if (usable.isEmpty()) return Size(640, 480)
-        return usable.minByOrNull { kotlin.math.abs(it.width.toLong() * it.height - 640L * 480L) } ?: Size(640, 480)
+        val usable = sizes
+            .filter { it.width * it.height <= 1280 * 960 && it.width % 2 == 0 && it.height % 2 == 0 }
+            .sortedBy { kotlin.math.abs(it.width.toLong() * it.height - 640L * 480L) }
+        // A camera that lists nothing usable still gets its one default tried, rather than no attempt at all.
+        return if (usable.isEmpty()) listOf(Size(640, 480)) else usable.take(3)
     }
 
     private fun startSession(camera: CameraDevice, target: ImageReader) {
