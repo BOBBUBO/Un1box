@@ -193,9 +193,9 @@ selected by native code. Recipes, architecture/tool selection and boot arguments
 remain native. Each new job uses a fresh firmware worker. Interrupted staging trees
 are never admitted as devices, and an existing device is preserved on failure.
 
-Preparation runs `firmwarekit` (Packages/FirmwareKit) and `lighttouch-oneshot` from the APK's
-nativeLibraryDir; `scripts/build.sh firmwarekit-android` builds them and `-PfirmwareKitDir` packages
-them. Preparation is not G6 acceptance until the resulting base boots on
+Preparation runs `firmwarekit` (Rust, crates/lighttouch-firmware) from the APK's nativeLibraryDir; its
+boots load the APK's engine themselves (`firmwarekit oneshot`). `scripts/build.sh firmwarekit-android`
+builds it and `-PfirmwareKitDir` packages it. Preparation is not G6 acceptance until the resulting base boots on
 Linux and unrooted Android with actual guest rendering and usable input.
 
 Private fixture import is explicit opt-in instrumentation:

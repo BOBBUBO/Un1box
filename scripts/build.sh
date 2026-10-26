@@ -164,7 +164,7 @@ build_android() {
     need "$angle/lib" "ANGLE arm64 libraries"
     need "$w/mobile-android/arm64-v8a" "Android mobile services"
     # firmwarekit prepares devices from IPSWs on the phone (build/firmwarekit/android): rebuilt every time (cargo is
-    # incremental), or the APK carries whatever firmwarekit and lighttouch-oneshot were last built.
+    # incremental), or the APK carries whatever firmwarekit was last built.
     build_firmwarekit_android
     # Guest tools the APK carries (new devices get the packages; firmwarekit bakes the helpers into the systems it
     # prepares); without them the APK still builds, but new devices get no guest tools and preparation cannot run.
@@ -206,8 +206,8 @@ build_portable_tests() {
 }
 
 # firmwarekit (crates/lighttouch-firmware, Rust) builds a device from an IPSW on every platform. Its preparation boots
-# run the engine library itself (`firmwarekit oneshot`: $LTM_QEMU_DYLIB, else libqemu-arm beside it); the C
-# lighttouch-oneshot is still built for the ports that pass --helper (Android's liblighttouch_oneshot.so).
+# run the engine library itself (`firmwarekit oneshot`: $LTM_QEMU_DYLIB, else libqemu-arm beside it), Android's too;
+# the C lighttouch-oneshot is still built on Linux for `create --helper` comparisons.
 build_firmwarekit() {
     log "firmwarekit (linux)"
     (cd "$REPO" && cargo build --release -p lighttouch-firmware --bin firmwarekit 2>&1 | tail -3)
@@ -227,8 +227,6 @@ build_firmwarekit_android() {
     mkdir -p "$OUT/firmwarekit/android"
     cp "$REPO/target/aarch64-linux-android/release/firmwarekit" "$OUT/firmwarekit/android/"
     "$NDK_BIN/llvm-strip" "$OUT/firmwarekit/android/firmwarekit"
-    "$NDK_BIN/aarch64-linux-android29-clang" -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/android/lighttouch-oneshot" \
-        "$REPO/Portable/oneshot/lighttouch-oneshot.c"
     python3 "$REPO/crates/lighttouch-firmware/stage-notices.py" "$OUT/firmwarekit/android/licenses" --target aarch64-linux-android \
         --source-reference "${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}"
     ls -la "$OUT/firmwarekit/android"

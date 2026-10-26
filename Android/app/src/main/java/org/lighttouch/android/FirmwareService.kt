@@ -9,10 +9,10 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * One preparation per process, independent of a running QEMU worker: firmwarekit (Packages/FirmwareKit, the
- * preparer every LightTouch port shares) builds the device from its IPSW, with its build-time boots through
- * lighttouch-oneshot and the APK's engine, into a device folder that the device worker moves into its library.
- * Both ship as executables in nativeLibraryDir (libfirmwarekit.so, liblighttouch_oneshot.so).
+ * One preparation per process, independent of a running QEMU worker: firmwarekit (crates/lighttouch-firmware, the
+ * preparer every LightTouch port shares) builds the device from its IPSW, with its build-time boots running the APK's
+ * engine itself (`firmwarekit oneshot`, LTM_QEMU_DYLIB), into a device folder that the device worker moves into its
+ * library. It ships as an executable in nativeLibraryDir (libfirmwarekit.so).
  */
 class FirmwareService : Service() {
     private val consumed = AtomicBoolean(false)
@@ -79,7 +79,7 @@ class FirmwareService : Service() {
             val catalog = File(filesDir, "firmware-catalog.json")
             assets.open("firmware-catalog.json").use { input -> catalog.outputStream().use { input.copyTo(it) } }
             run(libs, listOf("create", "--catalog", catalog.path, "--id", firmwareId, "--ipsw", ipsw, "--out", out.path,
-                "--helper", File(libs, "liblighttouch_oneshot.so").path, "--guest-tools", tools.path, "--cache", cache.path,
+                "--guest-tools", tools.path, "--cache", cache.path,
                 "--language", Locale.getDefault().toLanguageTag(),
                 // iOS 5 and later start at the Home screen, not Setup Assistant (ignored before 5, which has none)
                 "--skip-setup") +
