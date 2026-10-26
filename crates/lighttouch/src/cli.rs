@@ -5,14 +5,18 @@
 //! lighttouch import <.itbase | folder> [--sha256 HEX] [--name NAME] [--rom FILE] [--package FILE]
 //! lighttouch prepare <firmware id> [--ipsw FILE] [--rom FILE] [--name NAME]
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE]
+//!                [--network direct|archive[:yyyyMMdd]] [--lan]
 //! ```
 //!
 //! `run` starts a worker like the app does, prints its events, takes an optional screenshot of the last frame, then
-//! shuts iOS down cleanly. A script line is `<seconds> <command json>`, e.g. `40 {"cmd":"button","button":0,"down":true}`.
+//! shuts iOS down cleanly. A script line is `<seconds> <command json>`, e.g. `40 {"cmd":"button","button":0,"down":true}`
+//! or, live, `60 {"cmd":"network","config":{"mode":"archive","archive_date":"20090909","local_network":false}}`.
 use lighttouch_core::frames::{FrameReader, segment_name};
 use lighttouch_core::library::{ImportSource, Library, sha256_file};
+use lighttouch_core::network::NetworkConfig;
 use lighttouch_core::paths::{DataDirs, Resources, data_root};
-use lighttouch_core::protocol::{Command, Event, WorkerArgs};
+use lighttouch_core::protocol::{Command, Event, NetworkArgs, WorkerArgs};
+use lighttouch_core::runtime::NetworkMode;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
@@ -132,9 +136,32 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
     if services && usb.is_none() {
         return Err("--services needs usbmuxd-qemu (LIGHTTOUCH_USBMUXD)".into());
     }
+    let network = match option(args, "--network") {
+        Some(value) => {
+            let (mode, date) = value.split_once(':').unwrap_or((value.as_str(), "20090909"));
+            let mode = match mode {
+                "off" => NetworkMode::Off,
+                "direct" => NetworkMode::Direct,
+                "archive" => NetworkMode::Archive,
+                _ => return Err("--network is off, direct or archive[:yyyyMMdd]".into()),
+            };
+            if !lighttouch_core::network::valid_date(date) {
+                return Err(format!("{date} isn't a yyyyMMdd date from 1996 on"));
+            }
+            let config =
+                NetworkConfig { mode, archive_date: date.into(), local_network: args.iter().any(|a| a == "--lan") };
+            Some(NetworkArgs {
+                config,
+                directory: dirs.network().join(&record),
+                guest_tools: Resources::locate().guest_tools(),
+            })
+        }
+        None => None,
+    };
     let worker_args = WorkerArgs {
         library: dirs.library(),
         usb,
+        network,
         record,
         engine: Resources::locate().engine(),
         frames: frames.name().to_string(),

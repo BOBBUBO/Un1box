@@ -1,7 +1,8 @@
 //! A running device: the worker process for one session, its events, its frames and its performance numbers.
 use crate::Waker;
 use lighttouch_core::frames::{FrameMeta, FrameReader, segment_name};
-use lighttouch_core::protocol::{Command, Event, StatusEvent, WorkerArgs};
+use lighttouch_core::network::NetworkConfig;
+use lighttouch_core::protocol::{Command, Event, NetworkArgs, NetworkStatus, StatusEvent, WorkerArgs};
 use lighttouch_core::runtime::{BoardInfo, Contact, State};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
@@ -63,6 +64,8 @@ pub struct Session {
     pub usb_socket: Option<PathBuf>,
     /// Why the USB link isn't available.
     pub usb_error: Option<String>,
+    /// The session's networking as the worker reports it (`None` until it does, or when this build has none).
+    pub network: Option<NetworkStatus>,
     child: Child,
     stdin: Option<ChildStdin>,
     events: Receiver<Event>,
@@ -103,6 +106,7 @@ pub struct StartOptions {
     pub log_dir: PathBuf,
     pub extra_env: Vec<(String, String)>,
     pub usb: Option<lighttouch_core::protocol::UsbArgs>,
+    pub network: Option<NetworkArgs>,
 }
 
 impl Session {
@@ -123,6 +127,7 @@ impl Session {
             audio: options.audio,
             headphones: options.headphones,
             usb: options.usb.clone(),
+            network: options.network.clone(),
         };
         std::fs::create_dir_all(&options.log_dir).ok();
         prune_logs(&options.log_dir, 10);
@@ -177,6 +182,7 @@ impl Session {
             started_at: Instant::now(),
             usb_socket: None,
             usb_error: None,
+            network: None,
             child,
             stdin,
             events: rx,
@@ -272,6 +278,7 @@ impl Session {
                 }
                 self.pause_after_frontmost();
             }
+            Event::Network(status) => self.network = Some(status),
             Event::GuestResult { .. } | Event::Screenshot { .. } => {}
             Event::Exit { clean, dirty, message } => {
                 let _ = self.child.wait();
@@ -367,6 +374,13 @@ impl Session {
         if matches!(self.phase, Phase::Running | Phase::Paused) {
             self.pause_requested = paused;
             self.send(&Command::Pause { paused });
+        }
+    }
+
+    /// Change the route, archive date or LAN access of the running session.
+    pub fn set_network(&mut self, config: NetworkConfig) {
+        if self.phase.active() {
+            self.send(&Command::Network { config });
         }
     }
 

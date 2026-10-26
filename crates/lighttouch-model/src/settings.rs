@@ -91,6 +91,9 @@ pub struct Settings {
     /// Show the frame inspector button.
     pub inspect_button: bool,
     pub detailed_timing: bool,
+    /// Settings → Network. Off by default; a section that doesn't parse or validate is off.
+    #[serde(deserialize_with = "crate::network::lenient")]
+    pub network: crate::network::NetworkSettings,
     /// How the device is turned on the home view and in full screen.
     pub rotation: crate::rotation::Rotation,
 }
@@ -112,6 +115,7 @@ impl Default for Settings {
             overlay_in_device_view: true,
             inspect_button: false,
             detailed_timing: false,
+            network: Default::default(),
             rotation: crate::rotation::Rotation::Portrait,
         }
     }
@@ -119,7 +123,10 @@ impl Default for Settings {
 
 impl Settings {
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+        let mut settings: Self =
+            std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+        settings.network = settings.network.sanitized(crate::network::Day::today());
+        settings
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {

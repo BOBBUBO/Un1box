@@ -54,6 +54,7 @@ pub fn start_page() -> Option<Page> {
         "add" => Some(Page::Setup(super::setup::Step::Files)),
         "settings" => Some(Page::Settings),
         "licenses" => Some(Page::Licenses),
+        "network" => Some(Page::Network),
         "prepare" => Some(Page::Prepare),
         "store" => Some(Page::Store),
         _ => None,

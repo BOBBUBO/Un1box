@@ -142,7 +142,7 @@ pub enum NetworkMode {
 }
 
 impl NetworkMode {
-    fn raw(self) -> u32 {
+    pub(crate) fn raw(self) -> u32 {
         match self {
             Self::Off => 0,
             Self::Direct => 1,
@@ -436,6 +436,11 @@ impl Runtime {
             guest_status: result.guest_status,
             output: String::from_utf8_lossy(&output).into_owned(),
         })
+    }
+
+    /// Withdraw a pending guest request (a mutation the guest already ran stays done).
+    pub fn guest_cancel(&self, request_id: u64) -> Result<()> {
+        self.call(|r, e| unsafe { sys::lt_runtime_guest_cancel(r, request_id, e) })
     }
 
     /// Destroy after a terminal state (`LT_BUSY` otherwise). On success the device lease is released too.

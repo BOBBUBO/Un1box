@@ -4,6 +4,8 @@
 use std::ffi::{c_char, c_int, c_void};
 
 extern crate libz_sys;
+// OpenSSL 3 for the web proxy (src/network.cpp); this crate links it, vendored for packaged builds.
+extern crate openssl_sys;
 
 pub const LT_ABI_VERSION: u32 = 1;
 pub const LT_MAX_CONTACTS: usize = 8;
@@ -400,6 +402,51 @@ unsafe extern "C" {
         error: *mut lt_error,
     ) -> lt_status;
     pub fn lt_runtime_guest_cancel(runtime: *mut lt_runtime, request_id: u64, error: *mut lt_error) -> lt_status;
+}
+
+/// The guest web proxy (`Portable/network`) through `src/network.cpp`. One per running device.
+#[repr(C)]
+pub struct lt_net_proxy {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct lt_net_activity {
+    pub connections: u64,
+    pub active: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub last_result_error: u32,
+    pub summary: [c_char; 160],
+    pub last_result: [c_char; 512],
+}
+
+unsafe extern "C" {
+    pub fn lt_net_valid_date(date: *const c_char) -> c_int;
+    /// mode 1 direct, 2 archive. Null on failure, with the reason in `error`.
+    pub fn lt_net_create(
+        directory: *const c_char,
+        mode: u32,
+        date: *const c_char,
+        local_network: u32,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> *mut lt_net_proxy;
+    pub fn lt_net_configure(
+        proxy: *mut lt_net_proxy,
+        mode: u32,
+        date: *const c_char,
+        local_network: u32,
+        error: *mut c_char,
+        capacity: usize,
+    ) -> c_int;
+    pub fn lt_net_listen(proxy: *mut lt_net_proxy, path: *const c_char, error: *mut c_char, capacity: usize) -> c_int;
+    pub fn lt_net_certificate(proxy: *const lt_net_proxy, out: *mut u8, capacity: usize) -> usize;
+    pub fn lt_net_fingerprint(proxy: *const lt_net_proxy, out: *mut c_char, capacity: usize);
+    pub fn lt_net_activity_read(proxy: *const lt_net_proxy, out: *mut lt_net_activity);
+    pub fn lt_net_destroy(proxy: *mut lt_net_proxy);
+    /// Windows only: the ROOT certificate store as a PEM file. How many were written, or -1.
+    pub fn lt_net_export_system_roots(path: *const c_char, error: *mut c_char, capacity: usize) -> c_int;
 }
 
 #[cfg(test)]

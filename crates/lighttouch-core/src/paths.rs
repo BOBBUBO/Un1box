@@ -74,6 +74,10 @@ impl DataDirs {
     pub fn profiles(&self) -> PathBuf {
         self.root.join("profiles")
     }
+    /// Per-device guest web proxy identities (`network/<record id>`, owner-only).
+    pub fn network(&self) -> PathBuf {
+        self.root.join("network")
+    }
     /// Frame inspector reports.
     pub fn reports(&self) -> PathBuf {
         self.root.join("reports")
