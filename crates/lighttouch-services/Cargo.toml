@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 # Build OpenSSL from source (packaged builds); otherwise the system library is used.
-vendored-openssl = ["openssl/vendored"]
+vendored-openssl = ["openssl/vendored", "lighttouch-core/vendored-openssl"]
 
 [dependencies]
 lighttouch-catalog = { path = "../lighttouch-catalog" }

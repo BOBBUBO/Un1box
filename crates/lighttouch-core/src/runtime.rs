@@ -142,7 +142,7 @@ pub enum NetworkMode {
 }
 
 impl NetworkMode {
-    fn raw(self) -> u32 {
+    pub(crate) fn raw(self) -> u32 {
         match self {
             Self::Off => 0,
             Self::Direct => 1,

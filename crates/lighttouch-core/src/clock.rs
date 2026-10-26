@@ -75,3 +75,20 @@ pub fn process_resident_bytes() -> u64 {
 pub fn process_resident_bytes() -> u64 {
     0
 }
+
+/// Today's date on the host's calendar (local time): year, month, day.
+#[cfg(unix)]
+pub fn local_date() -> (i32, u32, u32) {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&now, &mut tm) };
+    (tm.tm_year + 1900, tm.tm_mon as u32 + 1, tm.tm_mday as u32)
+}
+
+#[cfg(windows)]
+pub fn local_date() -> (i32, u32, u32) {
+    use windows_sys::Win32::System::SystemInformation::GetLocalTime;
+    let mut now = unsafe { std::mem::zeroed() };
+    unsafe { GetLocalTime(&mut now) };
+    (now.wYear as i32, now.wMonth as u32, now.wDay as u32)
+}
