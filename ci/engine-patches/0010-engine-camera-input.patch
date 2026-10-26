@@ -114,6 +114,16 @@ guest never acknowledged, the timer stops, and the guest's next write to the
 block starts it again -- a phone that has given up on the camera stops being
 warmed by the emulator too.
 
+Then there is the sensor itself. The back camera is a MIPI part the kext talks to
+over the ISP's own I2C command, register by register: it identifies the part,
+writes its configuration and reads values back to check they took. The model
+answered nothing there, so every read came back 0 -- a chip identity of 0x0000,
+which no driver accepts -- and the kext never got as far as programming the ISP's
+output: the camera app showed a buffer nothing had filled. The sensor now has a
+register file of its own behind that command: a write stores, a read returns what
+was stored, and the transfer's result byte says the transfer worked. That is the
+shape a real part has, and it is what a driver's read-back passes on.
+
 Two smaller holes in the same path. An unacknowledged frame kept the frame-done
 interrupt asserted with no way out -- the same interrupt, 15 times a second, for
 ever -- so after two seconds the model drops the acknowledgement it can no longer
@@ -549,7 +559,7 @@ index 526734d..4871a07 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
-index c2b6ecf..dc11831 100644
+index c2b6ecf..a65004c 100644
 --- a/hw/arm/s5l8930_isp.c
 +++ b/hw/arm/s5l8930_isp.c
 @@ -25,6 +25,7 @@
@@ -560,7 +570,7 @@ index c2b6ecf..dc11831 100644
  #include "migration/vmstate.h"
  #include "system/address-spaces.h"
  #include "qemu/bswap.h"
-@@ -51,10 +52,25 @@
+@@ -51,10 +52,28 @@
  #define ISP_OUT_FORMAT  0xd3b20     /* 0x11: 4:2:0 biplanar (NV12), 0x10: 4:2:2 */
  
  #define INT_FRAME       0x1000
@@ -571,6 +581,9 @@ index c2b6ecf..dc11831 100644
 +#define ISP_FRAME_MAX   (2592u * 1936u * 2u)
  #define ISP_DART_SID    1
  
++/* The sensor's own register file, behind the ISP's I2C command: small on purpose. */
++#define SENSOR_REGS     16
++
 +typedef struct ISPFrameMap {
 +    uint32_t *x;            /* source column for each output column */
 +    size_t count;
@@ -586,7 +599,7 @@ index c2b6ecf..dc11831 100644
  struct S5L8930ISPState {
      SysBusDevice parent_obj;
      MemoryRegion cpu_mr, isp_mr;
-@@ -67,10 +83,22 @@ struct S5L8930ISPState {
+@@ -67,10 +86,29 @@ struct S5L8930ISPState {
      DeviceState *dart;
      QEMUTimer *frame_timer;
      uint32_t frames;
@@ -598,6 +611,13 @@ index c2b6ecf..dc11831 100644
 +    uint32_t unacked_ticks;         /* frames in a row the guest left unacknowledged */
 +    uint32_t unacked_drops;         /* acknowledgements dropped in a row: nobody is consuming frames */
 +    bool parked;                    /* the frame timer is stopped until the guest writes again */
++    struct {                        /* the sensor's own register file, behind the I2C command */
++        bool taken;
++        uint8_t slave;
++        uint16_t reg;
++        uint8_t value;
++    } sensor_regs[SENSOR_REGS];
++    unsigned sensor_next;
 +    hwaddr poll_addr;               /* the last block register read, and how often in a row with that value */
 +    uint32_t poll_value, poll_reads;
 +    uint8_t sensor;                 /* the active sensor: HOST_CAMERA_BACK or HOST_CAMERA_FRONT */
@@ -609,7 +629,21 @@ index c2b6ecf..dc11831 100644
  
      FILE *trace;
  };
-@@ -128,6 +156,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -110,8 +148,13 @@ static const struct { uint8_t cat, reg; } isp_commands[] = {
+     { 0x24, 0xb4 },     /* sensor I2C transaction: 24:b5 slave, b6/b7 register/data, result in 24:b9 */
+ };
+ 
++static void isp_sensor_transaction(S5L8930ISPState *s);
++
+ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+ {
++    if (cat == 0x24 && reg == 0xb4) {
++        isp_sensor_transaction(s);
++    }
+     if (cat == 0x24 && reg == 0x0c && s->file[cat][reg] == 5) {
+         s->file[cat][reg] = 1;                          /* request 5 done: the host polls for 1 */
+         return;
+@@ -128,6 +171,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
          s->file[0x00][0x91] = s->file[0x00][0x00];      /* requested sensor mode -> current mode */
          return;
      }
@@ -625,10 +659,76 @@ index c2b6ecf..dc11831 100644
      for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
          if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
              s->file[cat][reg] = 0;
-@@ -139,6 +176,19 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -139,6 +191,85 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
      }
  }
  
++/*
++ * The sensor behind the ISP's I2C command (24:b4: slave in b5, register in b6/b7, data in b8, result in b9).
++ *
++ * The back camera is a MIPI sensor the kext talks to over exactly this channel: it identifies the part, writes
++ * its configuration a register at a time, and reads values back to check they took. Without an answer here
++ * every read returned 0 -- a chip identity of 0x0000, which no driver accepts -- so the kext never got past
++ * identifying the sensor and never programmed the ISP's output. That is the purple frame: the camera app is
++ * looking at a buffer nothing ever filled.
++ *
++ * The model therefore keeps the sensor's own register file: a write stores, a read returns what was stored,
++ * which is how a real part behaves and what makes a driver's read-back checks pass. The identity registers
++ * answer with the part the A4 boards carry: the back sensor is an OmniVision OV5650 (chip ID 0x56 0x50 at
++ * 0x300A/0x300B), the front one a VGA sensor that this model leaves echoing, which is what already works.
++ */
++#define SENSOR_OV5650_ID_HI 0x56
++#define SENSOR_OV5650_ID_LO 0x50
++
++static void isp_sensor_transaction(S5L8930ISPState *s)
++{
++    uint8_t slave = s->file[0x24][0xb5];
++    uint16_t reg = (uint16_t)(s->file[0x24][0xb6] << 8 | s->file[0x24][0xb7]);
++    uint8_t data = s->file[0x24][0xb8];
++    unsigned slot = SENSOR_REGS;
++    uint8_t answer;
++
++    s->file[0x24][0xb9] = 0;            /* the transfer itself worked */
++    if (!slave) {
++        return;                         /* nothing addressed: no sensor answered */
++    }
++    for (unsigned i = 0; i < SENSOR_REGS; i++) {
++        if (s->sensor_regs[i].taken && s->sensor_regs[i].slave == slave &&
++            s->sensor_regs[i].reg == reg) {
++            slot = i;
++            break;
++        }
++    }
++    if (slot == SENSOR_REGS) {
++        for (unsigned i = 0; i < SENSOR_REGS && slot == SENSOR_REGS; i++) {
++            if (!s->sensor_regs[i].taken) {
++                slot = i;
++            }
++        }
++        if (slot == SENSOR_REGS) {
++            slot = s->sensor_next++ % SENSOR_REGS;      /* full: recycle the oldest slot */
++        }
++        s->sensor_regs[slot].taken = true;
++        s->sensor_regs[slot].slave = slave;
++        s->sensor_regs[slot].reg = reg;
++        s->sensor_regs[slot].value = 0;
++    }
++    if (data) {
++        s->sensor_regs[slot].value = data;              /* a write stores, a read returns it */
++    }
++    answer = s->sensor_regs[slot].value;
++    if (s->sensor == HOST_CAMERA_BACK) {
++        if (reg == 0x300a) {
++            answer = SENSOR_OV5650_ID_HI;
++        } else if (reg == 0x300b) {
++            answer = SENSOR_OV5650_ID_LO;
++        }
++    }
++    /* The part's answer lands in the data byte the driver reads back. */
++    s->file[0x24][0xb8] = answer;
++    isp_log(s, "sensor %02x:%04x <- %02x / -> %02x", slave, (unsigned)reg, data, answer);
++}
++
 +/* Does this model act on this command register? A register it does not act on keeps whatever the host wrote,
 + * so a host that polls it waits for a change that never comes. */
 +static bool isp_command_known(uint8_t cat, uint8_t reg)
@@ -645,7 +745,7 @@ index c2b6ecf..dc11831 100644
  static void isp_mailbox(S5L8930ISPState *s)
  {
      uint32_t st = s->cpu[CPU_MBX_STATUS / 4];
-@@ -152,12 +202,59 @@ static void isp_mailbox(S5L8930ISPState *s)
+@@ -152,12 +283,59 @@ static void isp_mailbox(S5L8930ISPState *s)
          uint8_t cat = w >> 16, reg = w >> 8, val = w;
  
          if (write) {
@@ -707,7 +807,7 @@ index c2b6ecf..dc11831 100644
          }
      }
      s->cpu[CPU_MBX_STATUS / 4] = (st & ~MBX_WRITE) | MBX_DONE;
-@@ -257,6 +354,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
+@@ -257,6 +435,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
      }
  }
  
@@ -831,7 +931,7 @@ index c2b6ecf..dc11831 100644
  /*
   * The frame's statistics record (0x1a0 bytes; the kext copies it into H3ISPFrameMetaData), as H3ISP.mediacapture
   * reads it: AE converged at unity gains, AWB and AF settled, and the shutter flag that marks a still.
-@@ -290,24 +504,90 @@ static void isp_frame(void *opaque)
+@@ -290,24 +585,90 @@ static void isp_frame(void *opaque)
  {
      S5L8930ISPState *s = opaque;
      uint32_t *r = s->isp;
@@ -926,7 +1026,7 @@ index c2b6ecf..dc11831 100644
          if (nv12) {
              isp_dma_write(s, y, s->pic, (size_t)w * h);
              if (c > 0x1000) {
-@@ -317,6 +597,10 @@ static void isp_frame(void *opaque)
+@@ -317,6 +678,10 @@ static void isp_frame(void *opaque)
              isp_dma_write(s, y, s->pic, (size_t)w * h * 2);
          }
      }
@@ -937,7 +1037,7 @@ index c2b6ecf..dc11831 100644
      s->frames++;
      /* The finished frame's statistics, in the metadata buffer named by 00:cb (even frames) or 00:cf (odd). */
      memcpy(&meta[0x78], m, 4);   /* a2/a3:58 stays 0: nonzero is the firmware still writing them */
-@@ -325,21 +609,68 @@ static void isp_frame(void *opaque)
+@@ -325,21 +690,68 @@ static void isp_frame(void *opaque)
      r[ISP_CUR_C / 4] = r[ISP_NEXT_C / 4];
      r[ISP_INT_STATUS / 4] |= INT_FRAME;
      isp_update_irq(s);
@@ -1008,7 +1108,7 @@ index c2b6ecf..dc11831 100644
      isp_log(s, "isp W %05x = %08x", (unsigned)addr, (uint32_t)val);
      if (addr == ISP_INT_STATUS) {
          s->isp[addr / 4] &= ~val;
-@@ -369,6 +700,7 @@ static void isp_init(Object *obj)
+@@ -369,6 +781,7 @@ static void isp_init(Object *obj)
      SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
      const char *trace = getenv("IT_ISP_TRACE");
  
@@ -1016,7 +1116,7 @@ index c2b6ecf..dc11831 100644
      s->isp = g_new0(uint32_t, ISP_SIZE / 4);
      s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, isp_frame, s);
      memory_region_init_io(&s->isp_mr, obj, &isp_ops, s, "s5l8930.isp", ISP_SIZE);
-@@ -385,6 +717,24 @@ static void isp_init(Object *obj)
+@@ -385,6 +798,24 @@ static void isp_init(Object *obj)
      }
  }
  
@@ -1041,7 +1141,7 @@ index c2b6ecf..dc11831 100644
  static void isp_reset(DeviceState *dev)
  {
      S5L8930ISPState *s = S5L8930_ISP(dev);
-@@ -395,6 +745,15 @@ static void isp_reset(DeviceState *dev)
+@@ -395,6 +826,15 @@ static void isp_reset(DeviceState *dev)
      timer_del(s->frame_timer);
      s->frames = 0;
      s->shutter = s->strobe = 0;
@@ -1057,7 +1157,7 @@ index c2b6ecf..dc11831 100644
  }
  
  static const VMStateDescription isp_vmstate = {
-@@ -417,6 +776,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
+@@ -417,6 +857,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
  {
      DeviceClass *dc = DEVICE_CLASS(klass);
  

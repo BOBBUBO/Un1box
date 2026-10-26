@@ -197,6 +197,11 @@ def main():
                 ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"],
                 [ENGINE / "hw/arm/host-camera.c"], [HERE / "stub", ENGINE / "include", ROOT], scratch))
 
+        report.run("isp sensor: the kext can identify and configure its sensor", lambda: compile_and_run(
+            report, "sensor i2c", HERE / "sensor-i2c.c", shutil.which("cc") or "cc",
+            ["-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter", "-Wno-unused-label"],
+            [], [HERE / "stub"], scratch))
+
         print("device ISP registers")
         if ENGINE is None:
             report.add("isp registers", True, "skipped: no engine checkout")
