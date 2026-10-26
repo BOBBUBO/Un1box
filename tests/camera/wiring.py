@@ -373,6 +373,27 @@ def android_a_refused_camera_comes_back():
             "camera it is still releasing")
 
 
+def engine_patch_throttles_idle_pushes():
+    """A frame nobody draws must not be copied: half a megabyte at thirty a second is heat."""
+    body = file_body(CAMERA_PATCH, "hw/arm/host-camera.c")
+    require("HOST_CAMERA_IDLE_US" in body and "HOST_CAMERA_IDLE_EVERY" in body,
+            "the camera slot copies every arriving frame even when the guest has taken none for seconds")
+    push = body.split("bool host_camera_push(", 1)[1].split("const uint8_t *host_camera_take(", 1)[0]
+    require("idle_pushes" in push and "return true;" in push,
+            "the idle push path does not return before the copy")
+    take = body.split("const uint8_t *host_camera_take(", 1)[1].split("void host_camera_flush(", 1)[0]
+    require("taken_us" in take,
+            "taking a frame does not record when the guest last consumed one, so the slot can never tell "
+            "an idle guest from an active one")
+
+
+def android_capture_is_rate_limited():
+    capture = read("Android/app/src/main/java/org/lighttouch/android/CameraCapture.kt")
+    require("DELIVER_GAP_NS" in capture and "lastDeliveredNs" in capture,
+            "every frame the phone offers is converted and handed over, including the half the emulated ISP "
+            "throws away: half a megabyte of copy each, in the app's own process")
+
+
 def android_jni_names_match():
     native = read("Android/app/src/main/java/org/lighttouch/android/Native.kt")
     jni = read("Android/app/src/main/cpp/lighttouch_jni.cpp")
@@ -449,5 +470,7 @@ CHECKS = [
     ("android: the front camera follows the guest's switch", android_follows_the_guests_camera_switch),
     ("android: the switch and the choice reach the worker", android_switch_reaches_the_worker),
     ("android: a camera Android refuses is opened again", android_a_refused_camera_comes_back),
+    ("engine patch: frames nobody draws are not copied", engine_patch_throttles_idle_pushes),
+    ("android: the capture is rate-limited to what the device draws", android_capture_is_rate_limited),
     ("android: Kotlin externals all have JNI bodies", android_jni_names_match),
 ]

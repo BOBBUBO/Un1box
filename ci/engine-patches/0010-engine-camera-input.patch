@@ -102,6 +102,11 @@ all ones ("everything has happened"), and a value it wrote itself reads 0 ("it
 was taken"). The registers the model drives are never touched, and a write
 restarts the count.
 
+A fourth is the copy a push makes: half a megabyte for a preview, thirty
+times a second, even when the guest has taken nothing for seconds. Once the guest
+has not consumed a frame for half a second the slot copies one push in eight and
+counts the rest, so a stuck camera costs a counter rather than a memcpy.
+
 A third cost is on this side of the fence: a stuck camera app leaves the model
 producing fifteen frames a second that nobody draws, each one a scaler pass, two
 DMA writes into guest memory and a vCPU wake. After six seconds of frames the
@@ -288,10 +293,10 @@ index 4e31244..fa23e30 100644
  /* Machine controls. */
 diff --git a/hw/arm/host-camera.c b/hw/arm/host-camera.c
 new file mode 100644
-index 0000000..fa82d3f
+index 0000000..f758548
 --- /dev/null
 +++ b/hw/arm/host-camera.c
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,238 @@
 +/*
 + * The frontend's camera: the latest frame per sensor, and nothing else.
 + *
@@ -310,6 +315,15 @@ index 0000000..fa82d3f
 +
 +#include <pthread.h>
 +
++/* While nothing is consuming frames, a push still costs a full frame's copy: an NV12 preview is half a
++ * megabyte, and the phone's camera offers thirty a second. A guest that has stopped taking them -- a stuck
++ * camera app, which is exactly when a phone gets hot -- would then have half a megabyte copied and counted
++ * thirty times a second for pictures nobody sees. So the slot remembers when the guest last took a frame:
++ * after half a second without a take, only one push in eight is copied, and the other seven cost a counter.
++ * The guest is never handed a picture older than that window. */
++#define HOST_CAMERA_IDLE_US     (500 * 1000)
++#define HOST_CAMERA_IDLE_EVERY  8
++
 +/* Three buffers, and two of them can be held at once: the frame the guest has not taken yet, and the one
 + * it is copying right now (it takes a frame, then spends a while in the ISP's scaler with it). A push never
 + * fills either, so a camera faster than the guest cannot overwrite the picture it is reading -- which with
@@ -320,6 +334,8 @@ index 0000000..fa82d3f
 +    uint8_t *buffer[HOST_CAMERA_BUFFERS];
 +    size_t capacity[HOST_CAMERA_BUFFERS];
 +    int write;                  /* where the next push goes */
++    int64_t taken_us;           /* when the guest last took a frame, 0 before the first */
++    unsigned idle_pushes;       /* pushes skipped since the guest last took one */
 +    int pending;                /* the buffer the guest has not taken, -1 when there is none */
 +    int busy;                   /* the buffer the guest took last and may still be reading, -1 when none */
 +    unsigned width, height;
@@ -372,7 +388,17 @@ index 0000000..fa82d3f
 +        return false;
 +    }
 +    {
-+        int target = host_camera_free_buffer(s);
++        int target;
++        int64_t now = g_get_monotonic_time();
++
++        if (s->taken_us && now - s->taken_us > HOST_CAMERA_IDLE_US &&
++            ++s->idle_pushes < HOST_CAMERA_IDLE_EVERY) {
++            s->state.replaced++;    /* nobody is drawing these: do not copy another half megabyte */
++            pthread_mutex_unlock(&host_camera_lock);
++            return true;
++        }
++        s->idle_pushes = 0;
++        target = host_camera_free_buffer(s);
 +
 +        if (target < 0) {
 +            s->state.rejected++;
@@ -422,6 +448,8 @@ index 0000000..fa82d3f
 +    }
 +    s->busy = s->pending;       /* the caller copies out of this one; pushes leave it alone */
 +    s->pending = -1;
++    s->taken_us = g_get_monotonic_time();
++    s->idle_pushes = 0;
 +    s->state.width = 0;
 +    s->state.height = 0;
 +    s->state.taken++;

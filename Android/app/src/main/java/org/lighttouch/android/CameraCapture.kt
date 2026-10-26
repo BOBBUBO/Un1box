@@ -45,6 +45,8 @@ internal class CameraCapture(private val context: Context, private val onError: 
     private var reader: ImageReader? = null
     private val switching = AtomicBoolean(false)
     @Volatile private var retries = 0
+    /** When the last frame was handed to the engine: the phone captures faster than the device draws. */
+    private var lastDeliveredNs = 0L
 
     /** The camera id for a lens facing, or null on a phone without that camera (an iPod touch has one). */
     private fun cameraId(lens: Int): String? = try {
@@ -231,6 +233,12 @@ internal class CameraCapture(private val context: Context, private val onError: 
     private fun deliver(image: Image) {
         val planes = image.planes
         if (planes.size < 3) return
+        // The phone's camera offers thirty frames a second and the emulated ISP consumes fifteen. Converting
+        // the ones in between is a pass over half a megabyte each, in the app's own process: pure heat on a
+        // phone that is already working hard. Half the rate is invisible on screen and halves that cost.
+        val now = System.nanoTime()
+        if (now - lastDeliveredNs < DELIVER_GAP_NS) return
+        lastDeliveredNs = now
         val sensor = if (facing == CameraCharacteristics.LENS_FACING_FRONT) Native.CAMERA_FRONT else Native.CAMERA_BACK
         try {
             val taken = Native.cameraFrame(
@@ -261,6 +269,8 @@ internal class CameraCapture(private val context: Context, private val onError: 
         private const val REOPEN_GAP_MS = 300L
         /** Enough tries to ride out a camera service that is busy, few enough to fail visibly. */
         private const val MAX_OPEN_RETRIES = 5
+        /** ~16 frames a second, which is what the emulated ISP draws: the rest would only be converted. */
+        private const val DELIVER_GAP_NS = 60_000_000L
 
         fun choice(key: String?): Choice = Choice.entries.firstOrNull { it.key == key } ?: Choice.FOLLOW
     }

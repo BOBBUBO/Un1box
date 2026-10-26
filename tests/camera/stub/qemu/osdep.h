@@ -15,6 +15,26 @@
 #include <string.h>
 
 typedef uint64_t hwaddr;
+/* glib's monotonic clock, which qemu/osdep.h brings in whole and host-camera.c uses to rate-limit pushes
+ * while nothing is consuming them. */
+typedef int64_t gint64;
+/* glib's monotonic clock and sleep, which qemu/osdep.h brings in whole and host-camera.c uses to rate-limit
+ * pushes while nothing is consuming them. The real engine links glib; this stub is enough to run the model
+ * and the camera slot on a plain host compiler. */
+#include <time.h>
+static inline int64_t g_get_monotonic_time(void)
+{
+    struct timespec now;
+
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+}
+static inline void g_usleep(unsigned long microseconds)
+{
+    struct timespec pause = { (time_t)(microseconds / 1000000), (long)(microseconds % 1000000) * 1000 };
+
+    nanosleep(&pause, NULL);
+}
 /* The two memory regions are members of the device, so they need a body here. */
 typedef struct MemoryRegion {
     int unused;
