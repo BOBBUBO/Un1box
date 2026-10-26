@@ -30,27 +30,24 @@
 #include <string.h>
 
 #include "hw/arm/host-camera.h"
-/* The slice's stand-in for qemu/osdep.h: g_renew(), which the scaler uses to grow its column map. The
- * test builds with the engine's include paths, where the test's stub comes first. */
 #include "qemu/osdep.h"
 
 /* hw/arm/s5l8930_isp.c's scaler state, reduced to what isp_from_camera() and
  * isp_map_x() touch: the frame buffer the model grows when the guest asks for a
- * bigger mode, and the column map the scaler keeps between frames. */
-struct ISPFrameMap {
-    uint32_t *x;
+ * bigger mode, and the column map the scaler keeps between frames. The map is
+ * the engine's own layout -- a definition, not a copy of the functions, so the
+ * slice can splice isp_map_x() and isp_from_camera() underneath it. */
+typedef struct ISPFrameMap {
+    uint32_t *x;            /* source column for each output column */
     size_t count;
     unsigned sw, w;
-};
+} ISPFrameMap;
 
 typedef struct S5L8930ISPState {
     uint8_t *pic;
     size_t pic_size;
-    struct ISPFrameMap xmap;
+    ISPFrameMap xmap;
 } S5L8930ISPState;
-
-/* The engine names the map's type for the two functions the slice copies. */
-typedef struct ISPFrameMap ISPFrameMap;
 
 static void isp_from_camera(S5L8930ISPState *s, const uint8_t *src, unsigned sw, unsigned sh, unsigned w,
                             unsigned h, bool nv12, bool rotate);

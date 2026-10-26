@@ -349,7 +349,7 @@ index 526734d..4871a07 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
-index c2b6ecf..5a25b2a 100644
+index c2b6ecf..a0d16bb 100644
 --- a/hw/arm/s5l8930_isp.c
 +++ b/hw/arm/s5l8930_isp.c
 @@ -25,6 +25,7 @@
@@ -360,7 +360,7 @@ index c2b6ecf..5a25b2a 100644
  #include "migration/vmstate.h"
  #include "system/address-spaces.h"
  #include "qemu/bswap.h"
-@@ -51,8 +52,15 @@
+@@ -51,8 +52,19 @@
  #define ISP_OUT_FORMAT  0xd3b20     /* 0x11: 4:2:0 biplanar (NV12), 0x10: 4:2:2 */
  
  #define INT_FRAME       0x1000
@@ -371,12 +371,16 @@ index c2b6ecf..5a25b2a 100644
 +#define ISP_FRAME_MAX   (2592u * 1936u * 2u)
  #define ISP_DART_SID    1
  
-+typedef struct ISPFrameMap ISPFrameMap;
++typedef struct ISPFrameMap {
++    uint32_t *x;            /* source column for each output column */
++    size_t count;
++    unsigned sw, w;
++} ISPFrameMap;
 +
  OBJECT_DECLARE_SIMPLE_TYPE(S5L8930ISPState, S5L8930_ISP)
  
  struct S5L8930ISPState {
-@@ -67,10 +75,12 @@ struct S5L8930ISPState {
+@@ -67,10 +79,12 @@ struct S5L8930ISPState {
      DeviceState *dart;
      QEMUTimer *frame_timer;
      uint32_t frames;
@@ -389,7 +393,7 @@ index c2b6ecf..5a25b2a 100644
  
      FILE *trace;
  };
-@@ -128,6 +138,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -128,6 +142,15 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
          s->file[0x00][0x91] = s->file[0x00][0x00];      /* requested sensor mode -> current mode */
          return;
      }
@@ -405,7 +409,7 @@ index c2b6ecf..5a25b2a 100644
      for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
          if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
              s->file[cat][reg] = 0;
-@@ -257,6 +276,129 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
+@@ -257,6 +280,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
      }
  }
  
@@ -422,12 +426,6 @@ index c2b6ecf..5a25b2a 100644
 + * Luma and chroma are sampled on even boundaries so a chroma sample covers the two pixels it stands for,
 + * which is what keeps colours from bleeding on the odd pixel.
 + */
-+struct ISPFrameMap {
-+    uint32_t *x;            /* source column for each output column */
-+    size_t count;
-+    unsigned sw, w;
-+};
-+
 +static void isp_map_x(ISPFrameMap *map, unsigned sw, unsigned w)
 +{
 +    if (map->count < w) {
@@ -535,7 +533,7 @@ index c2b6ecf..5a25b2a 100644
  /*
   * The frame's statistics record (0x1a0 bytes; the kext copies it into H3ISPFrameMetaData), as H3ISP.mediacapture
   * reads it: AE converged at unity gains, AWB and AF settled, and the shutter flag that marks a still.
-@@ -290,7 +432,7 @@ static void isp_frame(void *opaque)
+@@ -290,7 +430,7 @@ static void isp_frame(void *opaque)
  {
      S5L8930ISPState *s = opaque;
      uint32_t *r = s->isp;
@@ -544,7 +542,7 @@ index c2b6ecf..5a25b2a 100644
      uint8_t *f = s->file[front ? 0x04 : 0x03];
      unsigned w = f[0x1b] << 8 | f[0x1c], h = f[0x1d] << 8 | f[0x1e];     /* the output's size; 17..1a the sensor's */
      bool nv12 = r[ISP_OUT_FORMAT / 4] == 0x11;
-@@ -299,15 +441,40 @@ static void isp_frame(void *opaque)
+@@ -299,15 +439,40 @@ static void isp_frame(void *opaque)
      const uint8_t *m = &s->file[0x00][(s->frames & 1) ? 0xcf : 0xcb];
      size_t need = (size_t)w * h * 2;
  
@@ -588,7 +586,7 @@ index c2b6ecf..5a25b2a 100644
          if (nv12) {
              isp_dma_write(s, y, s->pic, (size_t)w * h);
              if (c > 0x1000) {
-@@ -325,7 +492,8 @@ static void isp_frame(void *opaque)
+@@ -325,7 +490,8 @@ static void isp_frame(void *opaque)
      r[ISP_CUR_C / 4] = r[ISP_NEXT_C / 4];
      r[ISP_INT_STATUS / 4] |= INT_FRAME;
      isp_update_irq(s);
@@ -598,7 +596,7 @@ index c2b6ecf..5a25b2a 100644
      timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
  }
  
-@@ -385,6 +553,14 @@ static void isp_init(Object *obj)
+@@ -385,6 +551,14 @@ static void isp_init(Object *obj)
      }
  }
  
@@ -613,7 +611,7 @@ index c2b6ecf..5a25b2a 100644
  static void isp_reset(DeviceState *dev)
  {
      S5L8930ISPState *s = S5L8930_ISP(dev);
-@@ -395,6 +571,11 @@ static void isp_reset(DeviceState *dev)
+@@ -395,6 +569,11 @@ static void isp_reset(DeviceState *dev)
      timer_del(s->frame_timer);
      s->frames = 0;
      s->shutter = s->strobe = 0;
@@ -625,7 +623,7 @@ index c2b6ecf..5a25b2a 100644
  }
  
  static const VMStateDescription isp_vmstate = {
-@@ -417,6 +598,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
+@@ -417,6 +596,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
  {
      DeviceClass *dc = DEVICE_CLASS(klass);
  

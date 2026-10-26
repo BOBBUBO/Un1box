@@ -128,6 +128,25 @@ def compile_and_run(report, name, test_file, compiler, flags, sources, includes,
     return ran.stdout.strip()
 
 
+def compile_whole_model(engine: Path) -> str:
+    """Type-check the model's whole file, not the slices of it.
+
+    A slice compiles the functions alone against a state the test writes, so it cannot see a struct that
+    moved above its own definition -- which is exactly the error that reached CI, after the local slices
+    passed. This compiles the file itself against the declarations in stub/, so anything the model starts
+    using has to be complete and in order.
+    """
+    source = engine / "hw/arm/s5l8930_isp.c"
+    command = [shutil.which("cc") or "cc", "-fsyntax-only", "-std=gnu11", "-Wall", "-Wextra", "-Werror",
+               "-Wno-unused-parameter",
+               "-I", str(HERE / "stub"), "-I", str(engine / "hw/arm"), "-I", str(engine / "include"),
+               str(source)]
+    built = sh(command)
+    if built.returncode:
+        raise Failure("the model does not compile:\n" + built.stderr.strip()[-4000:])
+    return f"{source.name}: {len(source.read_text(errors='ignore').splitlines())} lines"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--engine", help="engine checkout (default: $LT_ENGINE_SOURCE or ../qemu-ios)")
@@ -144,6 +163,12 @@ def main():
     try:
         ENGINE, engine_note = resolve_engine(options.engine, scratch)
         print(f"engine: {engine_note}")
+
+        print("the model, compiled whole")
+        if ENGINE is None:
+            report.add("isp model", True, "skipped: no engine checkout")
+        else:
+            report.run("isp model: hw/arm/s5l8930_isp.c compiles as a whole", lambda: compile_whole_model(ENGINE))
 
         print("device ISP frame")
         if ENGINE is None:
