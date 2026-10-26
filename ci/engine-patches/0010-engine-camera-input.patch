@@ -160,7 +160,9 @@ and the existing slice keeps its pattern assertions with the sensor reads added.
   hw/arm/s5l8930_isp.c                                 sensor recognition picks the slot, frames come from it,
                                                        and a poll nothing can answer is ended
   contrib/macos-app/qemu-macos-extras.c/.h             qemu_ios_camera_write/flush/state/sensor/diag (API 2.6)
-  hw/arm/meson.build                                   host-camera.c for the S5L8930 family
+  hw/arm/camera-sensor.c, include/hw/arm/camera-sensor.h
+                                                       the part on the I2C bus, and the name the board places
+  hw/arm/meson.build                                   host-camera.c and camera-sensor.c for the S5L8930 family
   tests/slice/ipad1-isp-mailbox.c                      the recognition reads, and that they clear
 ---
 diff --git a/contrib/macos-app/qemu-macos-extras.c b/contrib/macos-app/qemu-macos-extras.c
@@ -326,10 +328,10 @@ index 4e31244..fa23e30 100644
  /* Machine controls. */
 diff --git a/hw/arm/camera-sensor.c b/hw/arm/camera-sensor.c
 new file mode 100644
-index 0000000..cfd7091
+index 0000000..3f6bc0d
 --- /dev/null
 +++ b/hw/arm/camera-sensor.c
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,184 @@
 +/*
 + * The camera sensor on its I2C bus.
 + *
@@ -351,8 +353,7 @@ index 0000000..cfd7091
 +#include "hw/core/qdev-properties.h"
 +#include "migration/vmstate.h"
 +#include "qom/object.h"
-+
-+#define TYPE_CAMERA_SENSOR "camera-sensor"
++#include "hw/arm/camera-sensor.h"
 +OBJECT_DECLARE_SIMPLE_TYPE(CameraSensorState, CAMERA_SENSOR)
 +
 +#define SENSOR_REGS 64
@@ -754,10 +755,18 @@ index 0000000..001ec72
 +    return sensor;
 +}
 diff --git a/hw/arm/ipad1.c b/hw/arm/ipad1.c
-index f9cac94..40b1233 100644
+index f9cac94..4ace265 100644
 --- a/hw/arm/ipad1.c
 +++ b/hw/arm/ipad1.c
-@@ -202,6 +202,9 @@ static const A4Board a4_k48 = {
+@@ -48,6 +48,7 @@
+ #include "hw/arm/ipod_touch_lis302dl.h"
+ #include "hw/arm/ipod_touch_cs42l58.h"
+ #include "hw/arm/ipod_touch_cd3272_mikey.h"
++#include "hw/arm/camera-sensor.h"
+ #include "chardev/char.h"
+ #include "hw/i2c/i2c.h"
+ #include "hw/arm/s5l8930.h"
+@@ -202,6 +203,9 @@ static const A4Board a4_k48 = {
           */
          { 0, 0x39, TYPE_CD3272MIKEY },
          /* I2C2: LIS331DLH accelerometer and TSL2581 light sensor. */
@@ -767,7 +776,7 @@ index f9cac94..40b1233 100644
          { 2, 0x19, TYPE_LIS302DL },
          { 2, 0x39, TYPE_S5L8930_TSL2581, 0x25 },     /* DT als interrupt */
      },
-@@ -249,6 +252,9 @@ static const A4Board a4_n81 = {
+@@ -249,6 +253,9 @@ static const A4Board a4_n81 = {
          { 0, 0x74, TYPE_S5L8930_D1815, 0x0d },
          /* CS42L59 (audio0): the same MAP register file the CS42L61 driver saw. */
          { 0, 0x4a, TYPE_CS42L59, 0x0b },
@@ -777,7 +786,7 @@ index f9cac94..40b1233 100644
          { 2, 0x19, TYPE_LIS302DL },
          { 2, 0x49, TYPE_S5L8930_TSL2581, 0x25 },     /* DT als interrupt */
          { 2, 0x68, TYPE_S5L8930_L3G4200D, 0x21, 0x05 },   /* gyro,ap3gdl: INT1, INT2 */
-@@ -309,6 +315,9 @@ static const A4Board a4_n90 = {
+@@ -309,6 +316,9 @@ static const A4Board a4_n90 = {
           * The DT's akm8973s (0x1e) and compass2 (0x0d) nodes find nothing. */
          { 0, 0x0c, TYPE_S5L8930_AK8975 },
          { 0, 0x39, TYPE_CD3272MIKEY },           /* the codec waits for 'mikey' */
@@ -1446,6 +1455,27 @@ index c2b6ecf..20e506c 100644
      device_class_set_legacy_reset(dc, isp_reset);
      dc->vmsd = &isp_vmstate;
      dc->desc = "A4 camera ISP (H3) and its ISP CPU's firmware, high level";
+diff --git a/include/hw/arm/camera-sensor.h b/include/hw/arm/camera-sensor.h
+new file mode 100644
+index 0000000..86897ce
+--- /dev/null
++++ b/include/hw/arm/camera-sensor.h
+@@ -0,0 +1,15 @@
++/*
++ * The camera sensor on its I2C bus.
++ *
++ * The board places it and the driver identifies it, so both sides have to agree on the one type name -- and the
++ * board can only use it if it is declared before it is used. Local checks compiled the model on its own and did
++ * not see the board at all, which is how an undeclared type name reached a device build.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#ifndef HW_ARM_CAMERA_SENSOR_H
++#define HW_ARM_CAMERA_SENSOR_H
++
++#define TYPE_CAMERA_SENSOR "camera-sensor"
++
++#endif
 diff --git a/include/hw/arm/host-camera.h b/include/hw/arm/host-camera.h
 new file mode 100644
 index 0000000..309afad

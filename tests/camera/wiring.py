@@ -68,6 +68,29 @@ def engine_patch_adds_the_source():
     require("'host-camera.c'" in body, "hw/arm/meson.build does not build host-camera.c")
 
 
+def engine_patch_declares_what_the_board_uses():
+    """A name is only usable where it is declared, and only the device build says whether it was.
+
+    The model compiled on its own, against stub/, and passed; the board compiled it next to the model and
+    failed on an undeclared type name, because nothing put the declaration where the board could see it.
+    So: the header exists, it holds the name, and every file that uses the name includes it instead of
+    repeating it.
+    """
+    header, spelled = "include/hw/arm/camera-sensor.h", "hw/arm/camera-sensor.h"
+    declared = file_body(CAMERA_PATCH, header)
+    require('#define TYPE_CAMERA_SENSOR "' in declared,
+            f"{header} no longer declares the sensor's type name, so the board cannot place it")
+    for user in ("hw/arm/camera-sensor.c", "hw/arm/ipad1.c"):
+        body = file_body(CAMERA_PATCH, user)
+        if "TYPE_CAMERA_SENSOR" not in body:
+            continue
+        require(f'#include "{spelled}"' in body,
+                f"{user} uses the sensor's type name without including {spelled}: the device build fails there")
+        require("#define TYPE_CAMERA_SENSOR" not in body,
+                f"{user} defines the sensor's type name itself instead of taking it from {spelled}")
+    return f"{header} declares the name; the model and the board take it from there"
+
+
 def engine_patch_asks_the_camera_first():
     """The ordering that made the microphone's first device build silent: the fallback must come second."""
     body = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
@@ -530,6 +553,7 @@ def patch_stack(patch_dir, engine):
 CHECKS = [
     ("engine patch: the device code, its header and its build entry", engine_patch_adds_the_source),
     ("engine patch: the camera is asked before the test pattern", engine_patch_asks_the_camera_first),
+    ("engine patch: the board sees the sensor's type name", engine_patch_declares_what_the_board_uses),
     ("engine patch: the entry points and API 2.6", engine_patch_exports_the_api),
     ("engine patch: the guest's switch picks the sensor, both exist", engine_patch_lets_the_guest_choose_the_sensor),
     ("engine patch: the frame timer survives a bufferless frame", engine_patch_never_stops_the_frame_timer),
