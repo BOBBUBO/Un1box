@@ -493,7 +493,7 @@ jobs:
             step :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac || status=$?
           fi
           if [ "$status" -ne 0 ]; then
-            grep -aE '^e: |error:|FAILED|Caused by:|What went wrong' "$LOG" | head -8 | while IFS= read -r line; do
+            grep -aE '^e: |error:|FAILED|Caused by:|What went wrong' "$LOG" | head -12 | while IFS= read -r line; do
               echo "::error title=gradle preflight::$(printf '%s' "$line" | cut -c1-900 | sed -e 's/%/%25/g' -e 's/\r/%0D/g')"
             done || true   # no match, or head closing the pipe, is not itself a failure
             echo "---- last 60 lines of $LOG ----"

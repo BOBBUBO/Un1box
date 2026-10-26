@@ -204,13 +204,17 @@ internal class CameraCapture(private val context: Context, private val onError: 
     }
 
     companion object {
-        /** The Settings choice: which camera this phone streams. */
-        enum class Choice(val key: String, val label: String) {
-            FOLLOW("follow", "Follow the device"),
-            BACK("back", "Back"),
-            FRONT("front", "Front"),
-        }
-
         fun choice(key: String?): Choice = Choice.entries.firstOrNull { it.key == key } ?: Choice.FOLLOW
+    }
+
+    /**
+     * The Settings choice: which camera this phone streams. A nested class of the capture, not a member
+     * of its companion object -- `CameraCapture.Choice` does not resolve through a companion object, and
+     * `CameraCapture.Companion.Choice` reads badly at every call site.
+     */
+    enum class Choice(val key: String, val label: String) {
+        FOLLOW("follow", "Follow the device"),
+        BACK("back", "Back"),
+        FRONT("front", "Front"),
     }
 }
