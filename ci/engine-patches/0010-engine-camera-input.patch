@@ -147,23 +147,6 @@ falling back to the test pattern there made the viewfinder alternate between the
 camera and colour bars whenever the phone's frame rate drifted against the ISP's
 tick. The pattern now appears only for a sensor that has never delivered a frame.
 
-And a wait the model promised to help with and then did not. The block's timeout
-ends a poll of a register nothing can answer -- unless the register is one the
-model claims to act on. The I2C engine's request register was exactly that: the
-model answered code 5 and no other, so any other code left the host's value in
-place, and the host, polling for the firmware to take its request, could not be
-released by the timeout either. Every request code the engine is handed is taken
-now, and the timeout's list of "registers the model acts on" is asked with the
-value in hand, so a code this model does not know is a register that gets timed
-out instead of a frozen app.
-
-The back sensor's mode comes from a setfile, the per-sensor configuration the
-host leaves in shared memory for the firmware to apply. This model does not parse
-it, so the output's size stayed empty for the back path -- the "no mode" the
-diagnosis printed -- and the block had nothing to draw at. The size the host
-does fill in is the sensor's own, one pair of registers earlier: applying that is
-the part of the setfile the block needs, and it is what the firmware does here.
-
 Two smaller holes in the same path. An unacknowledged frame kept the frame-done
 interrupt asserted with no way out -- the same interrupt, 15 times a second, for
 ever -- so after two seconds the model drops the acknowledgement it can no longer
@@ -827,7 +810,7 @@ index 526734d..7324309 100644
  # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
  arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
 diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
-index c2b6ecf..258c747 100644
+index c2b6ecf..20e506c 100644
 --- a/hw/arm/s5l8930_isp.c
 +++ b/hw/arm/s5l8930_isp.c
 @@ -25,6 +25,7 @@
@@ -897,7 +880,7 @@ index c2b6ecf..258c747 100644
  
      FILE *trace;
  };
-@@ -110,10 +148,24 @@ static const struct { uint8_t cat, reg; } isp_commands[] = {
+@@ -110,8 +148,13 @@ static const struct { uint8_t cat, reg; } isp_commands[] = {
      { 0x24, 0xb4 },     /* sensor I2C transaction: 24:b5 slave, b6/b7 register/data, result in 24:b9 */
  };
  
@@ -905,26 +888,13 @@ index c2b6ecf..258c747 100644
 +
  static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
  {
--    if (cat == 0x24 && reg == 0x0c && s->file[cat][reg] == 5) {
--        s->file[cat][reg] = 1;                          /* request 5 done: the host polls for 1 */
 +    if (cat == 0x24 && reg == 0xb4) {
 +        isp_sensor_transaction(s);
 +    }
-+    if (cat == 0x24 && reg == 0x0c && s->file[cat][reg]) {
-+        /* The I2C engine's request register: the host writes a code, the firmware runs the transfer and
-+         * leaves 1 for "taken". Only code 5 was answered here, so any other code left the register holding
-+         * what the host wrote -- and, because the register is one this model claims to act on, the timeout
-+         * that ends a poll nothing can answer was told to leave it alone. A host waiting for the engine to
-+         * take its request then waited for ever, which is a frozen camera app with nothing on the ISP moving.
-+         * Every code the engine is handed is taken now. */
-+        if (s->file[cat][reg] != 5) {
-+            isp_log(s, "i2c request %u taken", s->file[cat][reg]);
-+        }
-+        s->file[cat][reg] = 1;                          /* done: the host polls for 1 */
+     if (cat == 0x24 && reg == 0x0c && s->file[cat][reg] == 5) {
+         s->file[cat][reg] = 1;                          /* request 5 done: the host polls for 1 */
          return;
-     }
-     if (cat == 0x00 && (reg == 0x33 || reg == 0x34) && s->file[cat][reg]) {
-@@ -128,6 +180,49 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -128,6 +171,30 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
          s->file[0x00][0x91] = s->file[0x00][0x00];      /* requested sensor mode -> current mode */
          return;
      }
@@ -943,25 +913,6 @@ index c2b6ecf..258c747 100644
 +            timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
 +        }
 +    }
-+    if (cat == 0x00 && reg == 0x40) {
-+        /* A setfile load: the host leaves the per-sensor configuration in shared memory and asks the firmware
-+         * to apply it. The back sensor's mode travels that way -- the host fills the sensor's own size in
-+         * 17..1a and leaves the output's size, 1b..1e, for the firmware to write, which is why this model
-+         * reported no mode at all for the back camera and drew nothing for it. This is the one part of the
-+         * setfile the block needs, so it is what the firmware does here. */
-+        uint8_t *f = s->file[s->sensor == HOST_CAMERA_FRONT ? 0x04 : 0x03];
-+        unsigned sw = f[0x17] << 8 | f[0x18], sh = f[0x19] << 8 | f[0x1a];
-+        unsigned w = f[0x1b] << 8 | f[0x1c], h = f[0x1d] << 8 | f[0x1e];
-+
-+        if (!w && !h && sw && sh) {
-+            f[0x1b] = f[0x17];
-+            f[0x1c] = f[0x18];
-+            f[0x1d] = f[0x19];
-+            f[0x1e] = f[0x1a];
-+            isp_log(s, "setfile: the output takes the sensor's %ux%u", sw, sh);
-+        }
-+        /* No return: the loop below clears the command register the host polls. */
-+    }
 +    if ((cat == 0x03 || cat == 0x04) && reg == 0x00) {
 +        /* Sensor recognition: the kext asks for the sensor it is about to drive, and asks again when
 +         * the app switches cameras. That is the only place it names one, so it is where the active
@@ -974,7 +925,7 @@ index c2b6ecf..258c747 100644
      for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
          if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
              s->file[cat][reg] = 0;
-@@ -139,6 +234,93 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+@@ -139,6 +206,85 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
      }
  }
  
@@ -1046,33 +997,25 @@ index c2b6ecf..258c747 100644
 +
 +/* Does this model act on this command register? A register it does not act on keeps whatever the host wrote,
 + * so a host that polls it waits for a change that never comes. */
-+static bool isp_command_known(uint8_t cat, uint8_t reg, uint8_t val)
++static bool isp_command_known(uint8_t cat, uint8_t reg)
 +{
 +    for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
 +        if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
 +            return true;
 +        }
 +    }
-+    /* Registers this model acts on for some values only: the value is part of the question. Advertising the
-+     * whole register as one the model acts on, whatever it holds, is how a request code it does not know
-+     * becomes a poll nothing is allowed to end. */
-+    if (cat == 0x24 && reg == 0x0c) {
-+        return val != 0;                    /* every request code is taken */
-+    }
-+    if (cat == 0x00 && reg == 0x00) {
-+        return val != 0;                    /* a sensor mode is copied to the current mode */
-+    }
-+    return cat == 0x00 && (reg == 0x33 || reg == 0x34) && val != 0;    /* shutter: the still is taken */
++    return (cat == 0x24 && reg == 0x0c) || (cat == 0x00 && reg == 0x00) ||
++           (cat == 0x00 && (reg == 0x33 || reg == 0x34));
 +}
 +
  static void isp_mailbox(S5L8930ISPState *s)
  {
      uint32_t st = s->cpu[CPU_MBX_STATUS / 4];
-@@ -152,12 +334,59 @@ static void isp_mailbox(S5L8930ISPState *s)
+@@ -152,12 +298,59 @@ static void isp_mailbox(S5L8930ISPState *s)
          uint8_t cat = w >> 16, reg = w >> 8, val = w;
  
          if (write) {
-+            bool ours = isp_command_known(cat, reg, val);
++            bool ours = isp_command_known(cat, reg);
 +
              s->file[cat][reg] = val;
 +            s->spin_reads = 0;      /* a write is the host doing something, not waiting */
@@ -1108,7 +1051,7 @@ index c2b6ecf..258c747 100644
 +             * for ever. That is not a stall the guest can recover from -- it is a core spinning at 100% and
 +             * a phone at 53 degrees. Nothing else can ever change this register, so clearing it after enough
 +             * reads turns the hang into a missing feature. */
-+            if (value && !isp_command_known(cat, reg, value)) {
++            if (value && !isp_command_known(cat, reg)) {
 +                if (s->spin_cat == cat && s->spin_reg == reg && s->spin_val == value) {
 +                    s->spin_reads++;
 +                } else {
@@ -1130,7 +1073,7 @@ index c2b6ecf..258c747 100644
          }
      }
      s->cpu[CPU_MBX_STATUS / 4] = (st & ~MBX_WRITE) | MBX_DONE;
-@@ -257,6 +486,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
+@@ -257,6 +450,123 @@ static void isp_pattern(S5L8930ISPState *s, unsigned w, unsigned h, bool nv12)
      }
  }
  
@@ -1254,7 +1197,7 @@ index c2b6ecf..258c747 100644
  /*
   * The frame's statistics record (0x1a0 bytes; the kext copies it into H3ISPFrameMetaData), as H3ISP.mediacapture
   * reads it: AE converged at unity gains, AWB and AF settled, and the shutter flag that marks a still.
-@@ -290,24 +636,111 @@ static void isp_frame(void *opaque)
+@@ -290,24 +600,111 @@ static void isp_frame(void *opaque)
  {
      S5L8930ISPState *s = opaque;
      uint32_t *r = s->isp;
@@ -1291,8 +1234,7 @@ index c2b6ecf..258c747 100644
 +    if (w && h && (w & 1 || h & 1 || w < 16 || h < 16 || (uint64_t)w * h * 2 > ISP_FRAME_MAX)) {
 +        isp_log(s, "frame skipped: %ux%u is not a mode", w, h);
 +        w = h = 0;
-     }
--    if (w && h && y > 0x1000) {
++    }
 +    /* The guest has to have consumed the last frame before this one may overwrite anything. While it
 +     * reprograms the block -- which is what a sensor switch is: disable, clear the buffers, swap the mode,
 +     * set them again -- the output address in CUR still points at buffers it is tearing down, and writing
@@ -1325,7 +1267,8 @@ index c2b6ecf..258c747 100644
 +        }
 +        timer_mod(s->frame_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + NANOSECONDS_PER_SECOND / 15);
 +        return;
-+    }
+     }
+-    if (w && h && y > 0x1000) {
 +    s->unacked_ticks = 0;
 +    s->unacked_drops = 0;
 +    {
@@ -1371,7 +1314,7 @@ index c2b6ecf..258c747 100644
          if (nv12) {
              isp_dma_write(s, y, s->pic, (size_t)w * h);
              if (c > 0x1000) {
-@@ -316,7 +749,12 @@ static void isp_frame(void *opaque)
+@@ -316,7 +713,12 @@ static void isp_frame(void *opaque)
          } else {
              isp_dma_write(s, y, s->pic, (size_t)w * h * 2);
          }
@@ -1384,7 +1327,7 @@ index c2b6ecf..258c747 100644
      s->frames++;
      /* The finished frame's statistics, in the metadata buffer named by 00:cb (even frames) or 00:cf (odd). */
      memcpy(&meta[0x78], m, 4);   /* a2/a3:58 stays 0: nonzero is the firmware still writing them */
-@@ -325,21 +763,68 @@ static void isp_frame(void *opaque)
+@@ -325,21 +727,68 @@ static void isp_frame(void *opaque)
      r[ISP_CUR_C / 4] = r[ISP_NEXT_C / 4];
      r[ISP_INT_STATUS / 4] |= INT_FRAME;
      isp_update_irq(s);
@@ -1455,7 +1398,7 @@ index c2b6ecf..258c747 100644
      isp_log(s, "isp W %05x = %08x", (unsigned)addr, (uint32_t)val);
      if (addr == ISP_INT_STATUS) {
          s->isp[addr / 4] &= ~val;
-@@ -369,6 +854,7 @@ static void isp_init(Object *obj)
+@@ -369,6 +818,7 @@ static void isp_init(Object *obj)
      SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
      const char *trace = getenv("IT_ISP_TRACE");
  
@@ -1463,7 +1406,7 @@ index c2b6ecf..258c747 100644
      s->isp = g_new0(uint32_t, ISP_SIZE / 4);
      s->frame_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, isp_frame, s);
      memory_region_init_io(&s->isp_mr, obj, &isp_ops, s, "s5l8930.isp", ISP_SIZE);
-@@ -385,6 +871,24 @@ static void isp_init(Object *obj)
+@@ -385,6 +835,24 @@ static void isp_init(Object *obj)
      }
  }
  
@@ -1488,7 +1431,7 @@ index c2b6ecf..258c747 100644
  static void isp_reset(DeviceState *dev)
  {
      S5L8930ISPState *s = S5L8930_ISP(dev);
-@@ -395,6 +899,15 @@ static void isp_reset(DeviceState *dev)
+@@ -395,6 +863,15 @@ static void isp_reset(DeviceState *dev)
      timer_del(s->frame_timer);
      s->frames = 0;
      s->shutter = s->strobe = 0;
@@ -1504,7 +1447,7 @@ index c2b6ecf..258c747 100644
  }
  
  static const VMStateDescription isp_vmstate = {
-@@ -417,6 +930,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
+@@ -417,6 +894,7 @@ static void isp_class_init(ObjectClass *klass, const void *data)
  {
      DeviceClass *dc = DEVICE_CLASS(klass);
  
