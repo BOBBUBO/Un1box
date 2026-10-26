@@ -95,7 +95,7 @@ concurrency:
   # manual run of another branch. A newer push supersedes the run in flight: before this, a build that hung
   # kept the queue for half an hour and there was no way to get past it -- the cancel button on the run page
   # is not enough when the runner never reports back.
-  group: android-perf-apk-${{ github.event.pull_request.number || github.ref }}
+  group: android-perf-apk-b-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
