@@ -457,6 +457,11 @@ class EngineService : Service() {
         Thread({
             val samples = ShortArray(8192)
             var format = ""
+            // While the guest is not playing anything the engine has nothing to hand over, and the loop below
+            // used to ask a hundred times a second for the whole of the OS boot: a JNI call and a wake each
+            // time, for silence. The wait grows while it stays idle and drops back the moment a packet comes,
+            // so sound that starts is delayed by one short wait at most.
+            var idleWaitMs = AUDIO_IDLE_MIN_MS
             while (alive.get()) {
                 // This ticket predates both the native PCM read and format read.
                 // Pause/resume can run while either JNI call is outside the sink lock.
@@ -468,7 +473,10 @@ class EngineService : Service() {
                     Thread.sleep(100)
                     continue
                 }
-                if (count > 0) synchronized(audioGuard) { audioObservations.samples(samples, 0, count, false) }
+                if (count > 0) {
+                    idleWaitMs = AUDIO_IDLE_MIN_MS
+                    synchronized(audioGuard) { audioObservations.samples(samples, 0, count, false) }
+                }
                 if (count > 0 && audioOn && !focusPaused && !userPaused && !stopping.get()) {
                     try {
                         val spec = Native.audioInfo()
@@ -517,7 +525,8 @@ class EngineService : Service() {
                     if (count > 0) synchronized(audioGuard) {
                         audioObservations.discardedReadPackets++; audioObservations.discardedReadSamples += count
                     }
-                    Thread.sleep(10)
+                    Thread.sleep(idleWaitMs.toLong())
+                    idleWaitMs = minOf(idleWaitMs * 2, AUDIO_IDLE_MAX_MS)
                 }
             }
             synchronized(audioGuard) { audio?.release(); audio = null }
@@ -531,6 +540,12 @@ class EngineService : Service() {
     private fun flushAudioLocked() {
         audio?.let { audioObservations.observeTrack(it.playbackHeadPosition, it.underrunCount); it.pause(); it.flush(); audioObservations.flushed() }
     }
+    companion object {
+        /** The pull loop's wait while the guest is silent: its floor, and how far it backs off. */
+        private const val AUDIO_IDLE_MIN_MS = 10
+        private const val AUDIO_IDLE_MAX_MS = 60
+    }
+
     private fun playAudio() = synchronized(audioGuard) { audio?.play(); audioGuard.resume() }
     private fun observations() = Bundle().apply {
         val values = Native.observations()
