@@ -5,8 +5,10 @@ use lighttouch_model::Model;
 use lighttouch_model::inspector::LiveTiming;
 use lighttouch_model::session::{FrameStats, FrameSummary, Session};
 use lighttouch_model::settings::{Corner, OverlayGraph, OverlayLevel, Settings};
+use std::time::{Duration, Instant};
 
 /// What the overlay shows: a running session's numbers, or the settings preview's sample.
+#[derive(Clone)]
 struct Readings {
     summary: FrameSummary,
     cpu_percent: f32,
@@ -31,10 +33,25 @@ impl Readings {
     }
 }
 
+/// How often the numbers change, as on Android: every frame is too fast to read.
+const REFRESH: Duration = Duration::from_millis(250);
+
 pub fn show(ui: &Ui, model: &Model, screen: Rect, scale: f32) {
     if let Some(session) = &model.session {
         if model.settings.overlay != OverlayLevel::Off {
-            draw(ui, &model.settings, &Readings::of(session), screen, scale);
+            let id = egui::Id::unique("overlay-readings");
+            let now = Instant::now();
+            let cached = ui.data(|d| d.get_temp::<(Instant, Readings)>(id));
+            let readings = match cached {
+                Some((at, readings)) if now.duration_since(at) < REFRESH => readings,
+                _ => {
+                    let readings = Readings::of(session);
+                    ui.data_mut(|d| d.insert_temp(id, (now, readings.clone())));
+                    readings
+                }
+            };
+            draw(ui, &model.settings, &readings, screen, scale);
+            ui.ctx().request_repaint_after(REFRESH);
         }
     }
 }
@@ -68,7 +85,7 @@ pub fn preview(ui: &mut Ui, settings: &Settings, session: Option<&Session>) {
     ui.painter().rect_filled(rect, CornerRadius::same(14), Color32::from_rgb(0x1B, 0x3A, 0x4B));
     draw(ui, settings, &readings, rect, 1.0);
     if live.is_some() {
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        ui.ctx().request_repaint_after(REFRESH);
     }
 }
 

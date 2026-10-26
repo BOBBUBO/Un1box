@@ -8,7 +8,8 @@
 #   linux-engine   build/linux/libqemu-arm.so                  x86_64 engine (qemu-ios, portable board)
 #   linux          build/linux/lighttouch-linux (+ engine)     the Linux frontend (Linux/CMakeLists.txt)
 #   android-engine build/android/engine/arm64-v8a/              arm64 engine, libc++_shared.so, notices
-#   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK
+#   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK (LT_ANDROID_ENGINE: a prebuilt
+#                                                             engine; LT_APP_ID_SUFFIX/LT_APP_LABEL: a side-by-side install)
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
 #   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Rust) + lighttouch-oneshot, x86_64
 #   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Rust + the NDK)
@@ -152,7 +153,12 @@ build_android_engine() {
 }
 
 build_android() {
-    build_android_engine
+    # LT_ANDROID_ENGINE=DIR (holding arm64-v8a/: libqemu-arm.so, libc++_shared.so, notices/, an android-engine
+    # output) packages that engine instead of building one.
+    local engine="${LT_ANDROID_ENGINE:-$OUT/android/engine}"
+    if [ -n "${LT_ANDROID_ENGINE:-}" ]; then need "$engine/arm64-v8a/libqemu-arm.so" "LT_ANDROID_ENGINE engine"
+    else build_android_engine; fi
+    mkdir -p "$OBJ" "$OUT/android"
     log "android APK (arm64-v8a, debug)"
     local w="$LT_INPUTS" angle="$LT_INPUTS/graphics/angle-android-arm64-gl-build-01/candidate-01"
     need "$angle/lib" "ANGLE arm64 libraries"
@@ -172,8 +178,9 @@ build_android() {
         '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' -PnativeJobs="$JOBS" -PtargetAbis=arm64-v8a \
         -PportableDir="$REPO/Portable" -PqemuSource="$QEMU_IOS" \
         -PnetworkDeps="$LT_INPUTS/backend/deps/arm64-v8a/prefix" \
-        -PengineRoot="$OUT/android/engine" -PfirmwareKitDir="$OUT/firmwarekit/android" \
-        -PengineNoticeArm64="$OUT/android/engine/arm64-v8a/notices" \
+        -PengineRoot="$engine" -PfirmwareKitDir="$OUT/firmwarekit/android" \
+        -PengineNoticeArm64="$engine/arm64-v8a/notices" \
+        -PappIdSuffix="${LT_APP_ID_SUFFIX:-}" -PappLabel="${LT_APP_LABEL:-LightTouch}" \
         -PsourceRevision="$(git -C "$REPO" rev-parse HEAD)" \
         -PsourceReference="${LT_SOURCE_REFERENCE:-https://github.com/blake-lucas/LightTouch/tree/$(git -C "$REPO" branch --show-current)}" \
         -PbuildRoot="$OBJ/android-gradle" -PmobileServicesArm64="$w/mobile-android/arm64-v8a" \

@@ -6,6 +6,7 @@ pub mod network;
 pub mod notices;
 pub mod prepare;
 pub mod queue;
+pub mod rotation;
 pub mod session;
 pub mod settings;
 pub mod store;

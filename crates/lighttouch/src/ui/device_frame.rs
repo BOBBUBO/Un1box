@@ -1,6 +1,7 @@
 //! The drawn device around the guest screen (port of the Android DeviceFrame): outlines in millimetres, the screen
 //! placed at the panel's exact aspect so the guest never letterboxes, and real Home, Sleep/Wake and volume buttons.
 use eframe::egui::{Color32, CornerRadius, Mesh, Painter, Pos2, Rect, Shape, Stroke, Vec2, epaint, pos2, vec2};
+use lighttouch_model::rotation::Rotation;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Skin {
@@ -90,6 +91,11 @@ impl Skin {
     pub fn screen_aspect(&self) -> f32 {
         self.screen_width / self.screen_height
     }
+
+    /// The screen's aspect as shown, turned to `rotation`.
+    pub fn shown_aspect(&self, rotation: Rotation) -> f32 {
+        if rotation.landscape() { 1.0 / self.screen_aspect() } else { self.screen_aspect() }
+    }
 }
 
 /// Hardware button ids shared with the runtime.
@@ -138,6 +144,30 @@ pub fn layout(skin: &Skin, space: Rect) -> Layout {
         (id, rect, hit)
     });
     Layout { body, screen, home, side, scale, corner: skin.corner * scale }
+}
+
+/// `layout` for the device turned to `rotation`: laid out upright in the turned space, then every part turned a
+/// quarter about the centre (quarter turns keep rectangles upright, so the painting is unchanged).
+pub fn layout_turned(skin: &Skin, space: Rect, rotation: Rotation) -> Layout {
+    if !rotation.landscape() {
+        return layout(skin, space);
+    }
+    let center = space.center();
+    let upright = layout(skin, Rect::from_center_size(center, vec2(space.height(), space.width())));
+    let turn = |r: Rect| {
+        let corner = |p: Pos2| {
+            let (dx, dy) = rotation.turn(p.x - center.x, p.y - center.y);
+            center + vec2(dx, dy)
+        };
+        Rect::from_two_pos(corner(r.min), corner(r.max))
+    };
+    Layout {
+        body: turn(upright.body),
+        screen: turn(upright.screen),
+        home: turn(upright.home),
+        side: upright.side.map(|(id, rect, hit)| (id, turn(rect), turn(hit))),
+        ..upright
+    }
 }
 
 /// Draw the device (everything except the screen contents). `pressed` darkens held buttons.

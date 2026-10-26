@@ -92,30 +92,53 @@ impl GuestView {
         self.texture.is_some()
     }
 
-    /// Draw the screen into `rect` and route input to the guest when `interactive`.
+    /// Draw the screen into `rect` and route input to the guest when `interactive`. An asleep display is black,
+    /// as on the device: the engine sends no frames then, so the last one would otherwise stay up.
     pub fn show(&mut self, ui: &mut Ui, rect: Rect, model: &mut Model, interactive: bool) -> egui::Response {
         let response = ui.interact(rect, ui.scope_id().with("guest-screen"), Sense::click_and_drag());
         ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
-        if let Some(texture) = &self.texture {
-            let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-            ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+        let asleep = model.session.as_ref().is_some_and(|s| s.display_asleep());
+        if let Some(texture) = self.texture.as_ref().filter(|_| !asleep) {
+            // Each corner shows the guest pixel the rotation puts there.
+            let rotation = model.settings.rotation;
+            let mut mesh = egui::Mesh::with_texture(texture.id());
+            for corner in [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()] {
+                let u = ((corner.x - rect.left()) / rect.width()) as f64;
+                let v = ((corner.y - rect.top()) / rect.height()) as f64;
+                let (x, y) = rotation.to_guest(u, v);
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: corner,
+                    uv: egui::pos2(x as f32, y as f32),
+                    color: Color32::WHITE,
+                });
+            }
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            ui.painter().add(egui::Shape::mesh(mesh));
         }
         if interactive {
             self.pointer_input(ui, rect, &response, model);
             self.keyboard_input(ui, model);
         } else {
-            self.release_all(model);
+            // Fingers only: the drawn device's Home and Sleep/Wake keep working (they wake an asleep screen), and
+            // so do their keys.
+            self.release_touches(model);
+            if asleep {
+                self.button_keys(ui, model);
+            }
         }
         response
     }
 
     fn pointer_input(&mut self, ui: &Ui, rect: Rect, response: &egui::Response, model: &mut Model) {
+        let rotation = model.settings.rotation;
         let Some(session) = &mut model.session else { return };
-        let normalized = |p: Pos2| Contact {
-            id: 0,
-            phase: MOVE,
-            x: ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64,
-            y: ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0) as f64,
+        // Where on the guest's (portrait) screen a point lands, however the device is turned.
+        let normalized = |p: Pos2| {
+            let u = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64;
+            let v = ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0) as f64;
+            let (x, y) = rotation.to_guest(u, v);
+            Contact { id: 0, phase: MOVE, x, y }
         };
         let mut batch: Vec<Contact> = Vec::new();
         let (events, pointer) = ui.input(|i| (i.events.clone(), i.pointer.clone()));
@@ -200,7 +223,8 @@ impl GuestView {
                     let n = normalized(p);
                     let pair = self.pair.unwrap_or(Pair { start: (n.x, n.y), parallel: modifiers.shift });
                     let (x, y) = pair.partner(n.x, n.y);
-                    let other = rect.min + egui::vec2(x as f32 * rect.width(), y as f32 * rect.height());
+                    let (u, v) = rotation.from_guest(x, y);
+                    let other = rect.min + egui::vec2(u as f32 * rect.width(), v as f32 * rect.height());
                     let stroke = egui::Stroke::new(1.5, Color32::from_white_alpha(200));
                     for at in [p, other] {
                         ui.painter().circle(at, 11.0, Color32::from_white_alpha(50), stroke);
@@ -231,6 +255,7 @@ impl GuestView {
                 up: key(egui::Key::ArrowUp),
                 down: key(egui::Key::ArrowDown),
             };
+            let keys = model.settings.rotation.keys(keys);
             if let Some(session) = &mut model.session {
                 session.tilt(keys);
                 // Leaning and settling back need steps between guest frames too.
@@ -239,9 +264,15 @@ impl GuestView {
                 }
             }
         }
-        if typing {
+        self.button_keys(ui, model);
+    }
+
+    /// H, P, + and -: the hardware buttons, held while the key is.
+    fn button_keys(&mut self, ui: &Ui, model: &mut Model) {
+        if ui.ctx().egui_wants_keyboard_input() {
             return;
         }
+        let key = |key| ui.input(|i| i.key_down(key) && i.modifiers.is_none());
         let keys = [
             (egui::Key::H, device_frame::HOME),
             (egui::Key::P, device_frame::POWER),
@@ -276,6 +307,24 @@ impl GuestView {
 
     pub fn is_held(&self, button: u32) -> bool {
         self.held.contains(&button)
+    }
+
+    /// Lift every finger, leaving hardware buttons as they are.
+    fn release_touches(&mut self, model: &mut Model) {
+        let mut ids: Vec<u32> = self.mouse.keys().chain(self.touches.values()).copied().collect();
+        if self.pair.take().is_some() {
+            ids.push(2);
+        }
+        if ids.is_empty() {
+            return;
+        }
+        self.mouse.clear();
+        self.touches.clear();
+        ids.sort_unstable();
+        ids.dedup();
+        if let Some(session) = &mut model.session {
+            session.touch(ids.into_iter().map(|id| Contact { id, phase: CANCEL, x: 0.5, y: 0.5 }).collect());
+        }
     }
 
     /// Release every contact and button (focus loss, the screen going away).

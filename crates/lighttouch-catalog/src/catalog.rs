@@ -98,7 +98,7 @@ pub const TESTED: &[&str] = &[
 ];
 
 /// Tested, but noticeably slower than the iPod touch 2G on 3.1.3.
-pub const SLOW: &[&str] = &["n81ap-10B500", "n88ap-9B206", "n90ap-8C148", "n90ap-8L1"];
+pub const SLOW: &[&str] = &["n88ap-9B206", "n90ap-8C148", "n90ap-8L1"];
 
 /// The firmware to pick first: the fastest and most complete.
 pub const RECOMMENDED: &str = "n72ap-7E18";

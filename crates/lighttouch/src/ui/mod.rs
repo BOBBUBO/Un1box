@@ -86,8 +86,9 @@ pub fn run() -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
         .with_title("LightTouch")
         .with_app_id("org.lighttouch.LightTouch")
-        .with_inner_size([1120.0, 780.0])
-        .with_min_inner_size([760.0, 560.0])
+        .with_inner_size(devshot::window_size().unwrap_or([1120.0, 780.0]))
+        // The sidebar takes 268 points; narrower, the pages' cards get cramped.
+        .with_min_inner_size([880.0, 600.0])
         // Unused, and on Windows winit panics when OLE won't register the drop target.
         .with_drag_and_drop(false);
     let options = eframe::NativeOptions { viewport, centered: true, ..Default::default() };
@@ -283,7 +284,7 @@ impl App {
                 .inner_margin(Margin::same(24)),
         );
         let response = modal.show(ctx, |ui| {
-            ui.set_width(380.0);
+            ui.set_width(360.0);
             match dialog {
                 Dialog::Stop => {
                     let name = self.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
@@ -296,7 +297,7 @@ impl App {
                         "iOS shuts down like holding the power button: apps close and the device turns off. Your apps and data are kept.",
                     ));
                     ui.add_space(16.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    widgets::dialog_buttons(ui, |ui| {
                         if widgets::danger(ui, "Shut down").clicked() {
                             self.model.stop();
                             close = true;
@@ -317,7 +318,7 @@ impl App {
                     let submit = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     ui.add_space(16.0);
                     let mut save = false;
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    widgets::dialog_buttons(ui, |ui| {
                         save = widgets::primary_enabled(ui, &p, "Save", fits).clicked();
                         if widgets::text_button(ui, &p, "Cancel").clicked() {
                             close = true;
@@ -342,7 +343,7 @@ impl App {
                         "On the speaker, iOS reshapes the sound for the device's small built-in speaker: mono, with the bass cut and a limiter to protect it. That processing runs on the emulated CPU, so games run a little slower, and the sound is closer to an old iPod's speaker than to your computer's.",
                     ));
                     ui.add_space(16.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    widgets::dialog_buttons(ui, |ui| {
                         if widgets::text_button(ui, &p, "OK").clicked() {
                             close = true;
                         }
@@ -375,7 +376,7 @@ impl App {
                     ui.add_space(4.0);
                     ui.label(widgets::muted(&p, body));
                     ui.add_space(16.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    widgets::dialog_buttons(ui, |ui| {
                         if widgets::danger(ui, "Stop and close").clicked() {
                             self.model.cancel_task();
                             self.close_after_task = true;
@@ -393,7 +394,7 @@ impl App {
                     ui.add_space(4.0);
                     ui.label(widgets::muted(&p, "Its apps, settings and data are removed from this computer. This can't be undone."));
                     ui.add_space(16.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    widgets::dialog_buttons(ui, |ui| {
                         if widgets::danger(ui, "Delete").clicked() {
                             self.model.remove(&id);
                             close = true;
@@ -430,7 +431,9 @@ impl App {
                         .show(ui, |ui| ui.label(RichText::new(text.as_str()).color(p.on_surface)));
                 });
         }
-        if let Some(error) = self.model.error.clone() {
+        // The device page shows errors in its header (home.rs).
+        let in_header = !self.fullscreen && matches!(self.page, Page::Device);
+        if let Some(error) = self.model.error.clone().filter(|_| !in_header) {
             let mut dismiss = false;
             egui::Area::new(egui::Id::unique("error"))
                 .anchor(Align2::CENTER_TOP, vec2(if self.fullscreen { 0.0 } else { 140.0 }, 72.0))

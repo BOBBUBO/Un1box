@@ -8,6 +8,7 @@ pub mod apps;
 pub mod bridge;
 pub mod instproxy;
 pub mod lockdown;
+mod pairing;
 pub mod usbmux;
 
 use std::fmt;

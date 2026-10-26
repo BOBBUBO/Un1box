@@ -181,18 +181,24 @@ fn version_step(app: &mut App, ui: &mut Ui) {
     }
 }
 
+/// What the preparation will use and what it does, laid out like Android's: the IPSW, the boot file, then what
+/// preparing involves, and one button.
 fn files_step(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     let Some(firmware) = app.prepare.firmware.as_deref().and_then(|id| Catalog::get().find(id)).cloned() else {
         app.prepare.step = Step::Version;
         return;
     };
-    let (time, space) = firmware.cost_hint();
+    let rom = Bootrom::for_board(&firmware.board);
+    let name = firmware.device_name();
     header(
         app,
         ui,
-        &format!("{} · iOS {}", firmware.device_name(), firmware.label()),
-        &format!("Takes {time} and needs about {space} free"),
+        &format!("{name}, iOS {}", firmware.label()),
+        &format!(
+            "LightTouch needs Apple's stock IPSW for this version{}",
+            if rom.is_some() { ", and the device's boot file." } else { "." }
+        ),
         |app| app.prepare.step = Step::Version,
     );
     if let Err(reason) = prepare::availability(&app.model.resources) {
@@ -201,91 +207,161 @@ fn files_step(app: &mut App, ui: &mut Ui) {
         });
         return;
     }
+    let support = firmware.support();
+    if support != Support::Tested {
+        let color = if support == Support::Untested { p.on_surface_variant } else { theme::WARNING };
+        ui.label(RichText::new(format!("{}: {}", support.label(), support.detail())).size(12.5).color(color));
+        ui.add_space(8.0);
+    }
+    let busy = app.model.busy().is_some();
 
-    widgets::section(ui, &p, "IPSW");
-    widgets::card(ui, &p, |ui| {
-        let size = format!("{:.0} MB", firmware.ipsw_bytes() as f64 / 1e6);
-        match app.prepare.ipsw_file.clone() {
-            None => {
-                widgets::setting_row(
-                    ui,
-                    &p,
-                    icons::DOWNLOAD,
-                    "Download it",
-                    &format!("{size} from Apple's servers or the Internet Archive"),
-                    |ui| {
-                        if widgets::tonal(ui, &p, "Use a file instead…").clicked() {
-                            if let Some(file) = rfd::FileDialog::new()
-                                .set_title("Choose the IPSW")
-                                .add_filter("IPSW", &["ipsw"])
-                                .pick_file()
-                            {
-                                app.prepare.ipsw_file = Some(file);
-                            }
-                        }
-                    },
-                );
-            }
-            Some(file) => {
-                let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                widgets::setting_row(
-                    ui,
-                    &p,
-                    icons::FILE,
-                    &name,
-                    "Checked against the catalog before it is used",
-                    |ui| {
-                        if widgets::tonal(ui, &p, "Download instead").clicked() {
-                            app.prepare.ipsw_file = None;
-                        }
-                    },
-                );
-            }
-        }
-    });
-
-    if let Some(rom) = Bootrom::for_board(&firmware.board) {
-        widgets::section(ui, &p, "Boot file");
-        widgets::card(ui, &p, |ui| {
-            let known = prepare::known_bootrom(&app.model.dirs, &app.model.devices, rom);
-            let subtitle = match (&app.prepare.bootrom, &known) {
-                (Some(file), _) => file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                (None, Some(_)) => "Already on this computer".to_string(),
-                (None, None) => format!("Downloaded from {}", rom.sources()),
-            };
-            widgets::setting_row(ui, &p, icons::CPU, &format!("{} boot ROM", rom.label()), &subtitle, |ui| {
-                if widgets::tonal(ui, &p, "Choose a file…").clicked() {
-                    if let Some(file) = rfd::FileDialog::new().set_title("Choose the boot ROM").pick_file() {
-                        if rom.matches_file(&file) {
-                            app.prepare.bootrom = Some(file);
-                            app.prepare.error = None;
-                        } else {
-                            app.prepare.error = Some(format!("That file isn't the {} boot ROM.", rom.label()));
-                        }
+    // The IPSW: downloaded as preparing starts, or a file chosen here.
+    let ipsw = app.prepare.ipsw_file.clone();
+    let detail = match &ipsw {
+        Some(file) => format!(
+            "{} · checked against the catalog before it is used",
+            file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        ),
+        None => format!(
+            "{} · {:.0} MB, downloaded when preparing starts",
+            firmware.file_name(),
+            firmware.ipsw_bytes() as f64 / 1e6
+        ),
+    };
+    prep_card(
+        ui,
+        &p,
+        icons::PACKAGE,
+        "iOS firmware (IPSW)",
+        &detail,
+        ipsw.is_some(),
+        Some(&mut |ui: &mut Ui| {
+            ui.horizontal(|ui| {
+                let label = if ipsw.is_some() { "Use a different file" } else { "Choose a file" };
+                if widgets::tonal_enabled(ui, &p, label, !busy).clicked() {
+                    if let Some(file) =
+                        rfd::FileDialog::new().set_title("Choose the IPSW").add_filter("IPSW", &["ipsw"]).pick_file()
+                    {
+                        app.prepare.ipsw_file = Some(file);
                     }
                 }
+                if ipsw.is_some() && widgets::text_button(ui, &p, "Download instead").clicked() {
+                    app.prepare.ipsw_file = None;
+                }
             });
-        });
+            if ipsw.is_none() {
+                ui.add_space(6.0);
+                ui.label(
+                widgets::muted(&p, "Downloads come from Apple's servers when ipsw.me lists them, otherwise from the Internet Archive.")
+                    .size(12.5),
+            );
+            }
+        }),
+    );
+
+    // The boot file: which one the device starts from, always shown.
+    match rom {
+        None => prep_card(
+            ui,
+            &p,
+            icons::CPU,
+            "Boot file",
+            &format!("None needed. The {name} starts from the files preparation makes."),
+            true,
+            None,
+        ),
+        Some(rom) => {
+            let known = prepare::known_bootrom(&app.model.dirs, &app.model.devices, rom);
+            let (ready, detail) = match (&app.prepare.bootrom, &known) {
+                (Some(file), _) => (
+                    true,
+                    format!(
+                        "{} ({}). It is the same for every iOS version.",
+                        file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                        rom.label()
+                    ),
+                ),
+                (None, Some(path)) => {
+                    let from = app.model.devices.iter().find(|d| d.record.bootrom_path.as_ref() == Some(path));
+                    let whose = from.map(|d| format!("the one from {}", d.name)).unwrap_or("the saved one".into());
+                    (true, format!("Reusing {whose} ({}). It is the same for every iOS version.", rom.label()))
+                }
+                (None, None) => (
+                    false,
+                    format!(
+                        "64 KB, part of the chip rather than the IPSW. Downloaded from {} when preparing starts.",
+                        rom.sources()
+                    ),
+                ),
+            };
+            let title = format!("Boot file · {} boot ROM", rom.label());
+            prep_card(
+                ui,
+                &p,
+                icons::CPU,
+                &title,
+                &detail,
+                ready,
+                Some(&mut |ui: &mut Ui| {
+                    let label = if ready { "Use a different file" } else { "Choose a file" };
+                    if widgets::tonal_enabled(ui, &p, label, !busy).clicked() {
+                        if let Some(file) = rfd::FileDialog::new().set_title("Choose the boot ROM").pick_file() {
+                            if rom.matches_file(&file) {
+                                app.prepare.bootrom = Some(file);
+                                app.prepare.error = None;
+                            } else {
+                                app.prepare.error = Some(format!("That file isn't the {} boot ROM.", rom.label()));
+                            }
+                        }
+                    }
+                }),
+            );
+        }
     }
 
-    widgets::section(ui, &p, "Name");
-    ui.add(
-        egui::TextEdit::singleline(&mut app.prepare.name)
-            .hint_text(lighttouch_catalog::catalog::default_device_name(
-                &firmware.board,
-                &firmware.build,
-                app.model.devices.iter().map(|d| d.name.as_str()),
-            ))
-            .desired_width(f32::INFINITY)
-            .margin(vec2(10.0, 8.0)),
+    prep_card(
+        ui,
+        &p,
+        icons::PENCIL,
+        "Name",
+        "Optional; shown in the device list",
+        false,
+        Some(&mut |ui: &mut Ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.prepare.name)
+                    .hint_text(lighttouch_catalog::catalog::default_device_name(
+                        &firmware.board,
+                        &firmware.build,
+                        app.model.devices.iter().map(|d| d.name.as_str()),
+                    ))
+                    .desired_width(f32::INFINITY)
+                    .margin(vec2(10.0, 8.0)),
+            );
+        }),
     );
+
     if let Some(error) = &app.prepare.error {
         ui.add_space(8.0);
         ui.label(RichText::new(error).color(p.error));
     }
-    ui.add_space(16.0);
-    let busy = app.model.busy().is_some();
-    if widgets::primary_enabled(ui, &p, "Prepare device", !busy).clicked() {
+    ui.add_space(12.0);
+    let (time, space) = firmware.cost_hint();
+    ui.label(
+        widgets::muted(
+            &p,
+            format!(
+                "Preparing runs on this computer, takes {time} and needs about {space} free. It shows in the device \
+                 list while it runs. LightTouch's guest tools are added for you."
+            ),
+        )
+        .size(12.5),
+    );
+    ui.add_space(20.0);
+    let mut start = false;
+    ui.vertical_centered(|ui| {
+        start = widgets::primary_enabled(ui, &p, "Prepare device", !busy).clicked();
+    });
+    if start {
         app.prepare.error = None;
         app.model.prepare(PrepareRequest {
             firmware_id: firmware.id.clone(),
@@ -296,6 +372,43 @@ fn files_step(app: &mut App, ui: &mut Ui) {
         app.prepare.started = Some(Instant::now());
         app.prepare.step = Step::Progress;
     }
+}
+
+/// One thing the preparation needs, as a card: icon (coloured once it's settled), title, detail, then controls.
+fn prep_card(
+    ui: &mut Ui,
+    p: &theme::Palette,
+    icon: &str,
+    title: &str,
+    detail: &str,
+    done: bool,
+    add: Option<&mut dyn FnMut(&mut Ui)>,
+) {
+    ui.add_space(6.0);
+    widgets::card(ui, p, |ui| {
+        ui.horizontal(|ui| {
+            let color = if done { p.primary } else { p.on_surface_variant };
+            ui.label(widgets::icon_text(icon, 22.0).color(color));
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.set_max_width((ui.available_width() - 36.0).max(120.0));
+                ui.label(RichText::new(title).size(14.5).family(theme::medium()));
+                ui.label(widgets::muted(p, detail).size(12.5));
+            });
+            if done {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(widgets::icon_text(icons::CHECK_CIRCLE, 22.0).color(p.primary));
+                });
+            }
+        });
+        if let Some(add) = add {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add_space(38.0);
+                ui.vertical(|ui| add(ui));
+            });
+        }
+    });
 }
 
 fn progress_step(app: &mut App, ui: &mut Ui) {

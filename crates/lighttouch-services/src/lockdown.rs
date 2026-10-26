@@ -2,7 +2,7 @@
 //! `StartSession` the connection continues inside TLS made with the host's pairing certificate. Old iOS only speaks
 //! TLS 1.0 with RSA key exchange and 1024-bit keys, which OpenSSL allows at security level 0.
 use crate::usbmux::{Mux, MuxDevice, PairRecord};
-use crate::{Error, Io, Result, dictionary, read_exact_vec, string, to_xml};
+use crate::{Error, Io, Result, dictionary, pairing, read_exact_vec, string, to_xml};
 use openssl::pkey::PKey;
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode, SslVersion};
 use openssl::x509::X509;
@@ -145,9 +145,15 @@ impl Lockdown {
     /// a missing record means the guest is still starting.
     pub fn session(mux: &Mux, device: &MuxDevice, timeout: Duration) -> Result<Self> {
         let mut lockdown = Self::connect(mux, device, timeout)?;
-        let record = mux
-            .pair_record(&device.udid)?
-            .ok_or_else(|| Error("The guest isn't paired yet; try again once iOS has finished starting.".into()))?;
+        let record = match mux.pair_record(&device.udid)? {
+            Some(record) => record,
+            // The Windows daemon is built without libimobiledevice, so it never pairs: pair here, as
+            // libimobiledevice's clients do. LIGHTTOUCH_SELF_PAIR does the same elsewhere, for testing.
+            None if cfg!(windows) || std::env::var_os("LIGHTTOUCH_SELF_PAIR").is_some() => lockdown.pair()?,
+            None => {
+                return Err(Error("The guest isn't paired yet; try again once iOS has finished starting.".into()));
+            }
+        };
         let buid = if record.system_buid.is_empty() { mux.buid()? } else { record.system_buid.clone() };
         if lockdown.version.0 < 7 {
             let pair = Dictionary::from_iter([
@@ -172,6 +178,55 @@ impl Lockdown {
         }
         lockdown.record = Some(record);
         Ok(lockdown)
+    }
+
+    /// Pair with the guest and store the record with the daemon, as libimobiledevice's `lockdownd_pair` does: new
+    /// root and host keys, a device certificate for the guest's public key, all signed by the root. iOS 7 and
+    /// later ask on the guest's screen first.
+    fn pair(&mut self) -> Result<PairRecord> {
+        let public_key = match self.value(None, Some("DevicePublicKey"))? {
+            Value::Data(key) => key,
+            _ => return Err(Error("the guest has no public key to pair with".into())),
+        };
+        // Read before pairing: iOS 7 drops the connection when it's asked afterwards.
+        let wifi = self.value(None, Some("WiFiAddress")).ok();
+        let buid = self.mux.buid()?;
+        // While iOS 7 and later wait for Trust to be tapped, every retry asks with the same identity.
+        let (host_id, keys) = pairing::pending(&self.device.udid, &public_key, self.version)?;
+        let mut record = Dictionary::from_iter([
+            ("DeviceCertificate", Value::Data(keys.device_certificate)),
+            ("HostCertificate", Value::Data(keys.host_certificate)),
+            ("HostID", Value::from(host_id)),
+            ("RootCertificate", Value::Data(keys.root_certificate)),
+            ("SystemBUID", Value::from(buid)),
+        ]);
+        let options = Dictionary::from_iter([("ExtendedPairingErrors", Value::Boolean(true))]);
+        let reply = self
+            .request(
+                "Pair",
+                Dictionary::from_iter([
+                    ("PairRecord", Value::Dictionary(record.clone())),
+                    ("ProtocolVersion", Value::from("2")),
+                    ("PairingOptions", Value::Dictionary(options)),
+                ]),
+            )
+            .map_err(|e| match e.0.contains("PairingDialogResponsePending") {
+                true => Error("Tap Trust on the guest's screen to let LightTouch install apps.".into()),
+                false => e,
+            })?;
+        record.insert("HostPrivateKey".into(), Value::Data(keys.host_private_key));
+        record.insert("RootPrivateKey".into(), Value::Data(keys.root_private_key));
+        if let Some(bag @ Value::Data(_)) = reply.get("EscrowBag") {
+            record.insert("EscrowBag".into(), bag.clone());
+        }
+        if let Some(wifi @ Value::String(_)) = wifi {
+            record.insert("WiFiMACAddress".into(), wifi);
+        }
+        let mut bytes = Vec::new();
+        Value::Dictionary(record).to_writer_binary(&mut bytes)?;
+        self.mux.save_pair_record(&self.device, &bytes)?;
+        pairing::forget(&self.device.udid);
+        PairRecord::parse(&bytes)
     }
 
     fn request(&mut self, request: &str, mut fields: Dictionary) -> Result<Dictionary> {

@@ -94,6 +94,8 @@ pub struct Settings {
     /// Settings → Network. Off by default; a section that doesn't parse or validate is off.
     #[serde(deserialize_with = "crate::network::lenient")]
     pub network: crate::network::NetworkSettings,
+    /// How the device is turned on the home view and in full screen.
+    pub rotation: crate::rotation::Rotation,
 }
 
 impl Default for Settings {
@@ -114,6 +116,7 @@ impl Default for Settings {
             inspect_button: false,
             detailed_timing: false,
             network: Default::default(),
+            rotation: crate::rotation::Rotation::Portrait,
         }
     }
 }

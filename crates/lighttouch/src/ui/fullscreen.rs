@@ -17,7 +17,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let full = ui.max_rect();
     ui.painter().rect_filled(full, 0.0, Color32::BLACK);
     let board = app.model.current().map(|d| d.board.clone());
-    let aspect = Skin::for_board(board.as_deref()).screen_aspect();
+    let aspect = Skin::for_board(board.as_deref()).shown_aspect(app.model.settings.rotation);
     let fit = home::fit_aspect(full, aspect);
     let docked = (full.height() - fit.height()) / 2.0 >= 0.8 * BAR;
     let screen = if docked { home::fit_aspect(full.shrink2(vec2(0.0, BAR)), aspect) } else { fit };
@@ -169,6 +169,11 @@ fn button_bar(app: &mut App, ui: &mut Ui, bar: Rect, running: bool) {
         }
         if ui.button(widgets::icon_label(icons::CAMERA, "Screenshot", None)).clicked() {
             app.model.screenshot();
+        }
+        let rotation = app.model.settings.rotation;
+        if ui.button(widgets::icon_label(icons::ROTATE, &format!("Rotate: {}", rotation.label()), None)).clicked() {
+            app.model.settings.rotation = rotation.next();
+            app.model.save_settings();
         }
         let level = app.model.settings.overlay;
         if ui
