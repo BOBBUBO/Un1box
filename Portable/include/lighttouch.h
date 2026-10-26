@@ -358,6 +358,33 @@ lt_status lt_runtime_mic_info(lt_runtime *, lt_mic_info *, lt_error *);
 /* Drop what the app pushed and the guest has not taken: what a recorder does when it stops, so the
  * next capture starts at the microphone and not with the tail of the one before it. */
 lt_status lt_runtime_mic_flush(lt_runtime *, lt_error *);
+/* The host's camera into the guest's ISP. One frame per call, NV12 (a Y plane of width*height, then
+ * interleaved CbCr of width*height/2), tightly packed, at most LT_CAMERA_MAX_WIDTH x
+ * LT_CAMERA_MAX_HEIGHT and even in both directions (a chroma sample covers two pixels). The A4 boards
+ * have two sensors and the guest picks between them: the frame goes to the camera the guest's driver
+ * last recognised. Latest wins -- a frame replaces one the guest has not taken yet, so a guest slower
+ * than the camera shows the newest picture instead of replaying an old one -- which is why this is not
+ * the microphone's ring. LT_AGAIN while the guest is not running or the engine has no camera tap (an
+ * older engine); LT_UNSUPPORTED for an engine built before it. Any thread. */
+#define LT_CAMERA_BACK 0
+#define LT_CAMERA_FRONT 1
+#define LT_CAMERA_MAX_WIDTH 1280
+#define LT_CAMERA_MAX_HEIGHT 960
+typedef struct {
+    uint32_t size, version;
+    uint32_t sensor;           /* the lt_camera_sensor this describes */
+    uint32_t width, height;    /* the frame waiting for the guest; 0 when none */
+    uint64_t pushed_frames, taken_frames, replaced_frames, rejected_frames;
+} lt_camera_info;
+lt_status lt_runtime_camera_write(lt_runtime *, int sensor, const uint8_t *nv12, uint32_t bytes,
+                                  uint32_t width, uint32_t height, lt_error *);
+lt_status lt_runtime_camera_info(lt_runtime *, int sensor, lt_camera_info *, lt_error *);
+/* Forget both sensors' frames: the app stopped capturing, or the guest switched cameras. */
+lt_status lt_runtime_camera_flush(lt_runtime *, lt_error *);
+/* Which sensor the guest's driver last recognised (LT_CAMERA_BACK/LT_CAMERA_FRONT): what the guest's own
+ * camera switch does, so the app can stream that camera instead of guessing. LT_UNSUPPORTED for an engine
+ * built before the camera tap; the value is the back sensor until the guest recognises one. */
+lt_status lt_runtime_camera_sensor(lt_runtime *, int *sensor, lt_error *);
 /* Small typed guest operations use the existing agent, never a host/guest shell.
  * Requests are async, at most one pending; caller polls completion. Lost/timeout
  * mutations are not retried. Launch builtin IDs are limited to com.apple.*;

@@ -234,6 +234,24 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   frontmost app, per-frame GL totals, slow GL calls, BQL waits and holds, Android present stages
   ([PROFILING.md](PROFILING.md)).
 
+## Camera
+
+- [ ] Camera on the phone (patch `ci/engine-patches/0010-engine-camera-input.patch`): the A4's ISP model
+  (`hw/arm/s5l8930_isp.c`) draws a test pattern, so the guest's camera app works and shows nothing real. The
+  phone's camera now feeds the ISP's output through `hw/arm/host-camera.c`: a latest-wins slot per sensor
+  (the camera produces 30 fps, the ISP takes 15, so the newest frame is the only one worth showing — this is
+  the deliberate difference from the microphone's ring, where every sample matters), NV12 in, and the ISP
+  scales it nearest-neighbour into whichever output layout the guest asked for (`0x11` NV12 or `yuvs` 4:2:2).
+  Both sensors: the guest's own front/back switch is a sensor recognition (`03:00` back, `04:00` front), the
+  model records it and tells the frontend (`qemu_ios_camera_sensor`), and `CameraCapture.kt` reopens the
+  phone's matching camera. Settings has the switch and Follow/Back/Front; with Follow the device decides.
+  The test pattern is still the fallback, so a headless engine, a Mac and a phone without a camera behave
+  exactly as before. `python3 tests/camera/run.py --engine qemu-ios` (`--sanitize` adds ASan/UBSan) checks
+  the tap and the scaler against the real device code, a planar and a semi-planar `ImageReader` frame through
+  the JNI conversion, the portable API, and the wiring — including that the camera is asked *before* the
+  pattern, which is the ordering that made the first microphone build silent. **Not measured and not yet
+  seen on a device**; to check, open the guest's Camera app and switch cameras in it, then take a still.
+
 ## Audio
 
 - [ ] Microphone on the phone (patch `ci/engine-patches/0009-engine-microphone-input.patch`): the phone's

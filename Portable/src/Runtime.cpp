@@ -126,6 +126,12 @@ struct Engine {
     decltype(&qemu_ios_microphone_write) mic_write = nullptr;
     decltype(&qemu_ios_microphone_flush) mic_flush = nullptr;
     decltype(&qemu_ios_microphone_state) mic_state = nullptr;
+    // Optional too: an engine built before the camera tap lacks these three, and the guest keeps the
+    // test pattern its ISP model has always produced.
+    decltype(&qemu_ios_camera_write) camera_write = nullptr;
+    decltype(&qemu_ios_camera_flush) camera_flush = nullptr;
+    decltype(&qemu_ios_camera_state) camera_state = nullptr;
+    decltype(&qemu_ios_camera_sensor) camera_sensor = nullptr;
     decltype(&qemu_ios_profile_start) profile_start = nullptr;
     decltype(&qemu_ios_profile_stop) profile_stop = nullptr;
     decltype(&qemu_ios_profile_status) profile_status = nullptr;
@@ -192,6 +198,10 @@ struct Engine {
             mic_write = reinterpret_cast<decltype(mic_write)>(dlsym(library, "qemu_ios_microphone_write"));
             mic_flush = reinterpret_cast<decltype(mic_flush)>(dlsym(library, "qemu_ios_microphone_flush"));
             mic_state = reinterpret_cast<decltype(mic_state)>(dlsym(library, "qemu_ios_microphone_state"));
+            camera_write = reinterpret_cast<decltype(camera_write)>(dlsym(library, "qemu_ios_camera_write"));
+            camera_flush = reinterpret_cast<decltype(camera_flush)>(dlsym(library, "qemu_ios_camera_flush"));
+            camera_state = reinterpret_cast<decltype(camera_state)>(dlsym(library, "qemu_ios_camera_state"));
+            camera_sensor = reinterpret_cast<decltype(camera_sensor)>(dlsym(library, "qemu_ios_camera_sensor"));
             package_report =
                 reinterpret_cast<decltype(package_report)>(dlsym(library, "qemu_ios_guest_package_report"));
         } catch (...) {
@@ -1064,6 +1074,58 @@ lt_status lt_runtime_mic_flush(lt_runtime *r, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && r->engine->mic_flush != nullptr, "engine has no microphone input", LT_UNSUPPORTED);
         r->engine->mic_flush();
+    });
+}
+lt_status lt_runtime_camera_write(lt_runtime *r, int sensor, const uint8_t *nv12, uint32_t bytes,
+                                  uint32_t width, uint32_t height, lt_error *e) {
+    int accepted = 0;
+    const auto status = lt::guard(e, [&] {
+        lt::require(r && nv12, "invalid camera frame");
+        lt::require(sensor == LT_CAMERA_BACK || sensor == LT_CAMERA_FRONT, "camera sensor must be 0 (back) or 1 (front)");
+        lt::require(width > 0 && height > 0 && !(width & 1) && !(height & 1) &&
+                        width <= LT_CAMERA_MAX_WIDTH && height <= LT_CAMERA_MAX_HEIGHT,
+                    "camera frame must be even and at most 1280x960");
+        lt::require(bytes == uint64_t(width) * height * 3 / 2, "camera frame must be NV12 (width*height*3/2 bytes)");
+        lt::require(r->engine->camera_write != nullptr, "engine has no camera input", LT_UNSUPPORTED);
+        std::lock_guard<std::mutex> lock(r->mutex);
+        lt::require(r->started && !r->done, "guest runtime inactive", LT_AGAIN);
+        accepted = r->engine->camera_write(sensor, nv12, int(bytes), int(width), int(height));
+        lt::require(accepted >= 0, "engine rejected the camera frame");
+    });
+    if (status != LT_OK)
+        return status; // Validation/errors keep their original precedence.
+    return accepted ? status : lt::error(e, LT_AGAIN, "camera frame refused");
+}
+lt_status lt_runtime_camera_info(lt_runtime *r, int sensor, lt_camera_info *info, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->engine->camera_state != nullptr, "engine has no camera input", LT_UNSUPPORTED);
+        lt::require(sensor == LT_CAMERA_BACK || sensor == LT_CAMERA_FRONT, "camera sensor must be 0 (back) or 1 (front)");
+        lt::abi(info);
+        uint32_t width = 0, height = 0;
+        uint64_t pushed = 0, taken = 0, replaced = 0, rejected = 0;
+        const int waiting = r->engine->camera_state(sensor, &width, &height, &pushed, &taken, &replaced, &rejected);
+        info->sensor = uint32_t(sensor);
+        info->width = width;
+        info->height = height;
+        info->pushed_frames = pushed;
+        info->taken_frames = taken;
+        info->replaced_frames = replaced;
+        info->rejected_frames = rejected;
+        lt::require(waiting >= 0, "engine rejected the camera query");
+    });
+}
+lt_status lt_runtime_camera_flush(lt_runtime *r, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->engine->camera_flush != nullptr, "engine has no camera input", LT_UNSUPPORTED);
+        r->engine->camera_flush();
+    });
+}
+lt_status lt_runtime_camera_sensor(lt_runtime *r, int *sensor, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && sensor, "invalid camera sensor output");
+        lt::require(r->engine->camera_sensor != nullptr, "engine has no camera input", LT_UNSUPPORTED);
+        const int active = r->engine->camera_sensor();
+        *sensor = active == LT_CAMERA_FRONT ? LT_CAMERA_FRONT : LT_CAMERA_BACK;
     });
 }
 lt_status lt_runtime_guest_status(lt_runtime *r, uint32_t *out, lt_error *e) {

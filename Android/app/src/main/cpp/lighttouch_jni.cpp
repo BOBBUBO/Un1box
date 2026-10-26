@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <dlfcn.h>
 #include <dirent.h>
+#include "camera_planes.h"
 #include "frame_pacer.h"
 #include "display_priority.h"
 #include <optional>
@@ -1108,6 +1109,62 @@ JNI(microphoneInfo) jlongArray JNICALL Java_org_lighttouch_android_Native_microp
     jlong data[6]={jlong(status),jlong(info.sample_rate),jlong(info.queued_frames),jlong(info.capturing),
                    jlong(info.pushed_frames),jlong(info.dropped_frames)};
     jlongArray arr=env->NewLongArray(6);env->SetLongArrayRegion(arr,0,6,data);return arr;
+}
+
+// The guest's camera: one YUV_420_888 image from Camera2, converted here and handed to the engine, which
+// puts it on the ISP's output buffers for whichever sensor its driver last recognised. The conversion is
+// in camera_planes.h (plain C++, checked on both the planar and the semi-planar layouts in
+// tests/camera/jni-glue.cpp). Returns the NV12 bytes taken, 0 when the frame was dropped (the guest is not
+// running, or no longer wants a camera), negative = error. The planes' buffers are direct, as ImageReader
+// hands them out; a non-direct one is refused rather than copied blind.
+JNI(cameraFrame) jint JNICALL Java_org_lighttouch_android_Native_cameraFrame(JNIEnv *env,jobject,
+        jobject yBuffer,jint yRow,jint yPixel,jobject uBuffer,jint uRow,jint uPixel,
+        jobject vBuffer,jint vRow,jint vPixel,jint width,jint height,jint sensor) {
+    std::lock_guard<std::mutex> lock(guard);
+    if(!runtime)return 0;
+    if(!yBuffer||!uBuffer||!vBuffer)return -jint(LT_INVALID);
+    const auto *y=static_cast<const uint8_t*>(env->GetDirectBufferAddress(yBuffer));
+    const auto *u=static_cast<const uint8_t*>(env->GetDirectBufferAddress(uBuffer));
+    const auto *v=static_cast<const uint8_t*>(env->GetDirectBufferAddress(vBuffer));
+    if(!y||!u||!v)return -jint(LT_INVALID);
+    const auto yBytes=size_t(env->GetDirectBufferCapacity(yBuffer));
+    const auto uBytes=size_t(env->GetDirectBufferCapacity(uBuffer));
+    const auto vBytes=size_t(env->GetDirectBufferCapacity(vBuffer));
+    if(!lt::cameraPlanesFit(width,height,yRow,yPixel,uRow,uPixel,vRow,vPixel,yBytes,uBytes,vBytes))
+        return -jint(LT_INVALID);
+    static thread_local std::vector<uint8_t> nv12;
+    nv12.resize(lt::nv12Bytes(width,height));
+    lt::cameraToNv12(y,yRow,yPixel,u,uRow,uPixel,v,vRow,vPixel,width,height,nv12.data());
+    lt_error error=LT_INIT(lt_error);
+    const auto status=lt_runtime_camera_write(runtime,sensor,nv12.data(),uint32_t(nv12.size()),
+                                              uint32_t(width),uint32_t(height),&error);
+    if(status==LT_OK)return jint(nv12.size());
+    if(status==LT_AGAIN)return 0;              // the guest is not running: a dropped frame, not an error
+    return -jint(status);
+}
+JNI(cameraFlush) void JNICALL Java_org_lighttouch_android_Native_cameraFlush(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return;
+    lt_error error=LT_INIT(lt_error);lt_runtime_camera_flush(runtime,&error);
+}
+// Which sensor the guest's driver last recognised, so the capture can stream the camera the device is actually
+// using (its own front/back switch is a sensor recognition). -1 when this engine has no camera tap, which the
+// Java side reads as "do not follow".
+JNI(cameraSensor) jint JNICALL Java_org_lighttouch_android_Native_cameraSensor(JNIEnv *env,jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    if(!runtime)return -1;
+    lt_error error=LT_INIT(lt_error);int sensor=LT_CAMERA_BACK;
+    const auto status=lt_runtime_camera_sensor(runtime,&sensor,&error);
+    if(status!=LT_OK)return -1;
+    return jint(sensor==LT_CAMERA_FRONT?LT_CAMERA_FRONT:LT_CAMERA_BACK);
+}
+JNI(cameraInfo) jlongArray JNICALL Java_org_lighttouch_android_Native_cameraInfo(JNIEnv *env,jobject,jint sensor) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_camera_info info=LT_INIT(lt_camera_info);lt_error error=LT_INIT(lt_error);
+    const auto status=runtime?lt_runtime_camera_info(runtime,sensor,&info,&error):LT_AGAIN;
+    jlong data[8]={jlong(status),jlong(info.sensor),jlong(info.width),jlong(info.height),
+                   jlong(info.pushed_frames),jlong(info.taken_frames),jlong(info.replaced_frames),
+                   jlong(info.rejected_frames)};
+    jlongArray arr=env->NewLongArray(8);env->SetLongArrayRegion(arr,0,8,data);return arr;
 }
 
 JNI(profile) jstring JNICALL Java_org_lighttouch_android_Native_profile(JNIEnv *env,jobject,jstring path) {

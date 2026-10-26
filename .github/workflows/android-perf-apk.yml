@@ -551,7 +551,7 @@ jobs:
           git -C qemu-ios add -A
           GIT_AUTHOR_DATE=2001-01-01T00:00:00Z GIT_COMMITTER_DATE=2001-01-01T00:00:00Z \
             git -C qemu-ios -c user.name=ci -c user.email=ci@localhost \
-            commit -q -m "ci: engine patches (slirp DNS, GLES, TCG fast paths, microphone)"
+            commit -q -m "ci: engine patches (slirp DNS, GLES, TCG fast paths, microphone, camera)"
           git -C qemu-ios log --oneline -1
           git -C qemu-ios status --porcelain
 
@@ -565,6 +565,13 @@ jobs:
         # check still shows in the run; locally the same command is strict.
         continue-on-error: true
         run: python3 tests/mic/run.py --engine qemu-ios
+
+      # The same for the camera: the ISP's frame tap (isp_from_camera sliced out of hw/arm/s5l8930_isp.c
+      # against the real hw/arm/host-camera.c), the NV12 conversion of a planar and a semi-planar
+      # ImageReader frame, the portable API, the JNI glue, and that the front camera follows the guest.
+      - name: Self-check the camera path
+        continue-on-error: true
+        run: python3 tests/camera/run.py --engine qemu-ios
 
       - name: Build the engine
         run: |

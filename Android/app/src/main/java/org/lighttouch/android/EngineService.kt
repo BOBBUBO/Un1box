@@ -34,6 +34,14 @@ class EngineService : Service() {
     @Volatile private var microphoneError = ""
     private var microphoneThread: Thread? = null
     private var recorder: AudioRecord? = null
+    /** The Settings switch and choice for this phone's camera; read at the next guest start. */
+    @Volatile private var cameraWanted = false
+    @Volatile private var cameraOn = false
+    @Volatile private var cameraError = ""
+    @Volatile private var cameraFollows = true
+    private var cameraChoice = CameraCapture.Choice.FOLLOW
+    private var camera: CameraCapture? = null
+    private var cameraWatch: Thread? = null
     private val buttonDownAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonUpAdmissions = java.util.concurrent.atomic.AtomicLongArray(2)
     private val buttonRejections = java.util.concurrent.atomic.AtomicLong(0)
@@ -179,6 +187,12 @@ class EngineService : Service() {
             val headphones = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("headphones", true)
             microphoneWanted = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("microphone", false)
             microphoneError = ""
+            getSharedPreferences("ui", MODE_PRIVATE).let { prefs ->
+                cameraWanted = prefs.getBoolean("camera", false)
+                cameraChoice = CameraCapture.choice(prefs.getString("camera_facing", null))
+                cameraFollows = cameraChoice == CameraCapture.Choice.FOLLOW
+            }
+            cameraError = ""
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()
@@ -562,6 +576,8 @@ class EngineService : Service() {
         } })
         putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioOutputOn", audioOn)
         putBoolean("microphoneOn", microphoneOn); putString("microphoneError", microphoneError)
+        putBoolean("cameraOn", cameraOn); putString("cameraError", cameraError)
+        putString("cameraFacing", cameraChoice.key)
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
         putLong("buttonRejections", buttonRejections.get())
@@ -602,9 +618,12 @@ class EngineService : Service() {
             audio?.play()
             audioGuard.resume()
             audioOn = true
+            // The camera follows the guest for the same reason the microphone does: a paused or backgrounded
+            // device does not hold the phone's camera (and its indicator) open.
+            startCamera()
         }
     } }
-    private fun stopAudioOutput() { lifecycleAdmission.run { audioOn = false; stopMicrophone() } }
+    private fun stopAudioOutput() { lifecycleAdmission.run { audioOn = false; stopMicrophone(); stopCamera() } }
     /**
      * This phone's microphone into the guest's capture port. Started and stopped with the guest's audio, so a
      * paused or backgrounded guest does not hold the recorder, and released by the reading thread itself so a
@@ -665,6 +684,51 @@ class EngineService : Service() {
     private fun stopMicrophone() {
         microphoneOn = false
         recorder?.let { runCatching { it.stop() } }
+    }
+    /**
+     * This phone's camera into the guest's ISP, for the camera app, everything that takes a picture, and the
+     * front/back switch. One camera at a time: the choice is Follow the device (the sensor the guest's driver
+     * recognised, asked of the engine twice a second), Back or Front.
+     */
+    private fun startCamera() {
+        if (cameraOn || !cameraWanted || stopping.get() || !alive.get()) return
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            cameraError = "Camera off: LightTouch has no camera permission. Turn the switch off and on again to grant it."
+            return
+        }
+        val first = when (cameraChoice) {
+            CameraCapture.Choice.BACK -> Native.CAMERA_BACK
+            CameraCapture.Choice.FRONT -> Native.CAMERA_FRONT
+            // Before the guest names a sensor, it has the back one.
+            CameraCapture.Choice.FOLLOW -> Native.cameraSensor().takeIf { it >= 0 } ?: Native.CAMERA_BACK
+        }
+        val capture = CameraCapture(applicationContext) { problem -> if (cameraOn) cameraError = problem }
+        camera = capture
+        cameraOn = true
+        cameraError = ""
+        capture.start(first)
+        if (!cameraFollows) return
+        cameraWatch = Thread({
+            while (cameraOn && alive.get() && !stopping.get()) {
+                try {
+                    Thread.sleep(500)
+                } catch (_: InterruptedException) {
+                    break
+                }
+                if (!cameraOn) break
+                // The guest's own front/back switch: its driver recognises the other sensor, the engine says
+                // which, and the session reopens on that camera. -1: an engine without the camera tap.
+                val sensor = Native.cameraSensor()
+                if (sensor >= 0) capture.follow(sensor)
+            }
+        }, "camera-watch").apply { start() }
+    }
+    private fun stopCamera() {
+        cameraOn = false
+        cameraWatch?.interrupt()
+        cameraWatch = null
+        camera?.stop()
+        camera = null
     }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)

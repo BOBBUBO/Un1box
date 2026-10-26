@@ -74,6 +74,13 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         settings.microphone = granted
         if (!granted) error = "Without the microphone permission the emulated device has no input."
     }
+    /** The phone's camera into the guest, read by the worker at the next guest start. */
+    override val camera: Boolean get() = settings.camera
+    override val cameraFacing: String get() = settings.cameraFacing
+    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        settings.camera = granted
+        if (!granted) error = "Without the camera permission the emulated device keeps its test pattern."
+    }
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
     private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
@@ -453,6 +460,18 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         }
         settings.microphone = on
         notice = if (on) "This phone's microphone feeds the device from the next start" else "The device gets no microphone input from the next start"
+    }
+    override fun useCamera(on: Boolean) {
+        if (on && checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            cameraPermission.launch(android.Manifest.permission.CAMERA)
+            return
+        }
+        settings.camera = on
+        notice = if (on) "This phone's camera feeds the device from the next start" else "The device shows its test pattern from the next start"
+    }
+    override fun useCameraFacing(key: String) {
+        settings.cameraFacing = key
+        notice = "The camera choice applies from the next start; Follow the device already follows the device's own switch"
     }
     override fun applySettings() {
         if (!settings.tilt) stopSensors() else if (status == "running") startSensors()

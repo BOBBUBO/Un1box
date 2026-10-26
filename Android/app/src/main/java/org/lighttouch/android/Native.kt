@@ -1,10 +1,14 @@
 package org.lighttouch.android
 
 import android.view.Surface
+import java.nio.ByteBuffer
 
 /** Loaded only in :engine. UI never loads QEMU or constructs boot arguments. */
 internal object Native {
     init { System.loadLibrary("lighttouch_jni") }
+    /** The two sensors the A4's ISP has, as the engine and the portable API name them. */
+    const val CAMERA_BACK = 0
+    const val CAMERA_FRONT = 1
     external fun importBase(source: String, libraryRoot: String, displayName: String, rom: String, guest: String, sha256: String = ""): String
     /** A firmwarekit output folder in this app's storage, moved in as a new record's base (lt_library_adopt_prepared). */
     external fun adoptPrepared(source: String, libraryRoot: String, displayName: String, rom: String): String
@@ -58,4 +62,22 @@ internal object Native {
     external fun microphoneFlush()
     /** status, sampleRate, queuedFrames, capturing, pushedFrames, droppedFrames. */
     external fun microphoneInfo(): LongArray
+
+    /**
+     * One Camera2 frame: the three YUV_420_888 planes (direct buffers, as ImageReader hands them out) with
+     * their row and pixel strides, converted to NV12 and handed to the guest's ISP for `sensor` (0 back,
+     * 1 front). Returns the bytes taken, 0 when the frame was dropped (the guest is not running), negative
+     * = error.
+     */
+    external fun cameraFrame(
+        y: ByteBuffer, yRowStride: Int, yPixelStride: Int,
+        u: ByteBuffer, uRowStride: Int, uPixelStride: Int,
+        v: ByteBuffer, vRowStride: Int, vPixelStride: Int,
+        width: Int, height: Int, sensor: Int,
+    ): Int
+    external fun cameraFlush()
+    /** status, sensor, width, height, pushed, taken, replaced, rejected. */
+    external fun cameraInfo(sensor: Int): LongArray
+    /** The camera the emulated device is using: 0 back, 1 front; -1 when the engine cannot say. */
+    external fun cameraSensor(): Int
 }

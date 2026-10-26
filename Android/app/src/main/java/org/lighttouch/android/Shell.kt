@@ -72,6 +72,12 @@ interface GuestHost {
     /** True while this phone's microphone feeds the emulated device's capture port; read at guest start. */
     val microphone: Boolean
     fun useMicrophone(on: Boolean)
+    /** True while this phone's camera feeds the emulated device's ISP; read at guest start. */
+    val camera: Boolean
+    fun useCamera(on: Boolean)
+    /** CameraCapture.Choice.key: "follow" (the device's own front/back switch), "back" or "front". */
+    val cameraFacing: String
+    fun useCameraFacing(key: String)
     fun pickGuestTools()
     fun openLicenses()
     fun openPreparation()
