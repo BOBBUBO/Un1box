@@ -60,6 +60,8 @@ impl Bridge {
                 .arg(pairing)
                 .arg("-P")
                 .arg(dir.join("daemon.pid"))
+                // LIGHTTOUCH_SELF_PAIR: the app pairs, as it must on Windows (lockdown.rs), so the daemon doesn't.
+                .args(std::env::var_os("LIGHTTOUCH_SELF_PAIR").map(|_| "-p"))
                 .env("USBMUXD_QEMU_ADDR", &guest_socket)
                 .stdin(Stdio::null())
                 .stdout(out.try_clone()?)
