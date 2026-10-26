@@ -157,31 +157,31 @@ index d08cfe1..7fcf66d 100644
 +    }
 +    host_camera_state(&state);
 +    if (mode_width) {
-+        *mode_width = int(state.sensor[sensor].mode_width);
++        *mode_width = (int)state.sensor[sensor].mode_width;
 +    }
 +    if (mode_height) {
-+        *mode_height = int(state.sensor[sensor].mode_height);
++        *mode_height = (int)state.sensor[sensor].mode_height;
 +    }
 +    if (format) {
-+        *format = int(state.sensor[sensor].format);
++        *format = (int)state.sensor[sensor].format;
 +    }
 +    if (sensor_active) {
 +        *sensor_active = qemu_ios_camera_sensor();
 +    }
 +    if (drawn) {
-+        *drawn = unsigned(state.sensor[sensor].drawn);
++        *drawn = (unsigned)state.sensor[sensor].drawn;
 +    }
 +    if (from_phone) {
-+        *from_phone = unsigned(state.sensor[sensor].from_phone);
++        *from_phone = (unsigned)state.sensor[sensor].from_phone;
 +    }
 +    if (unacked) {
-+        *unacked = unsigned(state.sensor[sensor].unacked);
++        *unacked = (unsigned)state.sensor[sensor].unacked;
 +    }
 +    if (no_chroma) {
-+        *no_chroma = unsigned(state.sensor[sensor].no_chroma);
++        *no_chroma = (unsigned)state.sensor[sensor].no_chroma;
 +    }
 +    if (stalls) {
-+        *stalls = unsigned(state.sensor[sensor].stalls);
++        *stalls = (unsigned)state.sensor[sensor].stalls;
 +    }
 +    if (stuck_commands) {
 +        *stuck_commands = s5l8930_isp_stuck_commands();

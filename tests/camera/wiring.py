@@ -179,6 +179,31 @@ def engine_patch_refuses_a_size_that_is_not_a_mode():
             "allocation and a DMA, which is a hang rather than a skipped frame")
 
 
+def engine_patches_stay_c():
+    """An engine patch adds C, and the portable build compiles those files as C.
+
+    `int(x)` and `unsigned(x)` are C++: in a .c file they are a syntax error, and this is exactly how the
+    camera build failed once -- the diagnostic entry point used both, and the engine job died three minutes
+    in, before any APK existed. contrib/macos-app/qemu-macos-extras.c is compiled by
+    contrib/portable/make-shared.py with the C compiler it reads out of compile_commands.json, so every added
+    line that lands in a .c file has to be C."""
+    pattern = re.compile(r"[=(,]\s*(?:int|unsigned|long|size_t|uint\d+_t|int\d+_t)\s*\(")
+    offenders = []
+    for patch in sorted(Path(PATCHES).glob("*.patch")):
+        current = None
+        for line in read(patch).splitlines():
+            if line.startswith("+++ b/"):
+                current = line[len("+++ b/"):]
+                continue
+            if current is None or not current.endswith(".c") or not line.startswith("+"):
+                continue
+            if line.startswith("+++"):
+                continue
+            if pattern.search(line[1:]):
+                offenders.append(f"{patch.name} {current}: {line[1:].strip()}")
+    require(not offenders, "a C++ functional cast in a C file compiles nowhere:\n  " + "\n  ".join(offenders[:5]))
+
+
 def engine_patch_forgets_a_stopped_camera():
     extras = added_lines(CAMERA_PATCH)
     require("host_camera_flush();" in extras, "stopping the capture does not drop the frame the guest never took")
@@ -370,6 +395,7 @@ CHECKS = [
     ("engine patch: a poll nothing can answer ends", engine_patch_ends_a_poll_nothing_can_answer),
     ("engine patch: an unacknowledged frame does not storm", engine_patch_does_not_storm_an_unacknowledged_frame),
     ("engine patch: a size that is not a mode is refused", engine_patch_refuses_a_size_that_is_not_a_mode),
+    ("engine patch: the added code is C, not C++", engine_patches_stay_c),
     ("engine patch: a stopped camera is forgotten", engine_patch_forgets_a_stopped_camera),
     ("portable: the API is declared and typed", portable_declares_the_api),
     ("portable: the engine's entry points are resolved, and optional", portable_resolves_exactly_the_exported_names),

@@ -115,7 +115,9 @@ jobs:
     # A skipped confirmation (a manual run) is fine; a rejected or cancelled one is not.
     if: always() && needs.confirm.result != 'failure' && needs.confirm.result != 'cancelled'
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+    # A ceiling for the whole job, above the sum of the step timeouts but far below the old 350:
+    # a run that wedges now fails within the hour instead of holding the queue all day.
+    timeout-minutes: 120
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_NDK_VERSION: 28.2.13676358
@@ -149,6 +151,7 @@ jobs:
           echo "APK is named ci/LightTouch-<engine>-arm64-debug.apk"
 
       - name: Extract firmwarekit, USB bridge and guest tools from the published APK
+        timeout-minutes: 15
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_RELEASE_REPO: ${{ env.DECLARED_BASE_RELEASE_REPO }}
@@ -333,12 +336,14 @@ jobs:
           PY
 
       - name: JDK 17
+        timeout-minutes: 5
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Free disk space
+        timeout-minutes: 10
         run: |
           df -h / | tail -1
           # The engine build trees, the NDK and Gradle are the three big ones; the
@@ -349,9 +354,13 @@ jobs:
             /usr/local/share/chromium /usr/lib/firefox /var/lib/docker/overlay2/* || true
           df -h / /mnt 2>/dev/null | tail -3
       - name: Install host tools, NDK 28.2 and CMake 3.22.1
+        timeout-minutes: 20
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ninja-build pkg-config python3-venv perl autoconf automake libtool
+          # Bounded and retried: an apt mirror that stops answering used to leave this step
+          # running until the job's own timeout, an hour into a run that would never produce
+          # an APK. Now one attempt cannot last more than five minutes.
+          sudo timeout 300 apt-get update -qq || sudo timeout 300 apt-get update -qq
+          sudo timeout 600 apt-get install -y -qq ninja-build pkg-config python3-venv perl autoconf automake libtool
           python3 -m venv meson
           meson/bin/pip install --quiet --disable-pip-version-check meson==1.10.0 packaging==24.0
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -366,6 +375,7 @@ jobs:
       # again over a complete tree. A file a recipe records but this engine ref does not carry is
       # written into the string as absent, so such a ref still gets a key (and never a stale hit).
       - name: Fingerprint the dependency and engine recipes
+        timeout-minutes: 5
         id: recipes
         run: |
           recorded() {
@@ -408,6 +418,7 @@ jobs:
       # The engine scripts ask ninja and make for exactly two jobs. The wrapper
       # rewrites that one argument; nothing else about their recipes changes.
       - name: Let the engine scripts use more than two jobs
+        timeout-minutes: 5
         run: |
           mkdir -p ci/bin
           printf '%s\n' '#!/bin/bash' \
@@ -421,6 +432,7 @@ jobs:
           cat ci/bin/ninja
 
       - name: Cache the engine dependencies
+        timeout-minutes: 10
         id: deps-cache
         uses: actions/cache@v4
         with:
@@ -430,6 +442,7 @@ jobs:
           key: lt-deps-arm64-${{ steps.recipes.outputs.deps }}
 
       - name: Cache the engine object tree
+        timeout-minutes: 10
         uses: actions/cache@v4
         with:
           path: ci/engine-build
@@ -439,12 +452,14 @@ jobs:
             lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ env.LT_JOBS }}-
 
       - name: Cache the signing key
+        timeout-minutes: 5
         uses: actions/cache@v4
         with:
           path: ci/debug.keystore
           key: lt-ci-debug-keystore-v1
 
       - name: Use a stable keystore for the debug build
+        timeout-minutes: 10
         run: |
           mkdir -p "$HOME/.android" ci
           if [ ! -f ci/debug.keystore ]; then
@@ -465,6 +480,7 @@ jobs:
       # after the engine's three minutes in "Build the APK". Compilation needs neither the
       # engine nor firmwarekit: only the packaging tasks read those.
       - name: Preflight the Gradle build
+        timeout-minutes: 25
         working-directory: Android
         run: |
           # A Kotlin error used to reach the run as "exit code 1" and nothing else: the step log lives
@@ -506,6 +522,7 @@ jobs:
       # running make and ninja again over an already complete tree. The hit must also carry the
       # libraries the engine links; a tree without them is built again.
       - name: Build the engine dependencies
+        timeout-minutes: 45
         if: steps.deps-cache.outputs.cache-hit != 'true' || hashFiles('ci/deps/prefix/lib/libavcodec.a', 'ci/crypto/prefix/lib/libgcrypt.a') == ''
         run: |
           deps() {
@@ -527,6 +544,7 @@ jobs:
       # for Android here, with the engine's own set-restricted/dns-forward patch, into the
       # prefix dependency('slirp') reads.
       - name: Build libslirp for Android
+        timeout-minutes: 20
         run: |
           if [ -f ci/deps/prefix/lib/libslirp.a ]; then
             echo "libslirp is already in the dependency prefix; nothing to build"
@@ -566,6 +584,7 @@ jobs:
       # hw/arm/host-mic.c and its header) leaves it untracked, and `commit -a` alone leaves it
       # behind, which is a dirty tree to the guard even after the commit.
       - name: Patch the engine for Android
+        timeout-minutes: 10
         run: |
           git -C qemu-ios apply "$GITHUB_WORKSPACE"/ci/engine-patches/*.patch
           git -C qemu-ios add -A
@@ -580,6 +599,7 @@ jobs:
       # silent voice in front of it), the portable API, the JNI glue, and the wiring between them.
       # Seconds, against the ten minutes an engine build takes; `--sanitize` adds ASan/UBSan.
       - name: Self-check the microphone path
+        timeout-minutes: 10
         # Reported, not gating: a compiler this job has never met could warn where the
         # author's did not, and a warning is not a reason to withhold an APK. A failed
         # check still shows in the run; locally the same command is strict.
@@ -590,10 +610,12 @@ jobs:
       # against the real hw/arm/host-camera.c), the NV12 conversion of a planar and a semi-planar
       # ImageReader frame, the portable API, the JNI glue, and that the front camera follows the guest.
       - name: Self-check the camera path
+        timeout-minutes: 10
         continue-on-error: true
         run: python3 tests/camera/run.py --engine qemu-ios
 
       - name: Build the engine
+        timeout-minutes: 60
         run: |
           set -o pipefail
           engine() {
@@ -632,6 +654,7 @@ jobs:
           fi
 
       - name: Keep the engine build log
+        timeout-minutes: 5
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -640,6 +663,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Stage the engine next to the NDK C++ runtime
+        timeout-minutes: 10
         run: |
           mkdir -p ci/engine/arm64-v8a
           cp ci/engine-build/libqemu-arm.so ci/engine/arm64-v8a/
@@ -649,6 +673,7 @@ jobs:
           file ci/engine/arm64-v8a/libqemu-arm.so
 
       - name: Build the APK
+        timeout-minutes: 40
         working-directory: Android
         run: |
           ./gradlew --no-daemon --max-workers="$LT_JOBS" \
@@ -672,6 +697,7 @@ jobs:
       # hand out an APK that cannot update the one before it. Sign with this
       # workflow's keystore instead, and the check step requires the digest.
       - name: Sign the APK with the workflow's keystore
+        timeout-minutes: 10
         working-directory: Android
         run: |
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
@@ -682,6 +708,7 @@ jobs:
           mv app-debug-signed.apk "$APK"
 
       - name: Check the APK and write provenance
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -727,6 +754,7 @@ jobs:
           cat ci/PROVENANCE.txt
 
       - name: Upload the APK
+        timeout-minutes: 10
         uses: actions/upload-artifact@v4
         with:
           name: LightTouch-perf-apk-${{ steps.engine.outputs.sha }}
@@ -735,6 +763,7 @@ jobs:
             ci/PROVENANCE.txt
 
       - name: Attach the APK to a pre-release
+        timeout-minutes: 10
         if: github.event_name == 'workflow_dispatch' && inputs.create_release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
