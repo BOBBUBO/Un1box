@@ -117,11 +117,9 @@ jobs:
     runs-on: ubuntu-24.04
     environment: perf-apk
     steps:
-      - env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
+      - run: |
           echo "Approved: building ${{ github.event.pull_request.head.sha }} of ${{ github.event.pull_request.head.repo.full_name }}"
-          echo "pull request #${{ github.event.pull_request.number }}: $PR_TITLE"
+          echo "pull request #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}"
 
   perf-apk:
     needs: confirm
@@ -434,7 +432,7 @@ jobs:
           BUNDLE="$SDK_ROOT/swift-6.4.1-RELEASE_android.artifactbundle"
           : >/tmp/swift-sdk.log
           if [ ! -d "$BUNDLE" ]; then
-            swift sdk list --swift-sdks-path "$SDK_ROOT" 2>/dev/null | sed 's/^/installed Swift SDK: /' >>/tmp/swift-sdk.log || true
+            swift sdk list 2>/dev/null | sed 's/^/installed Swift SDK: /' >>/tmp/swift-sdk.log || true
             # swift sdk install downloads through URLSession, which has crashed on Linux mid-install;
             # fetching with curl and handing it the file keeps that out of the way.
             echo "curl $SDK_URL" >>/tmp/swift-sdk.log
@@ -444,7 +442,7 @@ jobs:
               || report /tmp/swift-sdk.log
             swift sdk install --swift-sdks-path "$SDK_ROOT" /tmp/android-sdk.tar.gz >>/tmp/swift-sdk.log 2>&1 || report /tmp/swift-sdk.log
             echo "installed at: ${BUNDLE:-nowhere}" >>/tmp/swift-sdk.log
-            [ -d "$BUNDLE" ] || report /tmp/swift-sdk.log
+            [ -n "$BUNDLE" ] || report /tmp/swift-sdk.log
           fi
           # The bundle cross-compiles against an NDK sysroot the setup script links in (LTS r30 in
           # swift.org's guide, and the SDK's static runtime wants its libc++).
@@ -497,7 +495,7 @@ jobs:
           # What the build sees, in one place: a mismatch between these is the likeliest reason a cross-build
           # stops before it compiles anything.
           LIBCXX="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_static.a"
-          { swift --version; echo "bundle: $BUNDLE"; swift sdk list --swift-sdks-path "$SDK_ROOT"
+          { swift --version; echo "bundle: $BUNDLE"; swift sdk list
             echo "ndk root: $NDK_ROOT"; echo "ndks: $(ls -1 "$ANDROID_HOME/ndk" | tr '\n' ' ')"
             echo "libc++: $LIBCXX"
             echo "libc++ has __hash_memory: $(grep -c __hash_memory "$LIBCXX" 2>/dev/null || echo 0)"
@@ -513,8 +511,7 @@ jobs:
           # beside both). A second, static libc++ inside firmwarekit gives the process two runtimes, and
           # dlopen'ing libqemu-arm.so -- which is what `create` does to boot -- crashes the loader.
           NDK_LIB="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
-          # Use the same SDK directory as installation; the runner's default store is empty.
-          swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" --swift-sdks-path "$SDK_ROOT" \
+          swift build -c release --product firmwarekit --swift-sdk "$LT_SWIFT_ANDROID_SDK" \
             --scratch-path .build-android --static-swift-stdlib \
             --pkg-config-path build-support/android-pkgconfig \
             -Xlinker -L"$NDK_LIB" -Xlinker -lc++_shared \
@@ -595,6 +592,7 @@ jobs:
               qemu-ios/contrib/portable/build-deps.py \
               qemu-ios/contrib/portable/build-crypto-deps.py \
               qemu-ios/contrib/portable/libgpg-error-android-lock.patch \
+              qemu-ios/contrib/ffmpeg/*.patch
               qemu-ios/contrib/ffmpeg/*.patch \
               qemu-ios/subprojects/packagefiles/libslirp-set-restricted.patch
           } | sha256sum | cut -c1-24 )
@@ -645,6 +643,9 @@ jobs:
           key: lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs || '4' }}-${{ steps.engine.outputs.sha }}
           restore-keys: |
             lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs || '4' }}-
+          key: lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs }}-${{ steps.engine.outputs.sha }}
+          restore-keys: |
+            lt-engine-${{ steps.recipes.outputs.deps }}-${{ steps.recipes.outputs.engine }}-j${{ inputs.jobs }}-
 
       - name: Cache the signing key
         uses: actions/cache@v4
@@ -698,6 +699,16 @@ jobs:
           # AIDL first (Kotlin compiles against its generated interfaces), then Kotlin and Java:
           # what the APK step compiles, none of what it packages.
           gradlew :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac >>"$LOG" 2>&1 || report
+              --dependency-verification=${{ inputs.dependency_verification }} \
+              -Pdebuggable="${{ inputs.debuggable }}" "$@"
+          }
+          # Resolving the runtime classpath checks the pinned dependency verification; the dry
+          # run configures every task without running it.
+          gradlew :app:dependencies --configuration debugRuntimeClasspath > /dev/null
+          gradlew --dry-run :app:assembleDebug
+          # AIDL first (Kotlin compiles against its generated interfaces), then Kotlin and Java:
+          # what the APK step compiles, none of what it packages.
+          gradlew :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac
 
       # A cache hit is a tree the scripts' own recorded recipe accepts (the key is that recipe), so
       # there is nothing to rebuild. Without the skip this step spent ~3.5 minutes on every run
@@ -792,6 +803,17 @@ jobs:
               --abi arm64-v8a --ndk "$ANDROID_NDK_ROOT" --android-api 29 \
               --prefix ci/deps/prefix --crypto-prefix ci/crypto/prefix "$@"
           }
+          # The tree restored from another engine revision is updated in place when the only
+          # recorded input that changed is the source revision (--source-update: ninja compiles
+          # what moved, ~1.5 minutes less than a cold build). A tree whose configuration, tools
+          # or dependencies changed is refused before anything compiles, and rebuilt from
+          # scratch; so is one whose update fails, which is also the cold-build retry.
+          engine --source-update || {
+            echo "::warning::the cached engine tree could not be updated in place (see the message above); rebuilding it from scratch"
+            rm -rf ci/engine-build
+            engine
+          }
+          }
           # Every line of the build is kept: a compile error used to leave nothing behind but
           # "exit code 1", and neither the step log nor an artifact could be fetched afterwards.
           # The log is annotated below on failure and uploaded by the step that follows.
@@ -844,7 +866,6 @@ jobs:
         env:
           # Only the successfully rebuilt tool supports this branch's Android jailbreak path.
           LT_FIRMWAREKIT_DIR: ${{ steps.firmwarekit.outputs.dir }}
-          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
         run: |
           : "${LT_FIRMWAREKIT_DIR:?The current FirmwareKit build is required}"
           echo "firmwarekit: $LT_FIRMWAREKIT_DIR"
@@ -860,7 +881,7 @@ jobs:
             -PguestToolsDir="$GITHUB_WORKSPACE/ci/guest-tools" \
             -PmobileServicesArm64="$GITHUB_WORKSPACE/ci/mobile-services/arm64-v8a" \
             -PsourceRevision="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" \
-            -PsourceReference="https://github.com/${SOURCE_REPOSITORY}/tree/$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" \
+            -PsourceReference="https://github.com/${GITHUB_REPOSITORY}/tree/${{ github.head_ref || github.ref_name }}" \
             -Pdebuggable="$DECLARED_DEBUGGABLE" \
             :app:assembleDebug
 

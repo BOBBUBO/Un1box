@@ -79,16 +79,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     private var detailsDevice by mutableStateOf<DeviceSummary?>(null)
     private var muxSocket by mutableStateOf("")
     private var appServicesError by mutableStateOf("")
-    private val installer by lazy { StoreInstaller.of(applicationContext) }
-    private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
-    // Android 13+ shows an install queue's progress and result in notifications only once allowed.
-    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    private fun askNotifications() {
-        if (Build.VERSION.SDK_INT >= 33 && !askedNotifications && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            askedNotifications = true
-            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
+    private val store by lazy { StoreModel(applicationContext) { muxSocket.ifEmpty { null } } }
     private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null && !CydiaTransfers.active) store.installLocal(uri) }
     private val localDeb = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -116,6 +107,17 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             }
         }
     }
+    private val installer by lazy { StoreInstaller.of(applicationContext) }
+    private val store by lazy { StoreModel(applicationContext, { muxSocket.ifEmpty { null } }, ::askNotifications) }
+    // Android 13+ shows an install queue's progress and result in notifications only once allowed.
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && !askedNotifications && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            askedNotifications = true
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    private val localIpa = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) store.installLocal(uri) }
     // board-build -> (product type, iOS version), from the bundled firmware catalog.
     @Volatile private var firmwareTargets: Map<String, StoreTarget> = emptyMap()
     private var catalogVersion by mutableIntStateOf(0)
@@ -128,7 +130,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override val settings by lazy { AppSettings(this) }
     private val monitor = PerformanceMonitor { engine }
     override val perf: PerfSnapshot get() = monitor.snapshot
-    override val storeInstalling get() = installer.queue.active || CydiaTransfers.active
+    override val storeInstalling get() = store.installing || CydiaTransfers.active
     // Save & Stop needs the engine to serialize live GL state on EGL hosts (docs/TODO.md).
     override val canSaveState = false
     /** HOME or FULLSCREEN: what is under any full-page overlay. */
@@ -452,7 +454,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
             // A full page hides the guest surface: the presenter stops drawing into it and drops its 60 Hz request.
-            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.CYDIA, Screen.DETAILS)
+            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.CYDIA)
+            val guestCovered = overlay in listOf(Screen.LOADING, Screen.SETUP, Screen.SETTINGS, Screen.STORE, Screen.DETAILS)
             LaunchedEffect(guestCovered, engine) {
                 val worker = engine ?: return@LaunchedEffect
                 Thread({ try { worker.setPresentVisible(!guestCovered) } catch (_: RemoteException) { } }, "present-visibility").start()
@@ -501,10 +504,11 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             onFinish = { start -> overlay = null; if (start) startGuest() }, onCancel = { overlay = null })
                         Screen.SETTINGS -> SettingsScreen(this@MainActivity) { overlay = null }
                         Screen.CYDIA -> CydiaScreen(selected, muxSocket.takeIf { status == "running" && it.isNotEmpty() },
-                            blocked = busy || installer.queue.active,
+                            blocked = busy || store.installing,
                             onPickLocal = { localDeb.launch(arrayOf("application/vnd.debian.binary-package", "application/octet-stream", "*/*")) }) { overlay = null }
-                        Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
                         Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty() && !CydiaTransfers.active,
+                        Screen.DETAILS -> detailsDevice?.let { DeviceDetails(it) { overlay = null; openDevices() } }
+                        Screen.STORE -> StoreScreen(store, running = status == "running" && muxSocket.isNotEmpty(),
                             onPickLocal = { localIpa.launch(arrayOf("application/octet-stream", "*/*")) }) { overlay = null }
                         Screen.HITCH -> HitchInspector(hitchData, hitchError, onResume = ::closeHitch, onSave = ::saveHitch, saving = hitchSaving,
                             savedNotice = hitchNotice, onShare = hitchReport?.let { uri -> { shareReport(uri) } })
@@ -1411,7 +1415,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
         installer.visible = false
         if (wasOwner && ((sessionOwned && status !in listOf("stopping", "stopped", "failed")) || status in listOf("running", "starting"))) {
             // Installing apps needs the guest running: it lets go of the display, and keeps going until the queue is empty.
-            if (storeInstalling) displayView?.retireDisplay()
+            if (installer.queue.active) displayView?.retireDisplay()
             else {
                 pausedByBackground = status == "running" && overlay != Screen.HITCH
                 displayView?.backgroundOwnedDisplay()
@@ -1423,7 +1427,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     }
     /** The install queue emptied. With LightTouch off screen the guest pauses now, as it would have on leaving, and resumes on return. */
     private fun installsFinished() {
-        if (active || storeInstalling || status != "running" || !sessionOwned || overlay == Screen.HITCH) return
+        if (active || status != "running" || !sessionOwned || overlay == Screen.HITCH) return
         val worker = engine ?: return
         pausedByBackground = true
         Thread({ try { worker.pause(true) } catch (_: RemoteException) { } }, "install-idle-pause").start()
