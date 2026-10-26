@@ -9,8 +9,10 @@ use openssl::pkey::{HasPublic, PKey, PKeyRef, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::extension::{BasicConstraints, KeyUsage, SubjectKeyIdentifier};
 use openssl::x509::{X509, X509Builder};
+use std::sync::Mutex;
 
 /// PEM, as the pairing record and lockdownd carry them.
+#[derive(Clone)]
 pub struct Keys {
     pub root_certificate: Vec<u8>,
     pub root_private_key: Vec<u8>,
@@ -77,6 +79,25 @@ fn certificate<T: HasPublic>(
     }
     builder.sign(signer, digest)?;
     Ok(builder.build())
+}
+
+/// Identities offered to guests that haven't answered yet, by UDID: (HostID, keys).
+static PENDING: Mutex<Vec<(String, String, Keys)>> = Mutex::new(Vec::new());
+
+/// The identity to pair `udid` with: the one already offered to it, or a new one.
+pub fn pending(udid: &str, device_public_key: &[u8], ios: (u32, u32, u32)) -> Result<(String, Keys)> {
+    let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, host_id, keys)) = pending.iter().find(|(u, _, _)| u == udid) {
+        return Ok((host_id.clone(), keys.clone()));
+    }
+    let made = (uuid(), generate(device_public_key, ios)?);
+    pending.push((udid.to_string(), made.0.clone(), made.1.clone()));
+    Ok(made)
+}
+
+/// Paired: the next pairing with `udid` starts afresh.
+pub fn forget(udid: &str) {
+    PENDING.lock().unwrap_or_else(|e| e.into_inner()).retain(|(u, _, _)| u != udid);
 }
 
 /// A random (version 4) UUID in capitals, the form of a pairing's HostID.

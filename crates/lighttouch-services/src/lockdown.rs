@@ -191,8 +191,8 @@ impl Lockdown {
         // Read before pairing: iOS 7 drops the connection when it's asked afterwards.
         let wifi = self.value(None, Some("WiFiAddress")).ok();
         let buid = self.mux.buid()?;
-        let keys = pairing::generate(&public_key, self.version)?;
-        let host_id = pairing::uuid();
+        // While iOS 7 and later wait for Trust to be tapped, every retry asks with the same identity.
+        let (host_id, keys) = pairing::pending(&self.device.udid, &public_key, self.version)?;
         let mut record = Dictionary::from_iter([
             ("DeviceCertificate", Value::Data(keys.device_certificate)),
             ("HostCertificate", Value::Data(keys.host_certificate)),
@@ -225,6 +225,7 @@ impl Lockdown {
         let mut bytes = Vec::new();
         Value::Dictionary(record).to_writer_binary(&mut bytes)?;
         self.mux.save_pair_record(&self.device, &bytes)?;
+        pairing::forget(&self.device.udid);
         PairRecord::parse(&bytes)
     }
 
