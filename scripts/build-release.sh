@@ -14,6 +14,8 @@
 #             LT_PRERELEASE), NOTES.md checksums
 #   desktop   the Rust desktop app (docs/DESKTOP.md) as a Linux AppImage and a Windows zip in desktop/, from the
 #             engine and USB pieces the linux and windows steps built; only when named, and not published
+#   desktop-macos  the Rust desktop app for macOS, built on the Mac ($LT_MAC) from the pushed commits, in desktop/;
+#             only when named, and not published
 #   publish   push both tags and create the GitHub release from out/NOTES.md (a pre-release unless
 #             LT_PRERELEASE=false)
 #
@@ -50,8 +52,8 @@ D=$HOME/Documents/LightTouch-Development
 : "${ANDROID_HOME:=$HOME/Android/Sdk}"
 export QEMU_IOS LT_INPUTS ANDROID_HOME LT_PRERELEASE
 
-[ $# -ge 1 ] || { sed -n 2,22p "$0"; exit 2; }
-case "$1" in -h|--help) sed -n 2,22p "$0"; exit 0 ;; esac
+[ $# -ge 1 ] || { sed -n 2,24p "$0"; exit 2; }
+case "$1" in -h|--help) sed -n 2,24p "$0"; exit 0 ;; esac
 VER=${1#v}; V=v$VER; shift
 R=$LT_RELEASE_ROOT/release-$VER
 OUTD=$R/out
@@ -228,6 +230,38 @@ step_desktop() {
     ls -1 "$d"/*.AppImage "$d"/*.zip
 }
 
+step_desktop-macos() {
+    [ -n "$LT_MAC" ] || { echo "the macOS build runs on a Mac: set LT_MAC=user@host" >&2; exit 1; }
+    local m="$LT_MAC_ROOT/LightTouch-Desktop-Release-$VER" out=LightTouch-$V-Desktop-macOS-arm64 app_rev engine_rev
+    local tools=${LT_GUEST_TOOLS:-$R/app/build/firmware-tools} n=$LT_DESKTOP_NOTICES ff
+    need "$tools" "guest tools"; need "$LT_FFMPEG_ARCHIVE" "FFmpeg 9.0.1 archive"
+    need "$n/linux/engine/qemu-ios" "engine notices"; need "$n/linux/usb" "USB bridge notices"
+    app_rev=$(rev "$R/app"); engine_rev=$(rev "$R/engine"); ff=$(basename "$LT_FFMPEG_ARCHIVE")
+    ssh "$LT_MAC" "set -e; rm -rf $m; mkdir -p $m/notices/engine; cd $m
+        git init -q app; git -C app fetch -q --depth 1 $GH_APP $app_rev; git -C app checkout -q --detach FETCH_HEAD
+        git init -q qemu; git -C qemu fetch -q --depth 1 $GH_ENGINE $engine_rev; git -C qemu checkout -q --detach FETCH_HEAD"
+    for p in $SUBPROJECTS; do rsync -a "$R/engine/subprojects/$p" "$LT_MAC:$m/qemu/subprojects/"; done
+    rsync -a "$tools/" "$LT_MAC:$m/guest-tools/"
+    rsync -a "$n/linux/engine/qemu-ios" "$LT_MAC:$m/notices/engine/"
+    rsync -a "$n/linux/usb/" "$LT_MAC:$m/notices/usb/"
+    rsync -a "$LT_FFMPEG_ARCHIVE" "$LT_MAC:$m/"
+    # The engine links a decoder-only FFmpeg; the USB bridge is the LightTouchMac app's ($LT_MAC_VENDOR). The
+    # packager bundles the Homebrew libraries both load, with their licence files, and signs the app ad hoc.
+    ssh "$LT_MAC" "export PATH=\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin; cd $m
+        caffeinate -s $LT_MAC_PYTHON app/macOS/build-engine.py --qemu-source \$PWD/qemu --output \$PWD/engine --python $LT_MAC_PYTHON \
+            --openssl-prefix $LT_MAC_OPENSSL --ffmpeg-archive \$PWD/$ff > engine.log 2>&1 || { tail -30 engine.log; exit 1; }
+        (cd app && caffeinate -s cargo build --release --locked -p lighttouch -p lighttouch-firmware \
+            --features lighttouch-services/vendored-openssl) > app.log 2>&1 || { tail -30 app.log; exit 1; }
+        $LT_MAC_PYTHON -B app/scripts/release/package-desktop.py \$PWD/LightTouch.app --os macos --app app/target/release/lighttouch \
+            --firmwarekit app/target/release/firmwarekit --engine engine/libqemu-arm.dylib --usbmuxd '$LT_MAC_VENDOR/MacOS/usbmuxd' \
+            --guest-tools guest-tools --notices engine=\$PWD/notices/engine --notices usb=\$PWD/notices/usb \
+            --group-source engine=$GH_ENGINE > package.log 2>&1 || { tail -30 package.log; exit 1; }
+        codesign --verify --deep --strict LightTouch.app
+        ditto -c -k --keepParent LightTouch.app $out.zip"
+    mkdir -p "$R/desktop"; scp -q "$LT_MAC:$m/$out.zip" "$R/desktop/"
+    echo "$R/desktop/$out.zip"
+}
+
 step_finish() {
     python3 "$R/app/scripts/release/finish.py" "$R" "$V" "${LT_GUEST_TOOLS:-$R/app/build/firmware-tools}"
     (cd "$OUTD" && sha256sum -c --quiet SHA256SUMS)
@@ -253,7 +287,7 @@ step_publish() {
 steps=("$@"); auto=0
 if [ ${#steps[@]} = 0 ]; then steps=(prepare android windows linux macos finish); auto=1; fi
 for s in "${steps[@]}"; do
-    case "$s" in prepare|android|windows|linux|macos|finish|publish|desktop) ;; *) echo "unknown step: $s" >&2; exit 2 ;; esac
+    case "$s" in prepare|android|windows|linux|macos|finish|publish|desktop|desktop-macos) ;; *) echo "unknown step: $s" >&2; exit 2 ;; esac
 done
 mkdir -p "$R"
 for s in "${steps[@]}"; do
