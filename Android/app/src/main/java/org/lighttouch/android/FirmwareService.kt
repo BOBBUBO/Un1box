@@ -34,7 +34,7 @@ class FirmwareService : Service() {
                 FirmwareCatalog.load(this@FirmwareService).any { it.id == firmwareId }
         override fun start(firmwareId: String, ipswPath: String, trustedToolsRoot: String, bootromPath: String): Bundle {
             check(consumed.compareAndSet(false, true)) { "A fresh firmware worker is required" }
-            foreground()
+            foreground(PREPARING)
             currentFirmwareId = firmwareId
             state = "preparing"; stage = "Starting"
             val parent = File(filesDir, "prepared").apply { mkdirs() }
@@ -90,9 +90,10 @@ class FirmwareService : Service() {
             done = total
             state = "complete"
             note("complete")
-            foreground("Your device is prepared. Open LightTouch to add it.")
+            foreground(PREPARED)
         } catch (e: Exception) {
             if (cancelling) state = "cancelled" else { failure = e.message ?: "Firmware preparation failed"; state = "failed" }
+            if (!cancelling) foreground(FAILED)
             out.deleteRecursively()
             if (cancelling) PreparationNote.clear(this) else note("failed")
         } finally {
@@ -147,17 +148,26 @@ class FirmwareService : Service() {
         .put("firmwareId", currentFirmwareId).put("destination", destination).put("timings", timings).put("error", failure))
 
     override fun onBind(intent: Intent): IBinder = binder
+    // A fresh worker replacing one that ended (LightTouch stays bound) must not inherit its foreground notification.
+    override fun onCreate() { super.onCreate(); stopForeground(STOP_FOREGROUND_REMOVE) }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        foreground(if (state == "complete") "Your device is prepared. Open LightTouch to add it." else "Preparing a device; return to view progress or cancel")
+        foreground(when (state) { "complete" -> PREPARED; "failed" -> FAILED; else -> PREPARING })
         return START_NOT_STICKY
     }
-    private fun foreground(text: String = "Preparing a device; return to view progress or cancel") {
+    /** The ongoing notification while this worker has a preparation: under way, or its result until LightTouch takes it. */
+    private fun foreground(text: Pair<String, String>) {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel("firmware", "Firmware preparation", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel("firmware", "Device setup", NotificationManager.IMPORTANCE_LOW))
         val launch = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         startForeground(2, Notification.Builder(this, "firmware").setSmallIcon(android.R.drawable.ic_menu_upload)
-            .setContentTitle("LightTouch preparation").setContentText(text)
+            .setContentTitle(text.first).setContentText(text.second)
             .setContentIntent(launch).setOngoing(true).build())
+    }
+
+    private companion object {
+        val PREPARING = "Preparing a device" to "Tap to see its progress."
+        val PREPARED = "Your device is ready" to "Open LightTouch to add it."
+        val FAILED = "Couldn't prepare the device" to "Open LightTouch to see why."
     }
 }
 

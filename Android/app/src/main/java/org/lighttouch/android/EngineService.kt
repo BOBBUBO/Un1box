@@ -14,6 +14,10 @@ class EngineService : Service() {
     @Volatile private var error = ""
     @Volatile private var userPaused = false
     @Volatile private var focusPaused = false
+    /** The running device's name, for the notification; set by start. */
+    @Volatile private var deviceName = ""
+    /** startForeground has run in this worker, so the notification may be updated. */
+    @Volatile private var foregrounded = false
     private val started = WorkerStartAdmission()
     private val failureRecorded = AtomicBoolean(false)
     private val stopping = AtomicBoolean(false)
@@ -159,8 +163,9 @@ class EngineService : Service() {
             if (!started.tryConsume()) return status().apply {
                 putString("error", "Start and recovery require a fresh unused guest worker. Stop this worker first.")
             }
-            foreground()
             val libraryRoot = File(filesDir, "library").absolutePath
+            deviceName = Native.records(libraryRoot).firstOrNull { it[0] == recordId }?.getOrNull(1) ?: ""
+            foreground()
             // Before the engine starts: its USB controller dials the bridge when the guest brings the port up.
             usbError = usbThread.submit<String?> { usb.start(recordId) }.get() ?: ""
             // Perf work on debug builds (create these with run-as): files/debug-vcpu-accounting logs the
@@ -192,6 +197,7 @@ class EngineService : Service() {
                 persistStopError(error)
                 persistObservations("start-failed")
                 alive.set(false)
+                foregrounded = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 Process.killProcess(Process.myPid())
@@ -277,6 +283,7 @@ class EngineService : Service() {
             if (result == "Display ownership retired") return@run
             if (result.isNotEmpty()) { error = result; return@run }
             stopAudioOutput()
+            updateNotification()
         } }
         override fun pause(paused: Boolean) { lifecycleAdmission.run {
             // A background callback can race the stop button. Shutdown already
@@ -291,9 +298,11 @@ class EngineService : Service() {
             synchronized(audioGuard) { if (paused) audioObservations.pauses++ else audioObservations.resumes++ }
             if (paused) stopAudioOutput()
             else startAudioOutput()
+            updateNotification()
         } }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
+            updateNotification()
             profileCapture.finish("guest-stop")
             shutdownWatchdog.request()
         }
@@ -523,6 +532,9 @@ class EngineService : Service() {
     override fun onBind(intent: Intent): IBinder = binder
     override fun onCreate() {
         super.onCreate()
+        // A worker that ended its device is replaced by a fresh one while LightTouch stays bound, and Android carries
+        // the old one's foreground state over: its "running" notification stayed up with nothing running.
+        stopForeground(STOP_FOREGROUND_REMOVE)
         detailedTimingThread.scheduleWithFixedDelay({
             try {
                 if (detailedTiming && detailedTimingError.isEmpty() && !stopping.get())
@@ -682,12 +694,27 @@ class EngineService : Service() {
         }
     } }
     private fun stopAudioOutput() { lifecycleAdmission.run { audioOn = false } }
+    /** The ongoing notification while a device is on in this worker (Android requires one to keep it running). */
     private fun foreground() {
+        startForeground(1, notification())
+        foregrounded = true
+    }
+    /** The notification follows the device: running, paused (LightTouch left), or shutting down. */
+    private fun updateNotification() {
+        if (foregrounded) getSystemService(NotificationManager::class.java).notify(1, notification())
+    }
+    private fun notification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel("guest", "Running guest", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel("guest", "Running device", NotificationManager.IMPORTANCE_LOW))
         val launch = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        startForeground(1, Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("LightTouch guest").setContentText("Tap to return; Stop ends this worker").setContentIntent(launch).setOngoing(true).build())
+        val text = when {
+            stopping.get() -> "Shutting down"
+            userPaused -> "Paused while you're away. Tap to go back to it."
+            !started.isConsumed() -> "Starting"
+            else -> "Running. Tap to go back to it."
+        }
+        return Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(deviceName.ifEmpty { "LightTouch" }).setContentText(text).setContentIntent(launch).setOngoing(true).build()
     }
     override fun onDestroy() { networkThread.shutdownNow(); detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); super.onDestroy() }
 }
