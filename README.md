@@ -2,11 +2,11 @@
 
 <p align="center"><img src="./Picsart_26-10-25_03-23-04-384.jpg" alt="Un1box" width="700"></p>
 
-**Un1box** runs classic iPhone OS and iOS in an emulator on **Android, Linux, Windows and macOS** — pick a device from Apple's firmware catalog, prepare it on the phone or on the desktop, and a real, touchable iOS device appears in a window.
+**Un1box** is the Android app that runs classic iPhone OS and iOS on your phone: pick a device and a version, prepare it on the phone, and a real, touchable iOS device appears in a window. **Android only, for now** — the desktop ports in this repository (Linux, Windows, macOS) still ship under their **LightTouch** names and are unchanged.
 
-Un1box is a fork of **[Light Touch](https://github.com/blake-lucas/LightTouch)** — and of [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac) before it — built around the shared [qemu-ios engine](https://github.com/blake-lucas/qemu-ios). LightTouch gave this project its emulator, its device preparation, its engine work and much of its code; what Un1box adds is its own Android app, its own name and its own direction. Everything LightTouch does, it still does here: the settings, the store, the device library and the prepared-system format are the same, so a device prepared by either one can be opened by the other.
+Un1box is a fork of **[Light Touch](https://github.com/blake-lucas/LightTouch)** — and of [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac) before it — built around the shared [qemu-ios engine](https://github.com/blake-lucas/qemu-ios). LightTouch gave this project its emulator, its device preparation, its engine work and most of its code; Un1box adds its own Android app, its own name and its own direction. Everything LightTouch does, it still does here: the settings, the store, the device library and the prepared-system format are the same, so a device prepared by either one can be opened by the other.
 
-The desktop ports share one device library and setup UI. Android has its own touch UI. A prepared iOS system can back several saved devices, each with its own storage.
+A prepared iOS system can back several saved devices, each with its own storage.
 
 ## Communities
 
@@ -15,17 +15,17 @@ Telegram channel: https://t.me/hyperhle
 
 ## Download
 
-[Un1box builds](https://github.com/KlugKlugTG/Un1box/releases) — CI builds every commit. The plain LightTouch release is on [upstream](https://github.com/blake-lucas/LightTouch/releases/latest), v0.0.11.
+[Un1box builds](https://github.com/KlugKlugTG/Un1box/releases) — CI builds every commit. The plain LightTouch release, including the desktop builds, is on [upstream](https://github.com/blake-lucas/LightTouch/releases/latest), v0.0.11.
 
-Un1box is still early and things can change between versions. Android is the most complete: it sets up devices on the phone from start to finish.
+Un1box is still early and things can change between versions.
 
-## Current platforms
+## Platforms
 
 | Platform | Build | Status |
 | --- | --- | --- |
-| Android | APK, ARM64 (Android 10+) | The main test platform, on a Poco F3 and a Pixel 10. First launch walks you through preparing a device from an IPSW on the phone. Graphics, audio, touch, tilt, the cameras and IPA installs work, and the Legacy Store can be browsed like the website, with several installs queued in the background. |
-| Linux | x86_64 AppImage | Boot, input, accelerated graphics, audio, the Legacy Store and IPA installs work. Prepares devices with `firmwarekit` from the command line. |
-| Windows | x86_64 ZIP | Boot, graphics, audio and Legacy Store installs confirmed by users. Cannot prepare devices yet: copy a prepared `.itbase` from another computer. |
+| **Android** | APK, ARM64 (Android 10+) | **This is Un1box.** The main test platform, on a Poco F3 and a Pixel 10. First launch walks you through preparing a device from an IPSW on the phone. Graphics, audio, touch, tilt, the front camera and IPA installs work, and the Legacy Store can be browsed like the website, with several installs queued in the background. |
+| Linux | x86_64 AppImage | LightTouch frontend, built from this repository. Boot, input, accelerated graphics, audio, the Legacy Store and IPA installs work. Prepares devices with `firmwarekit` from the command line. |
+| Windows | x86_64 ZIP | LightTouch Windows preview. Boot, graphics, audio and Legacy Store installs confirmed by users. Cannot prepare devices yet: copy a prepared `.itbase` from another computer. |
 | macOS | Apple Silicon app ZIP | The shared desktop UI builds and packages. Guest services are not yet fully checked. Needs macOS 26. Upstream's [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac/releases) is the tested Mac app. |
 
 ## Devices
@@ -40,16 +40,20 @@ Un1box is still early and things can change between versions. Android is the mos
 | iPhone 4 | 4.2.1, 4.3.5 | **Tested, slow** |
 | Others in the [firmware catalog](Portable/firmware/firmware-catalog.json) | iPhone OS 1 to iOS 7 | Can be prepared and tried; not yet checked on Un1box. [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) records what has been run. |
 
-## Getting started
+## Getting started on Android
 
-**On Android**, install the APK and tap **Get started**. Pick a device and iOS version, and the app downloads iOS and prepares it on the phone (the iPod touch 2G on iOS 3.1.3 takes about a minute). You don't need any files of your own. If you already have device files made elsewhere, tap **I already have the device files**.
+Install the APK and tap **Get started**. Pick a device and iOS version, and the app downloads iOS and prepares it on the phone (the iPod touch 2G on iOS 3.1.3 takes about a minute). You don't need any files of your own. If you already have device files made elsewhere, tap **I already have the device files**.
 
-**On Linux, Windows and macOS**, unpack the build, then get an iOS system for it. The [asset guide](docs/ASSETS.md) covers both routes:
+Then start the device: the on-screen Home, Sleep/Wake and volume buttons are under the display, and **Stop** shuts iOS down cleanly. Each device keeps its own storage, and the prepared system is never changed.
+
+Because Un1box has its own package (`org.un1box.android`), Android treats it as a separate app from LightTouch: it installs beside it rather than over it, and each keeps its own prepared devices.
+
+## The desktop ports
+
+Unpack the build, then get an iOS system for it. The [asset guide](docs/ASSETS.md) covers both routes:
 
 - **Prepare one from Apple's IPSW** with `firmwarekit` on Linux or macOS. Every platform uses the same preparer ([Portable/firmware](Portable/firmware/README.md)).
 - **Use an already prepared system** (`.itbase`), for example the one `tools/get-assets.py` takes from upstream's Mac app, along with its guest tools (`armv6.itpack` or `armv7.itpack`) and, for the iPod touch 2G, its boot ROM.
-
-Then start the device. Use the on-screen Home, Power and volume buttons, and **Stop** to shut iOS down cleanly. Each device keeps its own storage, and the prepared system is never changed.
 
 ## Performance
 
@@ -59,11 +63,19 @@ Guests run through QEMU's TCG dynamic translation; there is no hardware virtuali
 
 `scripts/build.sh` builds the engine, the Linux frontend, the Android APK, `firmwarekit` and (on a Mac, over ssh) the guest tools; `scripts/build-release.sh` builds a release for all four platforms. Windows and macOS app builds run through `Desktop/build.py` on their own hosts. [docs/BUILDING.md](docs/BUILDING.md) covers the inputs, and [CONTRIBUTING.md](CONTRIBUTING.md) the repository layout, firmware preparation, tests and style. Development happens on `dev/*` branches of this repository and the engine; releases come from `main`.
 
+Tests that need no build, no device and no CI run:
+
+```sh
+python3 tests/branding/run.py    # the name: label, package, sources, JNI
+python3 tests/idle/run.py        # the app's idle loops
+python3 tests/mic/run.py         # the microphone path
+```
+
 ## License and credits
 
 Un1box is free software under GPL version 2 or, at your option, any later version; see [LICENSE](LICENSE). Upstream authorship and licenses are retained.
 
-It exists because of **[Light Touch](https://github.com/blake-lucas/LightTouch)** by blake-lucas, which itself builds on [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac) by Sam Henri Gold. Un1box's name and app are its own; the emulator underneath is theirs.
+It exists because of **[Light Touch](https://github.com/blake-lucas/LightTouch)** by blake-lucas, which itself builds on [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac) by Sam Henri Gold. Un1box's name and Android app are its own; the emulator underneath is theirs.
 
 It also builds on
 [qemu-ios](https://github.com/samhenrigold/qemu-ios),

@@ -1,9 +1,9 @@
 # Get the iOS files
 
-Un1box needs three files for its main device, the **iPod touch 2G on iOS 3.1.3
+LightTouch needs three files for its main device, the **iPod touch 2G on iOS 3.1.3
 (`n72ap-7E18`)**:
 
-| File | What it is | Un1box calls it |
+| File | What it is | LightTouch calls it |
 | --- | --- | --- |
 | `n72ap-7E18.itbase` | The prepared iOS system | **iOS system** |
 | `armv6.itpack` | Guest tools that run inside iOS | **Guest tools** (the Android app has its own) |
@@ -33,7 +33,7 @@ curl -LO https://raw.githubusercontent.com/blake-lucas/LightTouch/main/tools/get
 python3 get-assets.py
 ```
 
-The files land in `Un1box-assets/`. Then [load them](#4-load-the-files-in-lighttouch).
+The files land in `LightTouch-assets/`. Then [load them](#4-load-the-files-in-lighttouch).
 
 Options:
 
@@ -68,7 +68,7 @@ Keep the `.itbase` as it is: do not unzip it, and do not rename an IPSW to `.itb
 The board, iOS build and guest architecture must match; for the iPod touch 4G route see
 [route 5](#5-prepare-a-system-from-an-ipsw-instead).
 
-## 4. Load the files in Un1box
+## 4. Load the files in LightTouch
 
 **Desktop (Linux, Windows, macOS):** in **iOS files**, choose `n72ap-7E18.itbase` in
 **1 iOS system**, `armv6.itpack` in **2 Guest tools** and `bootrom.bin` in **3 Boot file**
@@ -124,7 +124,7 @@ build/firmwarekit/linux/firmwarekit create --catalog Portable/firmware/firmware-
 build/firmwarekit/linux/firmwarekit pack-base --base n81ap-10B500 --out n81ap-10B500.itbase
 ```
 
-`lighttouch-oneshot` loads `build/linux/libqemu-arm.so` (or set `LTM_QEMU_DYLIB`). `GUEST-TOOLS` is the folder of guest tools preparation installs (`armv6.itpack`, `armv7.itpack`, `it_seal`, …): build it on a Mac with `scripts/build.sh firmware-tools`, or copy `assets/guest-tools` out of a Un1box APK. On a desktop PC the iPod touch 2G takes about 35 seconds and the 4G about 5½ minutes.
+`lighttouch-oneshot` loads `build/linux/libqemu-arm.so` (or set `LTM_QEMU_DYLIB`). `GUEST-TOOLS` is the folder of guest tools preparation installs (`armv6.itpack`, `armv7.itpack`, `it_seal`, …): build it on a Mac with `scripts/build.sh firmware-tools`, or copy `assets/guest-tools` out of an Un1box APK. On a desktop PC the iPod touch 2G takes about 35 seconds and the 4G about 5½ minutes.
 
 **macOS:** in the upstream app use **Add Device** for the board and build, or run its bundled tool directly:
 
