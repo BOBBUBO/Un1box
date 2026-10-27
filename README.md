@@ -6,6 +6,14 @@ One desktop app runs on Linux, Windows and macOS; Android has its own touch UI. 
 
 [Download the latest release](https://github.com/blake-lucas/LightTouch/releases/latest). LightTouch is still early and things can change between versions. Android has had the most testing.
 
+## Demo videos
+
+Both recorded on a Pixel 10. Click to watch on YouTube.
+
+| iPod touch 4G, iOS 6.1.6 | iPod touch 2G, iOS 3.1.3 |
+| --- | --- |
+| [![iPod touch 4G on iOS 6.1.6 running in LightTouch](https://img.youtube.com/vi/ciXvzyemLPk/hqdefault.jpg)](https://www.youtube.com/watch?v=ciXvzyemLPk) | [![iPod touch 2G on iOS 3.1.3 running in LightTouch](https://img.youtube.com/vi/56bAQQgPxfk/hqdefault.jpg)](https://www.youtube.com/watch?v=56bAQQgPxfk) |
+
 ## Current platforms
 
 | Platform | Build | Status |
