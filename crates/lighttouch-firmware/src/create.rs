@@ -6,9 +6,10 @@
 //!            -> board.store -> [board.keybag if data protection] -> [board.seal if needs_seal] -> lock
 //!
 //! Shared here: the IPSW sha1 and Restore.plist checks, the decrypt cache, the seed name
-//! ("<board.seed_prefix>-<build>-default"), the step and progress events, the read-only outputs, the store listing
-//! hashes (listing_sha256; built_listing_sha256 before any boot, opt-in) and the lock, whose board-specific keys are
-//! merged in from `board.lock`.
+//! ("<board.seed_prefix>-<build>-default"), the step and progress events, packing the store into the NAND
+//! container (nand_disk: the work store's chip files become nand/nand.qcow2), the store listing hashes
+//! (listing_sha256; built_listing_sha256 before any boot, opt-in) and the lock, whose board-specific keys are merged
+//! in from `board.lock`. Outputs keep their ordinary permissions: the lock's hashes are what vouch for them.
 use crate::activation::ActivationResult;
 use crate::entry::{Entry, Recipe};
 use crate::error::{Code, Error, Result};
@@ -126,7 +127,7 @@ pub trait Board {
     fn keybag_step(&self) -> String;
     fn data_protection(&self) -> bool;
     fn needs_seal(&self) -> bool;
-    /// Outputs made read-only and hashed for the lock, besides nand/.
+    /// Outputs hashed for the lock, besides nand/.
     fn shipped(&self) -> Vec<String>;
     /// Before `begin`: what this recipe needs (helper, storage, guest helpers).
     fn check(&mut self, c: &mut Context) -> Result<()>;
@@ -337,18 +338,17 @@ pub fn run(o: Options, board: &mut dyn Board, emit: Emit) -> Result<()> {
             board.seal(&mut c)?;
         }
 
-        step(&c); // read-only outputs, lock
-        for n in std::iter::once("nand".to_string()).chain(board.shipped()) {
-            files::read_only(&c.file(&n))?;
-        }
-        let nand_files = files::tree_files(&c.nand)?;
-        let total: u64 = nand_files.iter().map(|f| std::fs::metadata(c.nand.join(f)).map(|m| m.len()).unwrap_or(0)).sum();
-        let hashed = ByteCount::new(total);
+        step(&c); // the store packed into its container, lock
+        // Its data is read once to pack and the container (about as large) once to hash.
+        let data = crate::nand_disk::data_bytes(&c.nand)?;
+        let done = ByteCount::new(2 * data);
         {
-            let h = hashed.clone();
-            progress.measure(Some(Box::new(move || h.fraction())));
+            let d = done.clone();
+            progress.measure(Some(Box::new(move || d.fraction())));
         }
-        let (hashes, listing) = files::nand_listing(&c.nand, &nand_files, &|n| hashed.add(n))?;
+        crate::nand_disk::pack(&c.nand, &|n| done.add(n))?;
+        let nand_files = files::tree_files(&c.nand)?;
+        let (hashes, listing) = files::nand_listing(&c.nand, &nand_files, &|n| done.add(n))?;
         c.nand_hashes = hashes;
         c.listing = listing;
         let mut tools: Vec<String> = std::fs::read_dir(&c.o.guest_tools)?

@@ -164,7 +164,7 @@ impl StepPlan {
             ("Writing the identity and boot image", _) => StepPlan::new(1.0, "Writing the boot image", vec![]),
             ("Building the system and data volumes", _) => StepPlan::new(12.0, "Building the system and data volumes", vec![]),
             ("Writing the NAND", _) => StepPlan::new(8.0, "Writing the flash image", vec![]),
-            ("Writing the lock", _) => StepPlan::new(3.0, "Hashing the prepared flash", vec![]),
+            ("Writing the lock", _) => StepPlan::new(4.0, "Packing the prepared flash", vec![]),
             ("Writing the identity, NOR and boot files", _) => StepPlan::new(2.0, "Writing the NOR and boot files", vec![]),
             ("Building the system volume", _) => StepPlan::new(20.0, "Building the system volume", vec![]),
             _ => StepPlan::new(10.0, name, vec![]),

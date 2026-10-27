@@ -199,6 +199,28 @@ fn k48_check(args: &[String]) -> Result<(), String> {
     if passed { Ok(()) } else { Err("the store failed its check".into()) }
 }
 
+/// A store of chip files (geometry.json + bus<b>-ce<c>.pages or cs<N>.pages) packed into its NAND container,
+/// nand.qcow2, in place: each chip file is removed once read.
+fn pack_nand(args: &[String]) -> Result<(), String> {
+    let Some(nand) = args.first() else {
+        return Err("pack-nand NAND_DIR".into());
+    };
+    let started = std::time::Instant::now();
+    let read = std::sync::atomic::AtomicU64::new(0);
+    let layout = lighttouch_firmware::nand_disk::pack(&PathBuf::from(nand), &|n| {
+        read.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+    })
+    .map_err(|e| e.to_string())?;
+    eprintln!(
+        "{} chips, {} data bytes read, block stride {} in {:.1} s",
+        layout.chips,
+        read.into_inner(),
+        layout.block_stride,
+        started.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
 fn write_n72_nand(args: &[String]) -> Result<(), String> {
     let (Some(volume), Some(out)) = (args.first(), args.get(1)) else {
         return Err("write-n72-nand VOLUME OUT --blocks N --epoch E".into());
@@ -535,6 +557,7 @@ fn main() -> ExitCode {
         Some("hfs-grow") => hfs_grow(&args[1..]),
         Some("hfs-format") => hfs_format(&args[1..]),
         Some("write-n72-nand") => write_n72_nand(&args[1..]),
+        Some("pack-nand") => pack_nand(&args[1..]),
         Some("read-n72-nand") => read_n72_nand(&args[1..]),
         Some("read-n45-nand") => read_n45_nand(&args[1..]),
         Some("write-n45-nand") => write_n45_nand(&args[1..]),
