@@ -13,7 +13,10 @@ import java.io.RandomAccessFile
  * which is where a C++ abort or a qemu error lands. Both are read here, nothing else.
  */
 internal object WorkerExitDiagnosis {
-    private const val TAIL_BYTES = 8 * 1024
+    /** Words that mark the line that stopped the engine, when the log has more than a handful of lines. */
+    private val KEYWORDS = listOf("error", "invalid", "could not", "failed", "unable", "unsupported", "no such",
+        "not found", "fatal", "abort", "cannot", "refus", "mismatch", "qemu:")
+    private const val TAIL_BYTES = 64 * 1024
 
     /** One line: Android's exit reason and description, then the last thing the engine said. */
     fun summarize(context: Context, files: File): String {
@@ -94,8 +97,18 @@ internal object WorkerExitDiagnosis {
                 String(buffer, Charsets.UTF_8)
             }
         }.getOrNull() ?: return null
-        // The last lines that say something: qemu's and the library's errors are one line each.
-        return text.lines().map { it.trim() }.filter { it.isNotEmpty() }.takeLast(3)
-            .joinToString(" / ").take(400).ifEmpty { null }
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        // A process torn down while its threads still run (qemu calling exit() during start does that) fills the
+        // end of the log with the same libc complaint about a destroyed mutex. It is a consequence, not the
+        // reason: skip it and say what came before.
+        val noise = lines.count { it.startsWith("FORTIFY:") }
+        val meaningful = lines.filterNot { it.startsWith("FORTIFY:") }
+        if (meaningful.isEmpty()) return if (noise > 0) "engine: $noise libc FORTIFY lines, nothing else" else null
+        val picked = if (meaningful.size <= 6) meaningful else {
+            val suspect = meaningful.lastOrNull { line -> KEYWORDS.any { line.contains(it, ignoreCase = true) } }
+            (listOfNotNull(suspect) + meaningful.takeLast(2)).distinct()
+        }
+        val body = picked.takeLast(4).joinToString(" / ") { it.take(180) }
+        return ("engine: $body" + (if (noise > 0) " (${noise}x FORTIFY skipped)" else "")).take(700)
     }
 }

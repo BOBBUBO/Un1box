@@ -1818,7 +1818,14 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
 #endif
             lt::require(absolute && std::strlen(c->network_socket) < 104 &&
                         std::strchr(c->network_socket, '\n') == nullptr, "Invalid private network endpoint");
-            network += ",guestfwd=tcp:10.0.2.100:3128-unix:" + escape(c->network_socket);
+            // The app listens on this socket; qemu is the client. A bare "unix:<path>" chardev connects
+            // *synchronously* while the network device is built, and with no proxy listening yet -- networking
+            // off, which is every fresh install -- that connect fails, the guestfwd rule fails with it, and the
+            // machine is gone before it starts (qemu exits 1; the engine log ends in bionic's torn-down-mutex
+            // noise from the threads it had already started). reconnect-ms makes it the asynchronous client it
+            // is: it dials at boot and again whenever the proxy comes up, so the boot never waits for a proxy.
+            network += ",guestfwd=tcp:10.0.2.100:3128-unix:" + escape(c->network_socket) +
+                       ",server=off,reconnect-ms=500";
         }
         d->args.insert(d->args.end(), {"-netdev", network});
         // Chain TCG jumps across guest pages: iOS never remaps a code page to other code
