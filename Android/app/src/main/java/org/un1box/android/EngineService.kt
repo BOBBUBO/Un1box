@@ -33,7 +33,6 @@ class EngineService : Service() {
     @Volatile private var cameraOn = false
     @Volatile private var cameraError = ""
     private var camera: CameraCapture? = null
-    private var cameraWatch: Thread? = null
     /** The Settings switch: this phone's microphone into the guest, read at the next guest start. */
     @Volatile private var microphoneWanted = false
     @Volatile private var microphoneOn = false
@@ -561,8 +560,6 @@ class EngineService : Service() {
         /** The pull loop's wait while the guest is silent: its floor, and how far it backs off. */
         private const val AUDIO_IDLE_MIN_MS = 10
         private const val AUDIO_IDLE_MAX_MS = 60
-        /** How often the worker asks the guest which camera it is on: twice a second is a switch felt at once. */
-        private const val CAMERA_POLL_MS = 500L
     }
 
     private fun playAudio() = synchronized(audioGuard) { audio?.play(); audioGuard.resume() }
@@ -702,9 +699,8 @@ class EngineService : Service() {
         recorder?.let { runCatching { it.stop() } }
     }
     /**
-     * This phone's cameras into the emulated device. Which one is open is the guest's call: its driver names a
-     * sensor when the camera starts and again when the Camera app switches, the engine reports it, and the
-     * capture follows. The watch below is what notices a switch, and it is the only thing that does.
+     * This phone's back camera into the emulated device. The guest's ISP takes the newest frame whenever it draws
+     * one, whatever camera its own app is showing, so there is nothing to choose here and nothing to poll.
      */
     private fun startCamera() {
         if (camera != null || !cameraWanted || stopping.get() || !alive.get()) return
@@ -716,49 +712,36 @@ class EngineService : Service() {
         camera = capture
         cameraOn = true
         cameraError = ""
-        capture.start(Native.cameraSensor())
-        cameraWatch = Thread({
-            while (camera === capture && alive.get() && !stopping.get()) {
-                try {
-                    Thread.sleep(CAMERA_POLL_MS)
-                } catch (_: InterruptedException) {
-                    break
-                }
-                capture.follow(Native.cameraSensor())
-            }
-        }, "camera-watch").apply { start() }
+        capture.start()
     }
     private fun stopCamera() {
         cameraOn = false
-        cameraWatch?.interrupt()
-        cameraWatch = null
         camera?.stop()
         camera = null
     }
     /**
-     * What the guest's camera is doing, in one line for Settings. It is the only view of the path that needs no
-     * adb: the sensor the guest is on, the frames the phone handed over, the ones the ISP drew, and the ones it
-     * replaced before anything drew them. Frames sent but never drawn means the phone is capturing and the
-     * guest is not: nothing sent means the capture never started.
+     * What the camera is doing, in one line for Settings. It is the only view of the path that needs no adb: the
+     * camera the guest's driver named, the frames the phone handed over, the ones the ISP drew, the ones it
+     * replaced before anything drew them, and the size of the picture it holds. Frames sent but never drawn means
+     * the phone is capturing and the guest is not; nothing sent means the capture never started.
      */
     private fun cameraSummary(): String {
         if (!cameraWanted) return "Camera off in Settings"
         if (camera == null) return cameraError.ifEmpty { "Camera not started yet" }
-        val guest = Native.cameraSensor()
-        fun one(sensor: Int): String {
-            val name = if (sensor == Native.CAMERA_FRONT) "front" else "back"
-            val info = Native.cameraInfo(sensor)
-            if (info.size < 7 || info[0].toInt() != 0) return "$name: no report"
-            val size = if (info[1] > 0) "${info[1]}x${info[2]}" else "no frame yet"
-            return "$name: sent ${info[4]}, drawn ${info[5]}, replaced ${info[6]}, $size"
-        }
-        val where = when (guest) {
+        val where = when (Native.cameraSensor()) {
             Native.CAMERA_FRONT -> "the guest is on the front camera"
             Native.CAMERA_BACK -> "the guest is on the back camera"
             else -> "the guest has named no camera"
         }
+        val info = Native.cameraInfo(Native.CAMERA_BACK)
+        val report = if (info.size < 7 || info[0].toInt() != 0) "no report"
+            else {
+                val size = if (info[1] > 0) "${info[1]}x${info[2]}" else "no frame yet"
+                "sent ${info[4]}, drawn ${info[5]}, replaced ${info[6]}, $size"
+            }
+        val opened = camera?.framesDelivered ?: 0L
         val problem = cameraError.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""
-        return "$where · ${one(Native.CAMERA_BACK)} · ${one(Native.CAMERA_FRONT)}$problem"
+        return "phone: $opened frames · $where · $report$problem"
     }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)

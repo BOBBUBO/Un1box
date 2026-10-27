@@ -123,7 +123,7 @@ struct Engine {
     decltype(&qemu_ios_audio_capture_read) audio_read = nullptr;
     decltype(&qemu_ios_audio_capture_stop) audio_stop = nullptr;
     // Optional: an engine built before the camera tap lacks all four.
-    decltype(&qemu_ios_camera_frame) camera_frame = nullptr;
+    decltype(&qemu_ios_camera_write) camera_write = nullptr;
     decltype(&qemu_ios_camera_flush) camera_flush = nullptr;
     decltype(&qemu_ios_camera_sensor) camera_sensor = nullptr;
     decltype(&qemu_ios_camera_state) camera_state = nullptr;
@@ -198,7 +198,7 @@ struct Engine {
             mic_flush = reinterpret_cast<decltype(mic_flush)>(dlsym(library, "qemu_ios_microphone_flush"));
             mic_state = reinterpret_cast<decltype(mic_state)>(dlsym(library, "qemu_ios_microphone_state"));
             // Optional together: the engine that has one of these has all of them.
-            camera_frame = reinterpret_cast<decltype(camera_frame)>(dlsym(library, "qemu_ios_camera_frame"));
+            camera_write = reinterpret_cast<decltype(camera_write)>(dlsym(library, "qemu_ios_camera_write"));
             camera_flush = reinterpret_cast<decltype(camera_flush)>(dlsym(library, "qemu_ios_camera_flush"));
             camera_sensor = reinterpret_cast<decltype(camera_sensor)>(dlsym(library, "qemu_ios_camera_sensor"));
             camera_state = reinterpret_cast<decltype(camera_state)>(dlsym(library, "qemu_ios_camera_state"));
@@ -1082,11 +1082,15 @@ lt_status lt_runtime_camera_write(lt_runtime *r, int sensor, const void *nv12, u
         lt::require(r && nv12, "invalid camera frame");
         lt::require(sensor == LT_CAMERA_BACK || sensor == LT_CAMERA_FRONT, "no such camera sensor");
         lt::require(width && height && !(width & 1) && !(height & 1), "camera frame must be an even size");
-        lt::require(r->engine->camera_frame != nullptr, "engine has no camera input", LT_UNSUPPORTED);
-        // A guest that is not running has nowhere to put it: say so rather than fill a slot it will
+        lt::require(r->engine->camera_write != nullptr, "engine has no camera input", LT_UNSUPPORTED);
+        // A guest that is not running has nowhere to put it: say so rather than fill a mailbox it will
         // draw minutes later, when the picture is stale.
         lt::require(r->started && !r->done, "guest runtime inactive", LT_AGAIN);
-        lt::require(r->engine->camera_frame(sensor, nv12, width, height), "engine refused the camera frame");
+        const int accepted = r->engine->camera_write(sensor, nv12, width, height);
+        // -1 is a frame that is not a frame; 0 is an engine with no A4 ISP behind it. A full mailbox is
+        // not a failure: the newest frame replaces the old one, by design.
+        lt::require(accepted >= 0, "engine refused the camera frame", LT_INVALID);
+        lt::require(accepted != 0, "engine camera input unavailable", LT_UNSUPPORTED);
     });
 }
 lt_status lt_runtime_camera_info(lt_runtime *r, int sensor, lt_camera_info *info, lt_error *e) {
@@ -1095,12 +1099,14 @@ lt_status lt_runtime_camera_info(lt_runtime *r, int sensor, lt_camera_info *info
         lt::require(sensor == LT_CAMERA_BACK || sensor == LT_CAMERA_FRONT, "no such camera sensor");
         lt::abi(info);
         uint64_t pushed = 0, taken = 0, replaced = 0;
-        r->engine->camera_state(sensor, &pushed, &taken, &replaced);
+        uint32_t width = 0, height = 0;
+        r->engine->camera_state(sensor, &pushed, &taken, &replaced, &width, &height);
         info->pushed = pushed;
         info->taken = taken;
         info->replaced = replaced;
         info->sensor = uint32_t(r->engine->camera_sensor());
-        info->width = info->height = 0;
+        info->width = width;
+        info->height = height;
         info->size = sizeof(*info);
         info->version = 1;
     });

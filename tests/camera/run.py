@@ -3,9 +3,12 @@
 
 Every layer is exercised where it can be, and read where it cannot:
 
-  slots          real hw/arm/host-camera.c: the newest frame wins, a frame is
-                 drawn once, the two sensors keep their own frames, and a frame
-                 that is not a picture is refused
+  slots          real hw/arm/host-camera.c: the newest frame wins, an unread one
+                 is replaced rather than queued, the picture is held until the
+                 app flushes it, and a frame that is not a picture is refused
+  convert        real include/hw/arm/s5l8930-isp-camera.h: NV12 and the ISP's
+                 4:2:2 both come out right, scaling picks the nearest source
+                 pixel, and nothing is written past the frame
   planes         real camera_planes.h: planar, semi-planar and row-padded
                  YUV_420_888 frames all become one NV12 frame, and shapes that
                  cannot be converted are refused
@@ -121,7 +124,8 @@ def engine_tree(engine, scratch):
             applied = sh(["git", "apply", str(patch)], cwd=target)
             if applied.returncode:
                 raise Failure(f"{patch.name} does not apply: {applied.stderr.strip()[:400]}")
-    for needed in ("hw/arm/host-camera.c", "include/hw/arm/host-camera.h"):
+    for needed in ("hw/arm/host-camera.c", "include/hw/arm/host-camera.h",
+                   "include/hw/arm/s5l8930-isp-camera.h"):
         if not (target / needed).is_file():
             raise Failure(f"the engine has no {needed}: the camera patch is neither in the tree nor applies")
     return target
@@ -143,11 +147,15 @@ def main():
         print("the camera's own code")
         if tree is None:
             report.add("slots", True, "skipped: no engine checkout")
+            report.add("convert", True, "skipped: no engine checkout")
         else:
-            report.run("slots: the newest frame wins and is drawn once", lambda: build_and_run(
+            report.run("slots: the newest frame wins and is held until flushed", lambda: build_and_run(
                 "slots", [HERE / "slots.c", tree / "hw/arm/host-camera.c"],
                 [HERE / "stub", tree / "hw/arm", tree / "include"],
                 ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"], scratch))
+            report.run("convert: the phone's frame becomes the guest's", lambda: build_and_run(
+                "convert", [HERE / "convert.c"], [tree / "include"],
+                ["-std=gnu11", "-Wall", "-Wextra", "-Werror"], scratch))
         report.run("planes: every YUV_420_888 shape becomes one NV12 frame", lambda: build_and_run(
             "planes", [HERE / "planes.cpp"], [ROOT / "Android/app/src/main/cpp"],
             ["-std=c++20", "-Wall", "-Wextra", "-Werror"], scratch, compiler=shutil.which("c++") or "c++"))

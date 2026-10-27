@@ -2,10 +2,10 @@
 
 The slices prove what a piece does; these prove the pieces are connected to each other and to the guest:
 
-  engine patch   the patch still applies to a clean engine and commits to it, and still contains the hand-off
-                 and the one place the picture's source is chosen
-  device model   the ISP takes a frame before it draws the pattern, never draws a size that is not a mode, and
-                 turns the front sensor's picture
+  engine patch   the patch still applies to a clean engine and commits to it, and still contains the hand-off,
+                 the conversion and the one place the ISP draws a picture instead of the pattern
+  device model   the ISP copies the phone's frame before it draws, never draws a size that is not a mode, and
+                 falls back to the pattern only when the phone has sent nothing
   native         the JNI entry points the app declares exist, with the names the app asks for
   android        the permission, the switch, the settings line and the worker's own wiring
 """
@@ -51,44 +51,53 @@ def require(condition, message):
 
 def engine_patch_ships_the_hand_off():
     body = added_lines(CAMERA_PATCH)
-    require("bool host_camera_push(" in body, "the patch no longer adds the camera's frame slots")
-    require("const uint8_t *host_camera_take(" in body, "the slots no longer hand a frame to the ISP")
+    require("int host_camera_write(" in body, "the patch no longer adds the camera's mailbox")
+    require("void host_camera_snapshot(" in body, "the mailbox no longer hands a frame to the ISP")
     require("'host-camera.c'" in body, "hw/arm/meson.build does not build host-camera.c")
-    for entry in ("qemu_ios_camera_frame", "qemu_ios_camera_flush", "qemu_ios_camera_sensor", "qemu_ios_camera_state"):
+    for entry in ("qemu_ios_camera_write", "qemu_ios_camera_flush", "qemu_ios_camera_sensor",
+                  "qemu_ios_camera_state"):
         require(entry in body, f"the engine API no longer exports {entry}")
 
 
-def engine_patch_chooses_the_source_at_recognition():
-    """The kext names a sensor exactly there, so that is where the picture's source has to be chosen."""
+def engine_patch_serves_one_mailbox():
+    """The guest drives one camera at a time and its ISP asks for frames either way: one mailbox, whichever it is."""
+    body = added_lines(CAMERA_PATCH)
+    require("host_camera_take(" not in body, "the ISP takes frames per sensor again: that is what made a guest draw none")
     isp = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
-    require("host_camera_select(" in isp, "the ISP never tells the slots which sensor the guest is driving")
-    recognition = isp.split("(cat == 0x03 || cat == 0x04) && reg == 0x00", 1)
-    require(len(recognition) == 2, "sensor recognition no longer names the sensor")
-    require("host_camera_select(" in recognition[1][:600],
-            "the sensor is not chosen where the guest names it, so the wrong camera's frames would be drawn")
+    require("host_camera_snapshot(&frame)" in isp or "host_camera_snapshot(" in isp,
+            "the ISP no longer asks the mailbox for the phone's newest frame")
+    frame = isp.find("static void isp_frame(")
+    snapshot = isp.find("isp_camera_snapshot(s);", frame)
+    stopped = isp.find("!r[ISP_OUT_ENABLE / 4] || !y", frame)
+    require(snapshot != -1 and stopped != -1 and snapshot < stopped,
+            "the frame is taken after the ISP's own early return: a guest not drawing yet would lose it")
 
 
 def engine_patch_draws_the_camera_before_the_pattern():
     """Order matters: a pattern in front of a real source is a picture nobody ever sees."""
     isp = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
-    require("host_camera_take(" in isp, "the ISP no longer asks the phone's camera for a frame")
-    camera = isp.find("isp_from_camera(")
-    pattern = isp.find("isp_pattern(s, w, h, nv12)", isp.find("static void isp_frame"))
+    frame = isp.find("static void isp_frame(")
+    camera = isp.find("s5l8930_isp_camera_convert(", frame)
+    pattern = isp.find("isp_pattern(s, w, h, nv12)", frame)
     require(camera != -1 and pattern != -1 and camera < pattern,
             "the test pattern is drawn before the camera's frame: the phone's picture would never show")
+    require("if (s->camera_frame)" in isp, "the ISP does not ask whether the phone has a picture")
 
 
-def engine_patch_turns_the_front_sensor_upright():
-    isp = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
-    require("bool flip)" in isp or "bool flip)" in isp.replace("\n", " "),
-            "the frame no longer has a way to be turned, so the front camera's picture arrives upside down")
-    require("flip ? h - 1 - y : y" in isp, "the turn is not applied to the rows it has to be applied to")
+def engine_patch_ships_the_conversion():
+    body = file_body(CAMERA_PATCH, "include/hw/arm/s5l8930-isp-camera.h")
+    require("s5l8930_isp_camera_convert(" in body, "the patch no longer adds the NV12 conversion")
+    require("destination_uv[dst] = source_uv[src]" in body or "nv12" in body,
+            "the conversion has no NV12 path")
+    unit = added_lines(CAMERA_PATCH)
+    require("test-s5l8930-isp-camera" in unit, "the conversion has no unit test in the engine")
 
 
 def engine_patch_refuses_a_size_that_is_not_a_mode():
     isp = file_body(CAMERA_PATCH, "hw/arm/s5l8930_isp.c")
-    require("ISP_FRAME_MAX" in isp and "is not a mode" in isp,
+    require("w <= 4096 && h <= 4096" in isp and "!(w & 1)" in isp,
             "a frame size the sensors never had is no longer skipped: it would be allocated and DMAed")
+    require("y > 0x1000" in isp, "the ISP no longer checks that the guest gave it a buffer")
 
 
 # --- native and android ------------------------------------------------------
@@ -109,8 +118,10 @@ def portable_declares_the_camera():
     require("LT_CAMERA_BACK" in header and "LT_CAMERA_FRONT" in header, "the sensors are not named in the API")
     for function in ("lt_runtime_camera_write", "lt_runtime_camera_info", "lt_runtime_camera_flush"):
         require(function in header and function in source, f"{function} is not declared and defined")
-    require('dlsym(library, "qemu_ios_camera_frame")' in source,
+    require('dlsym(library, "qemu_ios_camera_write")' in source,
             "the portable layer does not resolve the engine's camera entry point")
+    require("camera_state(sensor, &pushed, &taken, &replaced, &width, &height)" in source,
+            "the portable layer does not ask the engine for the picture's size")
 
 
 def android_asks_for_the_permission():
@@ -127,8 +138,13 @@ def android_the_switch_reaches_the_worker():
             "IT_CAMERA is not set before the guest starts: off, the board unmatches the isp node and there is "
             "no camera at all")
     require("CameraCapture(" in service and "startCamera()" in service, "the worker never starts the capture")
-    require("follow(Native.cameraSensor())" in service,
-            "the capture does not follow the guest's own switch between cameras")
+    require("cameraWatch" not in service and "capture.follow(" not in service,
+            "the capture waits for the guest to name a camera again: a guest that never does shows nothing")
+    capture = read("Android/app/src/main/java/org/un1box/android/CameraCapture.kt")
+    require("LENS_FACING_BACK" in capture, "the capture does not open the back camera")
+    require("LENS_FACING_FRONT" not in capture,
+            "the capture can still open the front camera, which is the switch that used to leave the guest blank")
+    require("Native.CAMERA_BACK," in capture, "the frame does not say which camera it came from")
 
 
 def android_the_switch_is_in_settings():
@@ -190,9 +206,9 @@ def patch_stack(patch_dir, engine):
 
 CHECKS = [
     ("engine patch: the hand-off and the API are there", engine_patch_ships_the_hand_off),
-    ("engine patch: the guest's own switch picks the sensor", engine_patch_chooses_the_source_at_recognition),
+    ("engine patch: one mailbox serves whichever camera the guest is on", engine_patch_serves_one_mailbox),
     ("engine patch: the camera is drawn before the pattern", engine_patch_draws_the_camera_before_the_pattern),
-    ("engine patch: the front sensor's picture is turned", engine_patch_turns_the_front_sensor_upright),
+    ("engine patch: the conversion is shipped with its unit test", engine_patch_ships_the_conversion),
     ("engine patch: a size that is not a mode is refused", engine_patch_refuses_a_size_that_is_not_a_mode),
     ("portable: the camera API is declared and resolved", portable_declares_the_camera),
     ("native: every entry point the app declares exists", jni_matches_the_app),

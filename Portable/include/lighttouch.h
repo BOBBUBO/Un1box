@@ -359,17 +359,19 @@ lt_status lt_runtime_mic_info(lt_runtime *, lt_mic_info *, lt_error *);
  * next capture starts at the microphone and not with the tail of the one before it. */
 lt_status lt_runtime_mic_flush(lt_runtime *, lt_error *);
 /* The host's camera into the emulated device's ISP. sensor is LT_CAMERA_BACK or
- * LT_CAMERA_FRONT; nv12 is one frame, luma then interleaved chroma, no padding,
- * at width x height, and it is copied. The newest frame wins: a frame pushed
- * before the guest drew the previous one replaces it, which is what a viewfinder
- * does and why a slow guest costs a drop rather than a delay. LT_UNSUPPORTED for
- * an engine built before this tap (see tests/camera). */
+ * LT_CAMERA_FRONT and is only a label -- one mailbox serves whichever camera the
+ * guest is on; nv12 is one frame, luma then interleaved chroma, no padding, at
+ * width x height, and it is copied. The newest frame wins: a frame pushed before
+ * the guest drew the previous one replaces it, which is what a viewfinder does
+ * and why a slow guest costs a drop rather than a delay. LT_UNSUPPORTED for an
+ * engine built before this tap, LT_INVALID for something that is not a frame
+ * (see tests/camera). */
 #define LT_CAMERA_BACK   0
 #define LT_CAMERA_FRONT  1
 typedef struct {
     uint32_t size, version;
     uint32_t width, height;          /* of the frame the guest is being given; 0 before one */
-    uint32_t sensor;                 /* the sensor the guest last named */
+    uint32_t sensor;                 /* the camera the guest's driver last named */
     uint64_t pushed, taken, replaced;
 } lt_camera_info;
 lt_status lt_runtime_camera_write(lt_runtime *, int sensor, const void *nv12, uint32_t width, uint32_t height,
