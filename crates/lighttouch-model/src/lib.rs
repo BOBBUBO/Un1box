@@ -360,7 +360,7 @@ impl Model {
             log_dir: self.dirs.logs(),
             extra_env: Vec::new(),
             usb: usb_args(&self.dirs, &self.resources, &device.id),
-            network: network::supported().is_ok().then(|| lighttouch_core::protocol::NetworkArgs {
+            network: Some(lighttouch_core::protocol::NetworkArgs {
                 config: self.settings.network.config(),
                 directory: self.dirs.network().join(&device.id),
                 guest_tools: self.resources.guest_tools(),

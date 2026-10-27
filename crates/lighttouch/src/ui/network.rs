@@ -5,7 +5,7 @@ use super::{App, Page, icons, theme, widgets};
 use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Ui};
 use lighttouch_core::protocol::NetworkStatus;
 use lighttouch_core::runtime::NetworkMode;
-use lighttouch_model::network::{self, Day, Route, days_in_month, month_name};
+use lighttouch_model::network::{Day, Route, days_in_month, month_name};
 
 pub fn show(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
@@ -13,7 +13,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let mut edited = saved.clone();
     let active = app.model.session_active();
     let status = app.model.session.as_ref().filter(|s| s.phase.active()).and_then(|s| s.network.clone());
-    let supported = network::supported();
     let today = Day::today();
     let https_id = egui::Id::unique("network-https-info");
     let mut show_https = ui.ctx().data(|d| d.get_temp::<bool>(https_id)).unwrap_or(false);
@@ -29,14 +28,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 }
                 ui.label(RichText::new("Network").font(theme::headline()));
             });
-            if let Err(why) = supported {
-                ui.add_space(10.0);
-                widgets::card(ui, &p, |ui| {
-                    widgets::setting_row(ui, &p, icons::WARNING, why, "Your settings are kept for when it is.", |_| {});
-                });
-            }
-
-            ui.add_enabled_ui(supported.is_ok(), |ui| {
+            ui.scope(|ui| {
                 widgets::section(ui, &p, "Connection");
                 widgets::card(ui, &p, |ui| {
                     widgets::setting_row(
@@ -117,7 +109,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 });
             });
 
-            if active && supported.is_ok() {
+            if active {
                 widgets::section(ui, &p, "Current session");
                 widgets::card(ui, &p, |ui| session_info(ui, &p, status.as_ref()));
             }

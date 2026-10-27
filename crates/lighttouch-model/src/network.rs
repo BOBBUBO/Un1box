@@ -172,16 +172,6 @@ pub(crate) fn lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<NetworkS
     Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
-/// Whether this build can network a guest; why not otherwise.
-pub fn supported() -> Result<(), &'static str> {
-    // The engine's guest forward to the proxy's socket is Unix-only so far; LIGHTTOUCH_NETWORK=1 tries it anyway
-    // (with an engine that has AF_UNIX forwarding on Windows).
-    if cfg!(windows) && std::env::var_os("LIGHTTOUCH_NETWORK").is_none_or(|v| v != "1") {
-        return Err("Networking isn't available in LightTouch for Windows yet.");
-    }
-    Ok(())
-}
-
 /// The running session's side: saved preferences and what the worker applied are distinct. A live change is retried
 /// while the engine is starting (`LT_AGAIN`/`LT_BUSY`), then applied once or reported; it never touches the guest.
 #[derive(Debug, Default)]

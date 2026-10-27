@@ -71,9 +71,9 @@ The Rust desktop app (docs/DESKTOP.md) has the same Settings → Network. Its
 per-device worker uses the same Unix listener; the host's roots go to OpenSSL as
 `SSL_CERT_FILE` (the distro bundle on Linux, the system keychain's roots on macOS,
 the ROOT store on Windows), since packaged builds compile OpenSSL in without
-default roots. Its Windows shim accepts AF_UNIX connections and passes them to
-`Proxy::serve`; it builds, but stays off (`LIGHTTOUCH_NETWORK=1` to try it) until
-the engine forwards to AF_UNIX on Windows. The other frontends do not yet expose
+default roots. On Windows the proxy listens on an AF_UNIX socket too (Windows 10
+1803 and later), and the engine's libslirp forwards to it (engine dev/desktop's
+Windows `unix:` guestfwd). The other frontends do not yet expose
 these settings. Upstream's retired-service and weather adapters are outside this
 web-routing implementation.
 
