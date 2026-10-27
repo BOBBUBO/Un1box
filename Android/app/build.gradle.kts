@@ -69,6 +69,9 @@ val prepareNetworkNotices = tasks.register<Exec>("prepareNetworkNotices") {
     inputs.files(prefix.map { file("$it/lib/libssl.a") }, prefix.map { file("$it/lib/libcrypto.a") })
     inputs.file(source.map { file("$it/contrib/portable/dependencies.json") })
     outputs.dir(networkNoticeAssets)
+    // A compile-only preflight passes neither property, and a tree that has not built its dependencies yet has
+    // no prefix: stage no network notice then instead of failing the whole build.
+    onlyIf { prefix.orElse("").get().isNotEmpty() && source.orElse("").get().isNotEmpty() }
     doFirst {
         commandLine("python3", rootProject.file("scripts/stage-network-notices.py").absolutePath,
             networkNoticeAssets.get().dir("licenses/network").asFile.absolutePath,
