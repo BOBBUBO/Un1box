@@ -26,6 +26,9 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <afunix.h>
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
 #else
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -87,6 +90,15 @@ size_t number(const std::string &s, size_t maximum, int base = 10) {
     }
     require(result <= maximum, 413, "Message exceeds size limit");
     return result;
+}
+// Paths arrive as UTF-8; Windows' narrow file calls would read them in the ANSI code page.
+FILE *open_file(const std::string &path, const char *mode) {
+#ifdef _WIN32
+    std::wstring wide(mode, mode + strlen(mode));
+    return _wfopen(std::filesystem::u8path(path).c_str(), wide.c_str());
+#else
+    return fopen(path.c_str(), mode);
+#endif
 }
 #ifdef _WIN32
 using Socket = SOCKET;
@@ -444,7 +456,7 @@ Proxy::Proxy(std::string directory, Configuration config, std::string roots) : s
     require(config.mode != Mode::archive || Configuration::valid_date(config.archive_date),400,"Choose a valid archive date");
     state->config=config;
     if (config.mode==Mode::off) return;
-    std::filesystem::create_directories(directory);
+    std::filesystem::create_directories(std::filesystem::u8path(directory));
 #ifndef _WIN32
     chmod(directory.c_str(),0700);
 #endif
@@ -469,11 +481,11 @@ Proxy::Proxy(std::string directory, Configuration config, std::string roots) : s
 #ifndef _WIN32
         struct stat st{}; require(!lstat(pem.c_str(),&st) && S_ISREG(st.st_mode) && st.st_uid==getuid() && !(st.st_mode&077),503,"Proxy key permissions are invalid");
 #endif
-        FILE *f=fopen(pem.c_str(),"rb"); require(f,503,"Could not read proxy certificate");
+        FILE *f=open_file(pem,"rb"); require(f,503,"Could not read proxy certificate");
         state->key.reset(PEM_read_PrivateKey(f,nullptr,nullptr,nullptr)); state->ca.reset(PEM_read_X509(f,nullptr,nullptr,nullptr)); fclose(f);
         require(state->key && state->ca && X509_check_private_key(state->ca.get(),state->key.get())==1,503,"Saved proxy identity is invalid");
     };
-    if (std::filesystem::exists(pem)) load_identity();
+    if (std::filesystem::exists(std::filesystem::u8path(pem))) load_identity();
     else {
         state->key=new_key(); state->ca=make_cert(state->key.get(),state->key.get(),nullptr,"LightTouch Device Proxy");
         // A unique staging name survives interrupted first launches. The lock
@@ -481,12 +493,15 @@ Proxy::Proxy(std::string directory, Configuration config, std::string roots) : s
         unsigned char random[16]; require(RAND_bytes(random,sizeof(random))==1,503,"Random source failed");
         std::string temp=pem+".tmp."; const char hex[]="0123456789abcdef";
         for (auto byte:random) { temp+=hex[byte>>4];temp+=hex[byte&15]; }
-        struct Cleanup { std::string path; ~Cleanup() { std::error_code error; std::filesystem::remove(path,error); } };
+        struct Cleanup { std::string path; ~Cleanup() { std::error_code error; std::filesystem::remove(std::filesystem::u8path(path),error); } };
 #ifndef _WIN32
         int fd=open(temp.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600); require(fd>=0,503,"Could not save proxy key");
         FILE *f=fdopen(fd,"wb"); if (!f) close(fd);
 #else
-        FILE *f=fopen(temp.c_str(),"wbx");
+        // msvcrt's fopen has no "x" (create only); _O_EXCL is the same.
+        int fd=_wopen(std::filesystem::u8path(temp).c_str(),_O_WRONLY|_O_CREAT|_O_EXCL|_O_BINARY,_S_IREAD|_S_IWRITE);
+        require(fd>=0,503,"Could not save proxy key");
+        FILE *f=_fdopen(fd,"wb"); if (!f) _close(fd);
 #endif
         require(f,503,"Could not save proxy key");
         Cleanup cleanup{temp};
@@ -499,14 +514,14 @@ Proxy::Proxy(std::string directory, Configuration config, std::string roots) : s
 #ifndef _WIN32
         if (rename(temp.c_str(),pem.c_str())) throw Error(503,std::string("Could not install proxy key: ")+strerror(errno));
 #else
-        std::error_code error; std::filesystem::rename(temp,pem,error);
-        if (error) { require(std::filesystem::exists(pem),503,"Could not install proxy key");load_identity(); }
+        std::error_code error; std::filesystem::rename(std::filesystem::u8path(temp),std::filesystem::u8path(pem),error);
+        if (error) { require(std::filesystem::exists(std::filesystem::u8path(pem)),503,"Could not install proxy key");load_identity(); }
 #endif
     }
     } // Release the identity lock before preparing per-session TLS state.
     int size=i2d_X509(state->ca.get(),nullptr); require(size>0,503,"Could not encode proxy certificate");
     state->der.resize(size); auto bytes=reinterpret_cast<unsigned char *>(state->der.data()); i2d_X509(state->ca.get(),&bytes);
-    std::ofstream(directory+"/proxy-ca.der",std::ios::binary).write(state->der.data(),state->der.size());
+    std::ofstream(std::filesystem::u8path(directory+"/proxy-ca.der"),std::ios::binary).write(state->der.data(),state->der.size());
     state->leaf_key=new_key();
     state->client.reset(SSL_CTX_new(TLS_client_method())); require(bool(state->client),503,"Host TLS initialization failed");
     SSL_CTX_set_verify(state->client.get(),SSL_VERIFY_PEER,nullptr); SSL_CTX_set_min_proto_version(state->client.get(),TLS1_2_VERSION);
@@ -530,7 +545,7 @@ Proxy::~Proxy() {
     for (auto socket:state->active) shutdown(socket,2);
     state->idle.wait(lock,[&]{return state->active.empty();});
     lock.unlock();
-    if (!state->socket_path.empty()) std::filesystem::remove(state->socket_path);
+    if (!state->socket_path.empty()) { std::error_code error; std::filesystem::remove(std::filesystem::u8path(state->socket_path),error); }
 }
 std::string Proxy::certificate() const { return state->der; }
 std::string Proxy::fingerprint() const {

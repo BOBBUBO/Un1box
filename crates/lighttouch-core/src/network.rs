@@ -357,6 +357,22 @@ mod tests {
         assert!(!dir.exists(), "no identity is created while networking is off");
     }
 
+    /// A device's proxy identity is made once and kept, on every platform (Windows saves it with its own calls).
+    #[test]
+    fn proxy_identity_is_saved_and_reused() {
+        let dir = temp("identity");
+        let config = NetworkConfig { mode: NetworkMode::Direct, ..Default::default() };
+        let proxy = Proxy::create(&dir, &config).unwrap();
+        let fingerprint = proxy.fingerprint();
+        assert!(!fingerprint.is_empty() && !proxy.certificate().is_empty());
+        drop(proxy);
+        assert!(dir.join("proxy-ca.pem").is_file());
+        let again = Proxy::create(&dir, &config).unwrap();
+        assert_eq!(again.fingerprint(), fingerprint, "the device keeps its CA");
+        drop(again);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The identity persists per device, and a request the policy refuses (host loopback) is counted without any
     /// outbound traffic.
     #[cfg(unix)]
