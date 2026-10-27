@@ -28,8 +28,6 @@ import androidx.compose.ui.unit.dp
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
-    var networkOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    if (networkOpen) { NetworkSettingsScreen(host) { networkOpen = false }; return }
     BackHandler(onBack = onBack)
     val s = host.settings
     val context = LocalContext.current
@@ -49,18 +47,18 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 Text("Settings", style = MaterialTheme.typography.titleLarge)
             }
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).testTag("settings")) {
-                SettingsGroup("Controls") {
+                Group("Controls") {
                     SwitchRow(LtIcons.Tilt, "Tilt controls", "Your phone's motion sensors move the device's accelerometer", s.tilt, "tilt_toggle") { s.tilt = it; host.applySettings() }
                     SwitchRow(LtIcons.VolumeUp, "Phone volume keys control the device", "Off, they set your phone's volume as usual; the device's own volume buttons are on screen", s.volumeKeys) { s.volumeKeys = it }
                     SwitchRow(LtIcons.Vibrate, "Haptic feedback", "A tap when you press Home, Sleep/Wake or volume", s.haptics) { s.haptics = it }
                 }
-                SettingsGroup("Audio") {
+                Group("Audio") {
                     SwitchRow(LtIcons.Headphones, "Headphones plugged in", "Stereo sound, as through the headphone jack; off plays through the device's speaker. Applies the next time the device starts",
                         s.headphones, "headphones_toggle", info = { headphonesInfo = true }) { s.headphones = it }
                     SwitchRow(LtIcons.Mic, "Microphone", "This phone's microphone becomes the device's input, for Voice Memos, Shazam and anything else that records; iOS asks inside the device the first time an app records. Android asks for the microphone permission when you turn this on. Applies the next time the device starts",
                         host.microphone, "microphone_toggle") { host.useMicrophone(it) }
                 }
-                SettingsGroup("Camera") {
+                Group("Camera") {
                     SwitchRow(LtIcons.Camera, "Camera", "This phone's back and front cameras become the device's cameras, so the Camera app sees a real picture. The device's own switch between them works too; iOS asks inside the device the first time an app uses the camera. Android asks for the camera permission when you turn this on. Applies the next time the device starts",
                         host.camera, "camera_toggle") { host.useCamera(it) }
                     // What the guest is doing with the frames, straight from the worker. It is the only view of
@@ -69,23 +67,20 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp).testTag("camera_status"))
                 }
-                SettingsGroup("Connection") {
-                    ActionRow(LtIcons.Network, "Network", s.network.summary, tag = "open_network") { networkOpen = true }
-                }
-                SettingsGroup("Display") {
+                Group("Display") {
                     ChoiceRow(LtIcons.Palette, "Theme", ThemeMode.entries, s.theme, { it.label }) { s.theme = it }
                     ChoiceRow(LtIcons.Layers, "Screen scaling", ScreenScaling.entries, s.scaling, { it.label },
                         if (s.scaling == ScreenScaling.SMOOTH) "Filtered by the display hardware" else "Crisp pixels, then filtered to fit") { s.scaling = it; host.applySettings() }
                     SwitchRow(LtIcons.Play, "Unpause when you return", "iOS pauses while Un1box is in the background, unless apps are installing. On, it carries on when you come back; off, it waits for you to tap Resume", s.autoResume) { s.autoResume = it }
                 }
-                SettingsGroup("Performance") {
+                Group("Performance") {
                     SwitchRow(LtIcons.Speed, "Fewer pauses when opening iOS apps", "Skips large emulator-code cleanups after app changes. Uses more RAM and may slightly lower steady-state game speed; applies after restarting the emulated iPhone.", s.reduceAppSwitchPauses, "reduce_app_switch_pauses") { s.reduceAppSwitchPauses = it }
                 }
-                if (BuildConfig.DEBUG) SettingsGroup("Graphics") {
+                if (BuildConfig.DEBUG) Group("Graphics") {
                     ChoiceRow(LtIcons.Chip, "GPU driver", GraphicsProvider.entries, s.graphicsProvider, { it.label },
                         "ANGLE uses the bundled graphics translation layer instead of Android's GPU driver. It may improve or reduce speed; applies on the next fresh guest start.", tag = "graphics_provider") { s.graphicsProvider = it }
                 }
-                SettingsGroup("Performance overlay") {
+                Group("Performance overlay") {
                     ChoiceRow(LtIcons.Speed, "Detail", OverlayLevel.entries, s.overlay, { it.label }, tag = "overlay_level") { s.overlay = it }
                     if (s.overlay != OverlayLevel.OFF) {
                         OverlayPreview(host)
@@ -98,7 +93,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                         SwitchRow(null, "Show in device view", "Also show it on the drawn device, not only in full screen", s.overlayInDeviceView) { s.overlayInDeviceView = it }
                     }
                 }
-                SettingsGroup("Diagnostics") {
+                Group("Diagnostics") {
                     SwitchRow(LtIcons.Timeline, "Inspect button", "A button that pauses iOS and opens the frame inspector, to pick apart a hitch you just saw", s.hitchButton, "hitch_toggle") { s.hitchButton = it }
                     SwitchRow(LtIcons.Chip, "Detailed frame timing", "Records each frame's guest CPU, GL and lock time so the overlay and inspector can explain slow frames. Costs about 6% speed while on.", s.detailedTiming, "detailed_timing") { s.detailedTiming = it; host.applySettings() }
                     SwitchRow(LtIcons.Speed, "Present on a worker", "The frame copy into the guest's surface runs on a worker thread. Off copies it on the CPU instead, which can be steadier when the guest is waiting most of its frame anyway. Applies at the next guest start.", host.presentAsync, "present_async") { host.usePresentAsync(it) }
@@ -109,13 +104,13 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     if (host.selected != null && !host.active) ActionRow(LtIcons.History, "Recover retained state",
                         "Start ${host.selected?.name} from its saved data after an unclean shutdown, keeping diagnostics", enabled = !host.busy, tag = "recover_guest") { host.recover(); onBack() }
                 }
-                SettingsGroup("Device") {
+                Group("Device") {
                     ActionRow(LtIcons.Puzzle, "Update guest tools", host.selected?.let { "Install a newer .itpack into ${it.name}; it applies at the next start" } ?: "Select a device first",
                         enabled = host.selected != null && !host.active && !host.busy) { host.pickGuestTools() }
                     ActionRow(LtIcons.Download, "Prepare from an IPSW", "Choose a device and iOS version; Un1box downloads Apple's firmware and builds it here",
                         enabled = !host.active && !host.busy) { host.openPreparation() }
                 }
-                SettingsGroup("About") {
+                Group("About") {
                     ActionRow(LtIcons.Info, "Un1box ${BuildConfig.VERSION_NAME}", "Classic iOS for Android") {}
                     ActionRow(LtIcons.Code, "Source code", "github.com/KlugKlugTG/Un1box") {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/KlugKlugTG/Un1box")))
@@ -129,7 +124,7 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
 }
 
 @Composable
-internal fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
     Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp))
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainer).padding(vertical = 6.dp), content = content)
@@ -142,7 +137,7 @@ private fun RowIcon(icon: ImageVector?, alpha: Float = 1f) {
 }
 
 @Composable
-internal fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boolean, tag: String? = null,
+private fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boolean, tag: String? = null,
                       info: (() -> Unit)? = null, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         RowIcon(icon)
@@ -179,7 +174,7 @@ private fun <T> ChoiceRow(icon: ImageVector?, title: String, options: List<T>, s
 }
 
 @Composable
-internal fun ActionRow(icon: ImageVector?, title: String, subtitle: String?, enabled: Boolean = true, tag: String? = null, onClick: () -> Unit) {
+private fun ActionRow(icon: ImageVector?, title: String, subtitle: String?, enabled: Boolean = true, tag: String? = null, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).then(if (tag != null) Modifier.testTag(tag) else Modifier)
         .padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         val alpha = if (enabled) 1f else 0.4f

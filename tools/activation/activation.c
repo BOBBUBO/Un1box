@@ -1,1 +1,1 @@
-#include "../../crates/lighttouch-firmware/csrc/activation.c"
+#include "../../Packages/FirmwareKit/Sources/CActivation/activation.c"
