@@ -8,7 +8,7 @@
 #   linux-engine   build/linux/libqemu-arm.so                  x86_64 engine (qemu-ios, portable board)
 #   linux          build/linux/lighttouch-linux (+ engine)     the Linux frontend (Linux/CMakeLists.txt)
 #   android-engine build/android/engine/arm64-v8a/              arm64 engine, libc++_shared.so, notices
-#   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK
+#   android        build/android/Un1box-debug.apk (+ engine) arm64 debug APK
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
 #   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Swift) + lighttouch-oneshot, x86_64
 #   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Swift SDK for Android)
@@ -185,8 +185,8 @@ build_android() {
         -PangleArm64NoticesSha256=63d2221b0fab9bff7788dc0c4e9a94c74079b3ab5ed3c09bd3ef72c909d1f924 \
         -Pdebuggable="$LT_DEBUGGABLE" -Pprofileable="$LT_PROFILEABLE" "${guest[@]}" "${lint[@]}" :app:assembleDebug > "$OBJ/android-gradle.out" 2>&1) ||
         { grep -A12 "What went wrong" "$OBJ/android-gradle.out" >&2 || tail -30 "$OBJ/android-gradle.out" >&2; exit 1; }
-    cp "$OBJ/android-gradle/app/outputs/apk/debug/app-debug.apk" "$OUT/android/LightTouch-debug.apk"
-    echo "$OUT/android/LightTouch-debug.apk"
+    cp "$OBJ/android-gradle/app/outputs/apk/debug/app-debug.apk" "$OUT/android/Un1box-debug.apk"
+    echo "$OUT/android/Un1box-debug.apk"
 }
 
 build_portable_tests() {

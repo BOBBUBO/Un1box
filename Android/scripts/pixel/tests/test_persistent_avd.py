@@ -12,7 +12,7 @@ class Persistent(unittest.TestCase):
     def owner_readiness_case(self,never_ready):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);out=root/'owner';launcher=root/'launcher';launcher.write_text('# synthetic')
-            plan={'output':str(out),'avd':'LightTouch_pixel_10_API36_16384_24_8192','ramMB':8192,'pageBytes':16384,
+            plan={'output':str(out),'avd':'Un1box_pixel_10_API36_16384_24_8192','ramMB':8192,'pageBytes':16384,
                 'launcher':str(launcher),'launcherSha256':hashlib.sha256(launcher.read_bytes()).hexdigest(),'adb':'/synthetic/adb'}
             path=root/'plan.json';path.write_text(json.dumps(plan));(root/'ROOT-PERSISTENT-AVD-GRANT.json').write_text(json.dumps({'owner':'/root/pixel','persistentAvdAuthorized':True}))
             avd=mock.Mock(pid=123);avd.poll.return_value=None
@@ -93,7 +93,7 @@ class Persistent(unittest.TestCase):
             (out/'pixel-bound.json').write_text(json.dumps(b));calls=[]
             stat=('42 (engine) '+' '.join(['S']+['0']*18+['9999' if changed else '1234'])).encode()
             values={'/proc/sys/kernel/random/boot_id':b['bootId'].encode(),'files/library/selected':b['recordId'].encode(),
-                '/proc/42/stat':stat,'/proc/42/status':b'Uid: 10215 10215 10215 10215\n','/proc/42/cmdline':b'org.lighttouch.android:engine\0'}
+                '/proc/42/stat':stat,'/proc/42/status':b'Uid: 10215 10215 10215 10215\n','/proc/42/cmdline':b'org.un1box.android:engine\0'}
             def run(argv,**kw):
                 calls.append(argv)
                 return subprocess.CompletedProcess(argv,0,values.get(argv[-1],b''),b'')
@@ -112,7 +112,7 @@ class Persistent(unittest.TestCase):
     def test_owner_rejects_existing_serial_before_any_launch(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);launcher=root/'launcher';launcher.write_text('# synthetic')
-            plan={'output':str(root/'owner'),'avd':'LightTouch_pixel_10_API36_16384_24_8192','ramMB':8192,'pageBytes':16384,
+            plan={'output':str(root/'owner'),'avd':'Un1box_pixel_10_API36_16384_24_8192','ramMB':8192,'pageBytes':16384,
                 'launcher':str(launcher),'launcherSha256':hashlib.sha256(launcher.read_bytes()).hexdigest(),'adb':'/synthetic/adb'}
             path=root/'plan.json';path.write_text(json.dumps(plan));(root/'ROOT-PERSISTENT-AVD-GRANT.json').write_text(json.dumps({'owner':'/root/pixel','persistentAvdAuthorized':True}))
             with mock.patch.object(persistent.subprocess,'run',return_value=subprocess.CompletedProcess([],0,b'List of devices\nemulator-5554\tdevice\n',b'')),mock.patch.object(persistent.subprocess,'Popen') as spawn:

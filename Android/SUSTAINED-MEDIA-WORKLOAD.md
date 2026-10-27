@@ -31,12 +31,12 @@ Launch the existing media test with `--no-restart` after foregrounding the app:
 
 ```sh
 adb -s "$SERIAL" shell am instrument --no-restart -w -r \
-  -e class org.lighttouch.android.GuestMediaLifecycleTest#productionMediaContinuesAfterPauseSurfaceAndAudioFocusChanges \
+  -e class org.un1box.android.GuestMediaLifecycleTest#productionMediaContinuesAfterPauseSurfaceAndAudioFocusChanges \
   -e exerciseMedia true -e mediaSeconds 30 \
   -e requireFrameProgress true -e requireGuestAudio true \
   -e exerciseAudioFocus true -e exerciseHeldAudioFocus true \
   -e requireConcurrentMediaWindows true \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 This test's binding can auto-create an unused service. Independently verify the

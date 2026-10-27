@@ -11,7 +11,7 @@ spec.loader.exec_module(policy)
 
 def ui(state='starting'):
     root = ET.Element('hierarchy')
-    package = 'org.lighttouch.android'
+    package = 'org.un1box.android'
     ET.SubElement(root, 'node', {'resource-id': 'session_status', 'package': package,
                                'enabled': 'true', 'text': state})
     for rid, text, enabled in [('stop_guest', 'Stop', True),

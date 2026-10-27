@@ -37,14 +37,14 @@ worker identity freshly verified, run the collector using the existing session:
 
 ```sh
 adb -s "$SERIAL" shell am instrument --no-restart -w \
-  -e class org.lighttouch.android.GuestShutdownProgressTest#observeCachedProgressWithoutCallingNativeOrRequestingStop \
+  -e class org.un1box.android.GuestShutdownProgressTest#observeCachedProgressWithoutCallingNativeOrRequestingStop \
   -e observeShutdownProgress true \
   -e expectedMainApkSha256 "$MAIN_SHA256" \
   -e expectedWorkerPid "$WORKER_PID" \
   -e expectedWorkerStartTicks "$WORKER_START_TICKS" \
   -e expectedBootId "$ANDROID_BOOT_ID" \
   -e shutdownProgressSeconds 40 \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 The collector binds with flags `0`, verifies APK/boot/PID/UID/start ticks, and invokes

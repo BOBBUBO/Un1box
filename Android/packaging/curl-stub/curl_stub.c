@@ -1,4 +1,4 @@
-/* LightTouch Android libcurl stand-in; see curl/curl.h. No network access:
+/* Un1box Android libcurl stand-in; see curl/curl.h. No network access:
  * every TSS request fails at curl_easy_init. */
 #include <stdlib.h>
 #include <string.h>

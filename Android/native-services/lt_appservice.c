@@ -1,5 +1,5 @@
 /*
- * lt_appservice: LightTouch Android guest app-services helper.
+ * lt_appservice: Un1box Android guest app-services helper.
  *
  * A short-lived, private child of the app. It talks ONLY to the app's own
  * usbmuxd-qemu daemon (--socket, an owner-only Unix socket) and never to a
@@ -55,7 +55,7 @@
 #include <libimobiledevice/syslog_relay.h>
 #include <plist/plist.h>
 
-#define CLIENT_LABEL "LightTouchAndroid"
+#define CLIENT_LABEL "Un1boxAndroid"
 #define CONNECT_WINDOW_MS 20000
 #define CONNECT_RETRY_MS 500
 #define UPLOAD_CHUNK (1u << 20)         /* one AFC write each, answered before the next: see mobile.py */

@@ -92,9 +92,9 @@ actual APK/engine and guest state; use Root's current PID rather than a stale
 example. The following are read-only command templates, not executed here:
 
 ```sh
-adb -s DEVICE_SERIAL shell -T 'run-as org.lighttouch.android cat /proc/WORKER_PID/stat'
-adb -s DEVICE_SERIAL shell -T 'run-as org.lighttouch.android cat /proc/WORKER_PID/io'
-adb -s DEVICE_SERIAL shell -T 'run-as org.lighttouch.android cat /proc/WORKER_PID/task/TCG_TID/io'
+adb -s DEVICE_SERIAL shell -T 'run-as org.un1box.android cat /proc/WORKER_PID/stat'
+adb -s DEVICE_SERIAL shell -T 'run-as org.un1box.android cat /proc/WORKER_PID/io'
+adb -s DEVICE_SERIAL shell -T 'run-as org.un1box.android cat /proc/WORKER_PID/task/TCG_TID/io'
 ```
 
 Capture the actual remote status and error bytes, not just a local ADB zero.

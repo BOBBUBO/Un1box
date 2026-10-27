@@ -12,7 +12,7 @@ import signal
 import subprocess
 import time
 
-PACKAGE='org.lighttouch.android'
+PACKAGE='org.un1box.android'
 SERIAL='emulator-5554'
 
 
@@ -161,7 +161,7 @@ def launch_owner(plan_path):
     for name,pin in p.get('sourceHashes',{}).items():
         if Path(name).name!=name or hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()!=pin:
             raise ValueError('Persistent owner source hash differs')
-    if p['avd']!='LightTouch_pixel_10_API36_16384_24_8192' or p['ramMB']!=8192 or p['pageBytes']!=16384:
+    if p['avd']!='Un1box_pixel_10_API36_16384_24_8192' or p['ramMB']!=8192 or p['pageBytes']!=16384:
         raise ValueError('Unexpected retained COW allocation')
     launcher=Path(p['launcher'])
     if hashlib.sha256(launcher.read_bytes()).hexdigest()!=p['launcherSha256']:raise ValueError('Owner launcher hash changed')

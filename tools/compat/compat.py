@@ -24,7 +24,7 @@ WORK = Path(os.environ.get("LT_COMPAT_WORK", DEV / "work"))
 RESULTS = Path(os.environ.get("LT_COMPAT_RESULTS", DEV / "results"))
 CATALOG = REPO / "Portable/firmware/firmware-catalog.json"
 LEVELS = ["admitted", "lit", "tools", "ui", "clean"]
-PACKAGE = "org.lighttouch.android"
+PACKAGE = "org.un1box.android"
 
 
 def catalog_entry(firmware_id):

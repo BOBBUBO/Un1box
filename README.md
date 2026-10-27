@@ -1,24 +1,29 @@
-# Un1box emulator 
-<p align="center"><img src="./Picsart_26-10-25_03-23-04-384.jpg" alt="Senses" width="700"></p>
+# Un1box
 
-Un1box emulator runs classic iPhone OS and iOS in an emulator on **Android, Linux, Windows and macOS**. It is a fork of [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac), built around a shared [qemu-ios engine](https://github.com/blake-lucas/qemu-ios).
+<p align="center"><img src="./Picsart_26-10-25_03-23-04-384.jpg" alt="Un1box" width="700"></p>
+
+**Un1box** runs classic iPhone OS and iOS in an emulator on **Android, Linux, Windows and macOS** — pick a device from Apple's firmware catalog, prepare it on the phone or on the desktop, and a real, touchable iOS device appears in a window.
+
+Un1box is a fork of **[Light Touch](https://github.com/blake-lucas/LightTouch)** — and of [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac) before it — built around the shared [qemu-ios engine](https://github.com/blake-lucas/qemu-ios). LightTouch gave this project its emulator, its device preparation, its engine work and much of its code; what Un1box adds is its own Android app, its own name and its own direction. Everything LightTouch does, it still does here: the settings, the store, the device library and the prepared-system format are the same, so a device prepared by either one can be opened by the other.
 
 The desktop ports share one device library and setup UI. Android has its own touch UI. A prepared iOS system can back several saved devices, each with its own storage.
 
-here are our communities
+## Communities
 
-Discord server:
-https://discord.gg/ZpEkAV47H9
-Our Telegram channel:
-https://t.me/hyperhle
+Discord server: https://discord.gg/ZpEkAV47H9
+Telegram channel: https://t.me/hyperhle
 
-[Download the latest build](https://github.com/KlugKlugTG/Un1box/releases) (CI builds every commit; the plain LightTouch release is on [upstream](https://github.com/blake-lucas/LightTouch/releases/latest), v0.0.11). Un1box is still early and things can change between versions. Android is the most complete: it sets up devices on the phone from start to finish. The Linux, Windows and macOS versions work but take more setup, since most of the work has gone into Android first.
+## Download
+
+[Un1box builds](https://github.com/KlugKlugTG/Un1box/releases) — CI builds every commit. The plain LightTouch release is on [upstream](https://github.com/blake-lucas/LightTouch/releases/latest), v0.0.11.
+
+Un1box is still early and things can change between versions. Android is the most complete: it sets up devices on the phone from start to finish.
 
 ## Current platforms
 
 | Platform | Build | Status |
 | --- | --- | --- |
-| Android | APK, ARM64 (Android 10+) | The main test platform, on a Poco F3 and a Pixel 10. First launch walks you through preparing a device from an IPSW on the phone. Graphics, audio, touch, tilt and IPA installs work, and the Legacy Store can be browsed like the website, with several installs queued in the background. |
+| Android | APK, ARM64 (Android 10+) | The main test platform, on a Poco F3 and a Pixel 10. First launch walks you through preparing a device from an IPSW on the phone. Graphics, audio, touch, tilt, the cameras and IPA installs work, and the Legacy Store can be browsed like the website, with several installs queued in the background. |
 | Linux | x86_64 AppImage | Boot, input, accelerated graphics, audio, the Legacy Store and IPA installs work. Prepares devices with `firmwarekit` from the command line. |
 | Windows | x86_64 ZIP | Boot, graphics, audio and Legacy Store installs confirmed by users. Cannot prepare devices yet: copy a prepared `.itbase` from another computer. |
 | macOS | Apple Silicon app ZIP | The shared desktop UI builds and packages. Guest services are not yet fully checked. Needs macOS 26. Upstream's [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac/releases) is the tested Mac app. |
@@ -33,7 +38,7 @@ https://t.me/hyperhle
 | iPod touch 4G | 6.1.6 | **Tested**: on a Pixel 10, Infinity Blade and Infinity Blade II run at full speed and Epic Citadel at 60 fps. Most other games, such as Jetpack Joyride, Doodle Jump and Real Racing, run at or near 60 fps on recent phones. |
 | iPhone 3GS | 5.1.1 | **Tested, slow** |
 | iPhone 4 | 4.2.1, 4.3.5 | **Tested, slow** |
-| Others in the [firmware catalog](Portable/firmware/firmware-catalog.json) | iPhone OS 1 to iOS 7 | Can be prepared and tried; not yet checked on Un1box emulator . [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) records what has been run. |
+| Others in the [firmware catalog](Portable/firmware/firmware-catalog.json) | iPhone OS 1 to iOS 7 | Can be prepared and tried; not yet checked on Un1box. [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) records what has been run. |
 
 ## Getting started
 
@@ -56,10 +61,11 @@ Guests run through QEMU's TCG dynamic translation; there is no hardware virtuali
 
 ## License and credits
 
-Un1box emulator  is free software under GPL version 2 or, at your option, any later
-version; see [LICENSE](LICENSE). Upstream authorship and licenses are retained.
+Un1box is free software under GPL version 2 or, at your option, any later version; see [LICENSE](LICENSE). Upstream authorship and licenses are retained.
 
-It builds on [LightTouchMac](https://github.com/samhenrigold/LightTouchMac),
+It exists because of **[Light Touch](https://github.com/blake-lucas/LightTouch)** by blake-lucas, which itself builds on [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac) by Sam Henri Gold. Un1box's name and app are its own; the emulator underneath is theirs.
+
+It also builds on
 [qemu-ios](https://github.com/samhenrigold/qemu-ios),
 [QEMU](https://www.qemu.org),
 [devos50's qemu-ios](https://github.com/devos50/qemu-ios),
@@ -68,5 +74,5 @@ the upstream usbmuxd fork, iBoot32Patcher, FFmpeg, GLib, libslirp, PCRE2, pixman
 OpenSSL, Swift and its Foundation, swift-crypto, ZIPFoundation and Unrar.swift with RARLAB's UnRAR. Preserve each package's bundled
 license and source notices.
 
-iPhone, iPod touch and iPad are trademarks of Apple Inc. LightTouch is not
+iPhone, iPod touch and iPad are trademarks of Apple Inc. Un1box is not
 affiliated with Apple.

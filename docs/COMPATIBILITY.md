@@ -1,6 +1,6 @@
 # Compatibility runs
 
-Which devices and iOS versions start on LightTouch, and how far they get. [`tools/compat/compat.py`](../tools/compat/compat.py)
+Which devices and iOS versions start on Un1box, and how far they get. [`tools/compat/compat.py`](../tools/compat/compat.py)
 boots a fresh device for one catalog firmware (`n81ap-10B500` and so on), presses Home once iOS has had
 time to start, asks the guest tools which app is in front, shuts down, and records how far it got. It runs
 the same way on headless Linux and on an Android phone; Linux is the fast loop, the phone confirms.
@@ -13,7 +13,7 @@ Each level needs the ones before it.
 | --- | --- |
 | `admitted` | the engine accepted the prepared base and started |
 | `lit` | the guest drew its first lit frame (iBoot or the kernel got as far as the display) |
-| `tools` | LightTouch's guest tools loaded (`guest package … judged good` in the engine log) |
+| `tools` | Un1box's guest tools loaded (`guest package … judged good` in the engine log) |
 | `ui` | an app is in front: SpringBoard, or Setup on a base that was not set up (Android: the guest screen is lit and not just the Apple logo) |
 | `clean` | iOS shut down cleanly when asked |
 

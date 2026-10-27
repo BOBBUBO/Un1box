@@ -61,10 +61,10 @@ steps = GAMES[sys.argv[3] if len(sys.argv) > 3 else "jetpack"]
 subprocess.run(["bash", os.path.join(D, "swapapk.sh"), apk], check=True)
 if "FC_ENV" in os.environ:
     lines = "\\n".join(os.environ["FC_ENV"].split())
-    subprocess.run(["adb", "shell", f"run-as org.lighttouch.android sh -c 'printf \"{lines}\\\\n\" > files/debug-env'"], check=True)
+    subprocess.run(["adb", "shell", f"run-as org.un1box.android sh -c 'printf \"{lines}\\\\n\" > files/debug-env'"], check=True)
 if os.environ.get("FC_FRAMES"):  # read by the engine at start; kept beside any other debug-env lines
-    line = "LT_FRAME_LOG=/data/user/0/org.lighttouch.android/files/frames.log"
-    subprocess.run(["adb", "shell", f"run-as org.lighttouch.android sh -c 'grep -q LT_FRAME_LOG files/debug-env 2>/dev/null || echo {line} >> files/debug-env'"], check=True)
+    line = "LT_FRAME_LOG=/data/user/0/org.un1box.android/files/frames.log"
+    subprocess.run(["adb", "shell", f"run-as org.un1box.android sh -c 'grep -q LT_FRAME_LOG files/debug-env 2>/dev/null || echo {line} >> files/debug-env'"], check=True)
 subprocess.run([sys.executable, os.path.join(D, "inappfps.py"), "--boot-only"], check=True)
 # One Power tap wakes the guest to the lock screen, which re-sleeps within ~5 s, so poll for it and
 # swipe at once; tapping Power again before the wake shows (slow on the Poco) puts it back to sleep.

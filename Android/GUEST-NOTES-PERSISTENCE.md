@@ -41,14 +41,14 @@ Operator invocation template (no command is executed by this document):
 
 ```sh
 adb -s AUTHORIZED_DEVICE shell am instrument --no-restart -w \
-  -e class org.lighttouch.android.GuestNotesPersistenceTest \
+  -e class org.un1box.android.GuestNotesPersistenceTest \
   -e exerciseNotesPersistence true -e notesMode write \
   -e existingNotesSessionConfirmed true -e focusedBlankNotesEditorConfirmed true \
   -e expectedMainApkSha256 MAIN_SHA -e expectedWorkerPid WORKER_PID \
   -e expectedWorkerStartTicks START_TICKS -e expectedBootId BOOT_UUID \
   -e recordId RECORD_ID -e expectedBaseLockSha256 LOCK_SHA \
   -e notesMarker LTNOTES-UUID \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 For readback replace `write` with `read` and the blank-editor opt-in with

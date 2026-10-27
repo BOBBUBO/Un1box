@@ -87,11 +87,11 @@ class KeyboardFenceTest(unittest.TestCase):
         # full output carries an inactive display7 and the active display0.
         actual = (b'  Display: mDisplayId=7\n  mCurrentFocus=null\n'
                   b'  Display: mDisplayId=0 (organized)\n'
-                  b'  mCurrentFocus=Window{774ee2f u0 org.lighttouch.android/org.lighttouch.android.MainActivity}\n'
+                  b'  mCurrentFocus=Window{774ee2f u0 org.un1box.android/org.un1box.android.MainActivity}\n'
                   b'  mTopFocusedDisplayId=0\n')
         self.assertEqual(k.focused_own_window(actual)['topFocusedDisplayId'], 0)
         for bad in (b'', actual.replace(b'mTopFocusedDisplayId=0', b'mTopFocusedDisplayId=7'),
-                    actual.replace(b'org.lighttouch.android/org.lighttouch.android.MainActivity',
+                    actual.replace(b'org.un1box.android/org.un1box.android.MainActivity',
                                    b'com.android.launcher3/com.android.launcher3.uioverrides.QuickstepLauncher'),
                     actual + b'  mTopFocusedDisplayId=0\n',
                     actual + b'  mCurrentFocus=null\n', b'x' * 131073):

@@ -1,4 +1,4 @@
-package org.lighttouch.android;
+package org.un1box.android;
 
 final class PowerTransitionHostTest {
     static GuestPowerTransition gate(boolean waking) { return new GuestPowerTransition(1000, 12872, 10179, 17001359, 939, waking); }

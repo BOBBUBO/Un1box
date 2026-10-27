@@ -1,11 +1,11 @@
 /* What the Android recorder's JNI calls do with a block of mono samples.
  *
- * The three entry points are sliced out of Android/app/src/main/cpp/lighttouch_jni.cpp,
+ * The three entry points are sliced out of Android/app/src/main/cpp/un1box_jni.cpp,
  * so the duplication, the clamp and the return codes are the shipped ones; only
  * the JNI environment and the portable API behind them are stubs, and both are
  * recorded so the test can look at exactly what crossed the boundary.
  *
- * SLICE ./Android/app/src/main/cpp/lighttouch_jni.cpp fn Java_org_lighttouch_android_Native_microphone Java_org_lighttouch_android_Native_microphoneFlush Java_org_lighttouch_android_Native_microphoneInfo
+ * SLICE ./Android/app/src/main/cpp/un1box_jni.cpp fn Java_org_un1box_android_Native_microphone Java_org_un1box_android_Native_microphoneFlush Java_org_un1box_android_Native_microphoneInfo
  * CFLAGS -Wall -Werror -Wno-missing-field-initializers -Wno-unused-parameter
  */
 #include <algorithm>
@@ -81,9 +81,9 @@ extern "C" lt_status lt_runtime_mic_flush(lt_runtime *, lt_error *) {
     return LT_OK;
 }
 
-extern "C" jint Java_org_lighttouch_android_Native_microphone(JNIEnv *, jobject, jshortArray, jint);
-extern "C" void Java_org_lighttouch_android_Native_microphoneFlush(JNIEnv *, jobject);
-extern "C" jlongArray Java_org_lighttouch_android_Native_microphoneInfo(JNIEnv *, jobject);
+extern "C" jint Java_org_un1box_android_Native_microphone(JNIEnv *, jobject, jshortArray, jint);
+extern "C" void Java_org_un1box_android_Native_microphoneFlush(JNIEnv *, jobject);
+extern "C" jlongArray Java_org_un1box_android_Native_microphoneInfo(JNIEnv *, jobject);
 
 namespace {
 void reset() {
@@ -99,7 +99,7 @@ int main(void)
         reset();
         ShortArray block;
         for (int i = 0; i < 1024; i++) block.samples.push_back(int16_t(300 + i));
-        const jint taken = Java_org_lighttouch_android_Native_microphone(&env, nullptr, &block, 1024);
+        const jint taken = Java_org_un1box_android_Native_microphone(&env, nullptr, &block, 1024);
         assert(taken == 1024);
         assert(calls.writes == 1);
         assert(calls.count == 1024);
@@ -113,13 +113,13 @@ int main(void)
         reset();
         ShortArray block;
         block.samples.assign(100, 5);
-        assert(Java_org_lighttouch_android_Native_microphone(&env, nullptr, &block, 4096) == 100);
+        assert(Java_org_un1box_android_Native_microphone(&env, nullptr, &block, 4096) == 100);
         assert(calls.count == 100);
     }
     {/* An empty read is not a call at all. */
         reset();
         ShortArray block;
-        assert(Java_org_lighttouch_android_Native_microphone(&env, nullptr, &block, 1024) == 0);
+        assert(Java_org_un1box_android_Native_microphone(&env, nullptr, &block, 1024) == 0);
         assert(calls.writes == 0);
     }
     {/* A full ring (LT_AGAIN) is a dropped block, reported as 0. */
@@ -127,28 +127,28 @@ int main(void)
         calls.write_result = LT_AGAIN;
         ShortArray block;
         block.samples.assign(64, 1);
-        assert(Java_org_lighttouch_android_Native_microphone(&env, nullptr, &block, 64) == 0);
+        assert(Java_org_un1box_android_Native_microphone(&env, nullptr, &block, 64) == 0);
     }
     {/* Anything else keeps its status, negated, so the recorder can stop and say why. */
         reset();
         calls.write_result = LT_UNSUPPORTED;
         ShortArray block;
         block.samples.assign(64, 1);
-        assert(Java_org_lighttouch_android_Native_microphone(&env, nullptr, &block, 64) == -jint(LT_UNSUPPORTED));
+        assert(Java_org_un1box_android_Native_microphone(&env, nullptr, &block, 64) == -jint(LT_UNSUPPORTED));
     }
     {/* Nothing is called before the guest's engine exists. */
         reset();
         runtime = nullptr;
         ShortArray block;
         block.samples.assign(64, 1);
-        assert(Java_org_lighttouch_android_Native_microphone(&env, nullptr, &block, 64) == -jint(LT_AGAIN));
+        assert(Java_org_un1box_android_Native_microphone(&env, nullptr, &block, 64) == -jint(LT_AGAIN));
         assert(calls.writes == 0);
-        Java_org_lighttouch_android_Native_microphoneFlush(&env, nullptr);
+        Java_org_un1box_android_Native_microphoneFlush(&env, nullptr);
         assert(calls.flushes == 0);
     }
     {/* The counters come back in this order: status, rate, queued, capturing, pushed, dropped. */
         reset();
-        LongArray *info = Java_org_lighttouch_android_Native_microphoneInfo(&env, nullptr);
+        LongArray *info = Java_org_un1box_android_Native_microphoneInfo(&env, nullptr);
         assert(info->values.size() == 6);
         assert(info->values[0] == jlong(LT_OK));
         assert(info->values[1] == 44100);
@@ -160,20 +160,20 @@ int main(void)
         /* Not capturing reads as 0, whatever the engine's own flag says. */
         reset();
         calls.capturing = 0;
-        info = Java_org_lighttouch_android_Native_microphoneInfo(&env, nullptr);
+        info = Java_org_un1box_android_Native_microphoneInfo(&env, nullptr);
         assert(info->values[3] == 0);
         delete info;
         /* A stopped runtime answers LT_AGAIN with zeroed counters instead of inventing values. */
         reset();
         runtime = nullptr;
-        info = Java_org_lighttouch_android_Native_microphoneInfo(&env, nullptr);
+        info = Java_org_un1box_android_Native_microphoneInfo(&env, nullptr);
         assert(info->values[0] == jlong(LT_AGAIN));
         assert(info->values[5] == 0);
         delete info;
     }
     {/* Stopping the recorder flushes what the guest has not read. */
         reset();
-        Java_org_lighttouch_android_Native_microphoneFlush(&env, nullptr);
+        Java_org_un1box_android_Native_microphoneFlush(&env, nullptr);
         assert(calls.flushes == 1);
     }
     std::puts("JNI glue: mono is duplicated to stereo, and every status maps to the recorder's contract");

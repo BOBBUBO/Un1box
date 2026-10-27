@@ -10,11 +10,11 @@ With matching main and test APKs installed, foreground MainActivity before each
 instrumentation waiting for a foreground launch:
 
 ```sh
-adb -s "$ANDROID_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
+adb -s "$ANDROID_SERIAL" shell am start -W -n org.un1box.android/.MainActivity
 adb -s "$ANDROID_SERIAL" shell am instrument --no-restart -w \
-  -e class org.lighttouch.android.GuestWakeDiagnosisTest \
+  -e class org.un1box.android.GuestWakeDiagnosisTest \
   -e diagnoseGuestWake true -e resumeExisting true -e wakePulseHoldMs 500 \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 The new optional `wakePulseHoldMs` accepts integers from 150 through 500 and

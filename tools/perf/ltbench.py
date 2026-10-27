@@ -13,7 +13,7 @@ For adb, Q/B/R are paths on the device inside the app's data dir.
 """
 import argparse, hashlib, json, os, subprocess, sys, threading, time
 
-PKG = "org.lighttouch.android"
+PKG = "org.un1box.android"
 
 p = argparse.ArgumentParser()
 p.add_argument("mode", choices=["local", "adb"])

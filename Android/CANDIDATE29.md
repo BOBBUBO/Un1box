@@ -30,7 +30,7 @@ catalog. Stage the tracked diagnostic into its instrumentation source set:
 
 ```sh
 cp "$LT_APP_SRC/Android/scripts/pixel/GuestPixelBootDiagnosisTest.kt" \
-  "$LT_APP_SRC/Android/app/src/androidTest/java/org/lighttouch/android/GuestPixelBootDiagnosisTest.kt"
+  "$LT_APP_SRC/Android/app/src/androidTest/java/org/un1box/android/GuestPixelBootDiagnosisTest.kt"
 ```
 
 Export matching QEMU bridge headers/helper from the engine revision. Obtain the
@@ -64,7 +64,7 @@ cd "$LT_APP_SRC/Android"
   "-PengineNoticeArm64=$LT_INPUTS/engine/arm64-v8a/notices" \
   "-PengineNoticeX86=$LT_INPUTS/engine/x86_64/notices" \
   -PsourceRevision=6b07201cd722602136d2207dc496faab3526d5f3 \
-  -PsourceReference=https://github.com/blake-lucas/LightTouch/tree/6b07201cd722602136d2207dc496faab3526d5f3 \
+  -PsourceReference=https://github.com/KlugKlugTG/Un1box/tree/6b07201cd722602136d2207dc496faab3526d5f3 \
   "-PbuildRoot=$LT_BUILD" -Pkotlin.compiler.execution.strategy=in-process \
   "-PangleLibraries=$LT_INPUTS/angle-x86/lib" \
   "-PangleManifest=$LT_INPUTS/angle-x86/closure.json" \
@@ -79,7 +79,7 @@ cd "$LT_APP_SRC/Android"
   "-PfrontendNotices=$LT_INPUTS/frontend" \
   -PfrontendNoticesSha256=88918185b1a3ba3ea1b4c910c8b7dde56391597574f53824a160fef45d2b76a7 \
   :app:assembleDebug :app:assembleDebugAndroidTest \
-  :app:testDebugUnitTest --tests 'org.lighttouch.android.*'
+  :app:testDebugUnitTest --tests 'org.un1box.android.*'
 ```
 
 Run the APK checker, `apksigner verify` and `zipalign -c -P 16 4` checks from
@@ -98,13 +98,13 @@ the signing key and package data; do not uninstall to solve an update conflict.
 LT_DEVICE_SERIAL=your-authorized-device
 LT_APK="$LT_BUILD/app/outputs/apk/debug/app-debug.apk"
 adb -s "$LT_DEVICE_SERIAL" install -r "$LT_APK"
-adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
+adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.un1box.android/.MainActivity
 ```
 
 Use the import/preparation instructions in [BUILD-AND-RUN.md](BUILD-AND-RUN.md)
 to supply legitimate matching private assets. Select the intended board/build,
 then Start. Home and Power operate guest buttons. Screenshot captures the guest
-frame to Android Pictures/LightTouch; it does not press the guest screenshot
+frame to Android Pictures/Un1box; it does not press the guest screenshot
 chord. Backgrounding pauses and cancels input; return and explicitly Resume.
 Stop requires actual guest confirmation. A restarted session gets a fresh
 worker. Ordinary Start refuses dirty state; use the explicit retained-state

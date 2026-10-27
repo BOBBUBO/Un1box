@@ -18,7 +18,7 @@ image child, NAND copy, asset push, ADB server, compiler or guest was started.
 
 ## Available control environment
 
-The existing `LightTouch_API35` smoke AVD uses API35/default/x86_64 revision2 and
+The existing `Un1box_API35` smoke AVD uses API35/default/x86_64 revision2 and
 Pixel6 geometry. Its historical JNI smoke actually reported4096-byte pages and
 SwiftShader EGL; pixel-transfer probes passed, while the historical GLES1 render
 probe failed an FBO-completeness assertion. Those results are prerequisites,
@@ -27,7 +27,7 @@ image flavor, so comparisons do not isolate page size.
 
 Reuse the installed API35 image and the existing smoke AVD's backing chain, with
 new small external QCOW children and a separately named private configuration
-`LightTouch_API35_4K_G5_26`. Do not mutate the original smoke disks. The proposed
+`Un1box_API35_4K_G5_26`. Do not mutate the original smoke disks. The proposed
 creation command uses `system-images;android-35;default;x86_64`, profile `pixel_6`,
 no `--force`, and stdin `no`. None of these creation commands has run.
 
@@ -44,7 +44,7 @@ and matching test26 SHA
 `30ea248ba52a38fcbadd395ed8d4f20a71842301ebfd0d8369c697afa50e755e`.
 Its packaged stripped x86 engine SHA is
 `6796ae4ae9401414e4aace4a799ee67f4a172c3d0148598f31916977ebd44274`.
-Select inner LightTouch `platform` explicitly. An actual missing/broken platform
+Select inner Un1box `platform` explicitly. An actual missing/broken platform
 GLES path may justify a separately approved fresh-worker `angle-gl` attempt;
 retain the platform failure and each provider's scope. Never switch providers
 silently or qualify a physical Tensor/vendor GPU from software AVD results.

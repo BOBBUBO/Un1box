@@ -1,5 +1,5 @@
 From 3fd66df960cce139cff88bcfe2ee15785c387230 Mon Sep 17 00:00:00 2001
-From: LightTouch <lighttouch@localhost>
+From: Un1box <un1box@localhost>
 Date: Sun, 25 Oct 2026 20:26:49 +0000
 Subject: [PATCH] hw/arm: the frontend's microphone into a capture port
 

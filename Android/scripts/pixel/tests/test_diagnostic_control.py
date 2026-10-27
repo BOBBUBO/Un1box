@@ -26,7 +26,7 @@ def binding():
 
 
 def stat(ticks):
-    return ("42 (org.lighttouch.android:engine) " + " ".join(["S"] + ["0"] * 18 + [str(ticks)] + ["0"] * 5)).encode()
+    return ("42 (org.un1box.android:engine) " + " ".join(["S"] + ["0"] * 18 + [str(ticks)] + ["0"] * 5)).encode()
 
 
 def bracket(offset=400):
@@ -126,7 +126,7 @@ class CaptureIdentity(unittest.TestCase):
         uid = b"Uid:\t10215\t10215\t10215\t10215\n"
         data = {"/proc/sys/kernel/random/boot_id": b["bootId"].encode(), "/proc/self/status": uid,
                 "files/library/selected": b["recordId"].encode(), "/proc/42/stat": stat(1234),
-                "/proc/42/status": uid, "/proc/42/cmdline": b"org.lighttouch.android:engine\0",
+                "/proc/42/status": uid, "/proc/42/cmdline": b"org.un1box.android:engine\0",
                 folder + "/ready.json": json.dumps(b).encode(), folder + "/result.json": b"{}",
                 folder + "/timeline.json": b'[{"index":0,"status":{"pid":42,"uid":10215}}]',
                 folder + "/qmp-0.jsonl": b"synthetic-host-test-only",
@@ -164,7 +164,7 @@ class CaptureIdentity(unittest.TestCase):
     def test_reused_pid_wrong_uid_or_role_stops_before_raw_copy(self):
         for change in ({"/proc/42/stat": stat(9999)},
                        {"/proc/42/status": b"Uid:\t10216\t10216\t10216\t10216\n"},
-                       {"/proc/42/cmdline": b"org.lighttouch.android:firmware\0"}):
+                       {"/proc/42/cmdline": b"org.un1box.android:firmware\0"}):
             receipt, calls = self.collect(change)
             self.assertIn("failure", receipt)
             self.assertFalse(any("frame-0.png" in " ".join(c) for c in calls))
@@ -266,7 +266,7 @@ class Admission(unittest.TestCase):
                      "/proc/sys/kernel/random/boot_id": b["bootId"].encode(),
                      "files/library/selected": b["recordId"].encode(), "/proc/42/stat": stat(1234),
                      "/proc/42/status": b"Uid:\t10215\t10215\t10215\t10215\n",
-                     "/proc/42/cmdline": b"org.lighttouch.android:engine\0", "/proc/uptime": b"900.00 1200.00\n"}
+                     "/proc/42/cmdline": b"org.un1box.android:engine\0", "/proc/uptime": b"900.00 1200.00\n"}
         if change: responses.update(change)
         calls = []
         clock = b["originNs"] + offset * 1_000_000_000

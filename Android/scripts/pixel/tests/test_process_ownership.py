@@ -86,7 +86,7 @@ class ProcessOwnership(unittest.TestCase):
                 persistent_avd.attach_attempt(attempt, root / 'owner.json')
             self.assertEqual(attempt.avd_start_ticks, 1234)
             self.assertEqual(attempt.owned_avd_identities, {})
-            xml = b'''<hierarchy><node package="org.lighttouch.android" enabled="true"
+            xml = b'''<hierarchy><node package="org.un1box.android" enabled="true"
                 clickable="true" bounds="[10,20][110,120]">
                 <node text="Stop" enabled="true" clickable="false"/>
                 </node></hierarchy>'''

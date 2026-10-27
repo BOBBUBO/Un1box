@@ -68,7 +68,7 @@ def main():
         for api, tag, pages in ((35, "default", 4096), (36, "google_apis_ps16k", 16384)):
             image = sdk / "system-images" / f"android-{api}" / tag / "x86_64"
             properties = image / "source.properties"
-            name = f"LightTouch_{profile}_API{api}_{pages}"
+            name = f"Un1box_{profile}_API{api}_{pages}"
             path = root / f"{name}.avd"
             plans.append({"name": name, "profile": profile, "abi": "x86_64", "api": api,
                 "expectedPageBytes": pages, "actualPageBytes": None,

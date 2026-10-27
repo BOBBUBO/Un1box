@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 BOOT_LIMIT = 240
 STOP_AT = 840
 HARD_LIMIT = 900
-PACKAGE = "org.lighttouch.android"
+PACKAGE = "org.un1box.android"
 # This tool is Linux-only; keep its independent watcher a fork even on Python
 # versions whose default start method is forkserver.
 PROCESS_CONTEXT = multiprocessing.get_context("fork")
@@ -355,7 +355,7 @@ class Attempt:
         # Only a unique enabled semantic Stop can admit native shutdown. No guessed coordinates.
         try:
             if self.adb("shell", "am", "start", "-W", "-n", PACKAGE+"/.MainActivity", timeout=5)[0]:
-                raise RuntimeError("LightTouch foreground launch failed; semantic Stop unconfirmed")
+                raise RuntimeError("Un1box foreground launch failed; semantic Stop unconfirmed")
             remote = f"/data/local/tmp/lighttouch-stop-{os.getpid()}.xml"
             if self.adb("shell", "uiautomator", "dump", "--compressed", remote, timeout=6)[0]:
                 raise RuntimeError("Semantic Stop hierarchy unavailable")
@@ -432,7 +432,7 @@ def main():
     parser.add_argument("--allocation-granted", action="store_true", required=True)
     parser.add_argument("--adb", required=True)
     parser.add_argument("--emulator", required=True)
-    parser.add_argument("--avd", default="LightTouch_API35_16K")
+    parser.add_argument("--avd", default="Un1box_API35_16K")
     parser.add_argument("--expected-page-bytes",type=int,choices=(4096,16384),default=16384)
     parser.add_argument("--memory-mb",type=int,choices=(2048,4096),default=2048)
     parser.add_argument("--cores",type=int,choices=(2,4),default=2)

@@ -11,7 +11,7 @@ with the production pixels and input mapper.
 
 ## Selected paths and equations
 
-`app/src/main/cpp/lighttouch_jni.cpp::viewport` computes, for raw guest dimensions
+`app/src/main/cpp/un1box_jni.cpp::viewport` computes, for raw guest dimensions
 `Fw,Fh` and destination dimensions `Dw,Dh`:
 
 ```
@@ -29,7 +29,7 @@ rotation call appears in this source.
 
 `GuestDisplay.onTouchEvent` passes View-local MotionEvent pixels and View
 dimensions, plus `display.rotation*90`, through Binder.
-`lighttouch_jni.cpp::Native_touch` calculates the same aspect-fit viewport with
+`un1box_jni.cpp::Native_touch` calculates the same aspect-fit viewport with
 those View dimensions, then explicitly calls `lt_map_contact(...,rotation=0)`
 and ignores the supplied physical rotation. The shared
 `Portable/src/Runtime.cpp::lt_map_contact` case0 returns

@@ -1,5 +1,5 @@
 From cef300fd052677e74df367fd65140cdff624046b Mon Sep 17 00:00:00 2001
-From: LightTouch <lighttouch@localhost>
+From: Un1box <un1box@localhost>
 Date: Sun, 25 Oct 2026 19:28:23 +0000
 Subject: [PATCH] gles: one guest read per draw for interleaved arrays
 

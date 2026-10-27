@@ -71,14 +71,14 @@ class Memory(unittest.TestCase):
     def test_worker_identity_checks_uid_ticks_and_role(self):
         stat = '42 (worker) ' + ' '.join(['S'] + ['0']*18 + ['123'])
         b = {'workerStartTicks': 123, 'appUid': 10215}
-        self.assertTrue(memory.worker_identity(stat, 'Uid:\t10215\t10215\n', 'org.lighttouch.android:engine\0', b))
+        self.assertTrue(memory.worker_identity(stat, 'Uid:\t10215\t10215\n', 'org.un1box.android:engine\0', b))
         # Actual API36 /proc cmdline used a99-byte argv slot padded with NULs.
-        padded = 'org.lighttouch.android:engine'.ljust(99, '\0')
+        padded = 'org.un1box.android:engine'.ljust(99, '\0')
         self.assertTrue(memory.worker_identity(stat, 'Uid:\t10215\t10215\n', padded, b))
-        self.assertFalse(memory.worker_identity(stat, 'Uid:\t10215\t10215\n', 'org.lighttouch.android:engine\0replacement', b))
+        self.assertFalse(memory.worker_identity(stat, 'Uid:\t10215\t10215\n', 'org.un1box.android:engine\0replacement', b))
         for change in ({'workerStartTicks': 124}, {'appUid': 10216}):
-            self.assertFalse(memory.worker_identity(stat, 'Uid:\t10215\n', 'org.lighttouch.android:engine\0', {**b, **change}))
-        self.assertFalse(memory.worker_identity(stat, 'Uid:\t10215\n', 'org.lighttouch.android', b))
+            self.assertFalse(memory.worker_identity(stat, 'Uid:\t10215\n', 'org.un1box.android:engine\0', {**b, **change}))
+        self.assertFalse(memory.worker_identity(stat, 'Uid:\t10215\n', 'org.un1box.android', b))
 
     def test_denied_host_file_and_zram_provenance_retained(self):
         def reader(path):

@@ -9,7 +9,7 @@ rendering, audible output or lifecycle acceptance.
 ## Working Poco APK22 route: platform recorder, plain task-clock
 
 The first usable APK22 recording ran `/system/bin/simpleperf` directly under
-`run-as org.lighttouch.android`, without `--app` redispatch. Actual platform
+`run-as org.un1box.android`, without `--app` redispatch. Actual platform
 version was `1.build.1790963387`, SHA-256
 `a258fcfcfa04b6336ab52f328bcd6a9ae6f3dff8e0aeb5f6950006ac6362e148`.
 This is platform-recorder evidence, not an NDK-recorder claim. Read back and retain
@@ -35,9 +35,9 @@ a different existing limit or change settings to make recording succeed.
 ```sh
 # LT_ADB, LT_SERIAL, LT_VERIFIED_TIDS and LT_PROFILE are operator-supplied.
 # LT_PROFILE is an existing fresh host evidence directory, outside Git.
-"$LT_ADB" -s "$LT_SERIAL" shell run-as org.lighttouch.android \
+"$LT_ADB" -s "$LT_SERIAL" shell run-as org.un1box.android \
   mkdir files/lt-perf-private-01
-"$LT_ADB" -s "$LT_SERIAL" shell run-as org.lighttouch.android \
+"$LT_ADB" -s "$LT_SERIAL" shell run-as org.un1box.android \
   /system/bin/simpleperf record -t "$LT_VERIFIED_TIDS" --no-inherit \
   -c 50000000 -e task-clock --duration 10 --clockid monotonic \
   --call-graph dwarf,8192 -m 8 --user-buffer-size 16M --size-limit 32M \
@@ -45,7 +45,7 @@ a different existing limit or change settings to make recording succeed.
   -o files/lt-perf-private-01/perf.data \
   > "$LT_PROFILE/record.stdout" 2> "$LT_PROFILE/record.stderr"
 # Retain the actual command and exit status before any further command.
-"$LT_ADB" -s "$LT_SERIAL" exec-out run-as org.lighttouch.android \
+"$LT_ADB" -s "$LT_SERIAL" exec-out run-as org.un1box.android \
   cat files/lt-perf-private-01/perf.data > "$LT_PROFILE/perf.data"
 ```
 

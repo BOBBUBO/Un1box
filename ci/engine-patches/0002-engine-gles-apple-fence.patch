@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: LightTouch <lighttouch@localhost>
+From: Un1box <un1box@localhost>
 Date: Sun, 25 Oct 2026 18:38:58 +0000
 Subject: [PATCH] gles: APPLE_fence as a real EGL fence sync on EGL hosts
 

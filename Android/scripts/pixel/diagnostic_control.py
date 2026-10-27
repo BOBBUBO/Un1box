@@ -9,7 +9,7 @@ import shlex
 import subprocess
 import time
 
-PACKAGE = "org.lighttouch.android"
+PACKAGE = "org.un1box.android"
 SERIAL = "emulator-5554"
 READBACK_AT = 810
 STOP_AT = 840

@@ -6,7 +6,7 @@ import unittest
 import re
 
 HERE = Path(__file__).resolve().parent
-POLICY = HERE.parents[1] / 'app/src/androidTest/java/org/lighttouch/android/GuestUnlockReadiness.java'
+POLICY = HERE.parents[1] / 'app/src/androidTest/java/org/un1box/android/GuestUnlockReadiness.java'
 
 
 class UnlockReadinessTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class UnlockReadinessTests(unittest.TestCase):
                          'height', 'invalid', 'deadline', 'clock']:
             with self.subTest(scenario=scenario):
                 completed = subprocess.run(['java', '-Xmx64m', '-cp', self.temp.name,
-                    'org.lighttouch.android.UnlockReadinessHostTest', scenario],
+                    'org.un1box.android.UnlockReadinessHostTest', scenario],
                     check=True, text=True, capture_output=True, timeout=5)
                 self.assertEqual(completed.stdout.strip(), 'PASS ' + scenario)
 

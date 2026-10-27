@@ -1,4 +1,4 @@
-package org.lighttouch.android;
+package org.un1box.android;
 
 /** Executes the same test-only admission class used by GuestUnlockTest. */
 final class UnlockReadinessHostTest {

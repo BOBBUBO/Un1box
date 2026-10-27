@@ -37,7 +37,7 @@ class PayloadTests(FIXTURE.RepackTests):
 
     def test_verifier_rejects_unrelated_managed_or_jni_change(self):
         receipt = self.run_repack()
-        for name in ['classes.dex', 'lib/arm64-v8a/liblighttouch_jni.so']:
+        for name in ['classes.dex', 'lib/arm64-v8a/libun1box_jni.so']:
             altered = self.rewrite({name: b'changed'})
             with self.assertRaisesRegex(ValueError, 'Unrelated APK payload changed'):
                 VERIFY.verify_payloads(self.base, altered, receipt)

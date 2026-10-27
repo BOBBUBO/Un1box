@@ -33,7 +33,7 @@ class Recovery(unittest.TestCase):
                 if kind=='missing-state':state.rmdir()
                 if kind=='symlink-state':state.rmdir();state.symlink_to(out)
                 def run(argv,**kw):
-                    remote=shlex.split(argv[-1]);self.assertEqual(remote[:4],['run-as','org.lighttouch.android','sh','-c'])
+                    remote=shlex.split(argv[-1]);self.assertEqual(remote[:4],['run-as','org.un1box.android','sh','-c'])
                     return subprocess.run(['/bin/sh','-c',remote[4]],cwd=out,**kw)
                 capture=SimpleNamespace(adb='/synthetic/adb',run=run,now=time.monotonic_ns,deadline=time.monotonic_ns()+5_000_000_000)
                 try:
@@ -67,7 +67,7 @@ class Recovery(unittest.TestCase):
         base=b'base';rom=b'rom';guest=b'guest';sha=lambda x:hashlib.sha256(x).hexdigest()
         meta=json.dumps({'schema':1,'id':record,'base_sha256':sha(base),'bootrom_sha256':sha(rom),'guest_package_sha256':sha(guest)}).encode()
         root='files/library/records/'+record
-        data={'/proc/self/status':uid,'/proc/42/stat':stat,'/proc/42/status':uid,'/proc/42/cmdline':b'org.lighttouch.android:engine\0',
+        data={'/proc/self/status':uid,'/proc/42/stat':stat,'/proc/42/status':uid,'/proc/42/cmdline':b'org.un1box.android:engine\0',
             '/proc/sys/kernel/random/boot_id':b'11111111-2222-3333-4444-555555555555','files/library/selected':record.encode(),
             root+'/record.json':meta,root+'/base/device.lock.json':base,root+'/assets/bootrom.bin':rom,root+'/assets/guest.itpack':guest,root+'/state/.dirty':b'actual interrupted',root+'/state/.base-identity':b'existing base identity'}
         if change:data.update(change)
@@ -75,7 +75,7 @@ class Recovery(unittest.TestCase):
         (out/'clock-context.json').write_text(json.dumps(context));(out/'memory-monitor.json').write_text(json.dumps({'originNs':10**12,'ownerPid':999,'ownerStartTicks':789}))
         pins={suffix:sha(data[root+'/'+suffix]) for suffix in ('record.json','base/device.lock.json','assets/bootrom.bin','assets/guest.itpack')}
         def run(argv,**kw):
-            if argv[-2:] == ['pidof','org.lighttouch.android:engine']:return subprocess.CompletedProcess(argv,0,b'42\n',b'')
+            if argv[-2:] == ['pidof','org.un1box.android:engine']:return subprocess.CompletedProcess(argv,0,b'42\n',b'')
             if argv[3:]==['exec-out','cat','/proc/sys/kernel/random/boot_id','/proc/uptime','/proc/sys/kernel/random/boot_id']:
                 boot=data['/proc/sys/kernel/random/boot_id'];return subprocess.CompletedProcess(argv,0,boot+b'\n100.00 200.00\n'+boot+b'\n',b'')
             if 'LT_MARKER_ABSENT' in argv[-1]:
@@ -139,7 +139,7 @@ class Recovery(unittest.TestCase):
                 if kind=='missing':data['files/library/records/'+record+'/state/.dirty']=None
                 if kind=='wrong-pin':pins['assets/guest.itpack']='0'*64
                 if kind=='wrong-selected':data['files/library/selected']=b'different'
-                if kind=='wrong-worker':data['/proc/42/cmdline']=b'org.lighttouch.android\0'
+                if kind=='wrong-worker':data['/proc/42/cmdline']=b'org.un1box.android\0'
                 original=bind_recovery.Sampler
                 with mock.patch.object(bind_recovery,'process_ticks',side_effect=lambda p:{777:100000,999:789}[p]),mock.patch.object(bind_recovery,'Sampler',side_effect=lambda *a,**kw:original(*a,identity=lambda p:789,**kw)):
                     with self.assertRaises(ValueError):bind_recovery.bind('/synthetic/adb',out,token,record,pins,run=run,now=lambda:10**12+100*10**9)
@@ -169,7 +169,7 @@ class Recovery(unittest.TestCase):
             (attempt.output/'recovery-record-bound.json').write_text(json.dumps(bound))
             stat=('42 (engine) '+' '.join(['S']+['0']*18+['1235'])).encode()
             def adb(*argv,**kw):
-                data={'stat':stat,'status':b'Uid: 10215 10215 10215 10215\n','cmdline':b'org.lighttouch.android:engine\0'}
+                data={'stat':stat,'status':b'Uid: 10215 10215 10215 10215\n','cmdline':b'org.un1box.android:engine\0'}
                 return 0,data[argv[-1].rsplit('/',1)[-1]]
             attempt.adb=mock.Mock(side_effect=adb);attempt.path_presence=mock.Mock(return_value=True)
             attempt.pixel_readback=mock.Mock()
@@ -192,7 +192,7 @@ class Recovery(unittest.TestCase):
                 if argv[1]=='pidof':return 0,b'42\n'
                 if argv[-1]=='/proc/sys/kernel/random/boot_id':return 0,bound['bootId'].encode()
                 if argv[-1]=='files/library/selected':return 0,bound['recordId'].encode()
-                data={'stat':stat,'status':b'Uid: 10215 10215 10215 10215\n','cmdline':b'org.lighttouch.android:engine\0'}
+                data={'stat':stat,'status':b'Uid: 10215 10215 10215 10215\n','cmdline':b'org.un1box.android:engine\0'}
                 return 0,data[argv[-1].rsplit('/',1)[-1]]
             attempt.adb=mock.Mock(side_effect=adb);attempt.pixel_readback=mock.Mock()
             with mock.patch.object(pixel_supervisor.base.Attempt,'stop') as stop:
@@ -225,13 +225,13 @@ class Recovery(unittest.TestCase):
         class Controller:
             values={'boot_id':b['bootId'].encode(),'selected':b['recordId'].encode(),
                 'stat':stat,'status':b'Uid: 10215 10215 10215 10215\n',
-                'cmdline':b'org.lighttouch.android:engine'.ljust(99,b'\0')}
+                'cmdline':b'org.un1box.android:engine'.ljust(99,b'\0')}
             def run(self,label,argv,*a):return self.values[argv[-1].rsplit('/',1)[-1]]
         c=Controller()
         result=bind_recovery.recheck_before_start(c,b)
         self.assertEqual(result['cmdlineBytes'],99);self.assertTrue(result['identityMatched'])
         self.assertFalse(result['guestAcceptancePassed'])
-        for name,value in (('cmdline',b'org.lighttouch.android\0'),('status',b'Uid: 10216 10216 10216 10216\n'),('selected',b'other')):
+        for name,value in (('cmdline',b'org.un1box.android\0'),('status',b'Uid: 10216 10216 10216 10216\n'),('selected',b'other')):
             with self.subTest(name=name):
                 old=c.values[name];c.values[name]=value
                 with self.assertRaises(ValueError):bind_recovery.recheck_before_start(c,b)

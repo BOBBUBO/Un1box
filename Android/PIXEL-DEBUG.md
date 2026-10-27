@@ -40,7 +40,7 @@ API36/4KiB comparison would require a separately installed and pinned image.
 
 Create one new named AVD from the receipt, using its private path and `no` on
 stdin. Do not use `--force`, reuse existing graphics-lane userdata, or wipe other
-AVDs. Start with `LightTouch_pixel_10_API36_16384`; Pixel 8/9 profiles primarily
+AVDs. Start with `Un1box_pixel_10_API36_16384`; Pixel 8/9 profiles primarily
 add geometry/inset/rotation coverage. Repeat virtual profiles only where those
 differences justify the work.
 
@@ -61,7 +61,7 @@ physical Pixel graphics. The host and matched runner contract is documented in
 For current tests, retain the running Android instance and attach a separately
 bounded guest attempt; do not restart Android between guest tests or interrupt a
 user-owned interactive session. Switching the inner provider requires a fresh
-LightTouch worker, not an Android restart. Use a genuine current clean-shutdown
+Un1box worker, not an Android restart. Use a genuine current clean-shutdown
 receipt or explicit dirty-state recovery for that worker's admission.
 
 This supervisor currently launches `-gpu swiftshader` and `-no-audio`. SwiftShader

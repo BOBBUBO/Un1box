@@ -37,7 +37,7 @@ BQL waits/holds for the longest frames. `--top 30` increases the number of detai
 ## What is captured
 
 - `metadata.json`: frontmost iOS app response, localized name, bundle ID, start/end timestamps,
-  Android model/build, LightTouch version, worker PID and performance environment switches.
+  Android model/build, Un1box version, worker PID and performance environment switches.
   New captures also include audio underrun, PCM queue/drop and output counters at start/end.
 - `engine-*-manifest.json`: the APK's build and engine notice/identity manifests.
 - `engine-start.log`: the first 64 KiB of engine setup diagnostics, including graphics initialization.
@@ -83,7 +83,7 @@ recorded.
 
 The engine has opt-in diagnostics for following one long frame through the guest, the engine and the
 host. All are off by default and cost nothing when off. On Android, a debug APK reads them from
-`files/debug-env` (`KEY=VALUE` lines, through `run-as org.lighttouch.android`); on the desktop, set
+`files/debug-env` (`KEY=VALUE` lines, through `run-as org.un1box.android`); on the desktop, set
 them in the environment. Each perturbs timing, so **never compare frame rates with a diagnostic on**:
 A/B pairs run with all of them off.
 

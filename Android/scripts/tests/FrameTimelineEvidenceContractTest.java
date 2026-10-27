@@ -1,4 +1,4 @@
-package org.lighttouch.android;
+package org.un1box.android;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;

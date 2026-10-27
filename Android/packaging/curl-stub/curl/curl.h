@@ -1,4 +1,4 @@
-/* LightTouch Android: configure/compile-time stand-in for libcurl.
+/* Un1box Android: configure/compile-time stand-in for libcurl.
  *
  * libtatsu (TSS signing requests) is a hard configure dependency of
  * libimobiledevice 1.4.0, but only its tools (ideviceimagemounter, restore
