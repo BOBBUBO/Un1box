@@ -276,9 +276,9 @@ fn c_str(p: *const std::ffi::c_char) -> String {
 
 /// The engine's threads on the fast cores only, as the app's runtime does for a running device: Android's scheduler
 /// otherwise leaves the second TCG thread and the main loop on the little cores. No-op unless the slowest core has
-/// under half the biggest's capacity (desktops); LT_ENGINE_CPUS=off skips it.
+/// under half the biggest's capacity (desktops); LT_ENGINE_CPUS=off skips it. Android is its own target_os.
 fn prefer_fast_cores() {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if std::env::var("LT_ENGINE_CPUS").as_deref() == Ok("off") {
             return;
@@ -308,6 +308,84 @@ fn prefer_fast_cores() {
             }
             libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &fast);
         }
+    }
+}
+
+/// Android Dynamic Performance Framework for the vCPU threads, as the app's runtime does for a running device
+/// (performance_hint.h), but for a boot that has no frames and wants to finish soonest: every 20 ms, the vCPUs' CPU
+/// time in that window against a 10 ms target, so a busy vCPU reads as behind and the power HAL raises its clocks and
+/// placement (2.3x on a Pixel's guest; without it a Pixel's iPod touch 3G seal boot ran past 10 minutes), and an idle
+/// one is left alone. API 33+, resolved at run time; does nothing without hint sessions (the Poco's HAL). As
+/// lighttouch-oneshot did; LT_ADPF=off skips it.
+#[cfg(target_os = "android")]
+fn performance_hint() {
+    use std::ffi::c_void;
+    type GetManager = unsafe extern "C" fn() -> *mut c_void;
+    type CreateSession = unsafe extern "C" fn(*mut c_void, *const i32, usize, i64) -> *mut c_void;
+    type ReportWork = unsafe extern "C" fn(*mut c_void, i64) -> i32;
+    // QEMU names its vCPU threads "CPU n/TCG" as they start.
+    fn vcpu_tids() -> Vec<i32> {
+        let Ok(tasks) = std::fs::read_dir("/proc/self/task") else { return Vec::new() };
+        tasks
+            .flatten()
+            .filter_map(|t| {
+                let name = std::fs::read_to_string(t.path().join("comm")).ok()?;
+                let name = name.trim_end_matches('\n');
+                (name.len() > 4 && name.starts_with("CPU ") && name.ends_with("/TCG"))
+                    .then(|| t.file_name().to_str()?.parse().ok())?
+            })
+            .take(8)
+            .collect()
+    }
+    // Another thread's CPU clock: MAKE_THREAD_CPUCLOCK(tid, CPUCLOCK_SCHED). None once a vCPU has gone (QEMU stopping).
+    fn cpu_ns(tids: &[i32]) -> Option<i64> {
+        let mut total = 0i64;
+        for &tid in tids {
+            let mut value: libc::timespec = unsafe { std::mem::zeroed() };
+            let clock = ((!(tid as u32) << 3) | 6) as libc::clockid_t;
+            if unsafe { libc::clock_gettime(clock, &mut value) } != 0 {
+                return None;
+            }
+            total += value.tv_sec as i64 * 1_000_000_000 + value.tv_nsec as i64;
+        }
+        Some(total)
+    }
+    let Ok(android) = (unsafe { libloading::Library::new("libandroid.so") }) else { return };
+    let symbols = unsafe {
+        (
+            android.get::<GetManager>(b"APerformanceHint_getManager"),
+            android.get::<CreateSession>(b"APerformanceHint_createSession"),
+            android.get::<ReportWork>(b"APerformanceHint_reportActualWorkDuration"),
+        )
+    };
+    let (Ok(manager), Ok(create), Ok(report)) = symbols else { return };
+    let manager = unsafe { manager() };
+    if manager.is_null() {
+        return;
+    }
+    let mut tids = Vec::new();
+    for _ in 0..60 {
+        tids = vcpu_tids();
+        if !tids.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    if tids.is_empty() {
+        return;
+    }
+    let session = unsafe { create(manager, tids.as_ptr(), tids.len(), 10_000_000) };
+    if session.is_null() {
+        return;
+    }
+    let Some(mut last) = cpu_ns(&tids) else { return };
+    loop {
+        std::thread::sleep(Duration::from_millis(20));
+        let Some(now) = cpu_ns(&tids) else { break };
+        if now > last {
+            unsafe { report(session, now - last) };
+        }
+        last = now;
     }
 }
 
@@ -419,6 +497,10 @@ pub fn engine_main(args: &[String]) -> i32 {
         });
     }
     unsafe { attach(std::ptr::null(), std::ptr::null()) };
+    #[cfg(target_os = "android")]
+    if std::env::var("LT_ADPF").as_deref() != Ok("off") {
+        std::thread::spawn(performance_hint);
+    }
     let owned: Vec<CString> = args.iter().map(|a| CString::new(a.as_str()).unwrap_or_default()).collect();
     let mut argv: Vec<*mut std::ffi::c_char> = owned.iter().map(|a| a.as_ptr() as *mut _).collect();
     argv.push(std::ptr::null_mut());
