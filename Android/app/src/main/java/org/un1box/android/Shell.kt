@@ -69,6 +69,11 @@ interface GuestHost {
     /** True while the frame block models a transfer's full hardware span (its default). */
     val faithfulScaler: Boolean
     fun useFaithfulScaler(on: Boolean)
+    /** True while this phone's cameras feed the emulated device; read at guest start. */
+    val camera: Boolean
+    fun useCamera(on: Boolean)
+    /** What the guest's camera is doing, from the worker: the sensor it is on and the frames it has taken. */
+    val cameraStatus: String
     /** True while this phone's microphone feeds the emulated device's capture port; read at guest start. */
     val microphone: Boolean
     fun useMicrophone(on: Boolean)

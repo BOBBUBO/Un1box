@@ -67,12 +67,21 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override var presentAsync by mutableStateOf(true)
     override var faithfulScaler by mutableStateOf(true)
         private set
+    /** The phone's cameras into the guest, read by the worker at the next guest start. */
+    override val camera: Boolean get() = settings.camera
+    override var cameraStatus by mutableStateOf("")
+        private set
     /** The phone's microphone into the guest, read by the worker at the next guest start. */
     override val microphone: Boolean get() = settings.microphone
     // Android asks once, when the switch goes on; a denial leaves the switch off and says why.
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         settings.microphone = granted
         if (!granted) error = "Without the microphone permission the emulated device has no input."
+    }
+    // The same for the camera: asked once, when its switch goes on.
+    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        settings.camera = granted
+        if (!granted) error = "Without the camera permission the emulated device has no camera."
     }
     private var licensesOpen by mutableStateOf(false)
     private var devicesOpen by mutableStateOf(false)
@@ -248,6 +257,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                             val socket = if (status == "running") b.getString("usbMuxSocket") ?: "" else ""
                             if (socket != muxSocket) { muxSocket = socket; store.guestChanged(); if (socket.isNotEmpty() && overlay == Screen.STORE) store.refreshGuest() }
                             appServicesError = b.getString("appServicesError") ?: ""
+                            cameraStatus = b.getString("cameraStatus") ?: ""
                             displayView?.keepScreenOn = status in listOf("starting", "running", "stopping")
                             if (status == "running") startSensors() else stopSensors()
                         }
@@ -451,6 +461,14 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
     override fun useFaithfulScaler(on: Boolean) {
         setDebugEnv("LT_SCALER_TIME_NS", if (on) null else "0")
         faithfulScaler = on
+    }
+    override fun useCamera(on: Boolean) {
+        if (on && checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            cameraPermission.launch(android.Manifest.permission.CAMERA)
+            return
+        }
+        settings.camera = on
+        notice = if (on) "This phone's cameras feed the device from the next start" else "The device gets no camera from the next start"
     }
     override fun useMicrophone(on: Boolean) {
         if (on && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {

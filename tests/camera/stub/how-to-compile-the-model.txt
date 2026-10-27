@@ -1,0 +1,7 @@
+These headers exist so tests/camera/run.py can compile hw/arm/s5l8930_isp.c as a
+whole with a plain host compiler, before an engine build ever happens. They are
+declarations only: enough of QOM, the timers, the memory API and the DART to
+type-check the model, and nothing that could run. They shadow the engine's own
+headers, so anything the model starts using that is not declared here shows up as
+the compile error it would be -- which is how an incomplete struct that had moved
+above its definition was caught.

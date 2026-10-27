@@ -23,7 +23,7 @@ Un1box is still early and things can change between versions.
 
 | Platform | Build | Status |
 | --- | --- | --- |
-| **Android** | APK, ARM64 (Android 10+) | **This is Un1box.** The main test platform, on a Poco F3 and a Pixel 10. First launch walks you through preparing a device from an IPSW on the phone. Graphics, audio, touch, tilt, the front camera and IPA installs work, and the Legacy Store can be browsed like the website, with several installs queued in the background. |
+| **Android** | APK, ARM64 (Android 10+) | **This is Un1box.** The main test platform, on a Poco F3 and a Pixel 10. First launch walks you through preparing a device from an IPSW on the phone. Graphics, audio, touch, tilt, the back camera and IPA installs work, and the Legacy Store can be browsed like the website, with several installs queued in the background. |
 | Linux | x86_64 AppImage | LightTouch frontend, built from this repository. Boot, input, accelerated graphics, audio, the Legacy Store and IPA installs work. Prepares devices with `firmwarekit` from the command line. |
 | Windows | x86_64 ZIP | LightTouch Windows preview. Boot, graphics, audio and Legacy Store installs confirmed by users. Cannot prepare devices yet: copy a prepared `.itbase` from another computer. |
 | macOS | Apple Silicon app ZIP | The shared desktop UI builds and packages. Guest services are not yet fully checked. Needs macOS 26. Upstream's [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac/releases) is the tested Mac app. |

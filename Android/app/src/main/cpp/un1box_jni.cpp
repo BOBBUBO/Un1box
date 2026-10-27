@@ -1,4 +1,5 @@
 #include "lighttouch.h"
+#include "camera_planes.h"
 #include <jni.h>
 #if defined(__aarch64__)
 #include <arm_neon.h>
@@ -1083,6 +1084,56 @@ JNI(audioInfo) jintArray JNICALL Java_org_un1box_android_Native_audioInfo(JNIEnv
 // AudioRecord is what every device supports and what the guest's own HAL feeds on. Duplicating here
 // keeps the engine's interface a single stereo ring. The JNI buffer holds either side of the copy,
 // so the caller's array is read once.
+// The phone's camera as the emulated device's sensor. Android hands over one
+// YUV_420_888 image as three direct buffers with the camera's own strides; the
+// engine wants one NV12 frame. The conversion is camera_planes.h, which is a
+// plain function over memory and is checked on its own (tests/camera).
+//
+// Returns 0 when the frame was dropped -- the guest is not running, or it is not
+// capturing, which is not an error and must not be retried -- and a negative
+// status when the engine refused it.
+JNI(cameraFrame) jint JNICALL Java_org_un1box_android_Native_cameraFrame(JNIEnv *env,jobject,
+    jobject luma,jint lumaRow,jint lumaPixel,jobject cb,jint cbRow,jint cbPixel,
+    jobject cr,jint crRow,jint crPixel,jint width,jint height,jint sensor) {
+    auto *lumaBytes=static_cast<const uint8_t *>(env->GetDirectBufferAddress(luma));
+    auto *cbBytes=static_cast<const uint8_t *>(env->GetDirectBufferAddress(cb));
+    auto *crBytes=static_cast<const uint8_t *>(env->GetDirectBufferAddress(cr));
+    if(!lumaBytes||!cbBytes||!crBytes)return -jint(LT_INVALID);
+    const camera_planes::Plane y{lumaBytes,lumaRow,lumaPixel};
+    const camera_planes::Plane u{cbBytes,cbRow,cbPixel};
+    const camera_planes::Plane v{crBytes,crRow,crPixel};
+    static thread_local std::vector<uint8_t> nv12;
+    nv12.resize(size_t(width)*size_t(height)*3/2);
+    if(!camera_planes::to_nv12(y,u,v,width,height,nv12.data()))return -jint(LT_INVALID);
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return 0;
+    lt_error error=LT_INIT(lt_error);
+    const auto status=lt_runtime_camera_write(runtime,sensor,nv12.data(),uint32_t(width),
+                                              uint32_t(height),&error);
+    if(status==LT_OK)return 1;
+    if(status==LT_AGAIN)return 0;          // guest inactive: a dropped frame, not a failure
+    return -jint(status);
+}
+JNI(cameraSensor) jint JNICALL Java_org_un1box_android_Native_cameraSensor(JNIEnv *,jobject) {
+    std::lock_guard<std::mutex> lock(guard);
+    if(!runtime)return jint(LT_CAMERA_BACK);
+    lt_error error=LT_INIT(lt_error);
+    lt_camera_info info=LT_INIT(lt_camera_info);
+    if(lt_runtime_camera_info(runtime,LT_CAMERA_BACK,&info,&error)!=LT_OK)return jint(LT_CAMERA_BACK);
+    return jint(info.sensor);
+}
+JNI(cameraFlush) void JNICALL Java_org_un1box_android_Native_cameraFlush(JNIEnv *,jobject) {
+    std::lock_guard<std::mutex> lock(guard);if(!runtime)return;
+    lt_error error=LT_INIT(lt_error);lt_runtime_camera_flush(runtime,&error);
+}
+JNI(cameraInfo) jlongArray JNICALL Java_org_un1box_android_Native_cameraInfo(JNIEnv *env,jobject,jint sensor) {
+    std::lock_guard<std::mutex> lock(guard);
+    lt_camera_info info=LT_INIT(lt_camera_info);lt_error error=LT_INIT(lt_error);
+    const auto status=runtime?lt_runtime_camera_info(runtime,sensor,&info,&error):LT_AGAIN;
+    jlong data[7]={jlong(status),jlong(info.width),jlong(info.height),jlong(info.sensor),
+                   jlong(info.pushed),jlong(info.taken),jlong(info.replaced)};
+    jlongArray arr=env->NewLongArray(7);env->SetLongArrayRegion(arr,0,7,data);return arr;
+}
+
 JNI(microphone) jint JNICALL Java_org_un1box_android_Native_microphone(JNIEnv *env,jobject,jshortArray buffer,jint count) {
     std::lock_guard<std::mutex> lock(guard);if(!runtime)return -jint(LT_AGAIN);
     const jint mono=std::min(count,jint(env->GetArrayLength(buffer)));

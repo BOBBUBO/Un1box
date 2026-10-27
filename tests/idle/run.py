@@ -108,9 +108,13 @@ def main():
         report.run(name, check)
     print()
     if report.failed:
+        # Also as workflow commands: these checks run with continue-on-error in CI, where a failure is not
+        # allowed to withhold an APK -- so the annotation is the only place it is visible.
+        for name, _, detail in report.failed:
+            print(f"::error title={name}::{detail}")
         print(f"{len(report.failed)} of {len(report.rows)} checks failed:")
         for name, _, detail in report.failed:
-            print(f"  {name}: {detail}")
+            print(f"  {name}: {detail.splitlines()[0] if detail else ''}")
         return 1
     print(f"all {len(report.rows)} idle checks pass")
     return 0

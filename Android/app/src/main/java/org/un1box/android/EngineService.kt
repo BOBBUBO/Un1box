@@ -28,6 +28,11 @@ class EngineService : Service() {
     private val audioGuard = AudioPacketEpoch()
     private val audioObservations = AudioObservations()
     @Volatile private var audioError = ""
+    /** The Settings switch: this phone's cameras into the guest, read at the next guest start. */
+    @Volatile private var cameraWanted = false
+    @Volatile private var cameraOn = false
+    @Volatile private var cameraError = ""
+    private var camera: CameraCapture? = null
     /** The Settings switch: this phone's microphone into the guest, read at the next guest start. */
     @Volatile private var microphoneWanted = false
     @Volatile private var microphoneOn = false
@@ -179,8 +184,19 @@ class EngineService : Service() {
             val headphones = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("headphones", true)
             microphoneWanted = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("microphone", false)
             microphoneError = ""
+            // The ISP is the engine's camera machine property, off by default: off, the board unmatches the
+            // device tree's isp node and the guest has no camera at all. IT_CAMERA is the engine's switch for a
+            // session the app starts, and it has to be set before the machine is created, which is what the
+            // start below does.
+            cameraWanted = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("camera", false)
+            cameraError = ""
+            android.system.Os.setenv("IT_CAMERA", if (cameraWanted) "1" else "0", true)
             error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
-            if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
+            if (error.isEmpty()) {
+                File(filesDir, "worker-stop-error.txt").delete()
+                startCamera()
+                if (!userPaused && !stopping.get()) startAudioOutput()
+            }
             val response = status()
             if (error.isNotEmpty()) Handler(mainLooper).postDelayed({
                 persistStopError(error)
@@ -265,8 +281,8 @@ class EngineService : Service() {
             val result = Native.pause(paused)
             if (result.isNotEmpty()) error = result
             synchronized(audioGuard) { if (paused) audioObservations.pauses++ else audioObservations.resumes++ }
-            if (paused) stopAudioOutput()
-            else startAudioOutput()
+            if (paused) stopAudioOutput() else startAudioOutput()
+            if (paused) stopCamera() else startCamera()
         } }
         override fun stop() {
             if (!stopping.compareAndSet(false, true)) return
@@ -577,6 +593,7 @@ class EngineService : Service() {
         } })
         putBoolean("userPaused", userPaused); putBoolean("focusPaused", focusPaused); putBoolean("audioOutputOn", audioOn)
         putBoolean("microphoneOn", microphoneOn); putString("microphoneError", microphoneError)
+        putString("cameraStatus", cameraSummary())
         putLongArray("buttonDownAdmissions", LongArray(2) { buttonDownAdmissions.get(it) })
         putLongArray("buttonUpAdmissions", LongArray(2) { buttonUpAdmissions.get(it) })
         putLong("buttonRejections", buttonRejections.get())
@@ -681,6 +698,51 @@ class EngineService : Service() {
         microphoneOn = false
         recorder?.let { runCatching { it.stop() } }
     }
+    /**
+     * This phone's back camera into the emulated device. The guest's ISP takes the newest frame whenever it draws
+     * one, whatever camera its own app is showing, so there is nothing to choose here and nothing to poll.
+     */
+    private fun startCamera() {
+        if (camera != null || !cameraWanted || stopping.get() || !alive.get()) return
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            cameraError = "Camera off: Un1box has no camera permission. Turn the switch off and on again to grant it."
+            return
+        }
+        val capture = CameraCapture(applicationContext) { problem -> if (camera != null) cameraError = problem }
+        camera = capture
+        cameraOn = true
+        cameraError = ""
+        capture.start()
+    }
+    private fun stopCamera() {
+        cameraOn = false
+        camera?.stop()
+        camera = null
+    }
+    /**
+     * What the camera is doing, in one line for Settings. It is the only view of the path that needs no adb: the
+     * camera the guest's driver named, the frames the phone handed over, the ones the ISP drew, the ones it
+     * replaced before anything drew them, and the size of the picture it holds. Frames sent but never drawn means
+     * the phone is capturing and the guest is not; nothing sent means the capture never started.
+     */
+    private fun cameraSummary(): String {
+        if (!cameraWanted) return "Camera off in Settings"
+        if (camera == null) return cameraError.ifEmpty { "Camera not started yet" }
+        val where = when (Native.cameraSensor()) {
+            Native.CAMERA_FRONT -> "the guest is on the front camera"
+            Native.CAMERA_BACK -> "the guest is on the back camera"
+            else -> "the guest has named no camera"
+        }
+        val info = Native.cameraInfo(Native.CAMERA_BACK)
+        val report = if (info.size < 7 || info[0].toInt() != 0) "no report"
+            else {
+                val size = if (info[1] > 0) "${info[1]}x${info[2]}" else "no frame yet"
+                "sent ${info[4]}, drawn ${info[5]}, replaced ${info[6]}, $size"
+            }
+        val opened = camera?.framesDelivered ?: 0L
+        val problem = cameraError.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""
+        return "phone: $opened frames · $where · $report$problem"
+    }
     private fun foreground() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("guest", "Running guest", NotificationManager.IMPORTANCE_LOW))
@@ -688,5 +750,6 @@ class EngineService : Service() {
         startForeground(1, Notification.Builder(this, "guest").setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("Un1box guest").setContentText("Tap to return; Stop ends this worker").setContentIntent(launch).setOngoing(true).build())
     }
-    override fun onDestroy() { detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); super.onDestroy() }
+    override fun onDestroy() { detailedTimingThread.shutdownNow(); usb.stop(); performanceSampler.close(); alive.set(false); Native.cancelInput(); stopAudioOutput(); stopCamera(); super.onDestroy() }
+
 }
