@@ -100,10 +100,16 @@ pub fn download_ipsw(firmware: &Firmware, dir: &Path, progress: &mut Progress<'_
     let partial = dir.join(format!("{}.partial", firmware.file_name()));
     let mut failure = String::from("no download link worked");
     for url in ipsw_candidates(firmware) {
-        if !progress("Connecting", 0, source.bytes) {
+        // Which server, as Android shows it: "Downloading from updates.cdn-apple.com".
+        let from = host(&url).to_string();
+        if !progress(&format!("Connecting to {from}"), 0, source.bytes) {
             return Err(DownloadError::Cancelled);
         }
-        match fetch_resumable(&url, &partial, source.bytes, progress) {
+        let mut tagged = |phase: &str, done: u64, total: u64| match phase {
+            "Downloading" => progress(&format!("Downloading from {from}"), done, total),
+            other => progress(other, done, total),
+        };
+        match fetch_resumable(&url, &partial, source.bytes, &mut tagged) {
             Ok(()) => {}
             Err(DownloadError::Cancelled) => return Err(DownloadError::Cancelled),
             Err(DownloadError::Failed(message)) => {

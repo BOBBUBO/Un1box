@@ -239,37 +239,59 @@ fn queue_button(app: &mut App, ui: &mut Ui) {
                     }
                 });
             });
-            egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
-                for item in &items {
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.set_width(220.0);
-                            ui.add(egui::Label::new(RichText::new(&item.name).family(theme::medium())).truncate());
-                            match &item.error {
-                                Some(error) => {
-                                    ui.add(egui::Label::new(RichText::new(error).color(p.error).size(12.5)).wrap())
+            // Tall enough for the list as laid out last frame, up to the cap: a popup's area keeps last frame's size,
+            // so without it a row that grew (a progress bar appearing) scrolled inside a list that should fit.
+            let list = ui.scope_id().with("queue-list");
+            let content = ui.data(|d| d.get_temp::<f32>(list)).unwrap_or(0.0);
+            let scroll =
+                egui::ScrollArea::vertical().max_height(340.0).min_scrolled_height(content.min(340.0)).show(ui, |ui| {
+                    for item in &items {
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(220.0);
+                                ui.add(egui::Label::new(RichText::new(&item.name).family(theme::medium())).truncate());
+                                match &item.error {
+                                    Some(error) => {
+                                        ui.add(egui::Label::new(RichText::new(error).color(p.error).size(12.5)).wrap())
+                                    }
+                                    None => ui.add(egui::Label::new(widgets::muted(&p, &item.phase).size(12.5)).wrap()),
+                                };
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if !item.active()
+                                    && widgets::icon_button_sized(
+                                        ui,
+                                        &p,
+                                        icons::CLOSE,
+                                        "Remove from the list",
+                                        30.0,
+                                        true,
+                                    )
+                                    .clicked()
+                                {
+                                    app.model.store.dismiss(item.id);
                                 }
-                                None => ui.add(egui::Label::new(widgets::muted(&p, &item.phase).size(12.5)).wrap()),
-                            };
+                                if item.cancellable() && widgets::text_button(ui, &p, "Cancel").clicked() {
+                                    app.model.store.cancel(item.id);
+                                }
+                                if item.state == QueueState::Failed && widgets::text_button(ui, &p, "Retry").clicked() {
+                                    app.model.store.retry(item.id);
+                                }
+                            });
                         });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if item.cancellable() && widgets::text_button(ui, &p, "Cancel").clicked() {
-                                app.model.store.cancel(item.id);
-                            }
-                            if item.state == QueueState::Failed && widgets::text_button(ui, &p, "Retry").clicked() {
-                                app.model.store.retry(item.id);
-                            }
-                        });
-                    });
-                    if item.active() {
-                        // Nothing measured yet (waiting, preparing): a moving bar, not an empty one.
-                        ui.add_space(4.0);
-                        let fraction = item.progress.filter(|f| *f > 0.01);
-                        widgets::progress(ui, &p, fraction, ui.available_width());
+                        if item.active() {
+                            // Nothing measured yet (waiting, preparing): a moving bar, not an empty one.
+                            ui.add_space(4.0);
+                            let fraction = item.progress.filter(|f| *f > 0.01);
+                            widgets::progress(ui, &p, fraction, ui.available_width());
+                        }
                     }
-                }
-            });
+                });
+            if (scroll.content_size.y - content).abs() > 0.5 {
+                ui.data_mut(|d| d.insert_temp(list, scroll.content_size.y));
+                ui.ctx().request_repaint();
+            }
             if items.iter().any(|i| i.committed && i.active()) {
                 ui.add_space(6.0);
                 ui.label(widgets::muted(&p, "Keep the device running until iOS finishes installing.").size(12.0));

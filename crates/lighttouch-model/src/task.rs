@@ -11,12 +11,16 @@ pub struct Progress {
     pub phase: String,
     pub done: u64,
     pub total: u64,
+    /// The whole task's share done, when the work is several phases (see [`Reporter::band`]); `done`/`total` are
+    /// then the current phase's own.
+    pub overall: Option<f32>,
+    band: Option<(f32, f32)>,
 }
 
 impl Progress {
-    /// 0..1, or `None` while the total is unknown.
+    /// 0..1 across the whole task, or `None` while the total is unknown.
     pub fn fraction(&self) -> Option<f32> {
-        (self.total > 0).then(|| (self.done as f64 / self.total as f64).clamp(0.0, 1.0) as f32)
+        self.overall.or_else(|| (self.total > 0).then(|| (self.done as f64 / self.total as f64).clamp(0.0, 1.0) as f32))
     }
 }
 
@@ -39,9 +43,22 @@ impl Reporter {
                 p.done = done;
                 p.total = total;
             }
+            if let Some((start, end)) = p.band {
+                let phase = if total > 0 { (done as f64 / total as f64).clamp(0.0, 1.0) as f32 } else { 0.0 };
+                // Never backwards: a phase that starts over (a check after its download) holds the bar.
+                p.overall = Some(p.overall.unwrap_or(0.0).max(start + (end - start) * phase));
+            }
         }
         (self.waker)();
         !self.cancelled()
+    }
+
+    /// The share of the whole task that the following reports fill, `start..end` of 0..1, so a task of several
+    /// phases shows one bar that never restarts.
+    pub fn band(&self, start: f32, end: f32) {
+        let mut p = self.progress.lock().unwrap();
+        p.band = Some((start, end));
+        p.overall = Some(p.overall.unwrap_or(0.0).max(start));
     }
 
     pub fn cancelled(&self) -> bool {
@@ -91,5 +108,49 @@ impl<T: Send + 'static> Task<T> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reporter() -> Reporter {
+        Reporter {
+            progress: Arc::new(Mutex::new(Progress::default())),
+            cancel: Arc::new(AtomicBool::new(false)),
+            waker: Arc::new(|| {}),
+        }
+    }
+
+    #[test]
+    fn phases_in_bands_make_one_bar_that_never_goes_back() {
+        let r = reporter();
+        let fraction = || r.progress.lock().unwrap().fraction().unwrap();
+        r.band(0.0, 0.4);
+        r.report("Downloading the IPSW", 50, 100);
+        assert_eq!(fraction(), 0.2);
+        r.report("Downloading the IPSW", 100, 100);
+        // the next phase starts at its own 0 but the bar holds where it was
+        r.band(0.4, 0.9);
+        r.report("Unpacking", 0, 10);
+        assert_eq!(fraction(), 0.4);
+        r.report("Unpacking", 5, 10);
+        assert!((fraction() - 0.65).abs() < 1e-6);
+        // the phase's own numbers stay for the page's "X of Y" text
+        let progress = r.progress.lock().unwrap().clone();
+        assert_eq!((progress.done, progress.total), (5, 10));
+        r.band(0.9, 1.0);
+        r.report("Adding the device", 0, 0);
+        assert_eq!(fraction(), 0.9);
+    }
+
+    #[test]
+    fn without_bands_the_fraction_is_the_phase_own() {
+        let r = reporter();
+        r.report("Copying", 1, 4);
+        assert_eq!(r.progress.lock().unwrap().fraction(), Some(0.25));
+        r.report("Starting", 0, 0);
+        assert_eq!(r.progress.lock().unwrap().fraction(), None);
     }
 }

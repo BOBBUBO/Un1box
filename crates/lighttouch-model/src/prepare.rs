@@ -130,13 +130,41 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     let started = Instant::now();
     let mut timings: Vec<(String, f64)> = Vec::new();
 
+    // One bar for the whole preparation: each phase fills a share by its usual time, so the bar never starts over.
+    let downloading = matches!(request.ipsw, IpswSource::Download);
+    let keybag_from = firmware.recipe.as_ref().and_then(|r| r.keybag_ramdisk_from.clone());
+    let seconds = [
+        if downloading { 40.0 } else { 8.0 },
+        if keybag_from.is_some() { 40.0 } else { 0.0 },
+        if firmware.board == "n72ap" { 40.0 } else { 150.0 },
+        4.0,
+    ];
+    let sum: f32 = seconds.iter().sum();
+    let mut at = 0.0;
+    let [ipsw_band, sibling_band, create_band, adopt_band] = seconds.map(|s| {
+        at += s;
+        ((at - s) / sum, at / sum)
+    });
+    // A download's check afterwards takes the last part of its share.
+    let fetch_band = |(start, end): (f32, f32), download: bool, phase: &str| {
+        let split = start + (end - start) * 0.85;
+        match (download, phase == "Checking") {
+            (false, _) => (start, end),
+            (true, false) => (start, split),
+            (true, true) => (split, end),
+        }
+    };
+
     // 1. The IPSW.
     let mut cancel_check = |phase: &str, done: u64, total: u64| -> bool {
+        let (start, end) = fetch_band(ipsw_band, downloading, phase);
+        reporter.band(start, end);
         let text = match phase {
-            "Downloading" => "Downloading the IPSW".to_string(),
             "Checking" => "Checking the IPSW".to_string(),
-            "Connecting" => "Connecting".to_string(),
-            other => other.to_string(),
+            other => match other.strip_prefix("Downloading from ") {
+                Some(host) => format!("Downloading the IPSW from {host}"),
+                None => other.to_string(),
+            },
         };
         reporter.report(&text, done, total)
     };
@@ -150,14 +178,20 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
         }
     };
     // 1b. A build whose restore ramdisk has no published key boots its keybag one-shot from a sibling's.
-    let sibling = match firmware.recipe.as_ref().and_then(|r| r.keybag_ramdisk_from.as_deref()) {
+    let sibling = match keybag_from.as_deref() {
         None => None,
         Some(from) => {
             let sib =
                 catalog.find(from).ok_or_else(|| format!("{from} (its keybag ramdisk) isn't in the catalog"))?.clone();
             let mut sibling_check = |phase: &str, done: u64, total: u64| -> bool {
+                let (start, end) = fetch_band(sibling_band, true, phase);
+                reporter.band(start, end);
                 let text = match phase {
-                    "Downloading" => format!("Downloading iOS {} for its restore ramdisk", sib.version),
+                    other if other.starts_with("Downloading from ") => format!(
+                        "Downloading iOS {} {} for its restore ramdisk",
+                        sib.version,
+                        &other["Downloading ".len()..]
+                    ),
                     "Checking" => format!("Checking iOS {}'s IPSW", sib.version),
                     other => other.to_string(),
                 };
@@ -200,6 +234,7 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     let catalog_file = ctx.dirs.cache().join("firmware-catalog.json");
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
     std::fs::write(&catalog_file, CATALOG_JSON).map_err(|e| e.to_string())?;
+    reporter.band(create_band.0, create_band.1);
     let result = run_firmwarekit(
         &ctx,
         &firmware.id,
@@ -220,6 +255,7 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     let _ = std::fs::remove_dir_all(out.join("work"));
 
     // 4. Adopt the output as a new device.
+    reporter.band(adopt_band.0, adopt_band.1);
     reporter.report("Adding the device", 0, 0);
     let adopt_started = Instant::now();
     let library = Library::open(&ctx.dirs.library()).map_err(|e| e.to_string())?;

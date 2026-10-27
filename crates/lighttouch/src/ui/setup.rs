@@ -231,7 +231,15 @@ fn files_card(app: &mut App, ui: &mut Ui) {
         }
         ui.add_space(12.0);
         let ready = app.setup.system.is_some() && !app.model.session_active();
-        if widgets::primary_enabled(ui, &p, "Create device", ready).clicked() {
+        // The button at the left, the guide link at the card's bottom right.
+        let create = ui
+            .horizontal(|ui| {
+                let create = widgets::primary_enabled(ui, &p, "Create device", ready).clicked();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| guide_link(ui, &p));
+                create
+            })
+            .inner;
+        if create {
             let request = AddRequest {
                 system: app.setup.system.clone().unwrap(),
                 bootrom: app.setup.bootrom.clone(),
@@ -241,8 +249,6 @@ fn files_card(app: &mut App, ui: &mut Ui) {
             app.model.add_device(request);
             app.page = Page::Setup(Step::Creating);
         }
-        ui.add_space(4.0);
-        guide_link(ui, &p);
     });
 }
 

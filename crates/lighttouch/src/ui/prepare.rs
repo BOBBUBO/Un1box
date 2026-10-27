@@ -223,7 +223,8 @@ fn files_step(app: &mut App, ui: &mut Ui) {
             file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
         ),
         None => format!(
-            "{} · {:.0} MB, downloaded when preparing starts",
+            "{} · {:.0} MB. Downloaded when preparing starts, from Apple's servers when ipsw.me lists it, otherwise \
+             from the Internet Archive.",
             firmware.file_name(),
             firmware.ipsw_bytes() as f64 / 1e6
         ),
@@ -236,25 +237,17 @@ fn files_step(app: &mut App, ui: &mut Ui) {
         &detail,
         ipsw.is_some(),
         Some(&mut |ui: &mut Ui| {
-            ui.horizontal(|ui| {
-                let label = if ipsw.is_some() { "Use a different file" } else { "Choose a file" };
-                if widgets::tonal_enabled(ui, &p, label, !busy).clicked() {
-                    if let Some(file) =
-                        rfd::FileDialog::new().set_title("Choose the IPSW").add_filter("IPSW", &["ipsw"]).pick_file()
-                    {
-                        app.prepare.ipsw_file = Some(file);
-                    }
+            // Right to left: the file button sits at the edge.
+            let label = if ipsw.is_some() { "Change" } else { "Choose a file" };
+            if widgets::tonal_enabled(ui, &p, label, !busy).clicked() {
+                if let Some(file) =
+                    rfd::FileDialog::new().set_title("Choose the IPSW").add_filter("IPSW", &["ipsw"]).pick_file()
+                {
+                    app.prepare.ipsw_file = Some(file);
                 }
-                if ipsw.is_some() && widgets::text_button(ui, &p, "Download instead").clicked() {
-                    app.prepare.ipsw_file = None;
-                }
-            });
-            if ipsw.is_none() {
-                ui.add_space(6.0);
-                ui.label(
-                widgets::muted(&p, "Downloads come from Apple's servers when ipsw.me lists them, otherwise from the Internet Archive.")
-                    .size(12.5),
-            );
+            }
+            if ipsw.is_some() && widgets::text_button(ui, &p, "Download instead").clicked() {
+                app.prepare.ipsw_file = None;
             }
         }),
     );
@@ -303,7 +296,7 @@ fn files_step(app: &mut App, ui: &mut Ui) {
                 &detail,
                 ready,
                 Some(&mut |ui: &mut Ui| {
-                    let label = if ready { "Use a different file" } else { "Choose a file" };
+                    let label = if ready { "Change" } else { "Choose a file" };
                     if widgets::tonal_enabled(ui, &p, label, !busy).clicked() {
                         if let Some(file) = rfd::FileDialog::new().set_title("Choose the boot ROM").pick_file() {
                             if rom.matches_file(&file) {
@@ -334,7 +327,7 @@ fn files_step(app: &mut App, ui: &mut Ui) {
                         &firmware.build,
                         app.model.devices.iter().map(|d| d.name.as_str()),
                     ))
-                    .desired_width(f32::INFINITY)
+                    .desired_width(240.0)
                     .margin(vec2(10.0, 8.0)),
             );
         }),
@@ -374,7 +367,8 @@ fn files_step(app: &mut App, ui: &mut Ui) {
     }
 }
 
-/// One thing the preparation needs, as a card: icon (coloured once it's settled), title, detail, then controls.
+/// One thing the preparation needs, as a card row: its icon (coloured once it's settled), the title and what it means
+/// on the left, its control on the right (a check when it needs none).
 fn prep_card(
     ui: &mut Ui,
     p: &theme::Palette,
@@ -382,32 +376,36 @@ fn prep_card(
     title: &str,
     detail: &str,
     done: bool,
-    add: Option<&mut dyn FnMut(&mut Ui)>,
+    trailing: Option<&mut dyn FnMut(&mut Ui)>,
 ) {
     ui.add_space(6.0);
     widgets::card(ui, p, |ui| {
+        // The control's width as laid out last frame, so the text wraps before it instead of running under it.
+        let id = ui.scope_id().with(("prep-card", title));
+        let reserved = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(140.0);
         ui.horizontal(|ui| {
+            ui.set_min_height(44.0);
             let color = if done { p.primary } else { p.on_surface_variant };
             ui.label(widgets::icon_text(icon, 22.0).color(color));
             ui.add_space(8.0);
             ui.vertical(|ui| {
-                ui.set_max_width((ui.available_width() - 36.0).max(120.0));
+                ui.set_max_width((ui.available_width() - reserved - 20.0).max(160.0));
                 ui.label(RichText::new(title).size(14.5).family(theme::medium()));
                 ui.label(widgets::muted(p, detail).size(12.5));
             });
-            if done {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let control = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| match trailing {
+                Some(add) => add(ui),
+                None if done => {
                     ui.label(widgets::icon_text(icons::CHECK_CIRCLE, 22.0).color(p.primary));
-                });
+                }
+                None => {}
+            });
+            let width = control.response.rect.width();
+            if (width - reserved).abs() > 0.5 {
+                ui.data_mut(|d| d.insert_temp(id, width));
+                ui.ctx().request_discard("a preparation card's control changed width");
             }
         });
-        if let Some(add) = add {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.add_space(38.0);
-                ui.vertical(|ui| add(ui));
-            });
-        }
     });
 }
 
