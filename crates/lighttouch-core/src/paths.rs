@@ -168,13 +168,6 @@ impl Resources {
             .unwrap_or_else(|| self.dir.join(exe_name("firmwarekit")))
     }
 
-    /// The headless engine launcher firmwarekit boots the guest with while preparing.
-    pub fn oneshot(&self) -> PathBuf {
-        std::env::var_os("LIGHTTOUCH_ONESHOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| self.dir.join(exe_name("lighttouch-oneshot")))
-    }
-
     pub fn usbmuxd(&self) -> PathBuf {
         std::env::var_os("LIGHTTOUCH_USBMUXD")
             .map(PathBuf::from)

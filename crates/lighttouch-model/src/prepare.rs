@@ -334,17 +334,13 @@ fn run_firmwarekit(
         .arg("--language")
         .arg(language())
         .arg("--skip-setup");
-    // firmwarekit boots the engine for its one-shots itself (`firmwarekit oneshot`, the engine library from
-    // LTM_QEMU_DYLIB); LIGHTTOUCH_ONESHOT names a separate launcher instead (the C lighttouch-oneshot).
-    if std::env::var_os("LIGHTTOUCH_ONESHOT").is_some() {
-        command.arg("--helper").arg(ctx.resources.oneshot());
-    }
     if let Some(rom) = bootrom {
         command.arg("--bootrom").arg(rom);
     }
     if let Some(sibling) = sibling {
         command.arg("--sibling-ipsw").arg(sibling);
     }
+    // firmwarekit boots the engine for its one-shots itself (`firmwarekit oneshot`, this engine library).
     command.env("LTM_QEMU_DYLIB", &engine).env("TMPDIR", ctx.dirs.cache());
     if let Some(dir) = engine.parent() {
         let mut paths = vec![dir.to_path_buf()];

@@ -1,13 +1,12 @@
 //! The preparation's boots (the keybag and seal one-shots): the engine run headless on one QEMU command line, in a
-//! process of its own, while the serial log and the clock are watched here (Swift's Preparer.engineOneshot, and
-//! Portable/oneshot/lighttouch-oneshot.c as `firmwarekit oneshot`).
+//! process of its own (`firmwarekit oneshot`), while the serial log and the clock are watched here.
 //!
 //!   firmwarekit oneshot LightTouch -M <machine,...> -serial file:<log> ...   (argv as boot.rs makes it)
 //!   firmwarekit oneshot '{"mode":{"machines":{}}}'                         (the machine listing)
 //!
-//! The helper is either lighttouch-oneshot (`create --helper`, Linux and Android) or this program itself. A helper
-//! quits QEMU cleanly (storage flushed) on SIGTERM; `firmwarekit oneshot` also on its stdin closing
-//! (LT_ONESHOT_STDIN=1), which is how a Windows parent asks, having no SIGTERM.
+//! The helper is this program itself unless `create --helper` names another launcher. A helper quits QEMU cleanly
+//! (storage flushed) on SIGTERM; `firmwarekit oneshot` also on its stdin closing (LT_ONESHOT_STDIN=1), which is how
+//! a Windows parent asks, having no SIGTERM.
 use crate::boot::{Board, DeviceInfo};
 use crate::error::{Code, Error, Result};
 use std::ffi::{CString, OsString};
@@ -315,8 +314,8 @@ fn prefer_fast_cores() {
 /// (performance_hint.h), but for a boot that has no frames and wants to finish soonest: every 20 ms, the vCPUs' CPU
 /// time in that window against a 10 ms target, so a busy vCPU reads as behind and the power HAL raises its clocks and
 /// placement (2.3x on a Pixel's guest; without it a Pixel's iPod touch 3G seal boot ran past 10 minutes), and an idle
-/// one is left alone. API 33+, resolved at run time; does nothing without hint sessions (the Poco's HAL). As
-/// lighttouch-oneshot did; LT_ADPF=off skips it.
+/// one is left alone. API 33+, resolved at run time; does nothing without hint sessions (the Poco's HAL).
+/// LT_ADPF=off skips it.
 #[cfg(target_os = "android")]
 fn performance_hint() {
     use std::ffi::c_void;

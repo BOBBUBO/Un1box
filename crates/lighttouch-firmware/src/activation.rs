@@ -1,6 +1,5 @@
-//! Activation: lockdownd activated in place (SystemEdits/Activation.swift over Sources/CActivation/activation.c,
-//! built here by build.rs), the iOS 6 data-ark route, the ad hoc re-signing, and the Mach-O signature checks of the
-//! guest helpers (MachOSignature).
+//! Activation: lockdownd activated in place (csrc/activation.c, built by build.rs), the iOS 6 data-ark route, the
+//! ad hoc re-signing, and the Mach-O signature checks of the guest helpers (MachOSignature).
 use crate::error::Result;
 use crate::macho::{self, Headers};
 use sha1::Sha1;

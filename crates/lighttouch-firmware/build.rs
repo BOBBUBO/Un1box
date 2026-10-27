@@ -1,6 +1,6 @@
-//! Builds the C activation library (Packages/FirmwareKit/Sources/CActivation/activation.c) into this crate, as the
-//! Swift package does with `-DLT_ACTIVATION_LIBRARY`. It is kept in C, not rewritten in Rust, so the one audited
-//! pattern matcher is shared; it cross-compiles for Windows (x86_64-w64-mingw32-gcc-posix) and Android.
+//! Builds the C activation library (csrc/activation.c) into this crate with `-DLT_ACTIVATION_LIBRARY`. It is kept in
+//! C, not rewritten in Rust, so the audited pattern matcher is the one tools/activation tests; it cross-compiles for
+//! Windows (x86_64-w64-mingw32-gcc-posix) and Android.
 //!
 //! Compiles the vendored iBoot32Patcher (vendor/iBoot32Patcher, LukeZGD's fork at the commit pinned in
 //! build-support/dependencies.json with iBoot32Patcher-ltm.patch already applied) into the crate, so the iPad's
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 fn activation() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let src = manifest.join("../../Packages/FirmwareKit/Sources/CActivation");
+    let src = manifest.join("csrc");
     let c = src.join("activation.c");
     let include = src.join("include");
 
