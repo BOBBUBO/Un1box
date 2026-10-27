@@ -55,6 +55,8 @@ pub enum Dialog {
     },
     /// What the headphones setting changes (from Settings).
     Headphones,
+    /// The mouse and keyboard controls (the sidebar's ? button).
+    Controls,
     /// The window was closed while a device is being prepared or added.
     CloseWhileBusy,
 }
@@ -334,6 +336,44 @@ impl App {
                         &p,
                         "On the speaker, iOS reshapes the sound for the device's small built-in speaker: mono, with the bass cut and a limiter to protect it. That processing runs on the emulated CPU, so games run a little slower, and the sound is closer to an old iPod's speaker than to your computer's.",
                     ));
+                    ui.add_space(16.0);
+                    widgets::dialog_buttons(ui, |ui| {
+                        if widgets::text_button(ui, &p, "OK").clicked() {
+                            close = true;
+                        }
+                    });
+                }
+                Dialog::Controls => {
+                    #[cfg(target_os = "macos")]
+                    const ALT: &str = "Option";
+                    #[cfg(not(target_os = "macos"))]
+                    const ALT: &str = "Alt";
+                    ui.label(widgets::icon_text(icons::KEYBOARD, 26.0).color(p.primary));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Controls").font(theme::title()));
+                    ui.add_space(4.0);
+                    ui.label(widgets::muted(&p, "The mouse is your finger on the device's screen."));
+                    ui.add_space(12.0);
+                    let rows: [(String, &str); 9] = [
+                        ("Click".into(), "Tap"),
+                        ("Drag".into(), "Swipe or scroll"),
+                        (format!("{ALT}-drag"), "Pinch or rotate with two fingers"),
+                        (format!("{ALT}+Shift-drag"), "Move two fingers together"),
+                        ("H".into(), "Home button"),
+                        ("P".into(), "Sleep/Wake button"),
+                        ("+  −".into(), "Volume up and down"),
+                        ("Arrow keys".into(), "Tilt the device"),
+                        ("Esc".into(), "Leave full screen"),
+                    ];
+                    egui::Grid::new("controls").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
+                        for (keys, action) in rows {
+                            widgets::key_cap(ui, &p, &keys);
+                            ui.label(action);
+                            ui.end_row();
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.label(widgets::muted(&p, "A touchscreen works too. Tilting can be turned off in Settings."));
                     ui.add_space(16.0);
                     widgets::dialog_buttons(ui, |ui| {
                         if widgets::text_button(ui, &p, "OK").clicked() {

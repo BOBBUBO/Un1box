@@ -24,6 +24,7 @@ pub const PENCIL: &str = "\u{E3B4}";
 pub const CHART: &str = "\u{E154}";
 pub const RECOVER: &str = "\u{E038}";
 pub const INFO: &str = "\u{E2CE}";
+pub const QUESTION: &str = "\u{E3E8}";
 pub const FILE: &str = "\u{E230}";
 pub const SUN: &str = "\u{E472}";
 pub const CPU: &str = "\u{E610}";

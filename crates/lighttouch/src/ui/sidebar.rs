@@ -94,6 +94,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     if nav_button(ui, &p, icons::GEAR, "Settings", settings_open).clicked() {
                         app.page = if settings_open { Page::Device } else { Page::Settings };
                     }
+                    let help = egui::Button::new(widgets::icon_text(icons::QUESTION, 18.0).color(p.on_surface_variant))
+                        .fill(Color32::TRANSPARENT)
+                        .corner_radius(CornerRadius::same(12))
+                        .min_size(vec2(36.0, 36.0));
+                    if ui.add(help).on_hover_text("Controls").on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+                    {
+                        app.dialog = Some(Dialog::Controls);
+                    }
                 });
             });
         });

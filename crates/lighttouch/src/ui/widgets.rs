@@ -328,6 +328,16 @@ pub fn setting_row<R>(
     .inner
 }
 
+/// A key or mouse action, drawn as a key cap (the Controls dialog).
+pub fn key_cap(ui: &mut Ui, p: &Palette, keys: &str) {
+    Frame::new()
+        .fill(p.container_highest)
+        .stroke(Stroke::new(1.0, p.outline.gamma_multiply(0.5)))
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(Margin::symmetric(8, 3))
+        .show(ui, |ui| ui.label(RichText::new(keys).font(FontId::new(13.0, theme::medium()))));
+}
+
 pub fn muted(p: &Palette, text: impl Into<String>) -> RichText {
     RichText::new(text.into()).color(p.on_surface_variant)
 }
