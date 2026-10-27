@@ -103,7 +103,10 @@ def compile_model_file(engine, source, includes):
 
 
 def engine_tree(engine, scratch):
-    """A copy of the engine at HEAD with the camera patch applied: what the device build will see."""
+    """A copy of the engine at HEAD with the camera patch applied: what the device build will see.
+
+    CI commits the patches into the engine checkout before it runs these checks, so a tree that already
+    carries them is normal and must not be patched twice."""
     archive = subprocess.run(["git", "-C", str(engine), "archive", "HEAD"], capture_output=True)
     if archive.returncode:
         raise Failure(f"git archive failed in {engine}")
@@ -111,9 +114,15 @@ def engine_tree(engine, scratch):
     target.mkdir()
     subprocess.run(["tar", "-x", "-C", str(target)], input=archive.stdout, check=True)
     for patch in sorted(PATCHES.glob("*.patch")):
+        already = sh(["git", "apply", "--check", "-R", str(patch)], cwd=target).returncode == 0
+        if already:
+            continue
         applied = sh(["git", "apply", str(patch)], cwd=target)
         if applied.returncode:
             raise Failure(f"{patch.name} does not apply: {applied.stderr.strip()[:400]}")
+    for needed in ("hw/arm/host-camera.c", "include/hw/arm/host-camera.h"):
+        if not (target / needed).is_file():
+            raise Failure(f"the patched engine has no {needed}: the camera patch is not in the tree")
     return target
 
 
@@ -161,6 +170,10 @@ def main():
 
     print()
     if report.failed:
+        # Also as workflow commands: these checks run with continue-on-error in CI, where a failure is not
+        # allowed to withhold an APK -- so the annotation is the only place it is visible.
+        for name, _, detail in report.failed:
+            print(f"::error title={name}::{detail}")
         print(f"{len(report.failed)} of {len(report.rows)} checks failed:")
         for name, _, detail in report.failed:
             print(f"  {name}: {detail.splitlines()[0] if detail else ''}")
