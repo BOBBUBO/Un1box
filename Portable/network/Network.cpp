@@ -384,8 +384,11 @@ struct Proxy::State {
     std::condition_variable idle;
     std::set<Socket> active;
     Activity activity;
+    // The archive's cache and back-off, and how many of its requests are out (a browser's few at a time).
     std::mutex gate;
-    std::chrono::steady_clock::time_point next{}, cooldown{};
+    std::condition_variable archive_slot;
+    int archive_requests = 0;
+    std::chrono::steady_clock::time_point cooldown{};
     struct Cached { std::string target, date; Reply reply; };
     std::list<Cached> cache;
     size_t cache_bytes = 0;
@@ -426,25 +429,35 @@ struct Proxy::State {
         return reply;
     }
     Reply archived(const Configuration &config, const std::string &target, const std::string &method) {
-        std::lock_guard<std::mutex> lock(gate);
+        std::unique_lock<std::mutex> lock(gate);
         for (auto it=cache.begin();it!=cache.end();++it) if (it->target==target && it->date==config.archive_date) { Reply r=it->reply; cache.splice(cache.begin(),cache,it); return r; }
+        // Up to six requests at once, as a browser opens to one site; a page's resources no longer queue one by
+        // one. The Archive's own limit still holds: a 429/503 stops every request for its Retry-After.
+        archive_slot.wait(lock,[&]{return archive_requests<6;});
+        ++archive_requests;
+        lock.unlock();
+        struct Slot { State &s; ~Slot() { { std::lock_guard<std::mutex> l(s.gate); --s.archive_requests; } s.archive_slot.notify_one(); } } slot{*this};
         auto url = archive_url(target,config.archive_date);
         for (int redirects=0;redirects<8;redirects++) {
             auto now=std::chrono::steady_clock::now();
-            if (now<cooldown) return {429,{{"content-type","text/plain"},{"retry-after",std::to_string(std::chrono::duration_cast<std::chrono::seconds>(cooldown-now).count()+1)}},"The Internet Archive asked LightTouch to wait. Try reloading after the wait shown in Retry-After.\n"};
-            if (now<next) std::this_thread::sleep_until(next);
-            next=std::chrono::steady_clock::now()+1s;
+            {
+                std::lock_guard<std::mutex> guard(gate);
+                if (now<cooldown) return {429,{{"content-type","text/plain"},{"retry-after",std::to_string(std::chrono::duration_cast<std::chrono::seconds>(cooldown-now).count()+1)}},"The Internet Archive asked LightTouch to wait. Try reloading after the wait shown in Retry-After.\n"};
+            }
             Reply r=fetch(config,url,method,{{"user-agent","LightTouch/1.0 (archive replay)"}});
             if (r.status==429 || r.status==503) {
                 int seconds=60;
                 try { if (r.headers.count("retry-after")) seconds=int(number(r.headers["retry-after"],3600)); } catch (...) {}
-                cooldown=std::chrono::steady_clock::now()+std::chrono::seconds(std::max(1,seconds));
+                std::lock_guard<std::mutex> guard(gate);
+                cooldown=std::max(cooldown,std::chrono::steady_clock::now()+std::chrono::seconds(std::max(1,seconds)));
                 r.headers["retry-after"]=std::to_string(seconds); return r;
             }
             if (r.status>=300 && r.status<400 && r.headers.count("location")) { url=archive_redirect(url,r.headers["location"],config.archive_date); continue; }
             r.headers.erase("set-cookie"); r.cookies.clear();
+            // A few pages' worth (a 2009 front page is ~60 resources): going back to a page doesn't refetch it all.
             if (method=="GET" && r.status==200 && r.body.size()<=2<<20) {
-                while (!cache.empty() && (cache.size()>=32 || cache_bytes+r.body.size()>16<<20)) { cache_bytes-=cache.back().reply.body.size(); cache.pop_back(); }
+                std::lock_guard<std::mutex> guard(gate);
+                while (!cache.empty() && (cache.size()>=256 || cache_bytes+r.body.size()>32<<20)) { cache_bytes-=cache.back().reply.body.size(); cache.pop_back(); }
                 cache_bytes+=r.body.size(); cache.push_front({target,config.archive_date,r});
             }
             return r;
