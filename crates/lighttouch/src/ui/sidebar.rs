@@ -1,5 +1,5 @@
 //! The device list on the left: every saved device, the running one marked, and "Add a device".
-use super::{App, Dialog, Page, icons, setup, theme, widgets};
+use super::{App, Dialog, Page, icons, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Frame, Margin, RichText, Sense, vec2};
 use lighttouch_model::session::Phase;
 
@@ -85,8 +85,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 (None, false) => add,
             };
             if add.clicked() && !busy {
-                app.setup = setup::SetupState::default();
-                app.page = Page::Setup(setup::Step::Files);
+                super::prepare::open(app);
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
@@ -100,26 +99,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
-/// The device being prepared or added, listed while that runs: its progress, and a way back to it.
+/// The device being prepared, listed while that runs: its progress, and a way back to it.
 fn pending_row(app: &mut App, ui: &mut egui::Ui) {
     let p = app.palette;
-    let Some((activity, progress)) = app.model.busy() else { return };
-    let (name, page) = match activity {
-        lighttouch_model::Activity::Preparing(id) => {
-            let firmware = lighttouch_catalog::catalog::Catalog::get().find(id);
-            let name = Some(app.prepare.name.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| {
-                firmware.map(|f| format!("{} {}", f.device_name(), f.label())).unwrap_or_else(|| "New device".into())
-            });
-            (name, Page::Prepare)
-        }
-        lighttouch_model::Activity::AddingDevice => ("New device".to_string(), Page::Setup(setup::Step::Creating)),
-    };
+    let Some((lighttouch_model::Activity::Preparing(id), progress)) = app.model.busy() else { return };
+    let firmware = lighttouch_catalog::catalog::Catalog::get().find(id);
+    let name = Some(app.prepare.name.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| {
+        firmware.map(|f| format!("{} {}", f.device_name(), f.label())).unwrap_or_else(|| "New device".into())
+    });
+    let page = Page::Prepare;
     let fraction = progress.fraction();
     // The stage itself is on the progress page; one line here.
-    let verb = if matches!(page, Page::Prepare) { "Preparing" } else { "Adding" };
     let status = match fraction {
-        Some(f) => format!("{verb} · {:.0}%", f * 100.0),
-        None => format!("{verb}…"),
+        Some(f) => format!("Preparing · {:.0}%", f * 100.0),
+        None => "Preparing…".to_string(),
     };
     let showing = app.page == page;
     let response = device_row(ui, &p, &name, &status, showing, Some(theme::WARNING));

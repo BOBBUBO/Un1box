@@ -1,5 +1,5 @@
 //! FitCheck: proof, read off the firmware itself at prepare time, that a guest-side piece fits the firmware it is
-//! injected into (Packages/FirmwareKit/Sources/FirmwareKit/FitCheck, GLIDispatchCheck, Portability/MachOHeaders).
+//! injected into (ported from the Swift FirmwareKit's FitCheck, GLIDispatchCheck and MachOHeaders).
 //! Every check returns a Fit: fits with the proof, or does not fit with why. "Could not tell" is never a fit. No
 //! per-build tables: only symbols, strings and structure.
 //!
@@ -9,11 +9,11 @@
 //! log.check(f, true, "left out")?;
 //! ```
 use crate::error::Result;
-use crate::hfs::editor::Kind;
 use crate::hfs::Editor;
+use crate::hfs::editor::Kind;
 use crate::macho::{
-    self, hex, is_export, last_component, le32, trie_reexports, MachO32, LC_DYLD_INFO, LC_DYLD_INFO_ONLY as LC_DIO,
-    LC_REEXPORT_DYLIB, REQ_DYLD,
+    self, LC_DYLD_INFO, LC_DYLD_INFO_ONLY as LC_DIO, LC_REEXPORT_DYLIB, MachO32, REQ_DYLD, hex, is_export,
+    last_component, le32, trie_reexports,
 };
 use crate::sandbox_patch;
 use crate::shared_cache::DyldSharedCache;
@@ -106,7 +106,8 @@ const CORE_SURFACES: [&str; 2] = [
 const IO_MOBILE_FRAMEBUFFER: &str =
     "System/Library/PrivateFrameworks/IOMobileFramebuffer.framework/IOMobileFramebuffer";
 const SGX_ENGINE: &str = "System/Library/Frameworks/OpenGLES.framework/GLEngine.bundle";
-const SURFACE_CALLS: [&str; 7] = ["GetBaseAddress", "GetBytesPerRow", "GetWidth", "GetHeight", "GetPixelFormat", "Lock", "Unlock"];
+const SURFACE_CALLS: [&str; 7] =
+    ["GetBaseAddress", "GetBytesPerRow", "GetWidth", "GetHeight", "GetPixelFormat", "Lock", "Unlock"];
 const DAEMONS: &str = "System/Library/LaunchDaemons";
 const FRAMEWORK_DIRS: [&str; 2] = ["System/Library/Frameworks", "System/Library/PrivateFrameworks"];
 const APPSYNC_PATH: &str = "usr/lib/libappsync.dylib";
@@ -212,7 +213,8 @@ impl Firmware {
                         if dest.starts_with('/') {
                             out.clear();
                         }
-                        let mut more: Vec<String> = dest.split('/').filter(|p| !p.is_empty()).map(str::to_string).collect();
+                        let mut more: Vec<String> =
+                            dest.split('/').filter(|p| !p.is_empty()).map(str::to_string).collect();
                         more.reverse();
                         // the remaining parts come after the symlink's target
                         let mut rest = std::mem::take(&mut parts);
@@ -255,7 +257,12 @@ impl Firmware {
     }
 
     /// The cache image installed as `install` (its path, or the followed path with a leading "/").
-    fn cache_image<'c>(&self, cache: &'c DyldSharedCache, install: &str, followed: &str) -> Option<&'c crate::shared_cache::Image> {
+    fn cache_image<'c>(
+        &self,
+        cache: &'c DyldSharedCache,
+        install: &str,
+        followed: &str,
+    ) -> Option<&'c crate::shared_cache::Image> {
         cache.image(install).or_else(|| cache.image(&format!("/{followed}")))
     }
 
@@ -547,8 +554,11 @@ pub fn loads(piece: &str, bin: &[u8], fw: &Firmware, host: Option<&str>) -> Fit 
     let cmds: Vec<String> =
         req_sorted.iter().filter_map(|c| precedent.get(c).map(|n| format!("{} as {n}", hex(*c)))).collect();
     let in_host = host.map(|h| format!(" in {}", last_component(h))).unwrap_or_default();
-    let cmds_text =
-        if cmds.is_empty() { "no dyld-required load commands".to_string() } else { format!("load commands {}", cmds.join(", ")) };
+    let cmds_text = if cmds.is_empty() {
+        "no dyld-required load commands".to_string()
+    } else {
+        format!("load commands {}", cmds.join(", "))
+    };
     Fit::new(
         piece,
         true,
@@ -717,11 +727,7 @@ pub fn sandbox_patch(kernel: Option<&[u8]>) -> Fit {
         return Fit::new(piece, false, "no decrypted kernelcache to check it against");
     };
     match sandbox_patch::locate(kernel) {
-        Ok(f) => Fit::new(
-            piece,
-            true,
-            format!("sb_evaluate at 0x{:x} ({})", f.address, macho::hex_bytes(&f.original)),
-        ),
+        Ok(f) => Fit::new(piece, true, format!("sb_evaluate at 0x{:x} ({})", f.address, macho::hex_bytes(&f.original))),
         Err(sandbox_patch::PatchError::NoSandboxKext | sandbox_patch::PatchError::NoString) => {
             Fit::new(piece, true, "no Seatbelt sandbox kext on this kernel: nothing to patch")
         }
@@ -759,7 +765,9 @@ pub fn app_sync(fw: &Firmware, host: &str, dylib: &[u8]) -> Fit {
     }
     let mut why: Vec<String> = Vec::new();
     if !contains(dylib, &c_string(&name)) {
-        why.push(format!("its getprogname gate does not name {name}: the Security interposes would pass through there"));
+        why.push(format!(
+            "its getprogname gate does not name {name}: the Security interposes would pass through there"
+        ));
     }
     let images = fw.loaded(host);
     let mut hooked: Vec<String> = Vec::new();
@@ -826,7 +834,9 @@ pub fn check_app_sync(log: &Log, fw: &Firmware, helpers: &Path, name: &str) -> R
         .find(|j| fw.resolve_exists(j));
     if let Some(job) = installd {
         let Some(host) = plist_dict(fw, &job).and_then(|d| program(&d)) else {
-            return log.check(Fit::new(APPSYNC_DYLIB, false, format!("{job} names no program")), true, "left out").map(|_| ());
+            return log
+                .check(Fit::new(APPSYNC_DYLIB, false, format!("{job} names no program")), true, "left out")
+                .map(|_| ());
         };
         log.check(app_sync(fw, &host, &dylib), true, "left out")?;
         return Ok(());
@@ -839,7 +849,11 @@ pub fn check_app_sync(log: &Log, fw: &Firmware, helpers: &Path, name: &str) -> R
         .and_then(program);
     let Some(host) = host else {
         return log
-            .check(Fit::new(APPSYNC_DYLIB, false, "no installd job and no Lockbot installation_proxy service"), true, "left out")
+            .check(
+                Fit::new(APPSYNC_DYLIB, false, "no installd job and no Lockbot installation_proxy service"),
+                true,
+                "left out",
+            )
             .map(|_| ());
     };
     log.check(app_sync(fw, &host, &dylib), true, "left out")?;
@@ -913,7 +927,11 @@ pub fn gles_front_end(fw: &Firmware, binary: &[u8], names_table: &str) -> Fit {
     if !lost.is_empty() {
         let shown = lost.iter().take(6).cloned().collect::<Vec<_>>().join(", ");
         let extra = if lost.len() > 6 { format!(" (+{})", lost.len() - 6) } else { String::new() };
-        return Fit::new(piece, false, format!("the stock OpenGLES exports {shown}{extra} that the front end does not"));
+        return Fit::new(
+            piece,
+            false,
+            format!("the stock OpenGLES exports {shown}{extra} that the front end does not"),
+        );
     }
     let mut proof = vec![format!("exports all {} of the stock OpenGLES's names", stock.len())];
     for sel in ["nativeWindow", "drawableProperties"] {
@@ -932,7 +950,10 @@ pub fn gles_front_end(fw: &Firmware, binary: &[u8], names_table: &str) -> Fit {
     }
     proof.push(format!("native window: version + {callbacks} callbacks"));
     let calls: &str;
-    if fw.exports(&format!("/{IOSURFACE}")).map(|s| SURFACE_CALLS.iter().all(|c| s.contains(&format!("_IOSurface{c}")))).unwrap_or(false)
+    if fw
+        .exports(&format!("/{IOSURFACE}"))
+        .map(|s| SURFACE_CALLS.iter().all(|c| s.contains(&format!("_IOSurface{c}"))))
+        .unwrap_or(false)
     {
         calls = "IOSurface";
     } else if let Some(lib) = CORE_SURFACES.iter().find(|c| fw.exports(&format!("/{c}")).is_some()) {
@@ -999,7 +1020,8 @@ pub fn gles_front_end(fw: &Firmware, binary: &[u8], names_table: &str) -> Fit {
             if slots == 0 {
                 return Fit::new(piece, false, "the macro context's dispatch @encode has neither fields nor slots");
             }
-            proof.push(format!("macro context: {slots} unnamed dispatch slots, named by the stock exports at run time"));
+            proof
+                .push(format!("macro context: {slots} unnamed dispatch slots, named by the stock exports at run time"));
         }
         let known: HashSet<String> = gles_names_table(names_table);
         let unknown: Vec<String> = fields.iter().filter(|f| !known.contains(*f)).cloned().collect();
@@ -1016,13 +1038,11 @@ pub fn gles_front_end(fw: &Firmware, binary: &[u8], names_table: &str) -> Fit {
             proof.push(format!("macro context: {} dispatch fields, all named", fields.len()));
         }
     }
-    proof.push(
-        if fw.resolve_exists(SGX_ENGINE) {
-            "ES 1.1 + 2.0 (GLEngine.bundle)".to_string()
-        } else {
-            "ES 1.1 only (no GLEngine.bundle)".to_string()
-        },
-    );
+    proof.push(if fw.resolve_exists(SGX_ENGINE) {
+        "ES 1.1 + 2.0 (GLEngine.bundle)".to_string()
+    } else {
+        "ES 1.1 only (no GLEngine.bundle)".to_string()
+    });
     proof.push(l.proof);
     Fit::new(piece, true, proof.join("; "))
 }

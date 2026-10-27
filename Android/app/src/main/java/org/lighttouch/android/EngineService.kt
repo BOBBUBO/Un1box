@@ -59,8 +59,6 @@ class EngineService : Service() {
     private val binder = object : IEngine.Stub() {
         override fun rename(recordId: String, name: String): String = Native.rename(File(filesDir, "library").absolutePath, recordId, name)
         override fun remove(recordId: String): String = Native.remove(File(filesDir, "library").absolutePath, recordId)
-        override fun importDevice(source: String, displayName: String, rom: String, guest: String, sha256: String): String =
-            Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, guest, sha256)
         override fun importProgress(): Bundle = Native.importProgress().let { p ->
             Bundle().apply { putString("phase", p[0]); putLong("done", p[1].toLongOrNull() ?: 0); putLong("total", p[2].toLongOrNull() ?: 0) }
         }
@@ -139,8 +137,6 @@ class EngineService : Service() {
             val result = Native.debugQmpSnapshot()
             return Bundle().apply { putString("error", result[0]); putString("path", result[1]) }
         }
-        override fun importBase(source: String, displayName: String): String = Native.importBase(source, File(filesDir, "library").absolutePath,
-            displayName, File(filesDir, "bootrom.bin").absolutePath, File(filesDir, "guest.itpack").absolutePath)
         override fun importPrepared(source: String, displayName: String, rom: String): String = Native.importBase(source, File(filesDir, "library").absolutePath, displayName, rom, "")
         override fun adoptPrepared(source: String, displayName: String, rom: String): String = Native.adoptPrepared(source, File(filesDir, "library").absolutePath, displayName, rom)
         override fun setGuestPackage(recordId: String, path: String): String = Native.setGuestPackage(File(filesDir, "library").absolutePath, recordId, path)

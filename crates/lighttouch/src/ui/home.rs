@@ -1,7 +1,7 @@
 //! The device page: the selected device drawn with its live screen, what state it is in, and the dock of session
 //! controls while it runs. Start lives only on the screen itself (one control per action).
 use super::device_frame::{self, Skin};
-use super::{App, Dialog, Page, icons, overlay, setup, sidebar, theme, widgets};
+use super::{App, Dialog, Page, icons, overlay, sidebar, theme, widgets};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Frame, Margin, Rect, RichText, Sense, Ui, vec2};
 use lighttouch_model::session::Phase;
 
@@ -265,10 +265,7 @@ fn state_card(app: &mut App, ui: &mut Ui, screen: Rect) {
                     Some(Phase::Paused) => app.model.set_paused(false),
                     Some(Phase::Running) => app.pulse_home(),
                     _ => match app.model.selected().map(|d| d.dirty) {
-                        None => {
-                            app.setup = setup::SetupState::default();
-                            app.page = Page::Setup(setup::Step::Files);
-                        }
+                        None => super::prepare::open(app),
                         Some(dirty) => app.model.start(dirty),
                     },
                 }

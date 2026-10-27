@@ -208,14 +208,6 @@ pub fn paint(painter: &Painter, skin: &Skin, layout: &Layout, pressed: impl Fn(u
     );
 }
 
-/// Which button (if any) a point hits.
-pub fn button_at(layout: &Layout, point: Pos2) -> Option<u32> {
-    if layout.home.center().distance(point) <= layout.home.width() / 2.0 {
-        return Some(HOME);
-    }
-    layout.side.iter().find(|(_, _, hit)| hit.contains(point)).map(|(id, _, _)| *id)
-}
-
 /// Outline of a rounded rectangle, clockwise from the top-left corner.
 fn rounded_outline(rect: Rect, radius: f32) -> Vec<Pos2> {
     let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0).max(0.0);

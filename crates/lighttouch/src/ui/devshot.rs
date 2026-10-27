@@ -51,7 +51,7 @@ pub fn window_size() -> Option<[f32; 2]> {
 
 pub fn start_page() -> Option<Page> {
     match std::env::var("LIGHTTOUCH_UI_PAGE").ok()?.as_str() {
-        "add" => Some(Page::Setup(super::setup::Step::Files)),
+        "add" => Some(Page::Prepare),
         "settings" => Some(Page::Settings),
         "licenses" => Some(Page::Licenses),
         "network" => Some(Page::Network),

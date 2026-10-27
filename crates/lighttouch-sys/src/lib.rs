@@ -257,14 +257,6 @@ unsafe extern "C" {
         error: *mut lt_error,
     ) -> lt_status;
     pub fn lt_library_remove(library: *mut lt_library, record_id: *const c_char, error: *mut lt_error) -> lt_status;
-    pub fn lt_library_import_observed(
-        library: *mut lt_library,
-        config: *const lt_library_import_config,
-        phase: lt_import_phase_fn,
-        opaque: *mut c_void,
-        info: *mut lt_record_info,
-        error: *mut lt_error,
-    ) -> lt_status;
     pub fn lt_library_adopt_prepared(
         library: *mut lt_library,
         config: *const lt_library_import_config,
@@ -296,7 +288,6 @@ unsafe extern "C" {
         device: *mut *mut lt_device,
         error: *mut lt_error,
     ) -> lt_status;
-    pub fn lt_sha256_file(path: *const c_char, hex: *mut c_char, error: *mut lt_error) -> lt_status;
 
     pub fn lt_engine_board(
         engine_library: *const c_char,

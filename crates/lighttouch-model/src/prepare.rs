@@ -270,7 +270,6 @@ pub(crate) fn run(ctx: PrepareContext, request: PrepareRequest, reporter: &Repor
     let tools = GuestTools::new(ctx.resources.guest_tools());
     let source = ImportSource {
         path: out.clone(),
-        sha256: None,
         name: Some(name.clone()),
         bootrom: bootrom.clone(),
         guest_package: tools.for_device(&firmware.board, &firmware.build),

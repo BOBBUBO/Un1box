@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build a native macOS TCG/CGL engine from an existing qemu-ios checkout.
 
-This recipe uses native Homebrew dependencies; build-shared.py later copies
-and relocates their dylib closure into the development app. No guest is run.
+This recipe uses native Homebrew dependencies; scripts/release/package-desktop.py
+later copies and relocates their dylib closure into LightTouch.app. No guest is run.
 Use a memory/time supervisor on shared hosts. Requires ninja, meson, jq,
 pkg-config, glib, pixman, libslirp, nettle, OpenSSL3 and the macOS Command Line Tools.
 QEMU has no built-in AES any more: without nettle the guest's AES engine (the

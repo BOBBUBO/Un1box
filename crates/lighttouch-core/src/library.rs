@@ -48,13 +48,11 @@ impl Record {
 /// and total for that phase. Return `false` to cancel.
 pub type PhaseFn<'a> = dyn FnMut(&str, u64, u64) -> bool + 'a;
 
-/// What to add as a new record.
+/// A preparer's output to add as a new record.
 #[derive(Debug, Clone, Default)]
 pub struct ImportSource {
-    /// An `.itbase` archive, a packed folder, or a prepared folder with `device.lock.json`.
+    /// The prepared folder, with its `device.lock.json`.
     pub path: PathBuf,
-    /// SHA-256 of an archive (required for archives; ignored for folders).
-    pub sha256: Option<String>,
     pub name: Option<String>,
     pub bootrom: Option<PathBuf>,
     pub guest_package: Option<PathBuf>,
@@ -138,26 +136,15 @@ impl Library {
         Ok(Record::from_info(&info))
     }
 
-    /// Copy and verify an `.itbase` archive or a prepared/packed folder in as a new record.
-    pub fn import(&self, source: &ImportSource, progress: &mut PhaseFn<'_>) -> Result<Record> {
-        self.add(source, progress, false)
-    }
-
     /// Move a preparer's output folder (on the library's own filesystem) in as a new record without copying it.
     /// On failure the folder is handed back where it was.
     pub fn adopt_prepared(&self, source: &ImportSource, progress: &mut PhaseFn<'_>) -> Result<Record> {
-        self.add(source, progress, true)
-    }
-
-    fn add(&self, source: &ImportSource, progress: &mut PhaseFn<'_>, adopt: bool) -> Result<Record> {
         let path = cpath(&source.path)?;
-        let sha = source.sha256.as_deref().map(cstring).transpose()?;
         let name = source.name.as_deref().map(cstring).transpose()?;
         let rom = opt_cpath(source.bootrom.as_deref())?;
         let package = opt_cpath(source.guest_package.as_deref())?;
         let mut config = sys::lt_library_import_config::new();
         config.source_path = path.as_ptr();
-        config.expected_sha256 = ptr(&sha);
         config.display_name = ptr(&name);
         config.bootrom_path = ptr(&rom);
         config.guest_package_path = ptr(&package);
@@ -166,25 +153,7 @@ impl Library {
         let mut observer: &mut PhaseFn<'_> = progress;
         let opaque = &mut observer as *mut &mut PhaseFn<'_> as *mut c_void;
         let status = unsafe {
-            if adopt {
-                sys::lt_library_adopt_prepared(
-                    self.raw,
-                    &config,
-                    Some(phase_trampoline),
-                    opaque,
-                    &mut *info,
-                    &mut error,
-                )
-            } else {
-                sys::lt_library_import_observed(
-                    self.raw,
-                    &config,
-                    Some(phase_trampoline),
-                    opaque,
-                    &mut *info,
-                    &mut error,
-                )
-            }
+            sys::lt_library_adopt_prepared(self.raw, &config, Some(phase_trampoline), opaque, &mut *info, &mut error)
         };
         check(status, &error)?;
         Ok(Record::from_info(&info))
@@ -208,13 +177,4 @@ unsafe extern "C" fn phase_trampoline(opaque: *mut c_void, phase: *const c_char,
         Ok(true) => 0,
         _ => 1,
     }
-}
-
-/// SHA-256 of a file, hex, using the core's (hardware-accelerated) hasher.
-pub fn sha256_file(path: &Path) -> Result<String> {
-    let path = cpath(path)?;
-    let mut hex = [0 as c_char; 65];
-    let mut error = sys::lt_error::new();
-    check(unsafe { sys::lt_sha256_file(path.as_ptr(), hex.as_mut_ptr(), &mut error) }, &error)?;
-    Ok(chars(&hex))
 }

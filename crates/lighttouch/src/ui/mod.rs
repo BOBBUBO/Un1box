@@ -236,14 +236,6 @@ impl App {
                     self.prepare.error = Some(message);
                     self.prepare.step = prepare::Step::Progress;
                 }
-                Finished::Failed { message, .. } => {
-                    if matches!(self.page, Page::Setup(setup::Step::Creating)) {
-                        self.setup.error = Some(message);
-                        self.page = Page::Setup(setup::Step::Files);
-                    } else {
-                        self.model.error = Some(message);
-                    }
-                }
             }
         }
         // Pause while minimized, resume on return. As on Android, not while apps install (a paused guest never
@@ -357,7 +349,6 @@ impl App {
                                 .map(|f| format!("{} · iOS {}", f.device_name(), f.label()))
                                 .unwrap_or_else(|| id.clone()),
                         ),
-                        Some(_) => None,
                         None => {
                             close = true;
                             None
@@ -370,7 +361,7 @@ impl App {
                             format!("Still preparing {what}"),
                             "Closing LightTouch stops it. You can prepare it again later, and a download picks up where it left off.",
                         ),
-                        None => ("Still adding a device".to_string(), "Closing LightTouch stops it; you can add it again later."),
+                        None => ("Still preparing a device".to_string(), "Closing LightTouch stops it."),
                     };
                     ui.label(RichText::new(title).font(theme::title()));
                     ui.add_space(4.0);
@@ -400,8 +391,7 @@ impl App {
                             close = true;
                             // As on Android: straight to adding another, past the welcome.
                             if self.model.devices.is_empty() {
-                                self.setup = Default::default();
-                                self.page = Page::Setup(setup::Step::Files);
+                                prepare::open(self);
                             }
                         }
                         if widgets::text_button(ui, &p, "Cancel").clicked() {

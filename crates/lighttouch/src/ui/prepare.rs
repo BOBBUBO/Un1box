@@ -88,6 +88,14 @@ fn page(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     });
 }
 
+/// Open this page to add a device, starting afresh unless a preparation is still running.
+pub fn open(app: &mut App) {
+    if app.prepare.step == Step::Progress && app.model.busy().is_none() {
+        app.prepare = Default::default();
+    }
+    app.page = Page::Prepare;
+}
+
 pub fn show(app: &mut App, ui: &mut Ui) {
     // A preparation in progress always shows its progress.
     if matches!(app.model.busy(), Some((lighttouch_model::Activity::Preparing(_), _))) {
@@ -104,7 +112,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 fn device_step(app: &mut App, ui: &mut Ui) {
     let p = app.palette;
     header(app, ui, "Prepare from an IPSW", "Choose the device to emulate", |app| {
-        app.page = Page::Setup(setup::Step::Files);
+        app.page = if app.model.devices.is_empty() { Page::Setup(setup::Step::Welcome) } else { Page::Device };
     });
     let groups = Catalog::get().devices();
     let (tested, untested): (Vec<&DeviceGroup>, Vec<&DeviceGroup>) =

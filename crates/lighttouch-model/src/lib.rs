@@ -13,16 +13,16 @@ pub mod store;
 pub mod task;
 pub mod tilt;
 
-use lighttouch_catalog::catalog::{default_device_name, device_subtitle, model_name};
+use lighttouch_catalog::catalog::{device_subtitle, model_name};
 use lighttouch_catalog::{Bootrom, GuestTools};
-use lighttouch_core::library::{ImportSource, Library, Record};
+use lighttouch_core::library::{Library, Record};
 use lighttouch_core::paths::{DataDirs, Resources};
 use session::{Phase, Session, StartOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use task::{Progress, Reporter, Task};
+use task::{Progress, Task};
 
 /// Ask the frontend to redraw (called from background threads).
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -66,38 +66,9 @@ impl Device {
     }
 }
 
-/// What a folder holds, for "Choose a folder".
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct FoundAssets {
-    pub system: Option<PathBuf>,
-    pub bootrom: Option<PathBuf>,
-}
-
-impl FoundAssets {
-    pub fn describe(&self, folder: &Path) -> String {
-        let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        match (&self.system, &self.bootrom) {
-            (Some(_), Some(_)) => format!("Found an iOS system and a boot file in {name}"),
-            (Some(_), None) => format!("Found an iOS system in {name}"),
-            (None, Some(_)) => format!("Found a boot file in {name}"),
-            (None, None) => format!("Nothing LightTouch can use in {name}"),
-        }
-    }
-}
-
-/// A device to add from files the user has.
-#[derive(Debug, Clone, Default)]
-pub struct AddRequest {
-    /// An `.itbase`, a packed folder (`index.json` + `files/`) or a prepared folder (`device.lock.json`).
-    pub system: PathBuf,
-    pub bootrom: Option<PathBuf>,
-    pub name: Option<String>,
-}
-
 /// What the current background operation is.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Activity {
-    AddingDevice,
     /// Preparing a device from an IPSW (the firmware id).
     Preparing(String),
 }
@@ -504,50 +475,6 @@ impl Model {
         }
     }
 
-    /// Look in a folder (and one level down) for a prepared system and a boot ROM.
-    pub fn scan_folder(folder: &Path) -> FoundAssets {
-        let mut found = FoundAssets::default();
-        let mut folders = vec![folder.to_path_buf()];
-        if let Ok(entries) = std::fs::read_dir(folder) {
-            folders.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
-        }
-        for dir in &folders {
-            if found.system.is_none() {
-                if dir.join("index.json").is_file() && dir.join("files").is_dir()
-                    || dir.join("device.lock.json").is_file()
-                {
-                    found.system = Some(dir.clone());
-                }
-            }
-            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-                let path = entry.path();
-                let name = entry.file_name().to_string_lossy().to_lowercase();
-                if found.system.is_none() && path.is_file() && name.ends_with(".itbase") {
-                    found.system = Some(path.clone());
-                }
-                if found.bootrom.is_none() && path.is_file() && name.starts_with("bootrom") {
-                    found.bootrom = Some(path);
-                }
-            }
-        }
-        found
-    }
-
-    /// Add a device from files the user has, in the background.
-    pub fn add_device(&mut self, request: AddRequest) {
-        if self.task.is_some() {
-            return;
-        }
-        let library_root = self.dirs.library();
-        let tools = GuestTools::new(self.resources.guest_tools());
-        let select = !self.session_active();
-        let taken: Vec<String> = self.devices.iter().map(|d| d.name.clone()).collect();
-        let task = Task::spawn(self.waker.clone(), move |reporter| {
-            add_device_work(&library_root, &tools, request, select, &taken, reporter)
-        });
-        self.task = Some((Activity::AddingDevice, task));
-    }
-
     /// Prepare a device from an IPSW in the background.
     pub fn prepare(&mut self, request: prepare::PrepareRequest) {
         if self.task.is_some() {
@@ -568,77 +495,6 @@ impl Model {
     pub fn dismiss_error(&mut self) {
         self.error = None;
     }
-}
-
-fn add_device_work(
-    library_root: &Path,
-    tools: &GuestTools,
-    request: AddRequest,
-    select: bool,
-    taken: &[String],
-    reporter: &Reporter,
-) -> Result<Finished, String> {
-    let library = Library::open(library_root).map_err(|e| e.to_string())?;
-    let sha256 = if request.system.is_file() { Some(sha256_with_progress(&request.system, reporter)?) } else { None };
-    let source = ImportSource {
-        path: request.system.clone(),
-        sha256,
-        name: None,
-        bootrom: request.bootrom.clone(),
-        guest_package: None,
-    };
-    let record = library
-        .import(&source, &mut |phase, done, total| {
-            let text = match phase {
-                "hashing" => "Checking the files",
-                "extracting" => "Copying the system",
-                "packing" => "Packing the flash",
-                "verifying" => "Verifying",
-                other => other,
-            };
-            reporter.report(text, done, total)
-        })
-        .map_err(|e| {
-            if reporter.cancelled() { "Cancelled".to_string() } else { format!("Couldn't add the device: {e}") }
-        })?;
-    reporter.report("Finishing", 0, 0);
-    // From here the record exists; later failures keep it.
-    if let Some(pack) = tools.for_device(&record.board, &record.build) {
-        if let Err(e) = library.set_guest_package(&record.id, &pack) {
-            eprintln!("guest tools for the new device: {e}");
-        }
-    }
-    let name = match request.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
-        Some(name) => name.to_string(),
-        None => default_device_name(&record.board, &record.build, taken.iter().map(String::as_str)),
-    };
-    let _ = library.rename(&record.id, &name);
-    if select {
-        let _ = library.select(&record.id);
-    }
-    Ok(Finished::DeviceAdded { id: record.id, name, selected: select, timings: Vec::new() })
-}
-
-fn sha256_with_progress(path: &Path, reporter: &Reporter) -> Result<String, String> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-    let total = path.metadata().map(|m| m.len()).unwrap_or(0);
-    let mut file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 4 << 20];
-    let mut done = 0u64;
-    loop {
-        let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buffer[..n]);
-        done += n as u64;
-        if !reporter.report("Checking the file", done, total) {
-            return Err("Cancelled".into());
-        }
-    }
-    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// "2026-10-24 at 21.05.33" in local-ish time without a date library: UTC is fine for file names.

@@ -2,7 +2,6 @@
 //!
 //! ```text
 //! lighttouch list
-//! lighttouch import <.itbase | folder> [--sha256 HEX] [--name NAME] [--rom FILE] [--package FILE]
 //! lighttouch prepare <firmware id> [--ipsw FILE] [--rom FILE] [--name NAME]
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE]
 //!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones]
@@ -12,7 +11,7 @@
 //! shuts iOS down cleanly. A script line is `<seconds> <command json>`, e.g. `40 {"cmd":"button","button":0,"down":true}`
 //! or, live, `60 {"cmd":"network","config":{"mode":"archive","archive_date":"20090909","local_network":false}}`.
 use lighttouch_core::frames::{FrameReader, segment_name};
-use lighttouch_core::library::{ImportSource, Library, sha256_file};
+use lighttouch_core::library::Library;
 use lighttouch_core::network::NetworkConfig;
 use lighttouch_core::paths::{DataDirs, Resources, data_root};
 use lighttouch_core::protocol::{Command, Event, NetworkArgs, WorkerArgs};
@@ -23,14 +22,13 @@ use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
 pub fn handles(command: &str) -> bool {
-    matches!(command, "list" | "import" | "run" | "prepare")
+    matches!(command, "list" | "run" | "prepare")
 }
 
 pub fn main(args: &[String]) -> i32 {
     let dirs = DataDirs::new(data_root());
     let result = match args[0].as_str() {
         "list" => list(&dirs),
-        "import" => import(&dirs, &args[1..]),
         "run" => run(&dirs, &args[1..]),
         "prepare" => prepare(dirs, &args[1..]),
         _ => unreachable!(),
@@ -62,57 +60,6 @@ fn list(dirs: &DataDirs) -> Result<(), String> {
             if r.guest_package_path.is_some() { "" } else { " (no guest tools)" }
         );
     }
-    Ok(())
-}
-
-fn import(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
-    let path = PathBuf::from(args.first().ok_or("import needs a path")?);
-    let sha256 = match option(args, "--sha256") {
-        Some(sha) => Some(sha),
-        None if path.is_file() => {
-            eprintln!("hashing {}", path.display());
-            Some(sha256_file(&path).map_err(|e| e.to_string())?)
-        }
-        None => None,
-    };
-    let source = ImportSource {
-        path,
-        sha256,
-        name: option(args, "--name"),
-        bootrom: option(args, "--rom").map(PathBuf::from),
-        guest_package: option(args, "--package").map(PathBuf::from),
-    };
-    let library = Library::open(&dirs.library()).map_err(|e| e.to_string())?;
-    let started = Instant::now();
-    let mut last = String::new();
-    let record = library
-        .import(&source, &mut |phase, done, total| {
-            let line = format!("{phase} {}%", if total > 0 { done * 100 / total } else { 0 });
-            if line != last {
-                eprintln!("{line}");
-                last = line;
-            }
-            true
-        })
-        .map_err(|e| e.to_string())?;
-    // The name the app would give it ("iPod touch 2G 3.1.3"), unless one was asked for.
-    let mut name = record.name.clone();
-    if source.name.is_none() {
-        let others: Vec<String> = library
-            .records()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .filter(|r| r.id != record.id)
-            .map(|r| r.name)
-            .collect();
-        name = lighttouch_catalog::catalog::default_device_name(
-            &record.board,
-            &record.build,
-            others.iter().map(String::as_str),
-        );
-        library.rename(&record.id, &name).map_err(|e| e.to_string())?;
-    }
-    println!("added {name} ({}) in {:.1} s", record.id, started.elapsed().as_secs_f64());
     Ok(())
 }
 

@@ -100,54 +100,6 @@ pub fn card<R>(ui: &mut Ui, p: &Palette, add: impl FnOnce(&mut Ui) -> R) -> R {
         .inner
 }
 
-/// A clickable card (e.g. "Prepare from an IPSW").
-pub fn action_card(ui: &mut Ui, p: &Palette, icon: &str, title: &str, subtitle: &str, emphasized: bool) -> Response {
-    let width = ui.available_width();
-    let height = 76.0;
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
-    let fill = match (emphasized, response.hovered()) {
-        (true, false) => p.primary_container,
-        (true, true) => p.primary_container.gamma_multiply(1.15),
-        (false, false) => p.container,
-        (false, true) => p.container_high,
-    };
-    let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(radius::CARD), fill);
-    let icon_center = rect.left_center() + vec2(38.0, 0.0);
-    painter.circle_filled(icon_center, 22.0, if emphasized { p.primary } else { p.container_highest });
-    painter.text(
-        icon_center,
-        Align2::CENTER_CENTER,
-        icon,
-        FontId::new(22.0, theme::icons()),
-        if emphasized { p.on_primary } else { p.on_surface },
-    );
-    let text_left = rect.left() + 76.0;
-    let title_color = if emphasized { p.on_primary_container } else { p.on_surface };
-    painter.text(
-        egui::pos2(text_left, rect.center().y - 10.0),
-        Align2::LEFT_CENTER,
-        title,
-        FontId::new(15.0, theme::semibold()),
-        title_color,
-    );
-    painter.text(
-        egui::pos2(text_left, rect.center().y + 11.0),
-        Align2::LEFT_CENTER,
-        subtitle,
-        FontId::new(13.0, egui::FontFamily::Proportional),
-        if emphasized { p.on_primary_container.gamma_multiply(0.8) } else { p.on_surface_variant },
-    );
-    painter.text(
-        rect.right_center() - vec2(22.0, 0.0),
-        Align2::CENTER_CENTER,
-        super::icons::CARET_RIGHT,
-        FontId::new(18.0, theme::icons()),
-        title_color.gamma_multiply(0.7),
-    );
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
 /// A group header above a card ("Display", "Controls").
 pub fn section(ui: &mut Ui, p: &Palette, text: &str) {
     ui.add_space(14.0);

@@ -2,18 +2,18 @@
 
 LightTouch runs classic iPhone OS and iOS in an emulator on **Android, Linux, Windows and macOS**. It is a fork of [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac), built around a shared [qemu-ios engine](https://github.com/blake-lucas/qemu-ios).
 
-The desktop ports share one device library and setup UI. Android has its own touch UI. A prepared iOS system can back several saved devices, each with its own storage.
+One desktop app runs on Linux, Windows and macOS; Android has its own touch UI. Every version sets up a device for you from Apple's IPSW: pick a device and iOS version, and LightTouch downloads and prepares it. Each device keeps its own storage.
 
-[Download the latest release](https://github.com/blake-lucas/LightTouch/releases/latest) (v0.0.11). LightTouch is still early and things can change between versions. Android is the most complete: it sets up devices on the phone from start to finish. The Linux, Windows and macOS versions work but take more setup, since most of the work has gone into Android first.
+[Download the latest release](https://github.com/blake-lucas/LightTouch/releases/latest). LightTouch is still early and things can change between versions. Android has had the most testing.
 
 ## Current platforms
 
 | Platform | Build | Status |
 | --- | --- | --- |
 | Android | APK, ARM64 (Android 10+) | The main test platform, on a Poco F3 and a Pixel 10. First launch walks you through preparing a device from an IPSW on the phone. Graphics, audio, touch, tilt and IPA installs work, and the Legacy Store can be browsed like the website, with several installs queued in the background. |
-| Linux | x86_64 AppImage | Boot, input, accelerated graphics, audio, the Legacy Store and IPA installs work. Prepares devices with `firmwarekit` from the command line. |
-| Windows | x86_64 ZIP | Boot, graphics, audio and Legacy Store installs confirmed by users. Cannot prepare devices yet: copy a prepared `.itbase` from another computer. |
-| macOS | Apple Silicon app ZIP | The shared desktop UI builds and packages. Guest services are not yet fully checked. Needs macOS 26. Upstream's [Light Touch for Mac](https://github.com/samhenrigold/LightTouchMac/releases) is the tested Mac app. |
+| Linux | x86_64 AppImage | Prepares devices from an IPSW. Accelerated graphics, audio, networking, the Legacy Store and IPA installs work. Needs glibc 2.31 or later (Debian 11, Ubuntu 20.04 and newer). |
+| Windows | x86_64 ZIP | The same app as on Linux. Preparing devices, graphics and audio confirmed on Windows 10 and 11. |
+| macOS | Apple Silicon app ZIP | The same app as on Linux. Needs macOS 26. The app isn't notarized: the first time, allow it in System Settings › Privacy & Security. |
 
 ## Devices
 
@@ -29,12 +29,7 @@ The desktop ports share one device library and setup UI. Android has its own tou
 
 ## Getting started
 
-**On Android**, install the APK and tap **Get started**. Pick a device and iOS version, and the app downloads iOS and prepares it on the phone (the iPod touch 2G on iOS 3.1.3 takes about a minute). You don't need any files of your own. If you already have device files made elsewhere, tap **I already have the device files**.
-
-**On Linux, Windows and macOS**, unpack the build, then get an iOS system for it. The [asset guide](docs/ASSETS.md) covers both routes:
-
-- **Prepare one from Apple's IPSW** with `firmwarekit` on Linux or macOS. Every platform uses the same preparer ([Portable/firmware](Portable/firmware/README.md)).
-- **Use an already prepared system** (`.itbase`), for example the one `tools/get-assets.py` takes from upstream's Mac app, along with its guest tools (`armv6.itpack` or `armv7.itpack`) and, for the iPod touch 2G, its boot ROM.
+Install the APK on Android, or unpack the build for your computer, and choose **Get started**. Pick a device and iOS version, and LightTouch downloads iOS and prepares it (the iPod touch 2G on iOS 3.1.3 takes about a minute). You don't need any files of your own; if you already have the IPSW, you can choose it instead of downloading. The iPod touch 1G and 2G and the original iPhone also need a boot file, which LightTouch downloads for you. [docs/ASSETS.md](docs/ASSETS.md) says where everything comes from.
 
 Then start the device. Use the on-screen Home, Power and volume buttons, and **Stop** to shut iOS down cleanly. Each device keeps its own storage, and the prepared system is never changed.
 
@@ -44,7 +39,7 @@ Guests run through QEMU's TCG dynamic translation; there is no hardware virtuali
 
 ## Building and contributing
 
-`scripts/build.sh` builds the engine, the Linux frontend, the Android APK, `firmwarekit` and (on a Mac, over ssh) the guest tools; `scripts/build-release.sh` builds a release for all four platforms. Windows and macOS app builds run through `Desktop/build.py` on their own hosts. [docs/BUILDING.md](docs/BUILDING.md) covers the inputs, and [CONTRIBUTING.md](CONTRIBUTING.md) the repository layout, firmware preparation, tests and style. Development happens on `dev/*` branches of this repository and the engine; releases come from `main`.
+The desktop app and `firmwarekit` (the preparer every platform uses) are one Rust workspace: `cargo build` ([docs/DESKTOP.md](docs/DESKTOP.md)). `scripts/build.sh` builds the engines, the Android APK and (on a Mac, over ssh) the guest tools; `scripts/build-release.sh` builds a release for all four platforms. [docs/BUILDING.md](docs/BUILDING.md) covers the inputs, and [CONTRIBUTING.md](CONTRIBUTING.md) the repository layout, firmware preparation, tests and style. Development happens on `dev/*` branches of this repository and the engine; releases come from `main`.
 
 ## License and credits
 
@@ -57,8 +52,8 @@ It builds on [LightTouchMac](https://github.com/samhenrigold/LightTouchMac),
 [devos50's qemu-ios](https://github.com/devos50/qemu-ios),
 [libimobiledevice](https://libimobiledevice.org), libusbmuxd, libplist, libtatsu,
 the upstream usbmuxd fork, iBoot32Patcher, FFmpeg, GLib, libslirp, PCRE2, pixman,
-OpenSSL, Swift and its Foundation, swift-crypto, ZIPFoundation and Unrar.swift with RARLAB's UnRAR. Preserve each package's bundled
-license and source notices.
+OpenSSL, egui and the Rust crates listed on each app's licence page. Preserve each package's bundled license and
+source notices.
 
 iPhone, iPod touch and iPad are trademarks of Apple Inc. LightTouch is not
 affiliated with Apple.
