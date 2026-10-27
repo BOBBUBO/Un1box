@@ -269,7 +269,8 @@ int main() {
     std::string source = (root / "base.itbase").string();
     config.source = source.c_str();
     assert(lt_import_archive(&config, &e) == LT_OK);
-    assert((fs::status(root / "base/nor.bin").permissions() & fs::perms::owner_write) == fs::perms::none);
+    // Imported files keep ordinary modes: the lock's hashes vouch for a base, not its permissions.
+    assert((fs::status(root / "base/nor.bin").permissions() & fs::perms::owner_write) != fs::perms::none);
     std::string state = (root / "state").string();
     lt_device_config dc{sizeof(dc), 1, dest.c_str(), state.c_str(), 0};
     lt_device *d = nullptr, *second = nullptr;

@@ -50,15 +50,11 @@ static void display_name(const std::string &name) {
         i += n;
     }
 }
-static void copy_regular(const fs::path &source, const fs::path &destination, bool immutable = false) {
+// The copy is the record's own file: it never takes the source's mode (a read-only ROM stays deletable with its
+// record).
+static void copy_regular(const fs::path &source, const fs::path &destination) {
     require(fs::is_regular_file(fs::symlink_status(source)), "record asset must be regular file");
-    fs::copy_file(source, destination, fs::copy_options::none);
-    int fd = lt::os::open(destination.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    io(fd >= 0, "open copied record file");
-    int result = lt::os::fsync(fd);
-    lt::os::close(fd);
-    io(result == 0, "sync copied record file");
-    io(lt::os::chmod(destination.c_str(), immutable ? 0400 : 0600) == 0, "private copied file mode");
+    copy_contents(source, destination);
 }
 static void copy_state(const fs::path &source, const fs::path &destination) {
     fs::create_directories(destination);
@@ -83,6 +79,10 @@ static void copy_state(const fs::path &source, const fs::path &destination) {
 }
 static void discard(const fs::path &p) {
     std::error_code error;
+    if (fs::remove_all(p, error) != static_cast<std::uintmax_t>(-1) && !error)
+        return;
+    // Records made before NAND containers froze their base and assets read-only (0500 folders), which an unlink
+    // inside them needs undone. Nothing made since is read-only.
     for (const auto &e : fs::recursive_directory_iterator(p, error))
         if (e.is_directory())
             lt::os::chmod(e.path().c_str(), 0700);
@@ -193,7 +193,6 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
             io(lt::os::stat(c->source_path, &from) == 0 && lt::os::stat(l->root.c_str(), &to) == 0, "stat prepared output");
             require(from.st_dev == to.st_dev, "prepared output must be on the library's storage");
             adopted = fs::canonical(c->source_path);
-            io(lt::os::chmod(adopted.c_str(), 0700) == 0, "own prepared output");  // a folder's move rewrites its ".."
             io(lt::os::rename(adopted.c_str(), base.c_str()) == 0, "move prepared output");
             adopt_base(base, observer, opaque);
         } else {
@@ -211,15 +210,15 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         display_name(name);
         fs::create_directory(stage / "assets");
         if (c->bootrom_path && *c->bootrom_path)
-            copy_regular(c->bootrom_path, stage / "assets/bootrom.bin", true);
+            copy_regular(c->bootrom_path, stage / "assets/bootrom.bin");
         if (c->guest_package_path && *c->guest_package_path)
-            copy_regular(c->guest_package_path, stage / "assets/guest.itpack", true);
+            copy_regular(c->guest_package_path, stage / "assets/guest.itpack");
         else if (const auto *outputs = lock.find("outputs"))
             if (const auto *package = outputs->find("guest_package")) {
                 auto source = stage / "base" / package->at("path").string();
                 require(digest_file(source) == package->at("sha256").string(),
                         "prepared guest package checksum mismatch");
-                copy_regular(source, stage / "assets/guest.itpack", true);
+                copy_regular(source, stage / "assets/guest.itpack");
             }
         if (legacy_state)
             copy_state(legacy->state, stage / "state");
@@ -235,7 +234,6 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         metadata += "}\n";
         atomic_write(stage / "record.json", metadata);
         sync_dir(stage / "assets");
-        io(lt::os::chmod((stage / "assets").c_str(), 0500) == 0, "immutable record assets");
         sync_dir(stage / "state");
         sync_dir(stage);
         fs::rename(stage, l->root / "records" / id);
@@ -252,10 +250,8 @@ static void import(lt_library *l, const lt_library_import_config *c, const char 
         describe(l, id, out);
     } catch (...) {
         std::error_code ec;
-        if (!adopted.empty() && fs::is_directory(stage / "base", ec) && !fs::exists(adopted, ec)) {
-            lt::os::chmod((stage / "base").c_str(), 0700);
+        if (!adopted.empty() && fs::is_directory(stage / "base", ec) && !fs::exists(adopted, ec))
             fs::rename(stage / "base", adopted, ec);
-        }
         discard(stage);
         throw;
     }
@@ -335,11 +331,13 @@ static void set_guest_package(lt_library *l, const std::string &id, const char *
     }
     auto assets = directory / "assets";
     fs::create_directories(assets);
-    io(lt::os::chmod(assets.c_str(), 0700) == 0, "record assets permissions");
+    // A record made before NAND containers froze its assets read-only (0500); writing into them needs that undone.
+    if (lt::os::read_only(assets.c_str()))
+        io(lt::os::chmod(assets.c_str(), 0700) == 0, "record assets permissions");
     try {
         std::error_code stale;
         fs::remove(assets / ".guest.itpack.new", stale);
-        copy_regular(path, assets / ".guest.itpack.new", true);
+        copy_regular(path, assets / ".guest.itpack.new");
         std::string sha = digest_file(assets / ".guest.itpack.new");
         fs::rename(assets / ".guest.itpack.new", assets / "guest.itpack");
         sync_dir(assets);
@@ -355,10 +353,8 @@ static void set_guest_package(lt_library *l, const std::string &id, const char *
     } catch (...) {
         std::error_code ec;
         fs::remove(assets / ".guest.itpack.new", ec);
-        lt::os::chmod(assets.c_str(), 0500);
         throw;
     }
-    io(lt::os::chmod(assets.c_str(), 0500) == 0, "immutable record assets");
     describe(l, id, out);
 }
 } // namespace lt
@@ -396,7 +392,6 @@ lt_status lt_library_open(const lt_library_config *c, lt_library **out, lt_error
         auto l = std::make_unique<lt_library>();
         l->root = lt::fs::canonical(c->root_path);
         lt::require(l->root.string().size() < 900, "library path exceeds record ABI bound");
-        lt::io(lt::os::chmod(l->root.c_str(), 0700) == 0, "private library permissions");
         lt::fs::create_directories(l->root / "records");
         lt::require(!lt::fs::is_symlink(lt::fs::symlink_status(l->root / "records")),
                     "library records symlink refused");
