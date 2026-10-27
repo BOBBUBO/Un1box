@@ -175,10 +175,12 @@ step_desktop() {
         AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar cargo build --release --locked --target x86_64-pc-windows-gnu \
         -p lighttouch -p lighttouch-firmware --features lighttouch-services/vendored-openssl) >> "$R/desktop-windows.log" 2>&1 ||
         { tail -30 "$R/desktop-windows.log" >&2; exit 1; }
+    # The engine's runtime goes last, so its libwinpthread (which the engine and libstdc++ import from) wins over the
+    # older one beside the USB bridge; package-desktop checks the bridge still finds what it imports.
     local w=$R/app/target/x86_64-pc-windows-gnu/release services=$LT_WIN_INPUTS/services-mobile01/bin
     python3 "$R/app/scripts/release/package-desktop.py" "$d/LightTouch-$V-Windows-x86_64" --os windows \
         --app "$w/lighttouch.exe" --firmwarekit "$w/firmwarekit.exe" --engine "$d/win-engine/libqemu-arm.dll" \
-        --usbmuxd "$services/lighttouch-usbmuxd.exe" --guest-tools "$tools" --lib "$d/win-runtime" --lib "$services" \
+        --usbmuxd "$services/lighttouch-usbmuxd.exe" --guest-tools "$tools" --lib "$services" --lib "$d/win-runtime" \
         --notices "engine=$n/windows/engine" --notices "usb=$n/windows/usb" --group-source "engine=$GH_ENGINE" --zip \
         > "$R/desktop-windows-package.log" 2>&1 || { tail -30 "$R/desktop-windows-package.log" >&2; exit 1; }
     cp "$d/LightTouch-$V-Linux-x86_64.AppImage" "$d/LightTouch-$V-Windows-x86_64.zip" "$OUTD/"
