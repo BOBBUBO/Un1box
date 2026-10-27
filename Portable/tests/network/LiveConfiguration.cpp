@@ -68,6 +68,15 @@ int main() {
             Connection peer(fd);timeout(fd,5);
             peer.tls=SSL_new(tls);SSL_set_fd(peer.tls,fd);assert(SSL_accept(peer.tls)==1);
             auto line=peer.line();(void)headers(peer);++archive_requests;
+            // The Archive's day-only URLs redirect to the capture it serves; /gone has none at all.
+            auto has=[&](const char *text){return line.find(text)!=std::string::npos;};
+            if(has("/gone ")) { peer.write(response({404,{{"content-type","text/plain"}},"not archived"})); continue; }
+            if(has("20090909id_/") && (has("/exact ") || has("/nearest ") || has("/missing "))) {
+                auto path=line.substr(line.find("id_/")+4);path=path.substr(0,path.find(' '));
+                auto stamp=has("/exact ")?"20090909120000":"20090912081500";
+                peer.write(response({302,{{"location",std::string("/web/")+stamp+"id_/"+path}},""}));continue;
+            }
+            if(has("20090912081500id_/http://origin.test/missing ")) { peer.write(response({404,{{"content-type","text/plain"}},"captured 404"})); continue; }
             auto body=line.find("20090909id_")!=std::string::npos?"20090909":"20100101";
             if(line.find("/slow ")!=std::string::npos && std::string(body)=="20090909") {
                 slow_entered.set_value();released.wait();
@@ -109,6 +118,17 @@ int main() {
         config.archive_date="20090909";proxy.configure(config);
         assert(request(proxy,"slow").find("20090909")!=std::string::npos && archive_requests==4);
         assert(request(proxy,"login","POST").find("405")!=std::string::npos);
+        // Current session names the copy that came back: the chosen day's, or the nearest one.
+        assert(request(proxy,"exact").find("HTTP/1.1 200 ")==0);
+        assert(proxy.activity().last_result=="Loaded the copy from 9 September 2009");
+        request(proxy,"nearest");
+        assert(proxy.activity().last_result=="No copy from 9 September 2009; loaded the nearest, from 12 September 2009");
+        assert(!proxy.activity().last_result_error);
+        request(proxy,"missing");
+        assert(proxy.activity().last_result=="No copy from 9 September 2009; the nearest, from 12 September 2009, is an error page (HTTP 404)");
+        assert(proxy.activity().last_result_error);
+        request(proxy,"gone");
+        assert(proxy.activity().last_result=="No archived capture is available for this page");
         config.mode=Mode::off;proxy.configure(config);
         assert(request(proxy,"page").find("503")!=std::string::npos);
         config.mode=Mode::direct;proxy.configure(config);

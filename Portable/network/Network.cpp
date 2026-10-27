@@ -242,7 +242,8 @@ Socket connect_to(const Address &a, bool local) {
     }
     throw Error(502, "Could not connect to the website");
 }
-struct Reply { int status = 502; Headers headers; std::string body; std::vector<std::string> cookies{}; };
+// `capture`: the archive's yyyyMMdd day of the copy it served (empty when it had none, or for direct replies).
+struct Reply { int status = 502; Headers headers; std::string body; std::vector<std::string> cookies{}; std::string capture{}; };
 bool hop(const std::string &name) {
     static const std::set<std::string> names{"connection", "proxy-connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade", "proxy-authorization", "proxy-authenticate", "content-length"};
     return names.count(name);
@@ -337,6 +338,21 @@ bool public_address(const unsigned char *b, size_t size) {
 std::string archive_url(const std::string &target, const std::string &date) {
     require(Configuration::valid_date(date), 400, "Choose a valid archive date");
     return "https://web.archive.org/web/" + date + "id_/" + Address::parse(target).url();
+}
+// The day of the capture an archive URL names (/web/yyyyMMddhhmmssid_/...), once its redirect has picked one.
+std::string capture_day(const std::string &url) {
+    const std::string prefix = "https://web.archive.org/web/";
+    if (!starts(url, prefix) || url.size() < prefix.size() + 18 || url.compare(prefix.size() + 14, 4, "id_/") != 0) return "";
+    for (size_t i = prefix.size(); i < prefix.size() + 14; i++) if (url[i] < '0' || url[i] > '9') return "";
+    return url.substr(prefix.size(), 8);
+}
+// "9 September 2009" from yyyyMMdd.
+std::string long_day(const std::string &day) {
+    static const char *months[] = {"January","February","March","April","May","June","July","August","September","October","November","December"};
+    if (day.size() != 8 || day.find_first_not_of("0123456789") != std::string::npos) return day;
+    int month = std::stoi(day.substr(4, 2));
+    if (month < 1 || month > 12) return day;
+    return std::to_string(std::stoi(day.substr(6, 2))) + " " + months[month - 1] + " " + day.substr(0, 4);
 }
 std::string archive_redirect(const std::string &current, const std::string &location, const std::string &date) {
     require(!location.empty(), 502, "Archive returned an empty redirect");
@@ -486,6 +502,7 @@ struct Proxy::State {
             }
             if (r.status>=300 && r.status<400 && r.headers.count("location")) { url=archive_redirect(url,r.headers["location"],config.archive_date); continue; }
             r.headers.erase("set-cookie"); r.cookies.clear();
+            r.capture = capture_day(url);
             // A few pages' worth (a 2009 front page is ~60 resources): going back to a page doesn't refetch it all.
             if (method=="GET" && r.status==200 && r.body.size()<=2<<20) {
                 std::lock_guard<std::mutex> guard(gate);
@@ -689,8 +706,13 @@ void Proxy::serve(std::intptr_t socket) {
         guest.write(response(reply,method=="HEAD"));
         std::string result = "HTTP " + std::to_string(reply.status);
         if (config.mode==Mode::archive) {
-            if (reply.status==404) result = "No archived capture is available for this page";
+            // Which copy came back: the Archive serves the capture nearest the chosen day when it has none that day.
+            const std::string chosen = long_day(config.archive_date), served = reply.capture.empty() ? "" : long_day(reply.capture);
+            const std::string error = reply.status>=400 ? " (HTTP " + std::to_string(reply.status) + ")" : "";
             if (reply.status==429 || reply.status==503) result = "Internet Archive is busy. Try reloading later.";
+            else if (served.empty()) { if (reply.status==404) result = "No archived capture is available for this page"; }
+            else if (reply.capture==config.archive_date) result = (error.empty() ? "Loaded the copy from " : "The copy from ") + served + (error.empty() ? "" : " is an error page" + error);
+            else result = "No copy from " + chosen + (error.empty() ? "; loaded the nearest, from " + served : "; the nearest, from " + served + ", is an error page" + error);
         }
         state->finish(result, reply.status>=400);
     } catch (const std::exception &error) {

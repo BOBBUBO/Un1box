@@ -20,7 +20,8 @@ archive date, guest setup and web activity. **Ready** means the certificate and
 proxy settings were installed; it does not prove a website loaded. Activity counts
 connections as soon as they reach the proxy, before headers or TLS complete, and
 separately reports connections in progress, finished connections, errors and the
-last result. Finished includes errors; totals cover this running session. Guest
+last result. With the Wayback Machine the last result names the copy served: the
+chosen day's, or (when that day has none) the nearest capture's date. Finished includes errors; totals cover this running session. Guest
 setup failures and the last failed result are explicitly labeled and colored.
 
 ## Shared backend
