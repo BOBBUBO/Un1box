@@ -1,26 +1,25 @@
 #!/bin/bash
-# One development build entry point: the engine, the Linux frontend, the Android APK, and (on a Mac,
-# over ssh) the guest package and LT Bench. Outputs go to build/<target>/ in this repository, object
+# One development build entry point: the engines, firmwarekit, the Android APK, and (on a Mac, over ssh) the
+# guest package and LT Bench. Outputs go to build/<target>/ in this repository, object
 # trees to build/obj/ (incremental; --clean removes a target's). See docs/BUILDING.md.
 #
 #   scripts/build.sh [--clean] TARGET...
 #
 #   linux-engine   build/linux/libqemu-arm.so                  x86_64 engine (qemu-ios, portable board)
-#   linux          build/linux/lighttouch-linux (+ engine)     the Linux frontend (Linux/CMakeLists.txt)
 #   android-engine build/android/engine/arm64-v8a/              arm64 engine, libc++_shared.so, notices
 #   android        build/android/LightTouch-debug.apk (+ engine) arm64 debug APK (LT_ANDROID_ENGINE: a prebuilt
 #                                                             engine; LT_APP_ID_SUFFIX/LT_APP_LABEL: a side-by-side install)
 #   portable-tests build/obj/portable-tests (ctest)            Portable/ unit tests
-#   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Rust) + lighttouch-oneshot, x86_64
+#   firmwarekit    build/firmwarekit/linux/                     firmwarekit (Rust), x86_64
 #   firmwarekit-android build/firmwarekit/android/              the same for arm64 Android (Rust + the NDK)
 #   guest-package  build/guest-package/{armv6,armv7}.itpack   on the Mac ($LT_MAC), Xcode + old SDKs
 #   firmware-tools build/firmware-tools/                       on the Mac: the helpers firmwarekit create bakes in
 #                                                             (--guest-tools; contrib/export-guest-artifacts.sh)
 #   ltbench        build/ltbench/LTBench.ipa                   on the Mac ($LT_MAC)
-#   all            linux android portable-tests (+ guest-package ltbench when LT_MAC is set)
+#   all            linux-engine android portable-tests (+ guest-package ltbench when LT_MAC is set)
 #
-# Windows and macOS app builds are not here: Desktop/build.py (Desktop/README.md) runs those recipes on
-# their own hosts.
+# The desktop app is `cargo build` (docs/DESKTOP.md); scripts/build-release.sh packages it for Linux, Windows and
+# macOS.
 #
 # Machine-local inputs come from the environment, or from scripts/build.env if present (sourced; not
 # tracked). The defaults are this project's development machine; docs/BUILDING.md says what each is.
@@ -94,16 +93,6 @@ build_linux_engine() {
     mkdir -p "$OUT/linux"
     cp "$dir/libqemu-arm.so" "$OUT/linux/"
     echo "$OUT/linux/libqemu-arm.so"
-}
-
-build_linux() {
-    build_linux_engine
-    log "linux frontend"
-    cmake -S "$REPO/Linux" -B "$OBJ/linux-frontend" -DLIGHTTOUCH_QEMU_SOURCE="$QEMU_IOS" > "$OBJ/linux-frontend.cmake.out"
-    cmake --build "$OBJ/linux-frontend" -j"$JOBS" --target lighttouch-linux > "$OBJ/linux-frontend.build.out" 2>&1 ||
-        { tail -30 "$OBJ/linux-frontend.build.out" >&2; exit 1; }
-    cp "$OBJ/linux-frontend/lighttouch-linux" "$OUT/linux/"
-    echo "$OUT/linux/lighttouch-linux"
 }
 
 build_android_engine() {
@@ -206,14 +195,12 @@ build_portable_tests() {
 }
 
 # firmwarekit (crates/lighttouch-firmware, Rust) builds a device from an IPSW on every platform. Its preparation boots
-# run the engine library itself (`firmwarekit oneshot`: $LTM_QEMU_DYLIB, else libqemu-arm beside it), Android's too;
-# the C lighttouch-oneshot is still built on Linux for `create --helper` comparisons.
+# run the engine library itself (`firmwarekit oneshot`: $LTM_QEMU_DYLIB, else libqemu-arm beside it), Android's too.
 build_firmwarekit() {
     log "firmwarekit (linux)"
     (cd "$REPO" && cargo build --release -p lighttouch-firmware --bin firmwarekit 2>&1 | tail -3)
     mkdir -p "$OUT/firmwarekit/linux"
     cp "$REPO/target/release/firmwarekit" "$OUT/firmwarekit/linux/"
-    cc -O2 -Wall -Wextra -Werror -o "$OUT/firmwarekit/linux/lighttouch-oneshot" "$REPO/Portable/oneshot/lighttouch-oneshot.c" -ldl -lpthread
     ls -la "$OUT/firmwarekit/linux"
 }
 
@@ -283,8 +270,8 @@ for a in "$@"; do
     case "$a" in
     --clean) clean=1 ;;
     -h|--help) sed -n 2,25p "$0"; exit 0 ;;
-    all) targets+=(linux android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
-    linux-engine|linux|android-engine|android|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
+    all) targets+=(linux-engine android portable-tests); [ -n "$LT_MAC" ] && targets+=(guest-package ltbench) ;;
+    linux-engine|android-engine|android|portable-tests|firmwarekit|firmwarekit-android|guest-package|firmware-tools|ltbench) targets+=("$a") ;;
     *) echo "unknown target: $a (scripts/build.sh --help)" >&2; exit 2 ;;
     esac
 done
@@ -293,7 +280,6 @@ for t in "${targets[@]}"; do
     if [ $clean = 1 ]; then
         case "$t" in
         linux-engine) rm -rf "$OBJ/linux-engine" ;;
-        linux) rm -rf "$OBJ/linux-engine" "$OBJ/linux-frontend" ;;
         android-engine) rm -rf "$OBJ/android-engine-arm64" ;;
         android) rm -rf "$OBJ/android-engine-arm64" "$OBJ/android-gradle" ;;
         portable-tests) rm -rf "$OBJ/portable-tests" ;;
