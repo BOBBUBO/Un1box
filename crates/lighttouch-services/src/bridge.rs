@@ -144,13 +144,8 @@ impl Bridge {
                 }
             })
             .ok();
-        let mut bridge = Self {
-            child,
-            dir: PathBuf::new(),
-            control,
-            mux_socket: PathBuf::new(),
-            guest_socket: PathBuf::new(),
-        };
+        let mut bridge =
+            Self { child, dir: PathBuf::new(), control, mux_socket: PathBuf::new(), guest_socket: PathBuf::new() };
         let deadline = Instant::now() + Duration::from_secs(8);
         while Instant::now() < deadline {
             match rx.recv_timeout(Duration::from_millis(50)) {
@@ -198,7 +193,15 @@ impl Bridge {
             unsafe {
                 libc::kill(self.child.id() as i32, libc::SIGTERM);
             }
-            let deadline = Instant::now() + Duration::from_secs(2);
+            // A daemon that never saw the guest exits on SIGTERM in ~100 ms. Once the guest has connected it can't:
+            // the engine's end of the link stays open after the runtime is destroyed, and the daemon's device
+            // teardown waits out a 30 s USB read, so it gets killed whatever the grace. A long one only held up
+            // every Stop (it was 2 s, more than iOS takes to shut down).
+            #[cfg(unix)]
+            let grace = Duration::from_millis(300);
+            #[cfg(not(unix))]
+            let grace = Duration::from_secs(2);
+            let deadline = Instant::now() + grace;
             while self.alive() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(20));
             }
