@@ -358,9 +358,13 @@ fn performance_hint() {
             android.get::<ReportWork>(b"APerformanceHint_reportActualWorkDuration"),
         )
     };
-    let (Ok(manager), Ok(create), Ok(report)) = symbols else { return };
+    let (Ok(manager), Ok(create), Ok(report)) = symbols else {
+        eprintln!("firmwarekit oneshot: no performance hints (API 33+ only)");
+        return;
+    };
     let manager = unsafe { manager() };
     if manager.is_null() {
+        eprintln!("firmwarekit oneshot: no performance hints on this device");
         return;
     }
     let mut tids = Vec::new();
@@ -376,8 +380,10 @@ fn performance_hint() {
     }
     let session = unsafe { create(manager, tids.as_ptr(), tids.len(), 10_000_000) };
     if session.is_null() {
+        eprintln!("firmwarekit oneshot: no performance hints (the power HAL has no hint sessions)");
         return;
     }
+    eprintln!("firmwarekit oneshot: performance hints for {} vCPU thread(s)", tids.len());
     let Some(mut last) = cpu_ns(&tids) else { return };
     loop {
         std::thread::sleep(Duration::from_millis(20));
