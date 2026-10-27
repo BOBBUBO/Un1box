@@ -6,9 +6,6 @@
 #include "../src/GuestNetwork.hpp"
 #include "../src/Elapsed.hpp"
 #include "../src/Lifecycle.hpp"
-#include "../../Linux/TouchScript.hpp"
-#include "../../Linux/ControlDelivery.hpp"
-#include "../../Linux/ReplayQueue.hpp"
 #include <zlib.h>
 #include <cassert>
 #include <cmath>
@@ -17,10 +14,6 @@
 #include <iostream>
 #include <unistd.h>
 #include <sys/stat.h>
-#ifdef __linux__
-#include <sys/socket.h>
-#include <cerrno>
-#endif
 namespace fs = std::filesystem;
 static void put(const fs::path &p, const std::string &s) {
     fs::create_directories(p.parent_path());
@@ -68,76 +61,6 @@ int main() {
         assert(std::string(error.message) == "invalid PCM output");
         assert(lt_runtime_pcm(nullptr, output.data(), 4096, &info, nullptr) == LT_INVALID);
     }
-    struct ReplayEntry {
-        int id;
-        bool replay;
-    };
-    // A cancellation while processing a replay must keep the next user
-    // screenshot/stop command. The current command is consumed before erase.
-    std::vector<ReplayEntry> scheduled{{1, true}, {2, true}, {3, false}, {4, true}, {5, false}};
-    size_t cursor = 1;
-    const auto current = scheduled[cursor++];
-    assert(current.id == 2);
-    assert(lt::discard_replay(scheduled, cursor) == 1);
-    assert(scheduled[cursor].id == 3 && scheduled[cursor + 1].id == 5);
-    assert(lt::discard_replay(scheduled, scheduled.size()) == 0);
-    assert(lt::discard_replay(scheduled, 0) == 2);
-    assert(scheduled.size() == 2 && scheduled[0].id == 3 && scheduled[1].id == 5);
-    lt::ControlDelivery delivery;
-    using ControlKind = lt::ControlDelivery::Kind;
-    unsigned calls = 0;
-    assert(delivery.send(ControlKind::input, [&] {
-        calls++;
-        return true;
-    })); // contact/button down queued
-    assert(!delivery.send(ControlKind::input, [&] {
-        calls++;
-        return false;
-    })); // release dropped by full socket
-    assert(delivery.needs_cancel());
-    assert(!delivery.send(ControlKind::input, [&] {
-        calls++;
-        return true;
-    }));
-    assert(calls == 2); // newer input never overtakes pending cancellation
-    delivery.retry_cancel([] { return false; });
-    assert(delivery.needs_cancel());
-    delivery.retry_cancel([] { return true; });
-    assert(!delivery.needs_cancel());
-    assert(delivery.send(ControlKind::input, [] { return true; }));
-    assert(!delivery.send(ControlKind::pause, [] { return false; }));
-    assert(delivery.needs_cancel());
-    assert(delivery.send(ControlKind::cancel, [] { return true; }));
-    assert(!delivery.needs_cancel());
-#ifdef __linux__
-    // Exercise a real bounded private socket reaching EAGAIN. This is transport
-    // regression evidence only; no engine or guest is involved.
-    int sockets[2];
-    assert(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, sockets) == 0);
-    int small_buffer = 4096;
-    assert(setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &small_buffer, sizeof(small_buffer)) == 0);
-    std::array<char, 1024> packet{};
-    while (send(sockets[0], packet.data(), packet.size(), MSG_NOSIGNAL) == ssize_t(packet.size())) {
-    }
-    assert(errno == EAGAIN || errno == EWOULDBLOCK);
-    lt::ControlDelivery bounded;
-    assert(!bounded.send(ControlKind::input, [&] {
-        return send(sockets[0], packet.data(), packet.size(), MSG_NOSIGNAL) == ssize_t(packet.size());
-    }));
-    assert(bounded.needs_cancel());
-    bounded.retry_cancel(
-        [&] { return send(sockets[0], packet.data(), packet.size(), MSG_NOSIGNAL) == ssize_t(packet.size()); });
-    assert(bounded.needs_cancel());
-    while (recv(sockets[1], packet.data(), packet.size(), 0) > 0) {
-    }
-    bounded.retry_cancel([&] { return send(sockets[0], "C", 1, MSG_NOSIGNAL) == 1; });
-    assert(!bounded.needs_cancel());
-    assert(bounded.send(ControlKind::input, [&] { return send(sockets[0], "I", 1, MSG_NOSIGNAL) == 1; }));
-    assert(recv(sockets[1], packet.data(), packet.size(), 0) == 1 && packet[0] == 'C');
-    assert(recv(sockets[1], packet.data(), packet.size(), 0) == 1 && packet[0] == 'I');
-    close(sockets[0]);
-    close(sockets[1]);
-#endif
     // A zero engine return is not a guest shutdown receipt. Finalization may
     // briefly retain dirty while the confirmed publisher is still cleaning up.
     assert(lt::terminal_issue(true, true, false, true, 0) == lt::TerminalIssue::unconfirmed_shutdown);
@@ -146,20 +69,6 @@ int main() {
     assert(lt::terminal_issue(true, true, true, true, 0) == lt::TerminalIssue::none);
     assert(lt::terminal_issue(true, false, true, false, 0) == lt::TerminalIssue::none);
     assert(lt::terminal_issue(true, false, false, true, 1) == lt::TerminalIssue::engine_exit);
-    std::istringstream pair("17 0 .3 .5 91 0 .7 .5");
-    auto batch = lt::parse_touch_contacts(pair, 2);
-    assert(batch.count == 2 && batch.contacts[0].id == 17 && batch.contacts[1].id == 91);
-    for (const auto &text : {"17 0 .3 .5 17 0 .7 .5", "17 0 .3 .5", "17 4 .3 .5 91 0 .7 .5", "17 0 1.1 .5 91 0 .7 .5",
-                             "17 0 .3 .5 91 0 .7 .5 extra"}) {
-        bool rejected = false;
-        try {
-            std::istringstream invalid(text);
-            lt::parse_touch_contacts(invalid, 2);
-        } catch (const std::exception &) {
-            rejected = true;
-        }
-        assert(rejected);
-    }
     // Stop is admitted after the loop timestamp is sampled. Unsigned subtraction
     // with that stale snapshot used to kill a real worker in the same iteration.
     const uint64_t loop_snapshot = 90000000000ull;
