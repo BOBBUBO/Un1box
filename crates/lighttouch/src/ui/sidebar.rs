@@ -32,6 +32,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let busy = app.model.busy().is_some();
             let running_id = app.model.session.as_ref().map(|s| s.record_id.clone());
             let running_phase = app.model.session.as_ref().map(|s| s.phase.clone());
+            // The Prepare page is the device being made (marked on its own row), not the selected one.
+            let preparing_shown = app.page == Page::Prepare;
             egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(ui.available_height() - 120.0).show(
                 ui,
                 |ui| {
@@ -42,7 +44,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             subtitle.push_str(" · needs recovery");
                         }
                         let dot = if running { running_phase.as_ref().map(phase_color) } else { None };
-                        let mut response = device_row(ui, &p, &device.name, &subtitle, device.selected, dot);
+                        let mut response =
+                            device_row(ui, &p, &device.name, &subtitle, device.selected && !preparing_shown, dot);
                         if active && !device.selected {
                             let name = app.model.session.as_ref().map(|s| s.name.clone()).unwrap_or_default();
                             response = response.on_hover_text(format!("Stop {name} to switch to this device"));
@@ -94,14 +97,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     if nav_button(ui, &p, icons::GEAR, "Settings", settings_open).clicked() {
                         app.page = if settings_open { Page::Device } else { Page::Settings };
                     }
-                    let help = egui::Button::new(widgets::icon_text(icons::QUESTION, 18.0).color(p.on_surface_variant))
-                        .fill(Color32::TRANSPARENT)
-                        .corner_radius(CornerRadius::same(12))
-                        .min_size(vec2(36.0, 36.0));
-                    if ui.add(help).on_hover_text("Controls").on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
-                    {
-                        app.dialog = Some(Dialog::Controls);
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if help_button(ui, &p).clicked() {
+                            app.dialog = Some(Dialog::Controls);
+                        }
+                    });
                 });
             });
         });
@@ -249,6 +249,28 @@ fn add_row(ui: &mut egui::Ui, p: &theme::Palette, enabled: bool) -> egui::Respon
     );
     if enabled { response.on_hover_cursor(egui::CursorIcon::PointingHand) } else { response }
 }
+
+/// The Controls dialog's button, at the footer's right: the icon alone, on the Settings button's centre line.
+fn help_button(ui: &mut egui::Ui, p: &theme::Palette) -> egui::Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+    // Into the panel's margin, toward the divider.
+    let rect = rect.translate(vec2(6.0, 0.0));
+    let response = ui.interact(rect, ui.scope_id().with("controls-help"), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(12), p.container_high);
+    }
+    // Phosphor's glyphs sit above the centre of their line box; this lines the ink up with the gear's.
+    let center = rect.center() + vec2(0.0, HELP_NUDGE);
+    ui.painter().text(
+        center,
+        Align2::CENTER_CENTER,
+        icons::QUESTION,
+        FontId::new(17.0, theme::icons()),
+        p.on_surface_variant,
+    );
+    response.on_hover_text("Controls").on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+const HELP_NUDGE: f32 = 1.0;
 
 fn nav_button(ui: &mut egui::Ui, p: &theme::Palette, icon: &str, label: &str, active: bool) -> egui::Response {
     let text = widgets::icon_label(icon, label, Some(if active { p.primary } else { p.on_surface_variant }));
