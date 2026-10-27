@@ -5,7 +5,7 @@
 //! lighttouch import <.itbase | folder> [--sha256 HEX] [--name NAME] [--rom FILE] [--package FILE]
 //! lighttouch prepare <firmware id> [--ipsw FILE] [--rom FILE] [--name NAME]
 //! lighttouch run <record id> [--seconds N] [--recover] [--shot FILE.ppm] [--script FILE]
-//!                [--network direct|archive[:yyyyMMdd]] [--lan]
+//!                [--network direct|archive[:yyyyMMdd]] [--lan] [--no-headphones]
 //! ```
 //!
 //! `run` starts a worker like the app does, prints its events, takes an optional screenshot of the last frame, then
@@ -167,7 +167,7 @@ fn run(dirs: &DataDirs, args: &[String]) -> Result<(), String> {
         frames: frames.name().to_string(),
         recover: args.iter().any(|a| a == "--recover"),
         audio: !args.iter().any(|a| a == "--no-audio"),
-        headphones: true,
+        headphones: !args.iter().any(|a| a == "--no-headphones"),
     };
     let mut child = spawn_worker(&worker_args)?;
     let mut stdin = child.stdin.take().unwrap();
