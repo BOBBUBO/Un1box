@@ -76,11 +76,12 @@ through `lt_runtime_network_policy`; slirp is never accessed on the UI/Binder th
 The worker reports its applied route/date separately from saved preferences and
 retries admission during engine startup. Live changes do not reinstall guest tools.
 
-Linux and macOS can use the same Unix listener and supply their trust roots.
-Windows frontends can pass accepted sockets to `Proxy::serve`; listener, trust
-store integration and Windows build validation remain future frontend work. The
-other frontends do not yet expose these settings. Upstream's retired-service and
-weather adapters are outside this web-routing implementation.
+Linux and macOS can use the same Unix listener and supply their trust roots. On
+Windows the proxy listens on an AF_UNIX socket too (Windows 10 1803 and later), and
+the engine's libslirp forwards to it. Un1box's Android app is the frontend that
+exposes these settings; other frontends and their Windows build validation remain
+future work. Upstream's retired-service and weather adapters are outside this
+web-routing implementation.
 
 ## Build
 

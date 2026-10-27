@@ -49,8 +49,8 @@ public:
     // In-flight work retains its snapshot. Never waits for upstream I/O.
     // A proxy constructed off has no TLS identity and cannot be enabled live.
     void configure(Configuration configuration);
-    // Unix listener for libslirp's per-connection guestfwd. Windows frontends may
-    // call serve() on an accepted socket instead, sharing routing and TLS unchanged.
+    // AF_UNIX listener for libslirp's per-connection guestfwd (Windows 10 1803 and
+    // later too). serve() also takes a socket a frontend accepted itself.
     void listen(const std::string &socket_path);
     void serve(std::intptr_t connected_socket); // borrows the socket
     std::string status() const;

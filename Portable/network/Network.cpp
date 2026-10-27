@@ -25,6 +25,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <afunix.h>
 #else
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -632,17 +633,27 @@ void Proxy::configure(Configuration config) {
     state->config=std::move(config);
 }
 void Proxy::listen(const std::string &path) {
-#ifndef _WIN32
     require(state->configuration().mode!=Mode::off,503,"Networking is off");
     require(path.size()<sizeof(sockaddr_un::sun_path),503,"Proxy socket path exceeds platform limit");
-    Socket fd=socket(AF_UNIX,SOCK_STREAM,0); require(fd>=0,503,"Could not create proxy socket");
+    Socket fd=socket(AF_UNIX,SOCK_STREAM,0); require(fd!=invalid_socket,503,"Could not create proxy socket");
     sockaddr_un address{}; address.sun_family=AF_UNIX; memcpy(address.sun_path,path.c_str(),path.size()+1);
-    if (bind(fd,reinterpret_cast<sockaddr *>(&address),sizeof(address)) || chmod(path.c_str(),0600) || ::listen(fd,16)) { close_socket(fd); throw Error(503,"Could not bind private proxy socket"); }
+#ifndef _WIN32
+    bool bound=!bind(fd,reinterpret_cast<sockaddr *>(&address),sizeof(address)) && !chmod(path.c_str(),0600) && !::listen(fd,16);
+#else
+    // Windows 10 1803 and later have AF_UNIX; the socket file takes its folder's ACL (the user's own temp folder).
+    bool bound=!bind(fd,reinterpret_cast<sockaddr *>(&address),int(sizeof(address))) && !::listen(fd,16);
+#endif
+    if (!bound) { close_socket(fd); throw Error(503,"Could not bind private proxy socket"); }
     state->socket_path=path; state->listener=fd;
     state->acceptor=std::thread([this,fd] {
         while (!state->stopping) {
             Socket peer=accept(fd,nullptr,nullptr);
-            if (peer<0) { if (errno==EINTR) continue; break; }
+            if (peer==invalid_socket) {
+#ifndef _WIN32
+                if (errno==EINTR) continue;
+#endif
+                break;
+            }
             timeout(peer,30);
             std::unique_lock<std::mutex> lock(state->mutex);
             if (state->stopping || state->active.size()>=16) { close_socket(peer); continue; }
@@ -654,9 +665,6 @@ void Proxy::listen(const std::string &path) {
             }).detach();
         }
     });
-#else
-    (void)path; throw Error(503,"This frontend must supply its socket listener");
-#endif
 }
 void Proxy::serve(std::intptr_t socket) {
     [[maybe_unused]] PipeSignal pipe_signal;
