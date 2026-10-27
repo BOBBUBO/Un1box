@@ -1824,8 +1824,11 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
             // machine is gone before it starts (qemu exits 1; the engine log ends in bionic's torn-down-mutex
             // noise from the threads it had already started). reconnect-ms makes it the asynchronous client it
             // is: it dials at boot and again whenever the proxy comes up, so the boot never waits for a proxy.
-            network += ",guestfwd=tcp:10.0.2.100:3128-unix:" + escape(c->network_socket) +
-                       ",server=off,reconnect-ms=500";
+            // The chardev's own options have to be escaped: -netdev splits on commas, so a bare ",server=off"
+            // here would be the netdev's (invalid) parameter, not the chardev's. escape() doubles the commas,
+            // and qemu undoes that before the chardev parses them.
+            network += ",guestfwd=" + escape("tcp:10.0.2.100:3128-unix:" + std::string(c->network_socket) +
+                                            ",server=off,reconnect-ms=500");
         }
         d->args.insert(d->args.end(), {"-netdev", network});
         // Chain TCG jumps across guest pages: iOS never remaps a code page to other code
