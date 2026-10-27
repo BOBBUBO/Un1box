@@ -47,10 +47,10 @@ class MonitorPhaseTest(unittest.TestCase):
 
     def test_worker_uid_and_padded_argv(self):
         status = "Pid:\t71\nTgid:\t71\nUid:\t10179 10179 10179 10179\n"
-        monitor.worker_identity(status, b"org.lighttouch.android:engine    \0", 71, 10179)
+        monitor.worker_identity(status, b"org.un1box.android:engine    \0", 71, 10179)
         for invalid in (status.replace("10179", "10180"), status.replace("Tgid:\t71", "Tgid:\t72")):
             with self.assertRaises(ValueError):
-                monitor.worker_identity(invalid, b"org.lighttouch.android:engine\0", 71, 10179)
+                monitor.worker_identity(invalid, b"org.un1box.android:engine\0", 71, 10179)
         with self.assertRaises(ValueError):
             monitor.worker_identity(status, b"another.app:engine\0", 71, 10179)
 
@@ -60,13 +60,13 @@ class MonitorPhaseTest(unittest.TestCase):
             self.assertIsNone(monitor.positive_pss(data, rc))
 
     def test_ui_requires_declared_panel_worker_and_session(self):
-        prefix = '<hierarchy><node package="org.lighttouch.android" resource-id="toggle_performance" text="Performance"/><node package="org.lighttouch.android" resource-id="session_status" text="running"/>'
+        prefix = '<hierarchy><node package="org.un1box.android" resource-id="toggle_performance" text="Performance"/><node package="org.un1box.android" resource-id="session_status" text="running"/>'
         closed = prefix + '</hierarchy>'
         self.assertFalse(monitor.panel_observation(closed, "a1-closed", 71)["panelOpen"])
         rows = ["Emulator CPU: 142% of one core · 1s ago", "Emulator memory: 400 MiB PSS · 2s ago",
                 "Android RAM: 1 / 2 MiB available/total · 2s ago", "Android whole-device CPU: unavailable",
                 "iOS guest CPU / RAM: unavailable", "Worker PID: 71 · sampled every 2s while open"]
-        opened = prefix + ''.join('<node package="org.lighttouch.android" text="' + row + '"/>' for row in rows) + '</hierarchy>'
+        opened = prefix + ''.join('<node package="org.un1box.android" text="' + row + '"/>' for row in rows) + '</hierarchy>'
         observed = monitor.panel_observation(opened, "b-open", 71)
         self.assertEqual(observed["visibleMetricAgesSeconds"], [1, 2, 2])
         for xml, phase, pid in ((opened, "a2-closed", 71), (closed, "b-open", 71),
@@ -92,8 +92,8 @@ class MonitorPhaseTest(unittest.TestCase):
         def xml(cpu_rows):
             rows = cpu_rows + ["Emulator memory: 400 MiB PSS · 2s ago", "Android RAM: 1 / 2 MiB available/total · 2s ago",
                 "Android whole-device CPU: unavailable", "iOS guest CPU / RAM: unavailable", "Worker PID: 71 · sampled every 2s while open"]
-            return '<hierarchy><node package="org.lighttouch.android" resource-id="toggle_performance" text="Performance"/><node package="org.lighttouch.android" resource-id="session_status" text="running"/>' + ''.join(
-                '<node package="org.lighttouch.android" text="' + row + '"/>' for row in rows) + '</hierarchy>'
+            return '<hierarchy><node package="org.un1box.android" resource-id="toggle_performance" text="Performance"/><node package="org.un1box.android" resource-id="session_status" text="running"/>' + ''.join(
+                '<node package="org.un1box.android" text="' + row + '"/>' for row in rows) + '</hierarchy>'
         legacy = "Emulator CPU: 120% of one core · 1s ago"
         rate = "QEMU worker CPU: 120% of one core · 1s ago"
         total = "QEMU worker CPU time: 1234.5s total · 1s ago"

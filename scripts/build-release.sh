@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build, package and publish a LightTouch release for every platform. Each step works in a release
+# Build, package and publish an Un1box release for every platform. Each step works in a release
 # workspace ($LT_RELEASE_ROOT/release-X.Y.Z) from worktrees of the release tags, so the checkouts you
 # work in are never built from. See docs/BUILDING.md, "Release builds".
 #
@@ -95,7 +95,7 @@ step_android() {
         LT_SOURCE_REFERENCE="https://github.com/blake-lucas/LightTouch/tree/$V" \
         bash "$R/app/scripts/build.sh" --clean android
     local apk=$OUTD/LightTouch-$V-android-arm64.apk aapt
-    cp "$R/app/build/android/LightTouch-debug.apk" "$apk"
+    cp "$R/app/build/android/Un1box-debug.apk" "$apk"
     aapt=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt | tail -1)
     if "$aapt" dump xmltree "$apk" AndroidManifest.xml | grep -q 'android:debuggable.*0xffffffff'; then
         echo "$apk is debuggable" >&2; exit 1

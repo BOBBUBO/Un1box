@@ -206,7 +206,7 @@ def main():
         run([env['AR'], 'rcs', stub_lib, stub_obj], build)
         (prefix / 'lib/pkgconfig/libcurl.pc').write_text(
             'prefix={}\nlibdir=${{prefix}}/lib\nincludedir=${{prefix}}/include\n\n'
-            'Name: libcurl\nDescription: LightTouch fail-closed curl stub (no network)\n'
+            'Name: libcurl\nDescription: Un1box fail-closed curl stub (no network)\n'
             'Version: 7.0.0\nLibs: -L${{libdir}} -lcurl\nCflags: -I${{includedir}}\n'.format(prefix))
 
     # Bionic has pthreads in libc and no libpthread, but libimobiledevice's configure demands

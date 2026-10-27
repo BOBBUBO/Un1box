@@ -82,9 +82,9 @@ acceptance. The first UI deliberately preserves an existing device rather than
 replacing its state.
 
 PNG screenshots use the actual copied guest frame, retain a private copy in
-`files/screenshots/`, and publish to MediaStore Pictures/LightTouch without broad
+`files/screenshots/`, and publish to MediaStore Pictures/Un1box without broad
 storage permission. A debug build can export them with `adb exec-out run-as
-org.lighttouch.android cat files/screenshots/NAME.png` using an authorized device.
+org.un1box.android cat files/screenshots/NAME.png` using an authorized device.
 
 ## Lifecycle policy
 
@@ -136,8 +136,8 @@ This establishes app-UID CPU/JIT execution, not iOS boot or graphics.
 ./gradlew [same pinned build properties] :app:assembleDebugAndroidTest
 adb install -r /path/to/app-debug.apk
 adb install -r /path/to/app-debug-androidTest.apk
-adb shell am instrument -w -e class org.lighttouch.android.TcgSmokeTest \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class org.un1box.android.TcgSmokeTest \
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 AndroidX Test Runner1.6.2 and JUnit1.2.1 are pinned; see the
@@ -199,7 +199,7 @@ them. Preparation is not G6 acceptance until the resulting base boots on
 Linux and unrooted Android with actual guest rendering and usable input.
 
 Private fixture import is explicit opt-in instrumentation:
-`-e class org.lighttouch.android.PrivateFixtureImportTest -e importPrivateFixture true`.
+`-e class org.un1box.android.PrivateFixtureImportTest -e importPrivateFixture true`.
 Provision `files/private-fixtures/n72ap-7E18.itbase`, `files/bootrom.bin`, and
 `files/guest.itpack` privately with the verified handoff hashes. The harness
 uses production `IEngine.importBase`, checks record preservation and selection,
@@ -210,7 +210,7 @@ integrity admission outside the frame/control mutex and publishes handles only
 when ready. Stop during admission is retained and applied when startup returns.
 
 Real Android userspace preparation acceptance is also opt-in:
-`-e class org.lighttouch.android.FirmwareAcceptanceTest -e preparePrivateFirmware true`.
+`-e class org.un1box.android.FirmwareAcceptanceTest -e preparePrivateFirmware true`.
 Privately stage `files/acceptance-fw/stock.ipsw`,
 `files/acceptance-fw/handoff/inventory.json`, and its
 `release-guest-unpacked/guest-tools` directory. Supply
@@ -291,7 +291,7 @@ missing/partial bytes are never taken as clean shutdown proof.
 Host `ShutdownWatchdogTest` blocks each native callback in turn and checks timer
 disposal and late-completion single-winner behavior without loading/killing QEMU
 or operating a phone. Run with the configured native/source input properties and
-`:app:testDebugUnitTest --tests org.lighttouch.android.ShutdownWatchdogTest`.
+`:app:testDebugUnitTest --tests org.un1box.android.ShutdownWatchdogTest`.
 
 Gradle consumes the shared firmware `package-notices.py` generator and pinned
 NDK notice into offline assets. `sourceRevision`/`sourceReference` override the

@@ -12,7 +12,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-PACKAGE = "org.lighttouch.android"
+PACKAGE = "org.un1box.android"
 PHASES = ("a1-closed", "b-open", "a2-closed", "paused-open")
 COLLECTOR_PATH = Path(__file__).resolve().parents[2] / "Portable/firmware/tools/collect-shutdown-evidence.py"
 

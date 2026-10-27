@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 HERE = Path(__file__).resolve().parent
-POLICY = HERE.parents[1] / 'app/src/androidTest/java/org/lighttouch/android/GuestPowerTransition.java'
+POLICY = HERE.parents[1] / 'app/src/androidTest/java/org/un1box/android/GuestPowerTransition.java'
 
 
 class PowerTransitionTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class PowerTransitionTests(unittest.TestCase):
                          'clock-regression', 'identity-and-health', 'missing-pixels']:
             with self.subTest(scenario=scenario):
                 result = subprocess.run(['java', '-Xmx64m', '-cp', self.temp.name,
-                    'org.lighttouch.android.PowerTransitionHostTest', scenario],
+                    'org.un1box.android.PowerTransitionHostTest', scenario],
                     check=True, text=True, capture_output=True, timeout=5)
                 self.assertEqual(result.stdout.strip(), 'PASS ' + scenario)
 

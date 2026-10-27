@@ -211,7 +211,7 @@ class AngleRuntimeTests(unittest.TestCase):
 
     def test_actual_JNI_closed_source_contract(self):
         # Source guard/loader contract only. Actual ABI compilation stays separately allocated.
-        source = (SCRIPTS.parent / 'app/src/main/cpp/lighttouch_jni.cpp').read_text()
+        source = (SCRIPTS.parent / 'app/src/main/cpp/un1box_jni.cpp').read_text()
         body = source.split('JNI(debugSelectGraphicsProvider)', 1)[1].split('JNI(debugEnableTouchTrace)', 1)[0]
         self.assertIn('#ifndef LT_ANDROID_DEBUG', body)
         self.assertIn('#if !defined(__x86_64__) && !defined(__aarch64__)', body)

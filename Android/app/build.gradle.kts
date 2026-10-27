@@ -7,12 +7,12 @@ val shutdownGraceMs = Regex("(?m)^#define\\s+LT_SHUTDOWN_GRACE_MS\\s+([0-9]+)u?\
     ?: error("Shared LT_SHUTDOWN_GRACE_MS policy is unavailable")
 require(shutdownGraceMs > 0)
 android {
-    namespace = "org.lighttouch.android"
+    namespace = "org.un1box.android"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
     ndkVersion = "28.2.13676358"
     defaultConfig {
-        applicationId = "org.lighttouch.android"
+        applicationId = "org.un1box.android"
         minSdk = 29
         targetSdk = 35
         versionCode = 11
@@ -96,7 +96,7 @@ val sourceRevision = providers.gradleProperty("sourceRevision").orElse(
         .standardOutput.asText.map { it.trim() }
 )
 val sourceReference = providers.gradleProperty("sourceReference").orElse(
-    sourceRevision.map { "https://github.com/blake-lucas/LightTouch/tree/$it" }
+    sourceRevision.map { "https://github.com/KlugKlugTG/Un1box/tree/$it" }
 )
 // firmwarekit, the preparer every port shares (-PfirmwareKitDir: scripts/build.sh firmwarekit-android): it and
 // lighttouch-oneshot ship as executables in nativeLibraryDir, with the notices of what it links.

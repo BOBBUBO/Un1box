@@ -64,7 +64,7 @@ and receipts:
 python3 -u Android/scripts/supervise_16k_retry.py \
   --allocation-granted --user "$task_user" \
   --adb "$task_adb" --emulator "$task_emulator" \
-  --avd LightTouch_API35_16K --record-id "$task_record" \
+  --avd Un1box_API35_16K --record-id "$task_record" \
   --lock-sha256 "$task_lock_hash" --rom-sha256 "$task_rom_hash" \
   --guest-sha256 "$task_guest_hash" --output "$task_output"
 ```
@@ -190,7 +190,7 @@ bounds emulator resources; it does not establish orderly guest shutdown.
 
 At 840 seconds, or when a controller creates `request-stop` in the private
 output directory, the supervisor attempts a single production Stop. It reads
-the current UI hierarchy and taps only a unique enabled LightTouch semantic Stop control;
+the current UI hierarchy and taps only a unique enabled Un1box semantic Stop control;
 there are no guessed coordinates. It observes the identified worker for up to
 35 seconds within the remaining budget and extracts own-PID shutdown/error
 receipts and dirty-marker status. If UI/Binder admission fails, the error is
@@ -225,13 +225,13 @@ the pinned NDK API29 targets for both ABIs, and 16384 maximum-page alignment
 at link time. No new native compile definition or public Portable ABI is needed.
 
 When a compiler allocation is granted, derive the syntax argv from the frozen
-compile_commands.json entry ending in lighttouch_jni.cpp: replace its source
+compile_commands.json entry ending in un1box_jni.cpp: replace its source
 with the reviewed JNI source, remove `-o OBJECT` and `-c`, and append
 `-fsyntax-only -Wall -Wextra -Werror`. Preserve all other target/sysroot/include
 and debug flags; run arm64-v8a then x86_64 sequentially. The targets are
 `aarch64-none-linux-android29` and `x86_64-none-linux-android29`; the pinned NDK is
 28.2.13676358. Record the database and source hashes with command exits. For a
-configured candidate build, `ninja -C PRIVATE_ABI_BUILD -j1 lighttouch_jni`
+configured candidate build, `ninja -C PRIVATE_ABI_BUILD -j1 un1box_jni`
 rebuilds the native adapter and its required dependencies; that requires its
 own build allocation. Syntax success alone does not verify linking or packaging.
 

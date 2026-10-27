@@ -1,5 +1,5 @@
 From a00eb7ab11aa8ab70850ec3090d82bcb286f167c Mon Sep 17 00:00:00 2001
-From: LightTouch <lighttouch@localhost>
+From: Un1box <un1box@localhost>
 Date: Sun, 25 Oct 2026 19:15:38 +0000
 Subject: [PATCH] ahb: wait on a frame fence, and read the row pitch once
 

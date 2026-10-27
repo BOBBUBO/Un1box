@@ -16,7 +16,7 @@ subprocess/fork tests cover that route; target execution remains required.
 This is a failed virtual attempt, not physical Pixel qualification. API36/16KiB,
 four KVM vCPUs,4GiB Android RAM, SwiftShader and the frozen APK22/test-only overlay
 were used. Android startup, actual page size, signed APK installation and an
-independently inspected unobstructed LightTouch UI passed. Reference import took
+independently inspected unobstructed Un1box UI passed. Reference import took
 about242s and created an independent record. The iOS diagnosis failed after36.892s.
 
 Android's retained log establishes the worker loss: LMKD killed PID4309/UID10215

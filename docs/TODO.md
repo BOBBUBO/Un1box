@@ -173,7 +173,7 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   stopped device. Both benchmark phones have it; the Poco has the private serial 29 from the rejected
   tally experiment, which behaves as 27 against the current host.
 - [x] Prepare guest tools for public distribution (serial 30, engine `e95888e9cb`). AppSync's signer
-  certificate was Apple's "iPhone Activation" certificate; it is now a self-signed LightTouch one.
+  certificate was Apple's "iPhone Activation" certificate; it is now a self-signed Un1box one.
   The `contrib/` sources carry no per-file headers, which qemu-ios's LICENSE covers as
   GPL-2.0-or-later. Tested on the Poco: serial 30 installed at boot (good 30), and Enigmo 4.1
   installed through AppSync and opened. The armv7 package was built but not run. The helpers still
@@ -246,7 +246,7 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   switch off. Every layer of the path is checkable without a device or an engine build:
   `python3 tests/mic/run.py --engine qemu-ios` (`--sanitize` adds ASan/UBSan) slices the capture port
   out of `hw/arm/s5l8930_i2s.c`, the API out of `Portable/src/Runtime.cpp` and the JNI glue out of
-  `lighttouch_jni.cpp`, runs them, and checks the wiring between the layers — the ordering above is one
+  `un1box_jni.cpp`, runs them, and checks the wiring between the layers — the ordering above is one
   of those checks, precisely because getting it wrong sounds exactly like a broken microphone. The CI
   job runs it before the engine build. The frontend pushes what `AudioRecord` captured into a bounded ring that the same RX FIFO
   reads (`hw/arm/host-mic.c`), and the guest side is unchanged: CDMA 0x1b, the same pacing, the same
@@ -300,7 +300,7 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
      `Packages/FirmwareKit/Sources`: SwiftPM cannot take a target path outside its package and FirmwareKit
      stays for the macOS port; `Portable/firmware` already compiles it from there.
   3. [x] `LightTouchMac/`, `LightTouchServices/`, `macOS/build-native.py`, the `macos-arm64` dispatcher
-     target and the `LightTouch`/`CLockdown`/`LightTouchServices` targets (57bb9aaa).
+     target and the `Un1box`/`CLockdown`/`LightTouchServices` targets (57bb9aaa).
      `Packages/DeviceServices` stays: `LightTouchCore` (linked by `LightTouchDesktopHost`) depends on
      `HostServiceWire`/`HostServiceClient`.
   4. [x] `CONTRIBUTING.md` rewritten without Xcode; stale handoff/branch notes and the stopped TCG
@@ -321,7 +321,7 @@ iPad, the iPod touch 1G and the original iPhone (never booted off the Mac), iOS 
   (Harness note: the guest re-sleeps ~5 s after a Power wake; a second Power tap before the wake
   shows puts it back to sleep.)
 - [ ] Stop was seen disabled once after Store use; not reproduced.
-- [ ] The Store's install queue keeps the guest running with LightTouch off screen (then pauses it when the
+- [ ] The Store's install queue keeps the guest running with Un1box off screen (then pauses it when the
   queue is empty); not yet tried on a phone. Guest audio is not muted meanwhile, and Android 14+ ends a
   `dataSync` foreground service after six hours a day.
 - [x] Store overlay lacks `testTagsAsResourceId`, so UI automation cannot find its controls.

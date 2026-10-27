@@ -5,7 +5,7 @@ repository (ignored by git). Object trees go in `build/obj/` and build increment
 
 ```sh
 scripts/build.sh linux                 # build/linux/libqemu-arm.so + build/linux/lighttouch-linux
-scripts/build.sh android               # build/android/engine/arm64-v8a/ + build/android/LightTouch-debug.apk
+scripts/build.sh android               # build/android/engine/arm64-v8a/ + build/android/Un1box-debug.apk
 scripts/build.sh portable-tests        # Portable/ unit tests (ctest)
 LT_MAC=user@mac scripts/build.sh guest-package ltbench   # build/guest-package/*.itpack, build/ltbench/LTBench.ipa
 scripts/build.sh all                   # linux android portable-tests (+ the Mac targets when LT_MAC is set)
@@ -17,7 +17,7 @@ scripts/build.sh --clean android       # reconfigure from scratch (after a confi
 | `linux-engine` | `build/linux/libqemu-arm.so` | qemu-ios (`$QEMU_IOS`), portable board, x86_64 |
 | `linux` | the engine and `build/linux/lighttouch-linux` | `Linux/CMakeLists.txt` (includes `Portable/`) |
 | `android-engine` | `build/android/engine/arm64-v8a/` (`libqemu-arm.so`, `libc++_shared.so`, manifest, notices) | qemu-ios with NDK clang, API 29 |
-| `android` | the engine, `firmwarekit-android` and `build/android/LightTouch-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
+| `android` | the engine, `firmwarekit-android` and `build/android/Un1box-debug.apk` (arm64-v8a, debug) | `Android/` Gradle |
 | `firmwarekit` | `build/firmwarekit/linux/` (`firmwarekit`, `lighttouch-oneshot`) | `Packages/FirmwareKit` (Swift) and `Portable/oneshot`; links the system's OpenSSL 3 `libcrypto` (`libssl-dev`) |
 | `firmwarekit-android` | `build/firmwarekit/android/` (the same, arm64, plus `licenses/`) | the same with the Swift SDK for Android (its static `libcrypto`) and NDK clang |
 | `portable-tests` | test results | `Portable/` with `-DLIGHTTOUCH_BUILD_TESTS=ON` |
@@ -52,7 +52,7 @@ from gameplay on a phone:
 ```
 LT_ENGINE_VARIANT=pgogen LT_ENGINE_CFLAGS=-fprofile-generate LT_ENGINE_LDFLAGS=-fprofile-generate \
   scripts/build.sh android                      # an instrumented engine in build/obj/android-engine-arm64-pgogen
-tools/perf/pgo-collect.sh build/android/LightTouch-debug.apk engine-arm64.profdata \
+tools/perf/pgo-collect.sh build/android/Un1box-debug.apk engine-arm64.profdata \
   n81-jetpack-play n81-doodlejump n81-realracing n81-flightcontrol n81-epiccitadel:190
 ```
 
@@ -103,7 +103,7 @@ publish built packages without the project owner's go-ahead.
 - Desktop, headless:
   `build/linux/lighttouch-linux --library LIB --record ID --engine build/linux/libqemu-arm.so --headless --seconds 120 --no-audio`.
   It boots a copy of a record and prints the runtime's status lines. Add `--package ITPACK` to offer a guest package.
-- Phones: `tools/perf/fcbench.py build/android/LightTouch-debug.apk 30 jetpack` (with `ANDROID_SERIAL`
+- Phones: `tools/perf/fcbench.py build/android/Un1box-debug.apk 30 jetpack` (with `ANDROID_SERIAL`
   set) installs the APK, boots, starts the game and measures it. `docs/PERFORMANCE.md` describes the
   benchmark set and the A/B method, and `docs/GUEST-BENCHMARKS.md` describes LT Bench.
 

@@ -10,7 +10,7 @@ import subprocess
 import time
 import uuid
 
-PACKAGE = "org.lighttouch.android"
+PACKAGE = "org.un1box.android"
 NDK_VERSION = "28.2.13676358"
 PINS = {
     "arm64": "7eb29ecba8ae792397bd8c1b0fcd874fed0dc4c44d0cf9cb284e948f80cfe7e5",

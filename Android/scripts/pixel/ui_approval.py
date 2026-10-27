@@ -53,7 +53,7 @@ def approve(controller, image, pin, png_dimensions):
     if controller.elapsed() >= 240:
         raise RuntimeError('Approval work exceeded original UI deadline')
     controller.write('ui-gate.json', {'uiGatePassed': True, 'visuallyInspected': True,
-        'unobstructedLightTouchUi': True, 'image': name, 'imageSha256': pin,
+        'unobstructedUn1boxUi': True, 'image': name, 'imageSha256': pin,
         'dimensions': dimensions, 'captureElapsedSeconds': capture_elapsed,
         'elapsedSeconds': controller.elapsed(), 'guestAcceptancePassed': False})
 

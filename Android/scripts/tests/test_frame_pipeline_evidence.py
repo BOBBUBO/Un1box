@@ -9,7 +9,7 @@ import unittest
 class FramePipelineEvidenceTest(unittest.TestCase):
     def test_fixed_schema_exact_deltas_and_actual_getters(self):
         android = Path(__file__).resolve().parents[2]
-        helper = android / "app/src/androidTest/java/org/lighttouch/android/FramePipelineEvidence.java"
+        helper = android / "app/src/androidTest/java/org/un1box/android/FramePipelineEvidence.java"
         contract = Path(__file__).with_name("FramePipelineEvidenceContractTest.java")
         fixture_root = os.environ.get("LIGHTTOUCH_ENGINE_COUNTER_FIXTURES")
         fixtures = []
@@ -19,7 +19,7 @@ class FramePipelineEvidenceTest(unittest.TestCase):
             subprocess.run(["javac", "-J-Xmx96m", "-d", output, str(helper), str(contract)],
                            check=True, capture_output=True, text=True, timeout=20)
             result = subprocess.run(["java", "-Xmx64m", "-cp", output,
-                                     "org.lighttouch.android.FramePipelineEvidenceContractTest", *fixtures],
+                                     "org.un1box.android.FramePipelineEvidenceContractTest", *fixtures],
                                     check=True, capture_output=True, text=True, timeout=10)
             self.assertIn("FramePipelineEvidence contract PASS", result.stdout)
             print(result.stdout.strip())

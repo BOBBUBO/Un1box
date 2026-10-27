@@ -53,7 +53,7 @@ a direct measure of the work it removes (time per call, per frame) alongside the
 | Change | Commit | Before → after |
 | --- | --- | --- |
 | Present guest frames on the display's vsync: the engine stamps each frame with the vsync it was latched on (engine `13b651b479`), and the presenter posts it at that time plus a steady latency, moved to just after a display vsync from Choreographer; it also asks for 60 Hz fixed-source content and turns off Android 15's touch boost | `daa3b042` | On a 120 Hz panel each 60 Hz guest frame has to land on the right one of two refreshes; posting on arrival handed the engine's ±2 ms jitter to SurfaceFlinger, which held ~30% of frames for one refresh or three: stutter at a full 60 fps. Pixel 10 at 120 Hz, Doodle Jump menu, SurfaceFlinger present gaps: **1232 at 16 ms, 273 at 8 ms, 270 at 24/25 ms (30% mis-paced) → 1739–1754 at 16 ms, 8–14 mis-paced (0.3–0.8%)**, 59.5–59.9 fps both. Spacing posts evenly without the vsync snap left 9%; the 60 Hz request alone left 27% (the Pixel keeps the panel at 120 Hz, which it counts as compatible). The Pixel 10 has no adaptive-refresh support (`hasArrSupport false`), so the presenter follows the panel's fixed vsync instead. |
-| Run the panel at 60 Hz while LightTouch is in front (the window's preferred display mode, as Google Maps does) | `b33726c7` | With Smooth Display at 120 Hz the Pixel 10 kept 120 Hz for the 60 Hz fixed-source request alone; the preferred mode switches it to 60 (`renderFrameRate 60`). Doodle Jump menu, SurfaceFlinger present gaps: **1796 at 16 ms, 5 at 17, 9 at 33, none at 8 or 24** (vs 0.3–0.8% mis-paced with vsync snapping at 120 Hz); 59.8 fps, 99% of the time at ≥ 55 fps. |
+| Run the panel at 60 Hz while Un1box is in front (the window's preferred display mode, as Google Maps does) | `b33726c7` | With Smooth Display at 120 Hz the Pixel 10 kept 120 Hz for the 60 Hz fixed-source request alone; the preferred mode switches it to 60 (`renderFrameRate 60`). Doodle Jump menu, SurfaceFlinger present gaps: **1796 at 16 ms, 5 at 17, 9 at 33, none at 8 or 24** (vs 0.3–0.8% mis-paced with vsync snapping at 120 Hz); 59.8 fps, 99% of the time at ≥ 55 fps. |
 | Release the 60 Hz cap and touch-boost lock while the Store or a dialog covers the guest | `21c96bba` | The cap applied to the whole window, so the Legacy Store scrolled at a fixed 60 Hz with no touch boost on 120 Hz phones and looked choppy (reported on the Pixel 10: `activeMode 60 Hz` with the Store open). Poco F3, the same 10 flings of the Store's results: panel 60 → 120 Hz, 651 → 1088 frames drawn, 99th percentile 17 ms both; back to 60 Hz on Done. |
 | Ask for vCPU performance through ADPF (`APerformanceHint`, API 33+): each published frame reports the vCPU threads' CPU time against a 16.67 ms target | `44cfb147` | Pixel 10, JellyCar's live physics menu, same APK with ADPF switched off by `LT_ADPF=off` (three interleaved rounds): 5.7/5.5/6.0 → 13.2/13.4/13.3 fps (2.3×); screenshots confirm the same scene. No effect on the Poco: its LineageOS power HAL has no hint sessions (`dumpsys performance_hint`: `Hint Session Support: false`), and its 4.19 kernel has no uclamp, so an app has no portable substitute there. |
 | Guest timer 4 at the hardware's 6 MHz instead of 10 MHz (Android only) | `e0d81871` | Interleaved A/B ×2 per phone: Poco animation 43.7/45.0 → 50.9/47.2 fps, frames on the 16.7 ms cadence 62% → 75%; Pixel 47.5/50.1 → 50.7/50.1 fps. Idle engine CPU −5 to −13%. Desktop keeps 10 MHz: an older desktop measurement found worse pacing there. |
@@ -420,7 +420,7 @@ lookups (5.6%), mostly cache misses on the jump-cache entry and the TB it points
 
 ### Where game time goes
 
-Debug builds can log the vCPU's time split: `adb shell run-as org.lighttouch.android touch
+Debug builds can log the vCPU's time split: `adb shell run-as org.un1box.android touch
 files/debug-vcpu-accounting`, start the guest, and read the `[acct]` lines in the record's
 `state/engine-PID.log`. The `run`/`halt`/`io (bql …)` split on each line understates lock time: its "bql" covers only
 the halt path. The `vcpu-bql`, `bql-by-mr`, `bql-wait-hist`, `bql-holder` and `bql-hold-hist` lines
@@ -431,7 +431,7 @@ Flight Control's vCPU waiting for the BQL ~26% of wall time before the BQL work 
 12.6%, `helper_lookup_tb_ptr` 9.2%, `tb_lookup_cmp` 4.1%).
 The `[acct]` lines also count jump-cache lookups and misses, split into empty slots, another PC in
 the slot, and the same PC with different `cs_base`/flags (with the differing bits), plus whole-cache
-flushes; `68d4df35e4` was found this way. Guest-side attribution: put `QEMU_PERFMAP_DIR=/data/data/org.lighttouch.android/files`
+flushes; `68d4df35e4` was found this way. Guest-side attribution: put `QEMU_PERFMAP_DIR=/data/data/org.un1box.android/files`
 in `files/debug-env` (debug builds read `KEY=VALUE` lines into the engine's environment), profile
 with `tools/perf/gameprof.sh`, and map JIT samples to guest PCs with the perf map. In Flight Control
 the guest's time is ~50% kernel (IPC, scheduling, timers), ~41% shared cache, ~8.5% the game itself.
@@ -499,7 +499,7 @@ Epic Citadel's guided tour (`fcbench.py APK 60 n81-ec-tour`) on the Poco: ~44 fp
 when the phone is hot. What was checked:
 
 - **The 1% low is real.** The game's own present intervals (frame path, its GL context) give the same 1% low
-  as the frames LightTouch publishes, so reading the display does not invent it. Published intervals are
+  as the frames Un1box publishes, so reading the display does not invent it. Published intervals are
   multiples of the 60 Hz vsync, as on the device: the game presents at 16–36 ms and backboardd composites on
   the vsync.
 - **Slow frames are more guest work, not waiting.** The vCPU is ~97% busy in fast and slow frames alike. A

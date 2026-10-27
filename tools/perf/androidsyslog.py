@@ -19,7 +19,7 @@ import re
 import shlex
 import subprocess
 
-PKG = "org.lighttouch.android"
+PKG = "org.un1box.android"
 
 
 def adb(*args):

@@ -16,7 +16,7 @@ def watch(manifest, run=subprocess.run, now=time.monotonic_ns, sleep=time.sleep)
     out=Path(p['attempt']);context=json.loads((out/'clock-context.json').read_text());origin=context['originNs']
     deadline=origin+490_000_000_000;token=p['attemptToken'];adb=option(p['supervisorArgv'],'--adb')
     path='files/pixel-boot-'+token+'/ready.json'
-    argv=[adb,'-s','emulator-5554','exec-out','run-as','org.lighttouch.android','cat',path]
+    argv=[adb,'-s','emulator-5554','exec-out','run-as','org.un1box.android','cat',path]
     while now()<deadline:
         if (out/'request-stop').exists() or (out/'terminal.json').exists():raise RuntimeError('Actual attempt already stopping; no late admission')
         before=now()

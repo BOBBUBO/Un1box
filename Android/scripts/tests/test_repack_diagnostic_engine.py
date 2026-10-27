@@ -44,7 +44,7 @@ class RepackTests(unittest.TestCase):
         self.entries = {'classes.dex': b'managed-code', 'AndroidManifest.xml': b'manifest',
                         'lib/arm64-v8a/libqemu-arm.so': b'old-engine',
                         'lib/arm64-v8a/libc++_shared.so': b'same-cpp',
-                        'lib/arm64-v8a/liblighttouch_jni.so': b'unchanged-jni',
+                        'lib/arm64-v8a/libun1box_jni.so': b'unchanged-jni',
                         'lib/x86_64/libqemu-arm.so': b'unchanged-x86-engine',
                         'META-INF/DEBUG.RSA': b'old-signature',
                         'META-INF/MANIFEST.MF': b'old-signature-manifest',

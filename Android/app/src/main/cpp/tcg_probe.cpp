@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 #include <cstdio>
-extern "C" JNIEXPORT jint JNICALL Java_org_lighttouch_android_TcgProbeNative_run(JNIEnv *env,jobject,jstring path) {
+extern "C" JNIEXPORT jint JNICALL Java_org_un1box_android_TcgProbeNative_run(JNIEnv *env,jobject,jstring path) {
     static std::atomic<bool> consumed{false};
     if(consumed.exchange(true))return -2;
     const char *raw=env->GetStringUTFChars(path,nullptr);if(!raw)return -3;

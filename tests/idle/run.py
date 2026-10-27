@@ -23,8 +23,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SERVICE = "Android/app/src/main/java/org/lighttouch/android/EngineService.kt"
-ACTIVITY = "Android/app/src/main/java/org/lighttouch/android/MainActivity.kt"
+SERVICE = "Android/app/src/main/java/org/un1box/android/EngineService.kt"
+ACTIVITY = "Android/app/src/main/java/org/un1box/android/MainActivity.kt"
 
 
 class Failure(RuntimeError):

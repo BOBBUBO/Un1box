@@ -208,7 +208,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("before", "after"))
     parser.add_argument("--serial", required=True)
-    parser.add_argument("--package", default="org.lighttouch.android")
+    parser.add_argument("--package", default="org.un1box.android")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--expected", type=Path)
     parser.add_argument("--before", type=Path)

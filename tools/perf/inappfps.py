@@ -4,7 +4,7 @@ unlocks, flings Home pages, and reads SurfaceFlinger's present timestamps for th
 guest SurfaceView. usage: inappfps.py [--no-start] [--swipes N] [--stop]"""
 import argparse, re, subprocess, sys, time, struct, statistics
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-PKG = "org.lighttouch.android"
+PKG = "org.un1box.android"
 def sh(*a): return subprocess.run(["adb", "shell", *a], capture_output=True, text=True).stdout
 def ui():
     sh("uiautomator", "dump", "/sdcard/ui.xml")

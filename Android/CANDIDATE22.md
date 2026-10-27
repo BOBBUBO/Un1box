@@ -54,7 +54,7 @@ cd "$LT_ANDROID_SRC/Android"
   "-PengineNoticeArm64=$LT_INPUTS/engine/arm64-v8a/notices" \
   "-PengineNoticeX86=$LT_INPUTS/engine/x86_64/notices" \
   "-PsourceRevision=$LT_APP_REVISION" \
-  "-PsourceReference=https://github.com/blake-lucas/LightTouch/tree/$LT_APP_REVISION" \
+  "-PsourceReference=https://github.com/KlugKlugTG/Un1box/tree/$LT_APP_REVISION" \
   "-PbuildRoot=$LT_BUILD" \
   "-PangleLibraries=$LT_INPUTS/angle/lib" \
   "-PangleManifest=$LT_INPUTS/angle/closure.json" \
@@ -64,7 +64,7 @@ cd "$LT_ANDROID_SRC/Android"
   "-PfrontendNotices=$LT_INPUTS/frontend" \
   -PfrontendNoticesSha256=88918185b1a3ba3ea1b4c910c8b7dde56391597574f53824a160fef45d2b76a7 \
   :app:assembleDebug :app:assembleDebugAndroidTest \
-  :app:testDebugUnitTest --tests 'org.lighttouch.android.*'
+  :app:testDebugUnitTest --tests 'org.un1box.android.*'
 python3 "$LT_ANDROID_SRC/Android/scripts/check-apk.py" \
   "$LT_BUILD/app/outputs/apk/debug/app-debug.apk"
 ```

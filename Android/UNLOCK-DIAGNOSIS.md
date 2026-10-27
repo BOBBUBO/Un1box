@@ -11,12 +11,12 @@ the existing main APK and guest state unchanged. Foreground MainActivity before
 `--no-restart`, then use the matching runner:
 
 ```sh
-adb -s "$ANDROID_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
+adb -s "$ANDROID_SERIAL" shell am start -W -n org.un1box.android/.MainActivity
 adb -s "$ANDROID_SERIAL" shell am instrument --no-restart -w -r \
-  -e class org.lighttouch.android.GuestUnlockTest \
+  -e class org.un1box.android.GuestUnlockTest \
   -e exerciseGuestUnlock true -e observedN72LockLayout true \
   -e resumeExisting true \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 This is a planned invocation, not a recorded unlock pass. A paused session needs

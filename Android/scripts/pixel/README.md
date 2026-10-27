@@ -67,7 +67,7 @@ after launch:
 ```sh
 python3 Android/scripts/pixel/capture_origin.py \
   --attempt /private/current-attempt --supervisor-pid ACTUAL_PID \
-  --exec-session ACTUAL_SESSION --avd LightTouch_pixel_10_API36_16384
+  --exec-session ACTUAL_SESSION --avd Un1box_pixel_10_API36_16384
 ```
 
 Schema2 `clock-context.json` derives `originNs` directly from process start ticks.
@@ -77,14 +77,14 @@ instrumentation asynchronously on only the allocated emulator:
 
 ```sh
 adb -s emulator-5554 shell am instrument -w -r --no-restart \
-  -e class org.lighttouch.android.GuestPixelBootDiagnosisTest \
+  -e class org.un1box.android.GuestPixelBootDiagnosisTest \
   -e diagnoseVirtualPixel true -e recordId VERIFIED_NEW_RECORD_ID \
   -e expectedMainApkSha256 SEALED_MAIN_APK_SHA256 \
   -e pixelGraphicsProvider platform \
   -e pixelAttemptToken UNIQUE_32_LOWERCASE_HEX \
   -e pixelOriginToken SHA256_OF_ORIGINAL_CLOCK_CONTEXT \
   -e pixelObserveSeconds 300 -e allowOneSleepWake true \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 The diagnostic fixes the explicitly selected provider and arms private read-only

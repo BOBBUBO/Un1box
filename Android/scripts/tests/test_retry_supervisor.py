@@ -373,14 +373,14 @@ class Supervision(unittest.TestCase):
                 child.kill(); child.wait()
 
     def test_semantic_stop_uses_unique_enabled_control(self):
-        xml = '<node package="org.lighttouch.android" clickable="true" enabled="true" bounds="[10,20][50,60]"><node text="Stop"/></node>'
+        xml = '<node package="org.un1box.android" clickable="true" enabled="true" bounds="[10,20][50,60]"><node text="Stop"/></node>'
         self.assertEqual(retry.semantic_stop_bounds(xml),(30,40))
         with self.assertRaises(ValueError):
             retry.semantic_stop_bounds(xml.replace('enabled="true"','enabled="false"'))
         with self.assertRaises(ValueError):
             retry.semantic_stop_bounds('<root>'+xml+xml.replace('[10,20][50,60]','[60,20][100,60]')+'</root>')
         with self.assertRaises(ValueError):
-            retry.semantic_stop_bounds(xml.replace('org.lighttouch.android','another.application'))
+            retry.semantic_stop_bounds(xml.replace('org.un1box.android','another.application'))
 
     def test_reused_root_pid_cannot_adopt_an_unrelated_process_tree(self):
         child = subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"])

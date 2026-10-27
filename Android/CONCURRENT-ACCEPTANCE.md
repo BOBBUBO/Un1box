@@ -10,15 +10,15 @@ immutable and bind each run to its actual source and payload hashes.
 
 Root must boot the intended selected record to actual Home and open/inspect a real Photos image before gesture acceptance. Resume and allow the chosen workload to settle while the activity remains foreground. An agent status or boot logo is not readiness proof. The concurrent test requires an existing running/paused worker; it never starts, imports, selects or resets one. It intentionally sends the guest Home+Power screenshot chord and may create a photo in writable guest state.
 
-Commands below target `org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner`. Run each separately and inspect/extract its app-private evidence before the next operation. Instrumentation completion can force-stop the target; root must choose `--no-restart` and any longer active-test continuation deliberately rather than assuming a running worker survives completion.
+Commands below target `org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner`. Run each separately and inspect/extract its app-private evidence before the next operation. Instrumentation completion can force-stop the target; root must choose `--no-restart` and any longer active-test continuation deliberately rather than assuming a running worker survives completion.
 
 | Exercise | Exact class/method and arguments |
 | --- | --- |
-| Concurrent touch/frame/nonzero playback | `-e class org.lighttouch.android.GuestConcurrentMediaTest#twoContactsOverlapGuestScreenshotSoundAndFramePresentation -e exerciseConcurrentMedia true -e concurrentSeconds 10 -e postGestureSettleSeconds 5` |
-| Photos pinch with delayed capture | `-e class org.lighttouch.android.GuestInputTest#stableTwoPointerTrajectoriesUseProductionDisplayPath -e exerciseGuest true -e gesture pinch -e settleSeconds 5 -e postGestureSettleSeconds 5` |
-| Recreate, rotate, contact cancel/reuse and balanced controls | `-e class org.lighttouch.android.GuestOrientationLifecycleTest#recreateRotateCancelReuseAndBalanceProductionControls -e exerciseOrientationLifecycle true` |
-| 30-second media and focus/lifecycle check | `-e class org.lighttouch.android.GuestMediaLifecycleTest#productionMediaContinuesAfterPauseSurfaceAndAudioFocusChanges -e exerciseMedia true -e mediaSeconds 30 -e requireFrameProgress true -e requireGuestAudio true -e exerciseAudioFocus true` |
-| Sustained 20-minute media and focus/lifecycle check | `-e class org.lighttouch.android.GuestMediaLifecycleTest#productionMediaContinuesAfterPauseSurfaceAndAudioFocusChanges -e exerciseMedia true -e mediaSeconds 1200 -e requireFrameProgress true -e requireGuestAudio true -e exerciseAudioFocus true` |
+| Concurrent touch/frame/nonzero playback | `-e class org.un1box.android.GuestConcurrentMediaTest#twoContactsOverlapGuestScreenshotSoundAndFramePresentation -e exerciseConcurrentMedia true -e concurrentSeconds 10 -e postGestureSettleSeconds 5` |
+| Photos pinch with delayed capture | `-e class org.un1box.android.GuestInputTest#stableTwoPointerTrajectoriesUseProductionDisplayPath -e exerciseGuest true -e gesture pinch -e settleSeconds 5 -e postGestureSettleSeconds 5` |
+| Recreate, rotate, contact cancel/reuse and balanced controls | `-e class org.un1box.android.GuestOrientationLifecycleTest#recreateRotateCancelReuseAndBalanceProductionControls -e exerciseOrientationLifecycle true` |
+| 30-second media and focus/lifecycle check | `-e class org.un1box.android.GuestMediaLifecycleTest#productionMediaContinuesAfterPauseSurfaceAndAudioFocusChanges -e exerciseMedia true -e mediaSeconds 30 -e requireFrameProgress true -e requireGuestAudio true -e exerciseAudioFocus true` |
+| Sustained 20-minute media and focus/lifecycle check | `-e class org.un1box.android.GuestMediaLifecycleTest#productionMediaContinuesAfterPauseSurfaceAndAudioFocusChanges -e exerciseMedia true -e mediaSeconds 1200 -e requireFrameProgress true -e requireGuestAudio true -e exerciseAudioFocus true` |
 | Actual held contacts through audio-focus cancellation | Add `-e exerciseHeldAudioFocus true` to the media/focus recipe, using the new matched owner-generation APKs |
 | Sustained declared keyboard workload with measured counter windows | Add `-e requireConcurrentMediaWindows true` to the 1200-second media recipe |
 

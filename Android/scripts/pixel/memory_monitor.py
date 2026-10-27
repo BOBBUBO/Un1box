@@ -10,7 +10,7 @@ import subprocess
 import time
 
 SERIAL = 'emulator-5554'
-PACKAGE = 'org.lighttouch.android'
+PACKAGE = 'org.un1box.android'
 HOST_FILES = ('/proc/meminfo', '/proc/vmstat', '/proc/swaps',
               '/proc/pressure/memory', '/proc/pressure/cpu', '/proc/pressure/io')
 GUEST_FILES = ('/proc/meminfo', '/proc/vmstat', '/proc/swaps', '/proc/pressure/memory',

@@ -14,7 +14,7 @@ Status recorded on 2026-10-14 for candidate 25:
 | Android and Portable source | `be428ddd18bcf76fea6776258c2e80d867f0eefa` |
 | QEMU engine | `259e4ad31702f4927ed8d06a06b64219121bc0a0` |
 | Main APK SHA256 | `ddf8ea5b0066ae5c3a432d4e663436f251b60be42462fae8072177619a7d66c3` |
-| Android package | `org.lighttouch.android` |
+| Android package | `org.un1box.android` |
 | Packaged host ABIs | `arm64-v8a`, `x86_64`; no 32-bit Android host claim |
 | Android versions | API 29 minimum; compiled/targeted against API 35 |
 
@@ -49,7 +49,7 @@ LT_DEVICE_SERIAL=your-authorized-device
 LT_MAIN_APK=/path/to/verified/app-debug.apk
 sha256sum "$LT_MAIN_APK"
 adb -s "$LT_DEVICE_SERIAL" install -r "$LT_MAIN_APK"
-adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
+adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.un1box.android/.MainActivity
 ```
 
 The test APK is optional instrumentation, not a runtime dependency. Use candidate
@@ -131,7 +131,7 @@ Backgrounding pauses the guest and cancels owned contacts; reopen and choose
 wake, which still needs an actual guest response. Avoid using repeated blind
 pulses or instrumentation completion as proof of guest behavior.
 
-**Screenshot** exports a host image to `Pictures/LightTouch`. The guest's
+**Screenshot** exports a host image to `Pictures/Un1box`. The guest's
 Home+Power screenshot gesture creates a guest Saved Photo. A host export is not
 proof that guest media persisted.
 

@@ -10,7 +10,7 @@ import shlex
 import time
 from pathlib import Path
 
-PACKAGE = "org.lighttouch.android"
+PACKAGE = "org.un1box.android"
 MONITOR = Path(__file__).with_name("collect-monitor-phase.py")
 
 

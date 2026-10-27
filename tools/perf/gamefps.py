@@ -3,7 +3,7 @@
 SurfaceView. usage: gamefps.py SECONDS [--series] (ANDROID_SERIAL set; the game must be on screen).
 --series prints one fps figure per second instead, to see a rate that swings."""
 import re, subprocess, sys, time
-PKG = "org.lighttouch.android"
+PKG = "org.un1box.android"
 def sh(*a): return subprocess.run(["adb", "shell", *a], capture_output=True, text=True).stdout
 secs = float(sys.argv[1]) if len(sys.argv) > 1 else 20
 def frames(out):

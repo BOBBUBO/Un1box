@@ -138,7 +138,7 @@ def android_asks_for_the_permission():
 
 
 def android_recorder_matches_the_api():
-    service = read("Android/app/src/main/java/org/lighttouch/android/EngineService.kt")
+    service = read("Android/app/src/main/java/org/un1box/android/EngineService.kt")
     require("Manifest.permission.RECORD_AUDIO" in service, "the worker does not check the permission")
     require("MediaRecorder.AudioSource.MIC" in service, "the recorder does not use the microphone source")
     require("CHANNEL_IN_MONO" in service, "the recorder does not record mono")
@@ -150,25 +150,25 @@ def android_recorder_matches_the_api():
 
 
 def android_switch_reaches_the_worker():
-    settings = read("Android/app/src/main/java/org/lighttouch/android/AppSettings.kt")
+    settings = read("Android/app/src/main/java/org/un1box/android/AppSettings.kt")
     require('getSharedPreferences("ui"' in settings, "AppSettings no longer uses the ui preferences")
     require('putBoolean("microphone"' in settings, "the switch no longer persists its value")
-    service = read("Android/app/src/main/java/org/lighttouch/android/EngineService.kt")
+    service = read("Android/app/src/main/java/org/un1box/android/EngineService.kt")
     require('getSharedPreferences("ui", MODE_PRIVATE).getBoolean("microphone"' in service,
             "the worker reads the switch from a different store than the settings write it to")
-    activity = read("Android/app/src/main/java/org/lighttouch/android/MainActivity.kt")
+    activity = read("Android/app/src/main/java/org/un1box/android/MainActivity.kt")
     require("RequestPermission()" in activity and "RECORD_AUDIO" in activity,
             "turning the switch on does not ask Android for the permission")
-    screen = read("Android/app/src/main/java/org/lighttouch/android/SettingsScreen.kt")
+    screen = read("Android/app/src/main/java/org/un1box/android/SettingsScreen.kt")
     require("host.useMicrophone(" in screen, "the microphone row is not wired to the host")
 
 
 def android_jni_names_match():
-    native = read("Android/app/src/main/java/org/lighttouch/android/Native.kt")
-    jni = read("Android/app/src/main/cpp/lighttouch_jni.cpp")
+    native = read("Android/app/src/main/java/org/un1box/android/Native.kt")
+    jni = read("Android/app/src/main/cpp/un1box_jni.cpp")
     declared = re.findall(r"external fun (\w+)\(", native)
     missing = [name for name in declared
-               if not re.search(r"\bJava_org_lighttouch_android_Native_" + name + r"\s*\(", jni)]
+               if not re.search(r"\bJava_org_un1box_android_Native_" + name + r"\s*\(", jni)]
     require(not missing, f"Native.kt declares externals the JNI never defines: {missing}")
     for name in ("microphone", "microphoneFlush", "microphoneInfo"):
         require(name in declared, f"Native.kt does not declare {name}()")

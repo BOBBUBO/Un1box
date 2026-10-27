@@ -12,8 +12,8 @@ import time
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True)
-    parser.add_argument("--package", default="org.lighttouch.android")
-    parser.add_argument("--process", default="org.lighttouch.android:engine")
+    parser.add_argument("--package", default="org.un1box.android")
+    parser.add_argument("--process", default="org.un1box.android:engine")
     parser.add_argument("--seconds", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--adb", default="adb")

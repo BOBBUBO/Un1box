@@ -5,7 +5,7 @@ name: Android perf APK
 # without a development machine.
 #
 # What is rebuilt: the Kotlin/Compose app, the JNI/native frontend
-# (liblighttouch_jni.so) and the engine (libqemu-arm.so) from the requested
+# (libun1box_jni.so) and the engine (libqemu-arm.so) from the requested
 # engine ref.
 #
 # What is reused: the pieces that are not part of what is being tested and that
@@ -146,7 +146,7 @@ jobs:
         id: engine
         run: |
           echo "sha=$(git -C qemu-ios rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "APK is named ci/LightTouch-<engine>-arm64-debug.apk"
+          echo "APK is named ci/Un1box-<engine>-arm64-debug.apk"
 
       - name: Extract firmwarekit, USB bridge and guest tools from the published APK
         env:
@@ -659,7 +659,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ENGINE_SHORT="$(git -C qemu-ios rev-parse --short HEAD)"
-          APK="ci/LightTouch-${ENGINE_SHORT}-arm64-debug.apk"
+          APK="ci/Un1box-${ENGINE_SHORT}-arm64-debug.apk"
           cp Android/app/build/outputs/apk/debug/app-debug.apk "$APK"
           ls -la "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
@@ -674,7 +674,7 @@ jobs:
           python3 Android/scripts/check-apk.py "$APK" ||
             echo "::warning::check-apk.py expects uncompressed native libraries; legacy packaging is expected here"
           {
-            echo "# LightTouch perf APK"
+            echo "# Un1box perf APK"
             echo
             echo "Built $(date -u +%Y-%m-%dT%H:%M:%SZ) by run ${{ github.run_number }} of this workflow."
             echo
@@ -693,7 +693,7 @@ jobs:
             echo
             echo "A debuggable APK reads KEY=VALUE lines from its own files/debug-env, for example:"
             echo
-            echo "    adb shell run-as org.lighttouch.android sh -c \"printf 'LT_BQL_SPIN=off\\n' > files/debug-env\""
+            echo "    adb shell run-as org.un1box.android sh -c \"printf 'LT_BQL_SPIN=off\\n' > files/debug-env\""
             echo
             echo "Each run is a full engine start, so measure the same scene twice per setting."
           } > ci/PROVENANCE.txt
@@ -702,9 +702,9 @@ jobs:
       - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
-          name: LightTouch-perf-apk-${{ steps.engine.outputs.sha }}
+          name: Un1box-perf-apk-${{ steps.engine.outputs.sha }}
           path: |
-            ci/LightTouch-*-arm64-debug.apk
+            ci/Un1box-*-arm64-debug.apk
             ci/PROVENANCE.txt
 
       - name: Attach the APK to a pre-release
@@ -713,7 +713,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="ci-$(git -C qemu-ios rev-parse --short HEAD)-r${{ github.run_number }}"
-          gh release create "$TAG" ci/LightTouch-*.apk ci/PROVENANCE.txt \
+          gh release create "$TAG" ci/Un1box-*.apk ci/PROVENANCE.txt \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --prerelease --title "$TAG" --notes-file ci/PROVENANCE.txt
           echo "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"

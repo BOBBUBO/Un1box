@@ -9,7 +9,7 @@ Every layer is exercised where it can be, and read where it cannot:
   portable API   real lt_runtime_mic_write/info/flush, sliced out of
                  Portable/src/Runtime.cpp, against a stub engine
   JNI glue       real Native.microphone/microphoneFlush/microphoneInfo, sliced
-                 out of lighttouch_jni.cpp, against a stub JNIEnv
+                 out of un1box_jni.cpp, against a stub JNIEnv
   wiring         the names, permissions and orderings that connect those layers
   engine patches the patch stack still applies to the engine and still commits
                  to a clean tree (needs --engine; skipped otherwise)

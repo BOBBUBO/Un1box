@@ -12,7 +12,7 @@ class CaptureReadinessError(ValueError):
     pass
 
 
-def capture_readiness(xml, package='org.lighttouch.android'):
+def capture_readiness(xml, package='org.un1box.android'):
     try:
         root = ET.fromstring(xml)
     except ET.ParseError as error:

@@ -15,7 +15,7 @@ else()
     set(LIGHTTOUCH_ENABLE_DEBUG_QMP OFF CACHE BOOL "" FORCE)
 endif()
 add_subdirectory("${LT_PORTABLE_DIR}" "${CMAKE_BINARY_DIR}/portable")
-add_library(lighttouch_jni SHARED lighttouch_jni.cpp)
+add_library(un1box_jni SHARED un1box_jni.cpp)
 # Optimize frame conversion and the shared publisher/control loop in Debug
 # without replacing its symbols/assertion flags or changing release policy.
 # Runtime.cpp belongs to the Portable target's source-property directory.
@@ -23,18 +23,18 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR
    (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
     CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "GNU"))
     set(LT_ANDROID_DEBUG_OPTIMIZATION "$<$<CONFIG:Debug>:-O2>")
-    set_property(SOURCE lighttouch_jni.cpp APPEND PROPERTY
+    set_property(SOURCE un1box_jni.cpp APPEND PROPERTY
                  COMPILE_OPTIONS "${LT_ANDROID_DEBUG_OPTIMIZATION}")
     set_property(SOURCE "${LT_PORTABLE_DIR}/src/Runtime.cpp"
                  TARGET_DIRECTORY lighttouch_runtime APPEND PROPERTY
                  COMPILE_OPTIONS "${LT_ANDROID_DEBUG_OPTIMIZATION}")
 endif()
-target_include_directories(lighttouch_jni PRIVATE "${LT_PORTABLE_DIR}/include")
-target_link_libraries(lighttouch_jni PRIVATE lighttouch_runtime android log jnigraphics)
-target_link_options(lighttouch_jni PRIVATE "-Wl,-z,max-page-size=16384")
+target_include_directories(un1box_jni PRIVATE "${LT_PORTABLE_DIR}/include")
+target_link_libraries(un1box_jni PRIVATE lighttouch_runtime android log jnigraphics)
+target_link_options(un1box_jni PRIVATE "-Wl,-z,max-page-size=16384")
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(lighttouch_jni PRIVATE LT_ANDROID_DEBUG=1)
-    target_sources(lighttouch_jni PRIVATE "${LIGHTTOUCH_QEMU_SOURCE}/contrib/portable/engine-qmp-snapshot.c")
+    target_compile_definitions(un1box_jni PRIVATE LT_ANDROID_DEBUG=1)
+    target_sources(un1box_jni PRIVATE "${LIGHTTOUCH_QEMU_SOURCE}/contrib/portable/engine-qmp-snapshot.c")
     set_source_files_properties("${LIGHTTOUCH_QEMU_SOURCE}/contrib/portable/engine-qmp-snapshot.c" PROPERTIES COMPILE_DEFINITIONS LIGHTTOUCH_QMP_SNAPSHOT_NO_MAIN=1)
     add_library(lighttouch_probe SHARED tcg_probe.cpp)
     target_link_libraries(lighttouch_probe PRIVATE dl)
@@ -52,7 +52,7 @@ foreach(LT_LIBRARY IN LISTS LT_ENGINE_LIBRARIES)
     endif()
     add_library("${LT_NAME}" SHARED IMPORTED)
     set_target_properties("${LT_NAME}" PROPERTIES IMPORTED_LOCATION "${LT_LIBRARY}")
-    target_link_libraries(lighttouch_jni PRIVATE "${LT_NAME}")
+    target_link_libraries(un1box_jni PRIVATE "${LT_NAME}")
     if(TARGET lighttouch_probe)
         target_link_libraries(lighttouch_probe PRIVATE "${LT_NAME}")
     endif()

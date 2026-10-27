@@ -78,7 +78,7 @@ cd "$LT_ANDROID_SRC/Android"
   "-PengineNoticeArm64=$LT_INPUTS/engine/arm64-v8a/notices" \
   "-PengineNoticeX86=$LT_INPUTS/engine/x86_64/notices" \
   -PsourceRevision=3409cce3b21d9617723c80ac88665944f51553c3 \
-  -PsourceReference=https://github.com/blake-lucas/LightTouch/tree/3409cce3b21d9617723c80ac88665944f51553c3 \
+  -PsourceReference=https://github.com/KlugKlugTG/Un1box/tree/3409cce3b21d9617723c80ac88665944f51553c3 \
   "-PbuildRoot=$LT_BUILD" \
   "-PangleLibraries=$LT_INPUTS/angle/lib" \
   "-PangleManifest=$LT_INPUTS/angle/closure.json" \
@@ -88,7 +88,7 @@ cd "$LT_ANDROID_SRC/Android"
   "-PfrontendNotices=$LT_INPUTS/frontend" \
   "-PfrontendNoticesSha256=$LT_FRONTEND_NOTICE_SHA" \
   :app:assembleDebug :app:assembleDebugAndroidTest \
-  :app:testDebugUnitTest --tests 'org.lighttouch.android.*'
+  :app:testDebugUnitTest --tests 'org.un1box.android.*'
 ```
 
 The actual candidate20 build passed in61.6s and passed all ten JVM cases (Stop3, timestamp order4, session delivery3). It compiled the real-View, dirty-admission, concurrent-media and six synthetic `GuestAngleFrameReadinessTest` cases. Those six Android cases were compiled only; device execution and guest rendering remain separate. `GuestUnlockTest` retains the sealed main19 APK identity and intentionally rejects candidate20; do not invoke it as a candidate20 unlock test. Preserve source archives, exact argv/environment, producer manifests and input-to-packaged strip mappings. Different local paths/debug signing keys can change APK bytes; compare the actual payload provenance rather than assume every new build matches a sealed APK hash.
@@ -152,7 +152,7 @@ These are device-owner steps; stop/retain any existing session before updating. 
 LT_DEVICE_SERIAL=your-authorized-device
 adb -s "$LT_DEVICE_SERIAL" install -r "$LT_APK"
 adb -s "$LT_DEVICE_SERIAL" install -r "$LT_TEST_APK"
-adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
+adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.un1box.android/.MainActivity
 ```
 
 Normal use: import the legitimate matching guest package and optional ROM through the pickers, then import a prepared `.itbase`/folder. Each validated import creates a new record and independent state; select the intended board/build. n72's ROM is a separately supplied legitimate input. Prepared-kernel boards use native validated `kboot.bin` and do not require an arbitrary boot ROM. Start, Home, Power, Pause/Resume, Screenshot and Stop are semantic controls. Backgrounding pauses/cancels input; reopen and explicitly Resume. Guest Home/Photos readiness requires inspecting real guest pixels and response.
@@ -160,7 +160,7 @@ Normal use: import the legitimate matching guest package and optional ROM throug
 For the fixed private-fixture harness, the owner may provision verified inputs into Debug app storage at `files/private-fixtures/n72ap-7E18.itbase`, `files/bootrom.bin`, and `files/guest.itpack`; the harness expects its specific verified baseline, not arbitrary assets. Use a local authorized transfer into those paths, or the normal pickers. For example, a verified private package can be streamed without staging it in public/shared storage:
 
 ```sh
-adb -s "$LT_DEVICE_SERIAL" shell "run-as org.lighttouch.android sh -c 'cat > files/guest.itpack'" < /path/to/private/matching-guest.itpack
+adb -s "$LT_DEVICE_SERIAL" shell "run-as org.un1box.android sh -c 'cat > files/guest.itpack'" < /path/to/private/matching-guest.itpack
 ```
 
 Verify transferred bytes against the owner's trusted inventory before invoking the opt-in import test. Keep guest sources, prepared outputs, app-private state, logs and captures outside Git and cloud uploads. Do not delete `.dirty` or replace a baseline to recover a session. Ordinary Start rejects interrupted state; **Recover retained state** explicitly cold-boots preserved writable data in a fresh worker. Confirmed guest halt and successful engine cleanup, not timeout/exit0 alone, clear dirty state.
@@ -174,10 +174,10 @@ Linux uses the same preparer and Portable domain; see [firmware preparation](../
 Foreground MainActivity before every `am instrument --no-restart` test. Inspect JUnit output and private receipts: shell exit0 is not a JUnit pass. Ordinary instrumentation completion can terminate the target; choose session holds/stop/recovery deliberately. The following owner invocation is planned against candidate20. Run it before starting a guest. It exercises three real-View/fake-endpoint cases and six synthetic frame-policy cases; it does not exercise a guest:
 
 ```sh
-adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
+adb -s "$LT_DEVICE_SERIAL" shell am start -W -n org.un1box.android/.MainActivity
 adb -s "$LT_DEVICE_SERIAL" shell am instrument --no-restart -w -r \
-  -e class org.lighttouch.android.GuestDisplayAdmissionTest,org.lighttouch.android.GuestAngleFrameReadinessTest \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  -e class org.un1box.android.GuestDisplayAdmissionTest,org.un1box.android.GuestAngleFrameReadinessTest \
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 Historical evidence, separate from candidate20: candidate18 passed all three real View/fake Binder cases on Poco, including unowned resize preserving an unrelated button pulse; this is not native button delivery or guest input proof. Candidate17b passed actual dirty admission with unchanged metadata and explicit recovery/QMP diagnosis to a lit lock screen. Its later wake diagnosis remained black, and Stop disposed the worker after the deadline with dirty state retained. Shutdown receipts are best effort: a missing receipt does not establish a blocked call or a clean halt. See [wake diagnosis](WAKE-DIAGNOSIS.md) for the optional150–500ms host hold and its separate guest-clock limits.

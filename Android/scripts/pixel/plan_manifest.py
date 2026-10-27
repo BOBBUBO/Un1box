@@ -31,12 +31,12 @@ def graphics_provider(value):
 
 def instrumentation(p):
     main=next(a for a in p['assets'] if Path(a['path']).name=='app-debug.apk')
-    return ['shell','am','instrument','-w','-r','--no-restart','-e','class','org.lighttouch.android.GuestPixelBootDiagnosisTest',
+    return ['shell','am','instrument','-w','-r','--no-restart','-e','class','org.un1box.android.GuestPixelBootDiagnosisTest',
         '-e','diagnoseVirtualPixel','true','-e','expectedMainApkSha256',main['sha256'],'-e','recordId',p['recordId'],
         '-e','pixelAttemptToken',p['attemptToken'],'-e','pixelOriginToken','ACTUAL_ORIGINAL_CLOCK_SHA256',
         '-e','pixelGraphicsProvider',graphics_provider(p['pixelGraphicsProvider']),
         '-e','pixelColdRecovery',str(p['coldRecovery']).lower(),'-e','pixelObserveSeconds','300','-e','allowOneSleepWake','true',
-        'org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner']
+        'org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner']
 
 
 def build(seed, prepared, attempt, source, launcher, cold_recovery=False, token=None, pixel_graphics_provider='platform'):

@@ -10,7 +10,7 @@ same-revision Pixel test staging, engine/runtime/notice hashes, bridge copies an
 exact Gradle arguments. Use a fresh CMake and Gradle output directory, offline,
 one worker/native job, 768 MiB Java heap. The one allocated build runs
 `:app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --tests
-org.lighttouch.android.*`. The 46 JVM cases are a source count until XML results
+org.un1box.android.*`. The 46 JVM cases are a source count until XML results
 prove execution. Keep Debug symbols/assertions and verify effective JNI/Runtime
 `-O2`, metadata entrypoint, fixed accounting setter and all AIDL consumers.
 

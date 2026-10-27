@@ -15,13 +15,13 @@ Root foregrounds MainActivity first and controls the platform instrumentation
 lifetime/outer deadline. Planned invocation after the new runner is sealed:
 
 ```sh
-adb -s "$LT_SERIAL" shell am start -W -n org.lighttouch.android/.MainActivity
+adb -s "$LT_SERIAL" shell am start -W -n org.un1box.android/.MainActivity
 adb -s "$LT_SERIAL" shell am instrument --no-restart -w \
-  -e class org.lighttouch.android.GuestSessionSetupTest \
+  -e class org.un1box.android.GuestSessionSetupTest \
   -e armGuestSession true -e armTouchWireTrace true \
   -e expectedWorkerPid "$LT_EXPECTED_UNUSED_WORKER_PID" \
   -e expectedMainApkSha256 49565cd70fa9a83d99c2865707055313ec2cf373e85c13dcbc907401e4c71fa2 \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 Add `-e armFixedQmp true` only for the separate approved fixed diagnostic choice.
@@ -55,10 +55,10 @@ Planned24b command, only after the test runner is compiled/sealed:
 
 ```sh
 adb -s "$LT_SERIAL" shell am instrument --no-restart -w \
-  -e class org.lighttouch.android.GuestSessionSetupTest#createUnusedForegroundServiceForLaterArming \
+  -e class org.un1box.android.GuestSessionSetupTest#createUnusedForegroundServiceForLaterArming \
   -e createUnusedGuestWorker true \
   -e expectedMainApkSha256 b644c2d7a1e743522a574111c76a4870eb7ddacec150a8f69de8df8b52be0be5 \
-  org.lighttouch.android.test/androidx.test.runner.AndroidJUnitRunner
+  org.un1box.android.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 Retain files/session-create-evidence-*/result.json and full JUnit result. Then
