@@ -6,7 +6,8 @@ not contain guest assets, authorize a target operation, establish an executed
 rebuild/relink, or settle the complete APK's license classification. Use
 [dependency coverage](../../Android/DEPENDENCY-NOTICES.md),
 [frontend notices](../../Android/FRONTEND-NOTICES.md),
-and [the preparer](README.md) together.
+[firmware sources](SOURCE-DISTRIBUTION.md), and the
+[private run-bundle checklist](PRIVATE-RUN-BUNDLE.md) together.
 
 ## Existing generators and their boundaries
 
@@ -37,7 +38,7 @@ reading untracked assets:
 mkdir -m 700 "$OUT"
 git archive --format=tar --prefix=application/ \
   --output="$OUT/application-source.tar" "$FINAL_APP_REV" \
-  Android Portable crates Cargo.toml Cargo.lock \
+  Android Portable Packages/FirmwareKit/Sources/CActivation \
   README.md LICENSE Portable/firmware/firmware-catalog.json
 sha256sum "$OUT/application-source.tar"
 ```

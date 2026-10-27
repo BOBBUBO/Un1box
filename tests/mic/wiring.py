@@ -106,8 +106,7 @@ def portable_declares_the_api():
 def portable_resolves_exactly_the_exported_names():
     runtime = read("Portable/src/Runtime.cpp")
     for symbol in ENGINE_SYMBOLS:
-        # Through the platform's symbol helper (lt::os::library_symbol), as every optional entry point is.
-        require(f'library_symbol(library, "{symbol}")' in runtime, f"Runtime.cpp never resolves {symbol}")
+        require(f'dlsym(library, "{symbol}")' in runtime, f"Runtime.cpp never resolves {symbol}")
     require("engine has no microphone input" in runtime,
             "the optional microphone symbols are not treated as optional")
 

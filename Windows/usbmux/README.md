@@ -1,9 +1,12 @@
-# Windows USB bridge
+# Windows guest-service OS adapter
 
-`lighttouch-usbmuxd.exe`, the Windows build of the private usbmuxd-qemu daemon, and its owned libusbmuxd: the
-bridge between the engine and the desktop app's services (crates/lighttouch-services). The app starts it as a
-child, binds readiness to that child and stops it through its stdin. The release packages the built `bin`
-directory (the `services-mobile01` input of scripts/build-release.sh). The notes below record how it was built.
+The shared Windows product now uses `Desktop/lighttouch_desktop/windows_services.py`
+to own the foreground daemon, bind readiness to its retained Popen process handle,
+pin private pairing/log folders and retire the child. `--services-runtime` staging
+collects the existing mobile/TLS DLLs with the daemon. Shared Apps operations use
+the bundled owned connector and the same catalog/IPA code as Linux. The earlier
+source checkpoints below describe provider history; actual Windows guest
+installation and adversarial endpoint qualification remain pending.
 
 The peer/connector C files cross-compile to Win64 objects with GCC13 and
 `-Wall -Wextra -Werror` (source b36e542e). All eight daemon C translation units
@@ -18,6 +21,7 @@ retained. The original failed attempt (non-libtool connector `.o` objects) is
 preserved; the successful recipe uses generated `.lo` compile mode. Nothing
 has been executed on Windows or enabled by WindowsHost. The remaining
 libimobiledevice/TLS stack and native endpoint/services acceptance are open.
+The shared Apps window, catalog and IPA algorithms stay in `Desktop/app_services`.
 This directory changes only the native process/socket boundary and validates
 readiness against an already owned child. It is not a replacement installer.
 
@@ -105,7 +109,7 @@ that line alone is never a clean-shutdown proof.
 
 Readiness carries `LTW_SESSION_PROFILE` and `LTW_SESSION_TOKEN` (fresh 32-character
 lowercase hex identity tags, **not secrets**) and positive canonical decimal
-`LTW_SESSION_GENERATION` (at most 2^53-1). The parent binds that line to the
+`LTW_SESSION_GENERATION` (at most 2^53-1). `session.py` binds that line to the
 owned process handle's PID/FILETIME and selected saved profile. It invalidates
 availability before Stop and when identity/liveness changes. It does not launch
 the child, validate ACLs, enable Apps or prove Windows endpoint behavior.

@@ -118,9 +118,7 @@ def portable_declares_the_camera():
     require("LT_CAMERA_BACK" in header and "LT_CAMERA_FRONT" in header, "the sensors are not named in the API")
     for function in ("lt_runtime_camera_write", "lt_runtime_camera_info", "lt_runtime_camera_flush"):
         require(function in header and function in source, f"{function} is not declared and defined")
-    # Resolved through the platform's symbol helper (lt::os::library_symbol), which is how every
-    # optional engine entry point is looked up.
-    require('library_symbol(library, "qemu_ios_camera_write")' in source,
+    require('dlsym(library, "qemu_ios_camera_write")' in source,
             "the portable layer does not resolve the engine's camera entry point")
     require("camera_state(sensor, &pushed, &taken, &replaced, &width, &height)" in source,
             "the portable layer does not ask the engine for the picture's size")
