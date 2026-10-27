@@ -13,7 +13,7 @@ This guide follows the verified candidate20 build. It is a Debug development APK
 | Portable domain, firmware and CActivation | `53ea530954411460d915aace69249398801c4101` |
 | QEMU engine and JNI bridge headers/helper, both ABIs | `b59b3620b01da9285dea3a9ee6f58c1bb3cecfc2` |
 
-All62 tracked native/JNI/CActivation files at the two app revisions were checked byte-identical. Candidate20 includes provider frame readiness and a post-capture freshness/coherence check; the Portable/JNI source remains unchanged. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `Portable/firmware/firmware-catalog.json`.
+All62 tracked native/JNI/CActivation files at the two app revisions were checked byte-identical. Candidate20 includes provider frame readiness and a post-capture freshness/coherence check; the Portable/JNI source remains unchanged. Keep `Packages/FirmwareKit/Sources/CActivation` beside `Portable` when exporting native source. Omitting it makes firmware CMake fail. Source export must also retain the catalog at `Portable/firmware/firmware-catalog.json`. (That applies to those revisions; today the preparer is the Rust `crates/` workspace, CActivation included, and `Portable` builds without it.)
 
 For an archived Android build, export the catalog explicitly alongside Android:
 

@@ -125,13 +125,12 @@ do not silently label their binaries or pins as 25. Reproducing 25 requires the 
 engine revisions above, the actual matching per-ABI input manifests and build
 records, and the declared same-revision test-source staging if building that test
 APK. Native exports
-must retain all `Portable`, `Packages/FirmwareKit/Sources/CActivation`, Android JNI
+must retain all `Portable`, `crates` (firmwarekit, with its C), Android JNI
 and helper/header inputs, the tracked firmware catalog, and root README/LICENSE.
 Host compilation does not require private guest firmware, ROMs or Apple SDKs.
 
-Read [APK dependency coverage](DEPENDENCY-NOTICES.md),
-[frontend notices](FRONTEND-NOTICES.md) and
-[firmware source distribution](../Portable/firmware/SOURCE-DISTRIBUTION.md).
+Read [APK dependency coverage](DEPENDENCY-NOTICES.md)
+and [frontend notices](FRONTEND-NOTICES.md).
 The app's **Licenses** viewer preserves offline notices and source references;
 those references and the firmware component kit do not establish complete APK
 source/relink availability, a full source rebuild or public distribution clearance.

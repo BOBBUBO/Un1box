@@ -1,12 +1,12 @@
 //! The guest package: the it_boot loader and the arch's seed package from <arch>.itpack baked into the system
-//! volume (GuestPackage/GuestPackage.swift), and the hook backups. Every Mach-O it bakes (the loader, the package's
+//! volume, and the hook backups. Every Mach-O it bakes (the loader, the package's
 //! binaries and hooks) is first proven to load on this firmware (FitCheck.loads), except the GL engines' and
 //! AppSync's hooks, which their own installers check.
 use crate::error::{Code, Error, Result};
 use crate::fitcheck;
 use crate::guest_archive::{self as ga, Manifest};
-use crate::hfs::editor::Kind;
 use crate::hfs::Editor;
+use crate::hfs::editor::Kind;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -66,7 +66,8 @@ pub fn preserve_hook(volume: &mut Editor, target: &str) -> Result<String> {
     if let Some(m) = volume.lstat(target)? {
         // <target>.baked keeps what the volume had, with its current permissions.
         let perm = m.perm;
-        let bytes = if m.kind == Kind::Symlink { volume.read_link(target)?.into_bytes() } else { volume.read(target)? };
+        let bytes =
+            if m.kind == Kind::Symlink { volume.read_link(target)?.into_bytes() } else { volume.read(target)? };
         if let Some((dir, _)) = baked.rsplit_once('/') {
             volume.mkdirs(dir)?;
         }
@@ -141,14 +142,20 @@ pub fn seed(
         .filter(|h| (gles || !gl_targets.contains(&h.target)) && on_volume(volume, &h.target))
         .cloned()
         .collect();
-    let needs_absence = hooks
-        .iter()
-        .any(|h| volume.lstat(&format!("{}.baked-absent", h.target.trim_start_matches('/'))).map(|m| m.is_some()).unwrap_or(false));
+    let needs_absence = hooks.iter().any(|h| {
+        volume
+            .lstat(&format!("{}.baked-absent", h.target.trim_start_matches('/')))
+            .map(|m| m.is_some())
+            .unwrap_or(false)
+    });
     if needs_absence && entries.get("loader/hook-provenance").map(Vec::as_slice) != Some(b"file-or-absence 1\n") {
-        return Err(crate::unsupported!("guest loader cannot restore absent hook originals; rebuild the guest exports"));
+        return Err(crate::unsupported!(
+            "guest loader cannot restore absent hook originals; rebuild the guest exports"
+        ));
     }
     let kept: HashSet<&str> = hooks.iter().map(|h| h.file.as_str()).collect();
-    let dropped: HashSet<String> = man.hooks.iter().map(|h| h.file.clone()).filter(|f| !kept.contains(f.as_str())).collect();
+    let dropped: HashSet<String> =
+        man.hooks.iter().map(|h| h.file.clone()).filter(|f| !kept.contains(f.as_str())).collect();
     for h in &man.hooks {
         if !dropped.contains(&h.file) {
             continue;
@@ -174,7 +181,10 @@ pub fn seed(
     let fw = fitcheck::Firmware::new(volume.snapshot()?, &arch, None);
     let legacy_loader = man.requires.link.as_deref() == Some("legacy") && entries.contains_key("loader/it_boot-legacy");
     let loader_name = if legacy_loader { "loader/it_boot-legacy" } else { "loader/it_boot" };
-    let loader_bytes = entries.get(loader_name).cloned().ok_or_else(|| Error::new(Code::Internal, format!("{name}: no {loader_name}")))?;
+    let loader_bytes = entries
+        .get(loader_name)
+        .cloned()
+        .ok_or_else(|| Error::new(Code::Internal, format!("{name}: no {loader_name}")))?;
     fit.check(fitcheck::loads("it_boot (guest-package loader)", &loader_bytes, &fw, None), true, "left out")?;
     let hook_targets: HashMap<&str, &str> = hooks.iter().map(|h| (h.file.as_str(), h.target.as_str())).collect();
     for f in &files {
@@ -183,7 +193,8 @@ pub fn seed(
         if !fitcheck::is_mach_o(bytes) {
             continue;
         }
-        let is_gl_or_appsync = target.map(|t| gl_targets.contains(t) || t == format!("/{APPSYNC_PATH}")).unwrap_or(false);
+        let is_gl_or_appsync =
+            target.map(|t| gl_targets.contains(t) || t == format!("/{APPSYNC_PATH}")).unwrap_or(false);
         if is_gl_or_appsync {
             continue;
         }
@@ -202,9 +213,21 @@ pub fn seed(
     let serial = man.serial;
     let pkg = format!("{ROOT}/pkgs/{serial}");
     for f in &files {
-        put(volume, &mut written, &format!("{pkg}/{}", f.name), payload(&entries, &format!("{family}/{}", f.name))?, octal(&f.mode))?;
+        put(
+            volume,
+            &mut written,
+            &format!("{pkg}/{}", f.name),
+            payload(&entries, &format!("{family}/{}", f.name))?,
+            octal(&f.mode),
+        )?;
     }
-    put(volume, &mut written, &format!("{pkg}/offer"), ga::offer_text(&man, &build, None, &[], &[]).into_bytes(), 0o644)?;
+    put(
+        volume,
+        &mut written,
+        &format!("{pkg}/offer"),
+        ga::offer_text(&man, &build, None, &[], &[]).into_bytes(),
+        0o644,
+    )?;
     volume.symlink(&format!("{ROOT}/current"), &format!("pkgs/{serial}"))?;
     let mut state = format!("seed {serial}\n");
     put(volume, &mut written, &format!("{ROOT}/state"), state.clone().into_bytes(), 0o644)?;
@@ -216,7 +239,13 @@ pub fn seed(
         if !written.contains(&backup) {
             written.push(backup);
         }
-        put(volume, &mut written, &target, payload(&entries, &format!("{family}/{}", h.file))?, *modes.get(h.file.as_str()).unwrap_or(&0o755))?;
+        put(
+            volume,
+            &mut written,
+            &target,
+            payload(&entries, &format!("{family}/{}", h.file))?,
+            *modes.get(h.file.as_str()).unwrap_or(&0o755),
+        )?;
         state += &format!("hook {} {}\n", if h.respring { 1 } else { 0 }, h.target);
         put(volume, &mut written, &format!("{ROOT}/state"), state.clone().into_bytes(), 0o644)?;
     }
