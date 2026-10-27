@@ -57,7 +57,7 @@ on:
         required: true
         default: blake-lucas/LightTouch
       base_release_tag:
-        description: Release tag for those inputs (e.g. v0.0.10, or "latest")
+        description: Release tag for those inputs (e.g. v0.0.12, or "latest")
         required: false
         default: v0.0.10
       jobs:
@@ -125,7 +125,7 @@ jobs:
       ENGINE_REPO: ${{ inputs.engine_repository || 'KlugKlugTG/qemu-ios' }}
       ENGINE_REF: ${{ inputs.engine_ref || 'perf' }}
       DECLARED_BASE_RELEASE_REPO: ${{ inputs.base_release_repository || 'blake-lucas/LightTouch' }}
-      DECLARED_BASE_RELEASE_TAG: ${{ inputs.base_release_tag || 'v0.0.10' }}
+      DECLARED_BASE_RELEASE_TAG: ${{ inputs.base_release_tag || 'v0.0.12' }}
       DECLARED_DEBUGGABLE: ${{ inputs.debuggable || 'true' }}
       DECLARED_DEPENDENCY_VERIFICATION: ${{ inputs.dependency_verification || 'strict' }}
       MESON: ${{ github.workspace }}/meson/bin/meson
@@ -272,10 +272,15 @@ jobs:
                   check=True,
               )
 
+          # What the APK needs: the guest packages, the helpers the guest network and preparation
+          # use, and the preparer with its USB bridge. lighttouch-oneshot is not here: the Rust
+          # preparer boots the engine itself, and only a Swift-era release APK still carries it
+          # (it is copied when present, so an older base_release_tag keeps working).
           wanted_keys = (
               'assets/guest-tools/armv6.itpack', 'assets/guest-tools/armv7.itpack',
-              'assets/guest-tools/it_seal', 'assets/licenses/firmwarekit/manifest.json',
-              'lib/arm64-v8a/libfirmwarekit.so', 'lib/arm64-v8a/liblighttouch_oneshot.so',
+              'assets/guest-tools/it_seal', 'assets/guest-tools/ittrust', 'assets/guest-tools/itproxy',
+              'assets/licenses/firmwarekit/manifest.json',
+              'lib/arm64-v8a/libfirmwarekit.so',
               'lib/arm64-v8a/libusbmuxd_qemu.so', 'lib/arm64-v8a/liblt_appservice.so',
           )
 
@@ -283,6 +288,7 @@ jobs:
               names = archive.namelist()
               missing = [key for key in wanted_keys if key not in names]
               if missing:
+                  print(f'::error::{apk.name} does not carry {missing}')
                   raise SystemExit(f'{apk.name} does not carry {missing}')
 
               def copy_tree(prefix, destination):
@@ -303,10 +309,11 @@ jobs:
               copy_tree('assets/licenses/firmwarekit/', ci / 'firmwarekit/android/licenses')
               executables = {
                   'lib/arm64-v8a/libfirmwarekit.so': ci / 'firmwarekit/android/firmwarekit',
-                  'lib/arm64-v8a/liblighttouch_oneshot.so': ci / 'firmwarekit/android/lighttouch-oneshot',
                   'lib/arm64-v8a/libusbmuxd_qemu.so': ci / 'mobile-services/arm64-v8a/libusbmuxd_qemu.so',
                   'lib/arm64-v8a/liblt_appservice.so': ci / 'mobile-services/arm64-v8a/liblt_appservice.so',
               }
+              if 'lib/arm64-v8a/liblighttouch_oneshot.so' in names:
+                  executables['lib/arm64-v8a/liblighttouch_oneshot.so'] = ci / 'firmwarekit/android/lighttouch-oneshot'
               for name, output in executables.items():
                   output.parent.mkdir(parents=True, exist_ok=True)
                   output.write_bytes(archive.read(name))
@@ -316,13 +323,15 @@ jobs:
 
           for required in (
               'guest-tools/armv6.itpack', 'guest-tools/armv7.itpack', 'guest-tools/it_seal',
-              'firmwarekit/android/firmwarekit', 'firmwarekit/android/lighttouch-oneshot',
+              'guest-tools/ittrust', 'guest-tools/itproxy',
+              'firmwarekit/android/firmwarekit',
               'firmwarekit/android/licenses/manifest.json',
               'mobile-services/arm64-v8a/libusbmuxd_qemu.so',
               'mobile-services/arm64-v8a/liblt_appservice.so',
           ):
               path = ci / required
               if not path.is_file():
+                  print(f'::error::missing extracted input: {path}')
                   raise SystemExit(f'missing extracted input: {path}')
 
           env_path = os.environ.get('GITHUB_ENV')
@@ -473,13 +482,36 @@ jobs:
               --dependency-verification="$DECLARED_DEPENDENCY_VERIFICATION" \
               -Pdebuggable="$DECLARED_DEBUGGABLE" "$@"
           }
+          # A failure here is a compiler error, and the job log is not reachable from everywhere
+          # this repository is read: report the first errors as annotations as well.
+          check() {
+            local log status
+            log="$(mktemp)"
+            set +e
+            gradlew "$@" > "$log" 2>&1
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
+              tail -3 "$log"
+              return 0
+            fi
+            # The errors, then what Gradle says went wrong, then the tail: ten is the most this
+            # runner keeps.
+            {
+              grep -E '^(e: |error:)|error:' "$log" | head -4
+              grep -A5 -E '\* What went wrong|FAILURE: Build failed|Execution failed for task|A problem occurred' "$log" | head -6
+              tail -6 "$log"
+            } | sed 's/%/%25/g; s/,/%2C/g; s/\r$//; s/^/::error::/' | head -10
+            tail -40 "$log"
+            return 1
+          }
           # Resolving the runtime classpath checks the pinned dependency verification; the dry
           # run configures every task without running it.
-          gradlew :app:dependencies --configuration debugRuntimeClasspath > /dev/null
-          gradlew --dry-run :app:assembleDebug
+          check :app:dependencies --configuration debugRuntimeClasspath &&
+          check --dry-run :app:assembleDebug &&
           # AIDL first (Kotlin compiles against its generated interfaces), then Kotlin and Java:
           # what the APK step compiles, none of what it packages.
-          gradlew :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac
+          check :app:compileDebugAidl :app:compileDebugKotlin :app:compileDebugJavaWithJavac
 
       # A cache hit is a tree the scripts' own recorded recipe accepts (the key is that recipe), so
       # there is nothing to rebuild. Without the skip this step spent ~3.5 minutes on every run
@@ -637,6 +669,10 @@ jobs:
       - name: Build the APK
         working-directory: Android
         run: |
+          # The native half of this build is only ever compiled here, and the job log is not
+          # reachable from everywhere this repository is read: a failure reports itself.
+          log="$RUNNER_TEMP/apk-build.log"
+          set +e
           ./gradlew --no-daemon --max-workers="$LT_JOBS" \
             '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m' \
             --dependency-verification="$DECLARED_DEPENDENCY_VERIFICATION" \
@@ -645,13 +681,26 @@ jobs:
             -PportableDir="$GITHUB_WORKSPACE/Portable" \
             -PqemuSource="$GITHUB_WORKSPACE/qemu-ios" \
             -PengineRoot="$GITHUB_WORKSPACE/ci/engine" \
+            -PnetworkDeps="$GITHUB_WORKSPACE/ci/deps/prefix" \
             -PfirmwareKitDir="$GITHUB_WORKSPACE/ci/firmwarekit/android" \
             -PguestToolsDir="$GITHUB_WORKSPACE/ci/guest-tools" \
             -PmobileServicesArm64="$GITHUB_WORKSPACE/ci/mobile-services/arm64-v8a" \
             -PsourceRevision="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)" \
             -PsourceReference="https://github.com/${GITHUB_REPOSITORY}/tree/${GITHUB_REF_NAME}" \
             -Pdebuggable="$DECLARED_DEBUGGABLE" \
-            :app:assembleDebug
+            :app:assembleDebug > "$log" 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            {
+              grep -E '^(e: |error:)|error:|CMake Error|ninja: build stopped|FAILED: ' "$log" | head -5
+              grep -A5 -E '\* What went wrong|FAILURE: Build failed|Execution failed for task' "$log" | head -5
+              tail -10 "$log"
+            } | sed 's/%/%25/g; s/,/%2C/g; s/\r$//; s/^/::error::/' | head -12
+            tail -40 "$log"
+            exit "$status"
+          fi
+          tail -5 "$log"
 
       # AGP signs a debug build with whatever it finds (or makes) at
       # ~/.android/debug.keystore, which is not the cached key: a run would then
@@ -694,7 +743,7 @@ jobs:
             echo "- application revision: $(git rev-parse HEAD) ($GITHUB_REPOSITORY)"
             echo "- engine revision: $(git -C qemu-ios rev-parse HEAD) ($ENGINE_REPO $ENGINE_REF)"
             echo "- engine build: arm64-v8a, NDK $ANDROID_NDK_VERSION, --android-api 29, $LT_JOBS jobs"
-            echo "- reused from ${BASE_RELEASE_RESOLVED:-$DECLARED_BASE_RELEASE_REPO $DECLARED_BASE_RELEASE_TAG}: firmwarekit, lighttouch-oneshot, USB bridge, guest tools"
+            echo "- reused from ${BASE_RELEASE_RESOLVED:-$DECLARED_BASE_RELEASE_REPO $DECLARED_BASE_RELEASE_TAG}: firmwarekit, USB bridge, guest tools"
             echo "- debuggable: $DECLARED_DEBUGGABLE; signed with this workflow's own keystore"
             echo
             echo "## Engine commits in $ENGINE_REF that are not in main"
