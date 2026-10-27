@@ -53,7 +53,6 @@ pub fn run(
     let nor = work.join("nor.rw");
     let serial = work.join("keybag.log");
     std::fs::copy(out.join("nor.bin"), &nor)?;
-    crate::files::writable(&nor)?;
     let port = free_port()?;
     let hardware = helper.hardware(Hardware::N72)?;
     let file = |n: &str| boot::escape(&out.join(n).to_string_lossy());
@@ -118,7 +117,6 @@ pub fn run(
     if written == read(&stock)? {
         return Err(failed("keybag boot: NOR unchanged, effaceable was not written"));
     }
-    crate::files::writable(&stock)?;
     std::fs::write(&stock, written)?;
     for p in [&rd, &nor, &serial] {
         let _ = std::fs::remove_file(p);

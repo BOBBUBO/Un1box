@@ -662,7 +662,7 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
                 val alive = try { File("/proc/$pid/cmdline").readText().contains(":firmware") } catch (_: Exception) { false }
                 if (alive) { preparationOpen = true; bindFirmware() }
                 else {
-                    Thread({ File(job).takeIf { it.isDirectory }?.let { dir -> dir.walkTopDown().forEach { it.setWritable(true, true) }; dir.deleteRecursively() } }, "stale-preparation").start()
+                    Thread({ File(job).takeIf { it.isDirectory }?.deleteRecursively() }, "stale-preparation").start()
                     failed("Android stopped the preparation before it finished. Try again.")
                 }
             }
@@ -831,7 +831,6 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } catch (e: Exception) { e.message ?: "Device worker exited during import" }
             if (result.isEmpty()) {
                 // The device holds its own copy now; the prepared output and the IPSW only take space.
-                File(destination).walkTopDown().forEach { it.setWritable(true, true) }
                 File(destination).deleteRecursively(); File("$destination.native.log").delete()
                 if (ipsw.startsWith(filesDir.absolutePath)) File(ipsw).delete()
             }

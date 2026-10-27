@@ -1,6 +1,6 @@
 //! The preparation's file chores: digests with progress, sparse-aware hashing of the NAND page files, the store's
-//! listing, read-only outputs, free space and the decrypt cache's lease (Swift's Preparer.digest/nandListing/readOnly,
-//! SparseFile, StorageCapacity, FirmwareCache).
+//! listing, free space and the decrypt cache's lease (Swift's Preparer.digest/nandListing, SparseFile,
+//! StorageCapacity, FirmwareCache).
 use crate::error::Result;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
@@ -115,46 +115,6 @@ pub fn nand_listing(nand: &Path, files: &[String], count: &(dyn Fn(u64) + Sync))
     Ok((hashes, hex::encode(listing.finalize())))
 }
 
-/// chmod -R a-w: children first, so a folder is still writable while its entries change (Windows: the read-only
-/// attribute on files).
-pub fn read_only(path: &Path) -> Result<()> {
-    let meta = std::fs::symlink_metadata(path).map_err(|e| crate::internal!("{}: {e}", path.display()))?;
-    if meta.is_dir() {
-        for entry in std::fs::read_dir(path)? {
-            read_only(&entry?.path())?;
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = meta.permissions().mode() & 0o7777 & !0o222;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-            .map_err(|e| crate::internal!("chmod a-w {}: {e}", path.display()))?;
-    }
-    #[cfg(not(unix))]
-    if meta.is_file() {
-        let mut p = meta.permissions();
-        p.set_readonly(true);
-        std::fs::set_permissions(path, p).map_err(|e| crate::internal!("read-only {}: {e}", path.display()))?;
-    }
-    Ok(())
-}
-
-/// u+w on one file (a copy of a read-only output keeps its mode).
-pub fn writable(path: &Path) -> Result<()> {
-    let meta = std::fs::metadata(path).map_err(|e| crate::internal!("{}: {e}", path.display()))?;
-    let mut p = meta.permissions();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        p.set_mode(p.mode() | 0o200);
-    }
-    #[cfg(not(unix))]
-    #[allow(clippy::permissions_set_readonly_false)]
-    p.set_readonly(false);
-    std::fs::set_permissions(path, p).map_err(|e| crate::internal!("chmod u+w {}: {e}", path.display()))
-}
-
 /// The bytes free for this user on the filesystem holding `dir`; None where it can't tell.
 pub fn available(dir: &Path) -> Option<u64> {
     #[cfg(unix)]
@@ -210,30 +170,8 @@ pub fn consume_cache(root: &Path) -> Result<Lease> {
     Ok(Lease { _file: file })
 }
 
-/// Removes a folder tree, making it writable first (create leaves its outputs read-only).
+/// Removes a folder tree.
 pub fn remove_tree(path: &Path) {
-    fn writable(p: &Path) {
-        if let Ok(meta) = std::fs::symlink_metadata(p) {
-            let mut perm = meta.permissions();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                perm.set_mode(perm.mode() | 0o200);
-            }
-            #[cfg(not(unix))]
-            #[allow(clippy::permissions_set_readonly_false)]
-            perm.set_readonly(false);
-            let _ = std::fs::set_permissions(p, perm);
-            if meta.is_dir() {
-                if let Ok(d) = std::fs::read_dir(p) {
-                    for e in d.flatten() {
-                        writable(&e.path());
-                    }
-                }
-            }
-        }
-    }
-    writable(path);
     let _ = std::fs::remove_dir_all(path);
 }
 

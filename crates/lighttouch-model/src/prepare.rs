@@ -476,27 +476,6 @@ fn describe(e: DownloadError) -> String {
     }
 }
 
-/// firmwarekit leaves its output read-only; make it writable and remove it.
 fn remove_tree(path: &Path) {
-    fn writable(path: &Path) {
-        if let Ok(meta) = std::fs::symlink_metadata(path) {
-            if meta.is_dir() {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
-                }
-                for entry in std::fs::read_dir(path).into_iter().flatten().flatten() {
-                    writable(&entry.path());
-                }
-            } else if !meta.file_type().is_symlink() {
-                let mut perms = meta.permissions();
-                #[allow(clippy::permissions_set_readonly_false)]
-                perms.set_readonly(false);
-                let _ = std::fs::set_permissions(path, perms);
-            }
-        }
-    }
-    writable(path);
     let _ = std::fs::remove_dir_all(path);
 }

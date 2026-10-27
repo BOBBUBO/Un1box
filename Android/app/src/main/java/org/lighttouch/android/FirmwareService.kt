@@ -86,14 +86,14 @@ class FirmwareService : Service() {
                 // the iPod touch 2G's keybag boot (iOS 4) runs its SecureROM, which no IPSW carries
                 (if (bootrom.isNotEmpty()) listOf("--bootrom", bootrom) else emptyList()))
             // create's own lease and boot logs; the device is the rest
-            File(out, "work").let { writable(it); it.deleteRecursively() }
+            File(out, "work").deleteRecursively()
             done = total
             state = "complete"
             note("complete")
             foreground("Your device is prepared. Open LightTouch to add it.")
         } catch (e: Exception) {
             if (cancelling) state = "cancelled" else { failure = e.message ?: "Firmware preparation failed"; state = "failed" }
-            writable(out); out.deleteRecursively()
+            out.deleteRecursively()
             if (cancelling) PreparationNote.clear(this) else note("failed")
         } finally {
             process = null
@@ -145,9 +145,6 @@ class FirmwareService : Service() {
 
     private fun note(phase: String) = PreparationNote.write(this, JSONObject().put("state", phase).put("pid", Process.myPid())
         .put("firmwareId", currentFirmwareId).put("destination", destination).put("timings", timings).put("error", failure))
-
-    /** firmwarekit leaves its outputs read-only; delete needs the folders writable again. */
-    private fun writable(root: File) { if (root.exists()) root.walkTopDown().forEach { it.setWritable(true, true) } }
 
     override fun onBind(intent: Intent): IBinder = binder
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
