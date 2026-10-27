@@ -71,6 +71,10 @@ val prepareNetworkNotices = tasks.register<Exec>("prepareNetworkNotices") {
     inputs.files(prefix.map { file("$it/lib/libssl.a") }, prefix.map { file("$it/lib/libcrypto.a") })
     inputs.file(source.map { file("$it/contrib/portable/dependencies.json") })
     outputs.dir(networkNoticeAssets)
+    // Both come from the dependency build: -PnetworkDeps is the prefix the shared backend links, and the
+    // notice reads the engine's pin file beside it. A build without them -- a compile-only preflight, or a
+    // tree that has not built its dependencies yet -- stages no network notice instead of failing.
+    onlyIf { prefix.orElse("").get().isNotEmpty() && source.orElse("").get().isNotEmpty() }
     doFirst {
         commandLine("python3", rootProject.file("scripts/stage-network-notices.py").absolutePath,
             networkNoticeAssets.get().dir("licenses/network").asFile.absolutePath,

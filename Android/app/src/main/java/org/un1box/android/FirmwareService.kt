@@ -12,7 +12,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * One preparation per process, independent of a running QEMU worker: firmwarekit (crates/lighttouch-firmware, the
  * preparer every Un1box port shares) builds the device from its IPSW, with its build-time boots running the APK's
  * engine itself (`firmwarekit oneshot`, LTM_QEMU_DYLIB), into a device folder that the device worker moves into its
- * library. It ships as an executable in nativeLibraryDir (libfirmwarekit.so). */
+ * library. It ships as an executable in nativeLibraryDir (libfirmwarekit.so).
+ */
 class FirmwareService : Service() {
     private val consumed = AtomicBoolean(false)
     @Volatile private var destination = ""
@@ -89,7 +90,8 @@ class FirmwareService : Service() {
             done = total
             state = "complete"
             note("complete")
-            foreground(PREPARED)        } catch (e: Exception) {
+            foreground(PREPARED)
+        } catch (e: Exception) {
             if (cancelling) state = "cancelled" else { failure = e.message ?: "Firmware preparation failed"; state = "failed" }
             if (!cancelling) foreground(FAILED)
             out.deleteRecursively()
@@ -149,7 +151,8 @@ class FirmwareService : Service() {
     // A fresh worker replacing one that ended (Un1box stays bound) must not inherit its foreground notification.
     override fun onCreate() { super.onCreate(); stopForeground(STOP_FOREGROUND_REMOVE) }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        foreground(when (state) { "complete" -> PREPARED; "failed" -> FAILED; else -> PREPARING })        return START_NOT_STICKY
+        foreground(when (state) { "complete" -> PREPARED; "failed" -> FAILED; else -> PREPARING })
+        return START_NOT_STICKY
     }
     /** The ongoing notification while this worker has a preparation: under way, or its result until Un1box takes it. */
     private fun foreground(text: Pair<String, String>) {
@@ -157,7 +160,8 @@ class FirmwareService : Service() {
         manager.createNotificationChannel(NotificationChannel("firmware", "Device setup", NotificationManager.IMPORTANCE_LOW))
         val launch = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         startForeground(2, Notification.Builder(this, "firmware").setSmallIcon(android.R.drawable.ic_menu_upload)
-            .setContentTitle(text.first).setContentText(text.second)            .setContentIntent(launch).setOngoing(true).build())
+            .setContentTitle(text.first).setContentText(text.second)
+            .setContentIntent(launch).setOngoing(true).build())
     }
 
     private companion object {

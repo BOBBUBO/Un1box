@@ -118,7 +118,8 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 SettingsGroup("About") {
                     ActionRow(LtIcons.Info, "Un1box ${BuildConfig.VERSION_NAME}", "Classic iOS for Android") {}
                     ActionRow(LtIcons.Code, "Source code", "github.com/KlugKlugTG/Un1box") {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/KlugKlugTG/Un1box")))                    }
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/KlugKlugTG/Un1box")))
+                    }
                     ActionRow(LtIcons.File, "Open source licenses", null, tag = "open_licenses") { host.openLicenses() }
                 }
                 Spacer(Modifier.height(24.dp))
