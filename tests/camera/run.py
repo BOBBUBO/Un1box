@@ -113,16 +113,17 @@ def engine_tree(engine, scratch):
     target = scratch / "engine"
     target.mkdir()
     subprocess.run(["tar", "-x", "-C", str(target)], input=archive.stdout, check=True)
-    for patch in sorted(PATCHES.glob("*.patch")):
-        already = sh(["git", "apply", "--check", "-R", str(patch)], cwd=target).returncode == 0
-        if already:
-            continue
-        applied = sh(["git", "apply", str(patch)], cwd=target)
-        if applied.returncode:
-            raise Failure(f"{patch.name} does not apply: {applied.stderr.strip()[:400]}")
+    # CI commits the patches into the engine checkout before these checks run, so the tree either has all of
+    # them or none: asking patch by patch does not work, because a later patch edits lines an earlier one
+    # added, and the earlier one then cannot be recognised. One marker for the whole stack.
+    if not (target / "hw/arm/host-camera.c").is_file():
+        for patch in sorted(PATCHES.glob("*.patch")):
+            applied = sh(["git", "apply", str(patch)], cwd=target)
+            if applied.returncode:
+                raise Failure(f"{patch.name} does not apply: {applied.stderr.strip()[:400]}")
     for needed in ("hw/arm/host-camera.c", "include/hw/arm/host-camera.h"):
         if not (target / needed).is_file():
-            raise Failure(f"the patched engine has no {needed}: the camera patch is not in the tree")
+            raise Failure(f"the engine has no {needed}: the camera patch is neither in the tree nor applies")
     return target
 
 

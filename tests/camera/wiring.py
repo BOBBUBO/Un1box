@@ -158,22 +158,27 @@ def patch_stack(patch_dir, engine):
         subprocess.run(["git", "add", "-A"], cwd=tree, check=True)
         subprocess.run(["git", "-c", "user.email=a@b", "-c", "user.name=c", "commit", "-q", "-m", "base"],
                        cwd=tree, check=True)
-        for patch in sorted(Path(patch_dir).glob("*.patch")):
-            # CI commits the patches into the engine before these checks run, so a tree that already
-            # carries them is normal and must not be patched twice.
-            if subprocess.run(["git", "apply", "--check", "-R", str(patch)], cwd=tree,
-                              capture_output=True).returncode == 0:
-                continue
-            applied = subprocess.run(["git", "apply", str(patch)], cwd=tree, capture_output=True, text=True)
-            if applied.returncode:
-                raise AssertionError(f"{patch.name} does not apply: {applied.stderr.strip()[:400]}")
+        # CI commits the patches into the engine before these checks run, so a tree either has the whole stack
+        # or none of it. A file only the camera patch adds is the marker.
+        patched = (tree / "hw/arm/host-camera.c").is_file()
+        if not patched:
+            for patch in sorted(Path(patch_dir).glob("*.patch")):
+                applied = subprocess.run(["git", "apply", str(patch)], cwd=tree,
+                                         capture_output=True, text=True)
+                if applied.returncode:
+                    raise AssertionError(f"{patch.name} does not apply: {applied.stderr.strip()[:400]}")
         subprocess.run(["git", "add", "-A"], cwd=tree, check=True)
-        committed = subprocess.run(
-            ["git", "-c", "user.email=a@b", "-c", "user.name=c",
-             "-c", "user.name=Un1box", "commit", "-q", "-m", "camera"],
-            cwd=tree, capture_output=True, text=True)
-        if committed.returncode:
-            raise AssertionError(f"the stack does not commit: {committed.stderr.strip()[:400]}")
+        # CI commits the patches into its checkout before these checks run, so a tree that already has them
+        # has nothing to commit -- which is not a failure.
+        staged = subprocess.run(["git", "status", "--porcelain"], cwd=tree, capture_output=True, text=True)
+        if staged.stdout.strip():
+            committed = subprocess.run(
+                ["git", "-c", "user.email=a@b", "-c", "user.name=c",
+                 "-c", "user.name=Un1box", "commit", "-q", "-m", "camera"],
+                cwd=tree, capture_output=True, text=True)
+            if committed.returncode:
+                raise AssertionError(f"the stack does not commit: "
+                                     f"{(committed.stderr or committed.stdout).strip()[:400]}")
         dirty = subprocess.run(["git", "status", "--porcelain"], cwd=tree, capture_output=True, text=True)
         if dirty.stdout.strip():
             raise AssertionError(f"the patched tree is dirty after the commit: {dirty.stdout.strip()[:300]}")
