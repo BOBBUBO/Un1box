@@ -367,7 +367,7 @@ struct Proxy::State {
     std::condition_variable idle;
     std::set<Socket> active;
     Activity activity;
-    // The archive's cache and back-off, and how many of its requests are out (a browser's few at a time).
+    // The archive's cache and back-off, and how many of its requests are out.
     std::mutex gate;
     std::condition_variable archive_slot;
     int archive_requests = 0;
@@ -382,40 +382,80 @@ struct Proxy::State {
         if (error) ++activity.failed;
         activity.last_result = result; activity.last_result_error = error;
     }
-    Reply fetch(const Configuration &config, const std::string &url, const std::string &method, const Headers &request_headers = {}, const std::string &upload = "") {
-        Address address = Address::parse(url); Connection origin(connect_to(address, config.local_network && config.mode == Mode::direct));
+    std::unique_ptr<Connection> open(const Configuration &config, const Address &address) {
+        auto origin = std::make_unique<Connection>(connect_to(address, config.local_network && config.mode == Mode::direct));
         if (address.scheme == "https") {
-            origin.tls = SSL_new(client.get()); require(origin.tls,503,"TLS allocation failed");
-            SSL_set_fd(origin.tls,int(origin.fd)); SSL_set_tlsext_host_name(origin.tls,address.host.c_str());
-            auto param = SSL_get0_param(origin.tls);
+            origin->tls = SSL_new(client.get()); require(origin->tls,503,"TLS allocation failed");
+            SSL_set_fd(origin->tls,int(origin->fd)); SSL_set_tlsext_host_name(origin->tls,address.host.c_str());
+            auto param = SSL_get0_param(origin->tls);
             unsigned char ip[16]; bool numeric = inet_pton(AF_INET,address.host.c_str(),ip)==1 || inet_pton(AF_INET6,address.host.c_str(),ip)==1;
-            require((numeric ? X509_VERIFY_PARAM_set1_ip_asc(param,address.host.c_str()) : SSL_set1_host(origin.tls,address.host.c_str())) == 1,502,"Invalid TLS host");
-            require(SSL_connect(origin.tls)==1 && SSL_get_verify_result(origin.tls)==X509_V_OK,502,"Website TLS verification failed");
+            require((numeric ? X509_VERIFY_PARAM_set1_ip_asc(param,address.host.c_str()) : SSL_set1_host(origin->tls,address.host.c_str())) == 1,502,"Invalid TLS host");
+            require(SSL_connect(origin->tls)==1 && SSL_get_verify_result(origin->tls)==X509_V_OK,502,"Website TLS verification failed");
         }
-        std::string wire = method + " " + address.path + " HTTP/1.1\r\nHost: " + authority(address) + "\r\nConnection: close\r\nAccept-Encoding: identity\r\n";
+        return origin;
+    }
+    // One request and its response on `origin`; `answered` once a status line arrived, `reusable` when the
+    // connection can carry another (keep-alive asked and granted, the body framed).
+    Reply exchange(Connection &origin, const Address &address, const std::string &method, const Headers &request_headers, const std::string &upload, bool keep, bool &answered, bool &reusable) {
+        std::string wire = method + " " + address.path + " HTTP/1.1\r\nHost: " + authority(address) + (keep ? "\r\nConnection: keep-alive" : "\r\nConnection: close") + "\r\nAccept-Encoding: identity\r\n";
         std::set<std::string> connection_names;
         auto named = request_headers.find("connection");
         if (named != request_headers.end()) { std::istringstream words(lower(named->second)); std::string token; while (std::getline(words,token,',')) connection_names.insert(trim(token)); }
         for (auto &h : request_headers) if (!hop(h.first) && h.first!="host" && h.first!="accept-encoding" && !connection_names.count(h.first)) wire += h.first + ": " + h.second + "\r\n";
         if (!upload.empty() || request_headers.count("content-length")) wire += "Content-Length: " + std::to_string(upload.size()) + "\r\n";
         origin.write(wire + "\r\n" + upload);
-        Reply reply;
+        Reply reply; std::string version;
         for (int i=0;i<5;i++) {
-            auto line=origin.line(); std::istringstream stream(line); std::string version;
+            auto line=origin.line(); answered=true; std::istringstream stream(line);
             stream>>version>>reply.status; require(starts(version,"HTTP/1.") && reply.status>=100 && reply.status<=599,502,"Invalid upstream response");
             reply.cookies.clear(); reply.headers = headers(origin,&reply.cookies); if (reply.status>=200) break;
         }
         require(reply.status>=200,502,"Too many interim responses");
-        if (method!="HEAD" && reply.status!=204 && reply.status!=304) reply.body=body(origin,reply.headers,true,body_limit);
+        const bool bodyless = method=="HEAD" || reply.status==204 || reply.status==304;
+        if (!bodyless) reply.body=body(origin,reply.headers,true,body_limit);
+        reusable = keep && version=="HTTP/1.1" && (bodyless || reply.headers.count("content-length") || reply.headers.count("transfer-encoding")) &&
+                   !(reply.headers.count("connection") && lower(reply.headers["connection"]).find("close")!=std::string::npos);
         // Remove headers explicitly named by Connection, too.
         if (reply.headers.count("connection")) { std::istringstream words(lower(reply.headers["connection"])); std::string token; while (std::getline(words,token,',')) { token=trim(token); if (token=="set-cookie") reply.cookies.clear(); if (token!="connection") reply.headers.erase(token); } }
         return reply;
     }
+    // Idle connections to the Internet Archive, kept like a browser keeps its own: a new TCP and TLS handshake for
+    // every request and redirect was most of each resource's time.
+    std::mutex pool_mutex;
+    std::vector<std::unique_ptr<Connection>> archive_pool;
+    Reply fetch(const Configuration &config, const std::string &url, const std::string &method, const Headers &request_headers = {}, const std::string &upload = "", bool keep = false) {
+        Address address = Address::parse(url);
+        keep = keep && address.scheme == "https" && lower(address.host) == "web.archive.org" && address.port == 443;
+        for (int attempt = 0;; attempt++) {
+            std::unique_ptr<Connection> origin;
+            if (keep && attempt == 0) {
+                std::lock_guard<std::mutex> lock(pool_mutex);
+                if (!archive_pool.empty()) { origin = std::move(archive_pool.back()); archive_pool.pop_back(); }
+            }
+            const bool pooled = bool(origin);
+            if (!origin) origin = open(config, address);
+            bool answered = false, reusable = false;
+            try {
+                Reply reply = exchange(*origin, address, method, request_headers, upload, keep, answered, reusable);
+                if (reusable) {
+                    std::lock_guard<std::mutex> lock(pool_mutex);
+                    if (archive_pool.size() < 32) archive_pool.push_back(std::move(origin));
+                }
+                return reply;
+            } catch (const std::exception &) {
+                // A kept connection the server has since closed fails before any answer: once more on a new one.
+                if (pooled && !answered) continue;
+                throw;
+            }
+        }
+    }
     Reply archived(const Configuration &config, const std::string &target, const std::string &method) {
         std::unique_lock<std::mutex> lock(gate);
         for (auto it=cache.begin();it!=cache.end();++it) if (it->target==target && it->date==config.archive_date) { Reply r=it->reply; cache.splice(cache.begin(),cache,it); return r; }
-        // Up to six requests at once, as a browser opens to one site; a page's resources no longer queue one by
-        // one. The Archive's own limit still holds: a 429/503 stops every request for its Retry-After.
+        // Six at once, each on its own kept-alive connection: what a browser speaking HTTP/1.1 opens to one site.
+        // Firefox gets further with HTTP/2 (up to 58 requests in flight for a 2009 nytimes.com) but over just two
+        // connections; dozens of separate connections from one address get it refused by the Archive for a while.
+        // The guest's Safari asks for about six at a time itself. A 429/503 stops every request for its Retry-After.
         archive_slot.wait(lock,[&]{return archive_requests<6;});
         ++archive_requests;
         lock.unlock();
@@ -427,7 +467,16 @@ struct Proxy::State {
                 std::lock_guard<std::mutex> guard(gate);
                 if (now<cooldown) return {429,{{"content-type","text/plain"},{"retry-after",std::to_string(std::chrono::duration_cast<std::chrono::seconds>(cooldown-now).count()+1)}},"The Internet Archive asked LightTouch to wait. Try reloading after the wait shown in Retry-After.\n"};
             }
-            Reply r=fetch(config,url,method,{{"user-agent","LightTouch/1.0 (archive replay)"}});
+            Reply r;
+            try {
+                r=fetch(config,url,method,{{"user-agent","LightTouch/1.0 (archive replay)"}},"",true);
+            } catch (const Error &error) {
+                // A refused connection is the Archive limiting this address for a while: pause rather than retry
+                // every resource, which would only keep it refusing.
+                if (error.status!=502 || std::string(error.what())!="Could not connect to the website") throw;
+                { std::lock_guard<std::mutex> guard(gate); cooldown=std::max(cooldown,std::chrono::steady_clock::now()+60s); }
+                throw Error(503,"The Internet Archive isn't accepting connections from this network right now (it limits busy addresses for a while). Try again later.");
+            }
             if (r.status==429 || r.status==503) {
                 int seconds=60;
                 try { if (r.headers.count("retry-after")) seconds=int(number(r.headers["retry-after"],3600)); } catch (...) {}
