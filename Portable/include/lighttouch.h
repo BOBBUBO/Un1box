@@ -13,6 +13,10 @@ extern "C" {
  * clean exit. Confirmed cleanup may finish sooner. Kill/timeout retains dirty. */
 #define LT_SHUTDOWN_CONFIRMATION_TIMEOUT_MS 30000u
 #define LT_SHUTDOWN_GRACE_MS 35000u
+/* A Stop before a booting guest's agent first answers (on a device whose agent
+ * answered on an earlier boot) waits up to this long for it before asking iOS;
+ * callers count their deadlines from when iOS is asked (shutdown_route set). */
+#define LT_SHUTDOWN_AGENT_WAIT_MS 20000u
 #define LT_INIT(type) {sizeof(type), LT_ABI_VERSION}
 typedef enum {
     LT_OK = 0,

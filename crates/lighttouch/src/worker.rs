@@ -323,6 +323,9 @@ fn run(
     // The core reports LT_UNSUPPORTED (by a C++ throw) when the session runs without audio: ask once.
     let mut pcm_live = true;
     let mut stopping_since: Option<Instant> = None;
+    // When iOS was asked to shut down (the core may first wait for a booting guest's agent): the grace counts from
+    // then.
+    let mut shutdown_asked: Option<Instant> = None;
     let mut last_status: Option<(StatusEvent, Instant)> = None;
     let mut reported_input = 0u64;
     let mut pending_guest: Option<u64> = None;
@@ -472,6 +475,16 @@ fn run(
             last_status = Some((event, Instant::now()));
         }
 
+        if stopping_since.is_some() && shutdown_asked.is_none() && diagnostics.shutdown_route != 0 {
+            // Which way iOS was asked to shut down: the agent's halt, or Power held (slide to power off).
+            shutdown_asked = Some(Instant::now());
+            eprintln!(
+                "shutdown: {} after {:.1} s (agent {})",
+                if diagnostics.shutdown_route == 1 { "guest agent halt" } else { "power button" },
+                stopping_since.unwrap().elapsed().as_secs_f64(),
+                diagnostics.agent_status
+            );
+        }
         match status.state {
             State::Stopped => {
                 break Outcome {
@@ -514,7 +527,11 @@ fn run(
         }
 
         if let Some(since) = stopping_since {
-            if since.elapsed() > grace {
+            let overdue = match shutdown_asked {
+                Some(asked) => asked.elapsed() > grace,
+                None => since.elapsed() > grace + Duration::from_millis(sys::LT_SHUTDOWN_AGENT_WAIT_MS as u64),
+            };
+            if overdue {
                 break Outcome {
                     clean: false,
                     dirty: true,

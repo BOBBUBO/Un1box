@@ -37,6 +37,11 @@ void record_guest_verdict(lt_device *d, bool good, int64_t serial) {
     if (verdicts.judge(good ? GuestPackageJudge::Verdict::good : GuestPackageJudge::Verdict::bad, serial, seed))
         atomic_write(path, verdicts.text());
 }
+bool guest_agent_expected(lt_device *d) {
+    auto path = d->state / "guest-verdicts";
+    std::error_code missing;
+    return fs::exists(path, missing) && GuestVerdicts::parse(read_file(path, 4096)).good >= 0;
+}
 std::string guest_offer(lt_device *d, const char *pack) {
     require(fs::is_regular_file(fs::symlink_status(pack)), "guest package must be a regular .itpack");
     auto blob = read_file(pack);

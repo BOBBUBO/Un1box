@@ -190,7 +190,11 @@ pub struct Diagnostics {
     pub engine_ready: bool,
     pub display_sleeping: bool,
     pub backlight_level: i32,
+    /// The guest agent: 0 absent, 1 alive, 2 stale (its lease ran out).
+    pub agent_status: u32,
     pub shutdown_phase: u32,
+    /// How the shutdown went to iOS: 0 not yet, 1 the agent's halt, 2 the power-button gesture.
+    pub shutdown_route: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -289,7 +293,9 @@ impl Runtime {
             engine_ready: d.engine_ready != 0,
             display_sleeping: d.display_sleeping != 0,
             backlight_level: d.backlight_level,
+            agent_status: d.agent_status,
             shutdown_phase: d.shutdown_phase,
+            shutdown_route: d.shutdown_route,
         })
     }
 

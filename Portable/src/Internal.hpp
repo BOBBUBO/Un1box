@@ -62,6 +62,8 @@ std::string prepared_guest_package(lt_device *);
 std::string guest_offer(lt_device *, const char *);
 // A boot's verdict on the guest package it ran (GuestPackageJudge), for later offers.
 void record_guest_verdict(lt_device *, bool good, int64_t serial);
+// Whether a boot has called this device's guest package good, which takes its agent answering: its guest has one.
+bool guest_agent_expected(lt_device *);
 void clean_device(lt_device *, bool);
 } // namespace lt
 struct lt_device {

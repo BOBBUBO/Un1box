@@ -520,7 +520,10 @@ impl Session {
         if self.frontmost_asked.is_some_and(|at| at.elapsed() > Duration::from_millis(2500)) {
             self.pause_after_frontmost();
         }
-        let grace = Duration::from_millis(lighttouch_core::sys::LT_SHUTDOWN_GRACE_MS as u64 + 10_000);
+        let grace = Duration::from_millis(
+            (lighttouch_core::sys::LT_SHUTDOWN_AGENT_WAIT_MS + lighttouch_core::sys::LT_SHUTDOWN_GRACE_MS) as u64
+                + 10_000,
+        );
         if self.stop_requested.is_some_and(|at| at.elapsed() > grace) && self.phase.active() {
             let _ = self.child.kill();
         }

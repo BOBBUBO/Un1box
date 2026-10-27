@@ -11,6 +11,7 @@ pub const LT_ABI_VERSION: u32 = 1;
 pub const LT_MAX_CONTACTS: usize = 8;
 pub const LT_SHUTDOWN_CONFIRMATION_TIMEOUT_MS: u32 = 30000;
 pub const LT_SHUTDOWN_GRACE_MS: u32 = 35000;
+pub const LT_SHUTDOWN_AGENT_WAIT_MS: u32 = 20000;
 pub const LT_BOARD_HEADPHONES: u64 = 1 << 4;
 
 pub type lt_status = c_int;

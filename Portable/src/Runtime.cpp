@@ -347,7 +347,16 @@ struct lt_runtime {
     }
     void publish() {
         bool quit_sent = false;
+        static_assert(lt::GuestShutdownAdmission::boot_budget_ns == uint64_t(LT_SHUTDOWN_AGENT_WAIT_MS) * 1000000);
         lt::GuestShutdownAdmission shutdown_admission;
+        // A device whose agent answered on an earlier boot gets one on this boot too: a Stop before it answers waits
+        // for it (GuestShutdownAdmission::boot_budget_ns) rather than pressing Power on a booting guest.
+        try {
+            if (lt::guest_agent_expected(device))
+                shutdown_admission.expect_agent();
+        } catch (const std::exception &e) {
+            fprintf(stderr, "lighttouch: could not read the guest package verdicts: %s\n", e.what());
+        }
         lt::GuestPackageJudge package_judge;
         while (!done) {
             try {
