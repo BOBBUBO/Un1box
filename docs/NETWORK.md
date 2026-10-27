@@ -60,7 +60,11 @@ The engine's bundled libslirp uses a native private Unix socket forward at
 every boot, Off included; libslirp connects to the socket per guest connection, so
 the worker makes the proxy (identity, then listener) the first time networking is
 turned on, at boot or live, and a guest connection before that just closes. Off
-restricts guest egress and creates no proxy identity until networking is first on. Archive restricts egress to the private proxy.
+restricts guest egress and creates no proxy identity until networking is first on.
+With egress restricted (Off, and Archive) the guest's own DNS lookups get an
+immediate NXDOMAIN from the virtual nameserver (engine patch
+libslirp-restricted-dns.patch, zero-TTL SOA so nothing is negatively cached), so
+apps fail at once instead of waiting out the resolver's timeout. Archive restricts egress to the private proxy.
 Direct enables NAT and Android DNS using netd/getaddrinfo; LAN access remains an
 explicit opt-in. Host loopback remains blocked. This source integration replaces
 the fork PR's build-time patches.
@@ -131,7 +135,8 @@ sh Portable/tests/network/check-slirp-policy.sh /path/to/qemu-ios-net \
 ```
 
 This runs libslirp's ping, guest-forward and NCSI suites, then checks Direct-mode
-public/LAN routing, host-loopback refusal and the private Android DNS exemption.
+public/LAN routing, host-loopback refusal, the private Android DNS exemption and
+restricted mode's immediate DNS refusal.
 It opens no outbound connections.
 
 ## Android acceptance checks
