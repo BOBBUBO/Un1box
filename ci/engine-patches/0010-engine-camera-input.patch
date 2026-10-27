@@ -1,0 +1,569 @@
+Camera: the phone's cameras become the device's
+
+The A4's camera ISP has always been modelled well enough for the guest to
+drive it -- it draws a test pattern, on time, into the buffer the kext gave it,
+and both cameras' drivers accept it. What it never had was a picture. This is
+that, written as the smallest thing that can be: a hand-off between the app's
+camera thread and the emulated ISP.
+
+  hw/arm/host-camera.c            two slots, one per sensor. A push copies the
+                                  frame and, if nobody drew the last one, counts
+                                  it as replaced -- a viewfinder drops, it does
+                                  not queue, so a slow guest costs a dropped
+                                  frame and never a growing buffer. A take hands
+                                  the newest frame over once. Sizes that cannot
+                                  be a picture are refused rather than drawn.
+  hw/arm/s5l8930_isp.c            the sensor recognition command (03:00 back,
+                                  04:00 front) is what names the sensor, so it
+                                  is where the picture's source is chosen; each
+                                  frame takes the newest one and scales it into
+                                  the guest's mode with a step accumulator, or
+                                  draws the pattern when the phone has sent
+                                  nothing (a desktop, a check boot). The front
+                                  sensor's module is mounted rotated, so its
+                                  picture is turned. A frame size no sensor ever
+                                  had is skipped instead of allocated and DMAed.
+  contrib/macos-app/…             qemu_ios_camera_frame/flush/sensor/state
+                                  (API 2.4): the app's side of the hand-off, with
+                                  no device and no guest memory involved.
+
+Nothing here repairs, throttles, retries or waits: the old camera work's
+timeouts, parking, fallbacks and extra devices are all gone. The ISP's timing is
+the engine's own, untouched, because it is the part that already worked.
+
+diff --git a/contrib/macos-app/qemu-macos-extras.c b/contrib/macos-app/qemu-macos-extras.c
+index d08cfe1..1b92aff 100644
+--- a/contrib/macos-app/qemu-macos-extras.c
++++ b/contrib/macos-app/qemu-macos-extras.c
+@@ -25,6 +25,7 @@
+ #include "qemu/thread.h"
+ #include "qemu/atomic.h"
+ #include "hw/arm/ipod-agent.h"
++#include "hw/arm/host-camera.h"
+ #include "qobject/qjson.h"
+ #include "qobject/qdict.h"
+ #include "qapi/qapi-commands-control.h"
+@@ -1111,3 +1112,35 @@ int qemu_ios_microphone_state(uint32_t *rate, uint32_t *queued, uint64_t *pushed
+     }
+     return state.capturing ? 1 : 0;
+ }
++
++/*
++ * The host's cameras into the emulated device's ISP, one sensor at a time.
++ *
++ * The bridge is the engine's, not a device's: the app pushes a frame whenever
++ * its camera has one, the ISP takes the newest when it draws the next one, and
++ * neither waits for the other. Nothing here touches guest memory or the device
++ * state, so it is safe to call from any thread, including before a machine
++ * exists -- a frame pushed early is just the first viewfinder picture.
++ */
++bool qemu_ios_camera_frame(int sensor, const void *nv12, uint32_t width, uint32_t height)
++{
++    if (!nv12 || !width || !height) {
++        return false;
++    }
++    return host_camera_push(sensor, nv12, width, height);
++}
++
++void qemu_ios_camera_flush(void)
++{
++    host_camera_reset();
++}
++
++int32_t qemu_ios_camera_sensor(void)
++{
++    return host_camera_active();
++}
++
++void qemu_ios_camera_state(int sensor, uint64_t *pushed, uint64_t *taken, uint64_t *replaced)
++{
++    host_camera_counts(sensor, pushed, taken, replaced);
++}
+diff --git a/contrib/macos-app/qemu-macos-extras.h b/contrib/macos-app/qemu-macos-extras.h
+index 4e31244..bb9e43a 100644
+--- a/contrib/macos-app/qemu-macos-extras.h
++++ b/contrib/macos-app/qemu-macos-extras.h
+@@ -130,6 +130,22 @@ const char *qemu_ios_build_id(void);
+ #define QEMU_IOS_API_VERSION ((2u << 16) | 4u)
+ uint32_t qemu_ios_api_version(void);
+ 
++/*
++ * The host's cameras into the emulated device. sensor is 0 for the back one and
++ * 1 for the front, the two the A4 boards carry. nv12 is one frame, luma then
++ * interleaved chroma, no padding, at width x height; it is copied, so the caller
++ * keeps its buffer. false when the frame is not a plausible one.
++ *
++ * The newest frame wins: pushing over a frame nobody has drawn drops the old
++ * one, which is what a viewfinder does and why a slow guest costs a drop rather
++ * than a delay. qemu_ios_camera_sensor is the sensor the guest last named (the
++ * front and back switch in the Camera app is what changes it).
++ */
++bool qemu_ios_camera_frame(int sensor, const void *nv12, uint32_t width, uint32_t height);
++void qemu_ios_camera_flush(void);
++int32_t qemu_ios_camera_sensor(void);
++void qemu_ios_camera_state(int sensor, uint64_t *pushed, uint64_t *taken, uint64_t *replaced);
++
+ /* Machine controls. */
+ void qemu_ios_ui_pause(void);
+ void qemu_ios_ui_resume(void);
+diff --git a/hw/arm/host-camera.c b/hw/arm/host-camera.c
+new file mode 100644
+index 0000000..b0e5ad1
+--- /dev/null
++++ b/hw/arm/host-camera.c
+@@ -0,0 +1,160 @@
++/*
++ * The phone's cameras into the emulated device: the slots the app fills and the
++ * ISP empties. See include/hw/arm/host-camera.h for the contract.
++ *
++ * Size limits are here because the two sides disagree about what a frame is: the
++ * app knows the phone's preview sizes (640x480 up to 1280x960), the guest asks
++ * for whatever mode its driver picked. A frame outside these bounds is a bug in
++ * the caller, and taking it would mean the ISP scaling from a buffer that is not
++ * what it claims -- so it is refused and counted, not truncated.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#include "qemu/osdep.h"
++#include "qemu/thread.h"
++#include "hw/arm/host-camera.h"
++
++#define HOST_CAMERA_MIN_SIDE    16
++#define HOST_CAMERA_MAX_SIDE    4096
++#define HOST_CAMERA_MAX_FRAME   (HOST_CAMERA_MAX_SIDE * HOST_CAMERA_MAX_SIDE * 3 / 2)
++
++typedef struct HostCameraSlot {
++    QemuMutex lock;
++    uint8_t *frame;             /* one NV12 frame, or NULL before the first push */
++    size_t capacity;
++    unsigned width, height;
++    bool fresh;                 /* pushed since the last take */
++    uint64_t pushed, taken, replaced;
++} HostCameraSlot;
++
++static HostCameraSlot slots[HOST_CAMERA_SENSORS];
++static int active = HOST_CAMERA_BACK;
++static bool initialised;
++
++static void host_camera_init(void)
++{
++    if (initialised) {
++        return;
++    }
++    for (int i = 0; i < HOST_CAMERA_SENSORS; i++) {
++        qemu_mutex_init(&slots[i].lock);
++    }
++    initialised = true;
++}
++
++static HostCameraSlot *slot_for(int sensor)
++{
++    return sensor == HOST_CAMERA_FRONT || sensor == HOST_CAMERA_BACK ? &slots[sensor] : NULL;
++}
++
++bool host_camera_push(int sensor, const uint8_t *nv12, unsigned width, unsigned height)
++{
++    HostCameraSlot *slot;
++
++    host_camera_init();
++    slot = slot_for(sensor);
++    if (!slot || !nv12) {
++        return false;
++    }
++    if (width < HOST_CAMERA_MIN_SIDE || height < HOST_CAMERA_MIN_SIDE ||
++        width > HOST_CAMERA_MAX_SIDE || height > HOST_CAMERA_MAX_SIDE ||
++        (width & 1) || (height & 1)) {
++        return false;
++    }
++
++    size_t need = (size_t)width * height * 3 / 2;
++
++    if (need > HOST_CAMERA_MAX_FRAME) {
++        return false;
++    }
++    qemu_mutex_lock(&slot->lock);
++    if (need > slot->capacity) {
++        slot->frame = g_realloc(slot->frame, need);
++        slot->capacity = need;
++    }
++    memcpy(slot->frame, nv12, need);
++    slot->width = width;
++    slot->height = height;
++    if (slot->fresh) {
++        /* An unread frame is replaced, not queued: this is a viewfinder. */
++        slot->replaced++;
++    }
++    slot->fresh = true;
++    slot->pushed++;
++    qemu_mutex_unlock(&slot->lock);
++    return true;
++}
++
++const uint8_t *host_camera_take(int sensor, unsigned *width, unsigned *height)
++{
++    HostCameraSlot *slot;
++
++    host_camera_init();
++    slot = slot_for(sensor);
++    if (!slot) {
++        return NULL;
++    }
++    qemu_mutex_lock(&slot->lock);
++    const uint8_t *frame = NULL;
++
++    if (slot->fresh) {
++        slot->fresh = false;
++        slot->taken++;
++        if (width) {
++            *width = slot->width;
++        }
++        if (height) {
++            *height = slot->height;
++        }
++        frame = slot->frame;
++    }
++    qemu_mutex_unlock(&slot->lock);
++    return frame;
++}
++
++void host_camera_select(int sensor)
++{
++    host_camera_init();
++    if (slot_for(sensor)) {
++        active = sensor;
++    }
++}
++
++int host_camera_active(void)
++{
++    return active;
++}
++
++void host_camera_counts(int sensor, uint64_t *pushed, uint64_t *taken, uint64_t *replaced)
++{
++    HostCameraSlot *slot;
++
++    host_camera_init();
++    slot = slot_for(sensor);
++    if (!slot) {
++        return;
++    }
++    qemu_mutex_lock(&slot->lock);
++    if (pushed) {
++        *pushed = slot->pushed;
++    }
++    if (taken) {
++        *taken = slot->taken;
++    }
++    if (replaced) {
++        *replaced = slot->replaced;
++    }
++    qemu_mutex_unlock(&slot->lock);
++}
++
++void host_camera_reset(void)
++{
++    host_camera_init();
++    for (int i = 0; i < HOST_CAMERA_SENSORS; i++) {
++        qemu_mutex_lock(&slots[i].lock);
++        slots[i].fresh = false;
++        slots[i].pushed = slots[i].taken = slots[i].replaced = 0;
++        qemu_mutex_unlock(&slots[i].lock);
++    }
++    active = HOST_CAMERA_BACK;
++}
+diff --git a/hw/arm/meson.build b/hw/arm/meson.build
+index 526734d..fb41528 100644
+--- a/hw/arm/meson.build
++++ b/hw/arm/meson.build
+@@ -93,7 +93,7 @@ arm_common_ss.add(when: 'CONFIG_XEN', if_true: files(
+   'xen-pvh.c',
+ ))
+ 
+-arm_ss.add(when: 'CONFIG_IPAD1', if_true: files('ipad1.c', 's5l8930_dmc.c', 's5l8930_pmgr.c', 's5l8930_gpio.c', 's5l8930_iop.c', 's5l8930_iop_core.c', 's5l8930_sdio.c', 's5l8930_i2c.c', 's5l8930_display.c', 's5l8930_dart.c', 's5l8930_cdma.c', 's5l8930_bbspi.c', 's5l8930_h2fmi.c', 's5l8930_sha1.c', 's5l8930_ltc4099.c', 's5l8930_hdq.c', 's5l8930_i2s.c', 's5l8930_isp.c', 'host-mic.c'))
++arm_ss.add(when: 'CONFIG_IPAD1', if_true: files('ipad1.c', 's5l8930_dmc.c', 's5l8930_pmgr.c', 's5l8930_gpio.c', 's5l8930_iop.c', 's5l8930_iop_core.c', 's5l8930_sdio.c', 's5l8930_i2c.c', 's5l8930_display.c', 's5l8930_dart.c', 's5l8930_cdma.c', 's5l8930_bbspi.c', 's5l8930_h2fmi.c', 's5l8930_sha1.c', 's5l8930_ltc4099.c', 's5l8930_hdq.c', 's5l8930_i2s.c', 's5l8930_isp.c', 'host-camera.c', 'host-mic.c'))
+ arm_ss.add(when: 'CONFIG_IPAD1', if_true: files('s5l8920.c', 's5l8920_pmgr.c', 's5l8920_dart.c', 's5l8920_pwm.c', 's5l8920_vxd.c', 's5l8920_vxd_h264.c', 's5l8920_jpeg.c'))
+ # Synopsys DWC OTG device core, PHY register file and host TCP bridge: shared by the S5L8720 and S5L8930 machines.
+ arm_ss.add(when: 'CONFIG_IPOD_TOUCH_1G', if_true: files('ipod_touch_1g.c', 's5l8900_fmc.c', 's5l8900_nand_ecc.c', 's5l8900_adm.c', 's5l8900_lcd_panel.c', 's5l8900_multitouch_z1.c', 'ipod_touch_wm8758.c', 'ipod_touch_piezo.c'))
+diff --git a/hw/arm/s5l8930_isp.c b/hw/arm/s5l8930_isp.c
+index c2b6ecf..cd7395f 100644
+--- a/hw/arm/s5l8930_isp.c
++++ b/hw/arm/s5l8930_isp.c
+@@ -28,6 +28,7 @@
+ #include "migration/vmstate.h"
+ #include "system/address-spaces.h"
+ #include "qemu/bswap.h"
++#include "hw/arm/host-camera.h"
+ 
+ #define ISP_CPU_SIZE    0x1000
+ #define ISP_SIZE        0xd6000
+@@ -51,6 +52,10 @@
+ #define ISP_OUT_FORMAT  0xd3b20     /* 0x11: 4:2:0 biplanar (NV12), 0x10: 4:2:2 */
+ 
+ #define INT_FRAME       0x1000
++
++/* The largest frame the A4's sensors produce (5 MP, 4:2:0, no padding): anything bigger is a
++ * register file that does not describe a picture, not a mode. */
++#define ISP_FRAME_MAX   (2592u * 1936u * 2u)
+ #define ISP_DART_SID    1
+ 
+ OBJECT_DECLARE_SIMPLE_TYPE(S5L8930ISPState, S5L8930_ISP)
+@@ -67,6 +72,7 @@ struct S5L8930ISPState {
+     DeviceState *dart;
+     QEMUTimer *frame_timer;
+     uint32_t frames;
++    uint8_t sensor;                 /* HOST_CAMERA_BACK or HOST_CAMERA_FRONT: what the kext last named */
+     uint8_t shutter;                /* frames still to flag as the still (00:33 one, 00:34 preflash and flash) */
+     uint8_t strobe;                 /* the flagged frame's strobe capture count */
+     uint8_t *pic;                   /* one frame, host side */
+@@ -128,6 +134,17 @@ static void isp_command(S5L8930ISPState *s, uint8_t cat, uint8_t reg)
+         s->file[0x00][0x91] = s->file[0x00][0x00];      /* requested sensor mode -> current mode */
+         return;
+     }
++    if ((cat == 0x03 || cat == 0x04) && reg == 0x00) {
++        /* Sensor recognition. The kext asks this before it drives a sensor and
++         * again when the app switches cameras, which makes it the one place the
++         * guest says which camera it is using -- so it is where the picture's
++         * source is chosen. 03 is the back sensor (MIPI), 04 the front (SMIA).
++         * No return: the command loop below still has to clear the register the
++         * kext polls for completion. */
++        s->sensor = cat == 0x04 ? HOST_CAMERA_FRONT : HOST_CAMERA_BACK;
++        host_camera_select(s->sensor);
++        isp_log(s, "sensor %s", s->sensor == HOST_CAMERA_FRONT ? "front" : "back");
++    }
+     for (unsigned i = 0; i < ARRAY_SIZE(isp_commands); i++) {
+         if (isp_commands[i].cat == cat && isp_commands[i].reg == reg) {
+             s->file[cat][reg] = 0;
+@@ -286,11 +303,92 @@ static void isp_metadata(S5L8930ISPState *s, uint32_t va)
+     }
+ }
+ 
++/*
++ * The phone's picture in the ISP's output layout.
++ *
++ * Both sides use NV12 (luma, then interleaved chroma), so the only work is
++ * size: the phone captures at its own preview size and the guest asked for a
++ * mode's size, and the two differ often enough that it cannot be ignored. It is
++ * nearest neighbour, done a row at a time with a step accumulator -- no division
++ * per pixel, and a frame that is already the right size is a straight copy.
++ *
++ * The front sensor's module sits rotated against the back one, so its picture
++ * arrives upside down; the guest draws what it is given, so it is turned here.
++ */
++static void isp_from_camera(S5L8930ISPState *s, const uint8_t *src, unsigned sw, unsigned sh,
++                            unsigned w, unsigned h, bool nv12, bool flip)
++{
++    uint8_t *dst = s->pic;
++    const uint8_t *luma = src;
++    const uint8_t *chroma = src + (size_t)sw * sh;
++
++    for (unsigned y = 0; y < h; y++) {
++        unsigned out_y = flip ? h - 1 - y : y;
++        unsigned sy = (unsigned)(((uint64_t)out_y * sh) / h);
++        const uint8_t *lrow = luma + (size_t)sy * sw;
++        const uint8_t *crow = chroma + (size_t)(sy / 2) * sw;
++        uint8_t *drow = dst + (size_t)y * w;
++
++        if (sw == w && nv12) {
++            memcpy(drow, lrow, w);
++            continue;
++        }
++        unsigned sx = 0, err = 0;
++
++        for (unsigned x = 0; x < w; x++) {
++            unsigned read_x = flip ? sw - 1 - sx : sx;
++
++            if (nv12) {
++                drow[x] = lrow[read_x];
++            } else {
++                /* 4:2:2 ('yuvs'): Y Cb Y Cr, one chroma sample per pixel, taken from the pair
++                 * that covers it. */
++                uint8_t *q = drow + (size_t)x * 2;
++
++                q[0] = lrow[read_x];
++                q[1] = crow[read_x & ~1u] ;
++                if (flip ? !(read_x & 1) : (read_x & 1)) {
++                    q[1] = crow[(read_x & ~1u) + 1];
++                }
++            }
++            err += sw;
++            while (err >= w) {
++                err -= w;
++                sx++;
++            }
++        }
++    }
++    if (nv12) {
++        uint8_t *duv = dst + (size_t)w * h;
++        unsigned ch = sh / 2 ? sh / 2 : 1, oh = h / 2 ? h / 2 : 1;
++
++        for (unsigned y = 0; y < oh; y++) {
++            unsigned out_y = flip ? oh - 1 - y : y;
++            unsigned sy = (unsigned)(((uint64_t)out_y * ch) / oh);
++            const uint8_t *crow = chroma + (size_t)sy * sw;
++            uint8_t *drow = duv + (size_t)y * w;
++            unsigned sx = 0, err = 0;
++
++            for (unsigned x = 0; x < w; x += 2) {
++                unsigned read_x = flip ? sw - 2 - (sx & ~1u) : (sx & ~1u);
++
++                drow[x] = crow[read_x];
++                drow[x + 1] = crow[read_x + 1];
++                err += sw;
++                while (err >= w) {
++                    err -= w;
++                    sx += 2;
++                }
++            }
++        }
++    }
++}
++
+ static void isp_frame(void *opaque)
+ {
+     S5L8930ISPState *s = opaque;
+     uint32_t *r = s->isp;
+-    bool front = false;     /* ponytail: back sensor only; the front's selection is not decoded yet */
++    bool front = s->sensor == HOST_CAMERA_FRONT;
+     uint8_t *f = s->file[front ? 0x04 : 0x03];
+     unsigned w = f[0x1b] << 8 | f[0x1c], h = f[0x1d] << 8 | f[0x1e];     /* the output's size; 17..1a the sensor's */
+     bool nv12 = r[ISP_OUT_FORMAT / 4] == 0x11;
+@@ -302,19 +400,44 @@ static void isp_frame(void *opaque)
+     if (!r[ISP_OUT_ENABLE / 4] || !y) {
+         return;     /* stopped: no buffer, no frame */
+     }
+-    if (w && h && y > 0x1000) {
+-        if (need > s->pic_size) {
+-            s->pic = g_realloc(s->pic, need);
+-            s->pic_size = need;
++    if (y > 0x1000) {
++        unsigned cw = 0, ch = 0;
++        const uint8_t *camera = host_camera_take(s->sensor, &cw, &ch);
++
++        if (w && h && (w & 1 || h & 1 || w < 16 || h < 16 || (uint64_t)w * h * 3 / 2 > ISP_FRAME_MAX)) {
++            /* The sizes come from the guest's own register file. Before the kext has programmed a
++             * mode those bytes are whatever it left there, and a size no sensor ever had is not a
++             * frame: drawing it would mean allocating and DMAing past the guest's buffer. */
++            isp_log(s, "frame skipped: %ux%u is not a mode", w, h);
++            w = h = 0;
++        }
++        if ((!w || !h) && camera) {
++            /* The guest has named no output mode but the phone has a picture: draw it at its own
++             * size rather than leaving the buffer the guest allocated unwritten. */
++            w = cw;
++            h = ch;
+         }
+-        isp_pattern(s, w, h, nv12);
+-        if (nv12) {
+-            isp_dma_write(s, y, s->pic, (size_t)w * h);
+-            if (c > 0x1000) {
+-                isp_dma_write(s, c, s->pic + w * h, (size_t)w * h / 2);
++        if (w && h) {
++            need = (size_t)w * h * 2;
++            if (need > s->pic_size) {
++                s->pic = g_realloc(s->pic, need);
++                s->pic_size = need;
++            }
++            if (camera) {
++                isp_from_camera(s, camera, cw, ch, w, h, nv12, front);
++            } else {
++                /* Nothing from the phone for this sensor: a host without a camera still shows a
++                 * viewfinder, so a check boot and a desktop are not staring at an empty buffer. */
++                isp_pattern(s, w, h, nv12);
++            }
++            if (nv12) {
++                isp_dma_write(s, y, s->pic, (size_t)w * h);
++                if (c > 0x1000) {
++                    isp_dma_write(s, c, s->pic + w * h, (size_t)w * h / 2);
++                }
++            } else {
++                isp_dma_write(s, y, s->pic, (size_t)w * h * 2);
+             }
+-        } else {
+-            isp_dma_write(s, y, s->pic, (size_t)w * h * 2);
+         }
+     }
+     s->frames++;
+@@ -394,7 +517,9 @@ static void isp_reset(DeviceState *dev)
+     memset(s->file, 0, sizeof(s->file));
+     timer_del(s->frame_timer);
+     s->frames = 0;
++    s->sensor = HOST_CAMERA_BACK;
+     s->shutter = s->strobe = 0;
++    host_camera_reset();
+ }
+ 
+ static const VMStateDescription isp_vmstate = {
+@@ -407,6 +532,7 @@ static const VMStateDescription isp_vmstate = {
+         VMSTATE_BUFFER_UNSAFE(file, S5L8930ISPState, 0, sizeof(((S5L8930ISPState *)0)->file)),
+         VMSTATE_TIMER_PTR(frame_timer, S5L8930ISPState),
+         VMSTATE_UINT32(frames, S5L8930ISPState),
++        VMSTATE_UINT8(sensor, S5L8930ISPState),
+         VMSTATE_UINT8(shutter, S5L8930ISPState),
+         VMSTATE_UINT8(strobe, S5L8930ISPState),
+         VMSTATE_END_OF_LIST()
+diff --git a/include/hw/arm/host-camera.h b/include/hw/arm/host-camera.h
+new file mode 100644
+index 0000000..20151e0
+--- /dev/null
++++ b/include/hw/arm/host-camera.h
+@@ -0,0 +1,59 @@
++/*
++ * The phone's cameras, as the emulated device's camera sensor.
++ *
++ * The A4's camera ISP decides when a frame happens and where it goes; what it
++ * has never had is a picture. This is the other half: two slots, one per sensor,
++ * that the app fills with the phone's own frames and the ISP empties.
++ *
++ * The contract is a viewfinder's, not a queue's. A sensor produces frames
++ * whether or not anyone is looking, and an old frame is worth nothing: the
++ * newest push wins and the one it replaced is dropped. That is why there is no
++ * ring here and no back-pressure -- a slow guest costs a drop, never a delay and
++ * never a buffer that grows.
++ *
++ * Nothing in here knows about QEMU or the ISP: it is a hand-off between threads
++ * (the app's camera thread pushes, the emulator's vCPU thread takes), and the
++ * lock is held only for the swap.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#ifndef HW_ARM_HOST_CAMERA_H
++#define HW_ARM_HOST_CAMERA_H
++
++#include "qemu/osdep.h"
++
++/* Which sensor a frame belongs to: the two the A4 boards carry. */
++#define HOST_CAMERA_BACK    0       /* MIPI, the one behind the screen's back */
++#define HOST_CAMERA_FRONT   1       /* SMIA, the one above the screen */
++#define HOST_CAMERA_SENSORS 2
++
++/*
++ * The app hands over one frame, NV12 (luma, then interleaved chroma, no
++ * padding), of width x height. The buffer is copied, so the caller keeps its
++ * own. Returns false for a sensor that does not exist or a frame that is not a
++ * plausible size; the app treats that as its own mistake, not a retry.
++ */
++bool host_camera_push(int sensor, const uint8_t *nv12, unsigned width, unsigned height);
++
++/*
++ * The newest frame this sensor has produced since the last take, or NULL. The
++ * pointer stays valid until the next take on the same sensor, which is the
++ * ISP's one use of it: draw it, then ask again next frame.
++ */
++const uint8_t *host_camera_take(int sensor, unsigned *width, unsigned *height);
++
++/* Which sensor the guest is driving: the ISP sets it when the kext names one. */
++void host_camera_select(int sensor);
++int host_camera_active(void);
++
++/*
++ * Counters for the app's own diagnosis: frames pushed, frames the ISP took, and
++ * frames replaced before anything took them. Cheap enough to read every half
++ * second, which is what the Settings line does.
++ */
++void host_camera_counts(int sensor, uint64_t *pushed, uint64_t *taken, uint64_t *replaced);
++
++/* Forget every frame and every count: a guest that restarts gets a clean camera. */
++void host_camera_reset(void);
++
++#endif

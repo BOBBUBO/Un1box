@@ -122,6 +122,11 @@ struct Engine {
     decltype(&qemu_ios_audio_capture_start) audio_start = nullptr;
     decltype(&qemu_ios_audio_capture_read) audio_read = nullptr;
     decltype(&qemu_ios_audio_capture_stop) audio_stop = nullptr;
+    // Optional: an engine built before the camera tap lacks all four.
+    decltype(&qemu_ios_camera_frame) camera_frame = nullptr;
+    decltype(&qemu_ios_camera_flush) camera_flush = nullptr;
+    decltype(&qemu_ios_camera_sensor) camera_sensor = nullptr;
+    decltype(&qemu_ios_camera_state) camera_state = nullptr;
     // Optional: an engine built before the microphone tap lacks all three.
     decltype(&qemu_ios_microphone_write) mic_write = nullptr;
     decltype(&qemu_ios_microphone_flush) mic_flush = nullptr;
@@ -192,6 +197,11 @@ struct Engine {
             mic_write = reinterpret_cast<decltype(mic_write)>(dlsym(library, "qemu_ios_microphone_write"));
             mic_flush = reinterpret_cast<decltype(mic_flush)>(dlsym(library, "qemu_ios_microphone_flush"));
             mic_state = reinterpret_cast<decltype(mic_state)>(dlsym(library, "qemu_ios_microphone_state"));
+            // Optional together: the engine that has one of these has all of them.
+            camera_frame = reinterpret_cast<decltype(camera_frame)>(dlsym(library, "qemu_ios_camera_frame"));
+            camera_flush = reinterpret_cast<decltype(camera_flush)>(dlsym(library, "qemu_ios_camera_flush"));
+            camera_sensor = reinterpret_cast<decltype(camera_sensor)>(dlsym(library, "qemu_ios_camera_sensor"));
+            camera_state = reinterpret_cast<decltype(camera_state)>(dlsym(library, "qemu_ios_camera_state"));
             package_report =
                 reinterpret_cast<decltype(package_report)>(dlsym(library, "qemu_ios_guest_package_report"));
         } catch (...) {
@@ -1064,6 +1074,41 @@ lt_status lt_runtime_mic_flush(lt_runtime *r, lt_error *e) {
     return lt::guard(e, [&] {
         lt::require(r && r->engine->mic_flush != nullptr, "engine has no microphone input", LT_UNSUPPORTED);
         r->engine->mic_flush();
+    });
+}
+lt_status lt_runtime_camera_write(lt_runtime *r, int sensor, const void *nv12, uint32_t width,
+                                  uint32_t height, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && nv12, "invalid camera frame");
+        lt::require(sensor == LT_CAMERA_BACK || sensor == LT_CAMERA_FRONT, "no such camera sensor");
+        lt::require(width && height && !(width & 1) && !(height & 1), "camera frame must be an even size");
+        lt::require(r->engine->camera_frame != nullptr, "engine has no camera input", LT_UNSUPPORTED);
+        // A guest that is not running has nowhere to put it: say so rather than fill a slot it will
+        // draw minutes later, when the picture is stale.
+        lt::require(r->started && !r->done, "guest runtime inactive", LT_AGAIN);
+        lt::require(r->engine->camera_frame(sensor, nv12, width, height), "engine refused the camera frame");
+    });
+}
+lt_status lt_runtime_camera_info(lt_runtime *r, int sensor, lt_camera_info *info, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->engine->camera_state != nullptr, "engine has no camera input", LT_UNSUPPORTED);
+        lt::require(sensor == LT_CAMERA_BACK || sensor == LT_CAMERA_FRONT, "no such camera sensor");
+        lt::abi(info);
+        uint64_t pushed = 0, taken = 0, replaced = 0;
+        r->engine->camera_state(sensor, &pushed, &taken, &replaced);
+        info->pushed = pushed;
+        info->taken = taken;
+        info->replaced = replaced;
+        info->sensor = uint32_t(r->engine->camera_sensor());
+        info->width = info->height = 0;
+        info->size = sizeof(*info);
+        info->version = 1;
+    });
+}
+lt_status lt_runtime_camera_flush(lt_runtime *r, lt_error *e) {
+    return lt::guard(e, [&] {
+        lt::require(r && r->engine->camera_flush != nullptr, "engine has no camera input", LT_UNSUPPORTED);
+        r->engine->camera_flush();
     });
 }
 lt_status lt_runtime_guest_status(lt_runtime *r, uint32_t *out, lt_error *e) {

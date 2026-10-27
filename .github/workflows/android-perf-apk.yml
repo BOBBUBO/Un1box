@@ -566,6 +566,19 @@ jobs:
         continue-on-error: true
         run: python3 tests/mic/run.py --engine qemu-ios
 
+      # The camera path the same way: the frame slots (hw/arm/host-camera.c), the YUV_420_888 conversion the
+      # app hands its frames through, the ISP model compiled whole against stub/, and the wiring from the
+      # Settings switch to the engine's API.
+      - name: Self-check the camera path
+        continue-on-error: true
+        run: python3 tests/camera/run.py --engine qemu-ios
+
+      - name: Self-check the name and the idle loops
+        continue-on-error: true
+        run: |
+          python3 tests/branding/run.py
+          python3 tests/idle/run.py
+
       - name: Build the engine
         run: |
           set -o pipefail

@@ -33,6 +33,10 @@ class AppSettings(context: Context) {
     private val headphonesState = mutableStateOf(prefs.getBoolean("headphones", true))
     var headphones: Boolean get() = headphonesState.value; set(v) { headphonesState.value = v; prefs.edit().putBoolean("headphones", v).apply() }
 
+    /* This phone's cameras into the emulated device. Needs CAMERA, so it starts off. */
+    private val cameraState = mutableStateOf(prefs.getBoolean("camera", false))
+    var camera: Boolean get() = cameraState.value; set(v) { cameraState.value = v; prefs.edit().putBoolean("camera", v).apply() }
+
     /* This phone's microphone into the emulated device's input. Needs RECORD_AUDIO, so it starts off. */
     private val microphoneState = mutableStateOf(prefs.getBoolean("microphone", false))
     var microphone: Boolean get() = microphoneState.value; set(v) { microphoneState.value = v; prefs.edit().putBoolean("microphone", v).apply() }

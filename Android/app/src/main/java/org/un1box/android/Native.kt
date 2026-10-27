@@ -58,4 +58,25 @@ internal object Native {
     external fun microphoneFlush()
     /** status, sampleRate, queuedFrames, capturing, pushedFrames, droppedFrames. */
     external fun microphoneInfo(): LongArray
+
+    /**
+     * The phone's camera as the emulated device's camera. One YUV_420_888 image's three planes, their row and
+     * pixel strides, its size and the sensor it belongs to; returns 1 taken, 0 dropped (the guest is not
+     * capturing), negative = status. The conversion to the device's NV12 frame is native (camera_planes.h).
+     */
+    external fun cameraFrame(
+        luma: java.nio.ByteBuffer, lumaRow: Int, lumaPixel: Int,
+        cb: java.nio.ByteBuffer, cbRow: Int, cbPixel: Int,
+        cr: java.nio.ByteBuffer, crRow: Int, crPixel: Int,
+        width: Int, height: Int, sensor: Int,
+    ): Int
+    /** Which sensor the guest's camera driver named last: [CAMERA_BACK] or [CAMERA_FRONT]. */
+    external fun cameraSensor(): Int
+    external fun cameraFlush()
+    /** status, width, height, the guest's sensor, pushed, taken, replaced. */
+    external fun cameraInfo(sensor: Int): LongArray
+
+    /** The device's own sensors, as the engine and the ISP number them. */
+    const val CAMERA_BACK = 0
+    const val CAMERA_FRONT = 1
 }
