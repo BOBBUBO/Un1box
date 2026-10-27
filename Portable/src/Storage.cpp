@@ -721,11 +721,9 @@ static void sparse_write(int fd, const uint8_t *bytes, size_t size) {
         write_all(fd, bytes, size);
 }
 // n72 NAND arrives as ~110,000 4160-byte page files, nand/csN/N.page. Extracted one file each (with a
-// sync per file on Android) that took minutes; the importer packs them instead, as the desktop one
-// does, into one indexed ITNAND01 file that the engine maps directly: a 24-byte header, a slot
-// table of 4 x 524288 little-endian record numbers (0 = never written) and the records in order.
+// sync per file on Android) that took minutes; the importer streams them instead into the record's
+// NAND container (the Pages route below); packed_page names a page's slot, chip x 524288 + page.
 constexpr uint32_t packed_pages_per_cs = 524288, packed_record = 4160;
-constexpr uint64_t packed_index_bytes = 4ull * packed_pages_per_cs * 4, packed_records_at = 24 + packed_index_bytes;
 static bool packed_page(const std::string &name, uint32_t &slot) {
     if (name.size() < 15 || name.compare(0, 7, "nand/cs") || name[7] < '0' || name[7] > '3' || name[8] != '/' ||
         name.compare(name.size() - 5, 5, ".page"))
