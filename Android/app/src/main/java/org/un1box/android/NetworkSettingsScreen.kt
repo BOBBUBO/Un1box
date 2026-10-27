@@ -61,7 +61,7 @@ internal fun NetworkSettingsScreen(host: GuestHost, onBack: () -> Unit) {
         text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Old versions of iOS can’t connect to many HTTPS websites today. LightTouch gives the emulated device its own proxy certificate, then connects to websites using modern TLS and your Android phone’s trusted certificates.")
             Text("The certificate is trusted only inside the emulated device. Android’s certificate settings stay as they are. Apps that pin certificates may still refuse the connection.")
-            Text("Setup runs when the guest tools become available after startup. If setup fails, update guest tools and restart the device.")
+            Text("Setup runs once the guest tools are available, at startup or when you turn networking on. If setup fails, update guest tools and restart the device.")
         } }, confirmButton = { TextButton(onClick = { showHttps = false }) { Text("Got it") } })
     Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }, color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -73,9 +73,9 @@ internal fun NetworkSettingsScreen(host: GuestHost, onBack: () -> Unit) {
                 SettingsGroup("Connection") {
                     SwitchRow(LtIcons.Network, "Enable networking", "Let the emulated device connect through your phone’s internet connection", config.enabled, "network_enabled") { update(config.copy(enabled = it)) }
                 }
-                Text(if (host.active) "Route, archive date and local network changes apply to new requests. Reload the page to use them. If this session started with networking off, stop and start it once to enable networking." else "Applies when you start the device. Once enabled, you can change the route and archive date while it runs.",
+                Text("Changes apply right away, even while the device is running: reload the page to use them. The first time networking is on in a session, the device takes a few seconds to set up.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp).testTag("network_restart_note"))
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp).testTag("network_live_note"))
                 saveError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
                 SettingsGroup("Browse with") {
                     RouteRow(NetworkRoute.DIRECT, "Connect to websites as they are today", config.route) { update(config.copy(route = it)) }

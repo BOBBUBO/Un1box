@@ -1,17 +1,17 @@
 package org.un1box.android
 
-/** Saved preferences and the running worker's applied configuration are distinct.
- * Retry only policy admission while the engine is starting, never guest mutations. */
+/** Saved preferences and the running worker's applied configuration are distinct. Every change applies live,
+ * turning networking on included: the engine forwards to the proxy socket from boot and the worker makes the
+ * proxy the first time networking is on. Retry only policy admission while the engine is starting, never guest
+ * mutations. */
 internal class NetworkSession {
     data class Snapshot(val active: NetworkConfiguration, val notice: String)
-    private var proxyAvailable = false
     private var active = NetworkConfiguration()
     private var requested = active
     private var pending = false
     private var notice = ""
 
     @Synchronized fun begin(config: NetworkConfiguration) {
-        proxyAvailable = config.enabled
         active = config
         requested = config
         pending = false
@@ -27,13 +27,6 @@ internal class NetworkSession {
 
     @Synchronized fun refresh(apply: (NetworkConfiguration) -> Pair<Int, String>) {
         if (!pending) return
-        if (!proxyAvailable) {
-            if (requested.enabled) {
-                notice = "Saved. Stop and start the device to enable networking for this session."
-            } else { active = requested; notice = "" }
-            pending = false
-            return
-        }
         val (code, message) = apply(requested)
         when (code) {
             0 -> { active = requested; pending = false; notice = "" }

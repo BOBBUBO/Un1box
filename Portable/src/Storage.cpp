@@ -1440,11 +1440,28 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         lt::require(c->network_mode <= 2, "Invalid network mode");
         std::string network = "user,id=wifi0,lan=" + std::string(c->network_local && c->network_mode == 1 ? "on" : "off") +
             ",restrict=" + (c->network_mode == 1 ? "off" : "on");
-        if (c->network_mode) {
-            lt::require(c->network_socket && c->network_socket[0] == '/' &&
-                        std::strlen(c->network_socket) < 104 &&
-                        std::strchr(c->network_socket, '\n') == nullptr, "Invalid private network endpoint");
-            network += ",guestfwd=tcp:10.0.2.100:3128-unix:" + escape(c->network_socket);
+        // The proxy forward is there whatever the mode, so networking can be turned on while the guest runs, and
+        // Off still blocks every other destination. It must not need a proxy to exist at boot, though: qemu
+        // builds this chardev while it sets the netdev up, and a bare "unix:<path>" chardev is a *synchronous*
+        // client -- with nothing listening (networking off, every fresh install) the connect fails, the rule
+        // fails, and netdev setup is error_fatal, so the process exits 1 before the machine exists. The phone
+        // showed exactly that: exit_self/status 1 and an engine log ending in bionic's torn-down-mutex noise.
+        // server=off,reconnect-ms=500 make it the asynchronous client it is: it dials at boot and again whenever
+        // the proxy comes up. Its commas must be doubled, or -netdev takes them as its own parameters ("Invalid
+        // parameter 'server'") -- escape() does that, and qemu undoes it before the chardev parses them.
+        if (c->network_socket) {
+            const char *endpoint = c->network_socket;
+#ifdef _WIN32
+            const bool absolute = endpoint && (endpoint[0] | 32) >= 'a' && (endpoint[0] | 32) <= 'z' &&
+                                  endpoint[1] == ':' && (endpoint[2] == '\\' || endpoint[2] == '/');
+#else
+            const bool absolute = endpoint && endpoint[0] == '/';
+#endif
+            lt::require(absolute && std::strlen(c->network_socket) < 104 &&
+                            std::strchr(c->network_socket, '\n') == nullptr,
+                        "Invalid private network endpoint");
+            network += ",guestfwd=" + escape("tcp:10.0.2.100:3128-unix:" + std::string(c->network_socket) +
+                                            ",server=off,reconnect-ms=500");
         }
         d->args.insert(d->args.end(), {"-netdev", network});
         // Chain TCG jumps across guest pages: iOS never remaps a code page to other code

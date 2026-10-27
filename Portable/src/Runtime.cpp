@@ -561,7 +561,8 @@ lt_status lt_runtime_create(const lt_runtime_config *c, lt_runtime **out, lt_err
         lt::require(!c->device->active, "device already active", LT_BUSY);
         lt::require(!lt::process_started, "engine process already consumed: restart in fresh process", LT_BUSY);
         auto runtime = std::make_unique<lt_runtime>(c->device);
-        runtime->network_available = c->boot.network_mode != 0;
+        // The proxy forward exists whenever a socket was given (Storage.cpp), Off included, so policy can open live.
+        runtime->network_available = c->boot.network_mode != 0 || c->boot.network_socket != nullptr;
         runtime->engine = std::make_unique<lt::Engine>(c->engine_library);
         auto facts = runtime->engine->find_board(c->device->lock.at("board").string());
         runtime->guest_capabilities = facts.capabilities;
@@ -765,7 +766,7 @@ lt_status lt_runtime_network_policy(lt_runtime *r, uint32_t mode, uint32_t local
         lt::require(r && r->started && !r->done && !r->stopping, "runtime not active", LT_AGAIN);
         std::lock_guard<std::mutex> lock(r->mutex);
         lt::require(!r->stopping, "runtime is stopping", LT_AGAIN);
-        lt::require(r->network_available, "Enable networking and restart the device first", LT_UNSUPPORTED);
+        lt::require(r->network_available, "This session started without networking; stop and start the device", LT_UNSUPPORTED);
         lt::require(r->engine->net_restrict && r->engine->net_lan, "Engine cannot change network policy live", LT_UNSUPPORTED);
         lt::require(r->engine->ready(), "Waiting for network readiness", LT_AGAIN);
         // wifi0 is the private user netdev created by lt_device_boot_argv.

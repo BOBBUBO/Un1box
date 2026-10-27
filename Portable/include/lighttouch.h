@@ -168,7 +168,9 @@ typedef struct {
     uint32_t headphones;
     /* App-owned network policy. Off (zero) blocks guest egress. Direct permits
      * NAT; archive permits only the dated HTTP proxy. Proxy path is a private
-     * Unix socket, not a shell command. No frontend-supplied QEMU arguments. */
+     * Unix socket, not a shell command; given with Off too, the guest can be
+     * switched on live once the app listens there. No frontend-supplied QEMU
+     * arguments. */
     uint32_t network_mode; /* 0 off, 1 direct, 2 archive */
     uint32_t network_local;
     const char *network_socket;
