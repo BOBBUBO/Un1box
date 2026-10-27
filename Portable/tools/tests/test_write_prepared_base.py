@@ -30,14 +30,17 @@ class PreparedBaseWriter(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="lt-archive-test-")
         self.root = Path(self.temporary.name)
-        self.base = self.root / "base"
+        self.make_base(writer.NAND_LAYOUTS[0])
+
+    def make_base(self, nand_names, label="base"):
+        self.base = self.root / label
         (self.base / "nand").mkdir(parents=True)
         self.payload = {"identity.json": b'{"synthetic":true}\n', "kboot.bin": b"synthetic kboot\0",
                         "nor.bin": b"synthetic nor\0"}
-        for name in writer.NAND_NAMES:
+        for name in nand_names:
             # Cross multiple compression/read chunk boundaries, still <2MiB total.
             self.payload["nand/" + name] = (name.encode() + b"\0") * 11000 if name != "geometry.json" else b"{}\n"
-        nand_hashes = {name: sha(self.payload["nand/" + name]) for name in writer.NAND_NAMES}
+        nand_hashes = {name: sha(self.payload["nand/" + name]) for name in nand_names}
         listing = "".join(name + " " + nand_hashes[name] + "\n" for name in sorted(nand_hashes))
         lock = {"format": 1, "board": "n81ap", "build": "TEST", "boot_strategy": "kboot",
                 "identity": {"sha256": sha(self.payload["identity.json"])},
@@ -52,10 +55,10 @@ class PreparedBaseWriter(unittest.TestCase):
         (self.base / "nand").chmod(0o500)
         self.base.chmod(0o500)
         self.pin = sha(self.payload["device.lock.json"])
-        self.output = self.root / "bundle"
+        self.output = self.root / ("bundle-" + label)
 
     def tearDown(self):
-        # Tests may run as a non-root user; production imported bases are immutable.
+        # Tests may run as a non-root user; the fixture's sources are read-only.
         for path, directories, _ in os.walk(self.root):
             os.chmod(path, 0o700)
             for name in directories:
@@ -125,7 +128,22 @@ class PreparedBaseWriter(unittest.TestCase):
         self.assertEqual(set(self.payload), {str(p.relative_to(destination)) for p in destination.rglob("*") if p.is_file()})
         for name, expected in self.payload.items():
             self.assertEqual(expected, (destination / name).read_bytes())
-            self.assertFalse((destination / name).stat().st_mode & 0o222)
+            self.assertTrue((destination / name).stat().st_mode & 0o200)
+
+    def test_container_base_streams_as_it_is(self):
+        self.make_base(writer.NAND_LAYOUTS[1], "container")
+        archive = self.accepted_bundle()
+        index = json.loads(archive.read_bytes()[12:12 + struct.unpack("<I", archive.read_bytes()[8:12])[0]])
+        self.assertEqual(["device.lock.json", "nand/geometry.json"], [e["name"] for e in index["entries"][:2]])
+        destination, _ = self.imported(archive)
+        for name, expected in self.payload.items():
+            self.assertEqual(expected, (destination / name).read_bytes())
+
+    def test_writable_source_streams_unchanged(self):
+        (self.base / "nor.bin").chmod(0o600)
+        before = self.snapshot()
+        self.assertEqual(0, self.run_writer().returncode)
+        self.assertEqual(before, self.snapshot())
 
     def test_production_importer_rejects_truncated_stream_with_correct_archive_hash(self):
         archive = self.changed_archive(self.accepted_bundle(), truncate=True)
@@ -163,13 +181,6 @@ class PreparedBaseWriter(unittest.TestCase):
         self.assertEqual(before, self.snapshot())
         self.assertFalse(self.output.exists())
         self.assertFalse(any(self.root.glob(".lt-base-*")))
-
-    def test_writable_source_is_refused_without_chmod_or_content_mutation(self):
-        (self.base / "nor.bin").chmod(0o600)
-        before = self.snapshot()
-        self.assertNotEqual(0, self.run_writer().returncode)
-        self.assertEqual(before, self.snapshot())
-        self.assertFalse(self.output.exists())
 
     def test_symlink_and_extra_inventory_are_refused(self):
         alias = self.root / "alias"; alias.symlink_to(self.base, target_is_directory=True)

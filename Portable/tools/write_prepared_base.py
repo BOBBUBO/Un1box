@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stream a trusted, immutable n81 kboot base into an atomic import bundle.
+"""Stream a trusted n81 kboot base into an atomic import bundle.
 
 No firmware preparation, source mutation, expanded copy, or target operation.
 The supported profile deliberately has exactly thirteen known regular files.
@@ -22,9 +22,17 @@ import zlib
 CHUNK = 65536
 MAX_BYTES = 64 << 30  # Same expanded-byte ceiling as lt_import_archive.
 MAX_LOCK = 1 << 20
-NAND_NAMES = tuple(f"bus{bus}-ce{ce}.pages" for bus in range(2) for ce in range(4)) + ("geometry.json",)
-FILES = tuple(sorted(("device.lock.json", "identity.json", "kboot.bin", "nor.bin") +
-                     tuple("nand/" + name for name in NAND_NAMES)))
+# A base's NAND: one file per chip, or (since FirmwareKit packs it) the NAND container, nand.qcow2.
+NAND_LAYOUTS = (tuple(f"bus{bus}-ce{ce}.pages" for bus in range(2) for ce in range(4)) + ("geometry.json",),
+                ("geometry.json", "nand.qcow2"))
+
+
+def archive_files(nand_names):
+    """Archive order: geometry.json before the chips, so the importer packs each chip into the record's NAND
+    container as it streams (a chip ahead of it is staged on disk first)."""
+    return tuple(sorted(("device.lock.json", "identity.json", "kboot.bin", "nor.bin") +
+                        tuple("nand/" + name for name in nand_names),
+                        key=lambda name: (name != "device.lock.json", name != "nand/geometry.json", name)))
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
 FILE_FLAGS = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
 
@@ -72,18 +80,17 @@ def identity(fd):
     return (st.st_dev, st.st_ino, st.st_mode, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
-def immutable(fd, directory=False):
+def regular(fd, directory=False):
     st = os.fstat(fd)
     require(stat.S_ISDIR(st.st_mode) if directory else stat.S_ISREG(st.st_mode),
             "source must contain only directories and regular files")
-    require(not st.st_mode & 0o222, "source is writable; refusing to change its permissions")
     require(not st.st_mode & 0o7000, "special source permission bits refused")
     require(directory or st.st_nlink == 1, "source file hard links refused")
     require(st.st_size >= 0, "invalid source size")
     return st
 
 
-def lock_plan(blob, pin):
+def lock_plan(blob, pin, nand_names):
     require(hashlib.sha256(blob).hexdigest() == digest(pin), "trusted lock SHA256 mismatch")
     lock = json.loads(blob, object_pairs_hook=unique_object)
     require(isinstance(lock, dict), "lock must be an object")
@@ -99,10 +106,10 @@ def lock_plan(blob, pin):
         require(outputs[key]["path"] == name, "unexpected output path")
         expected[name] = digest(outputs[key]["sha256"])
     nand = outputs["nand"]
-    require(nand["path"] == "nand" and set(nand["files"]) == set(NAND_NAMES), "unexpected NAND paths")
-    for name in NAND_NAMES:
+    require(nand["path"] == "nand" and set(nand["files"]) == set(nand_names), "unexpected NAND paths")
+    for name in nand_names:
         expected["nand/" + name] = digest(nand["files"][name])
-    require("pages" not in nand or (type(nand["pages"]) is int and nand["pages"] == len(NAND_NAMES)),
+    require("pages" not in nand or (type(nand["pages"]) is int and nand["pages"] == len(nand_names)),
             "unexpected NAND listing count")
     return lock, expected, digest(nand["listing_sha256"])
 
@@ -137,21 +144,26 @@ def write_bundle(source, pin, output):
             return fd
         root = keep(open_directory(source))
         nand = keep(os.open("nand", DIRECTORY_FLAGS, dir_fd=root))
-        immutable(root, True)
-        immutable(nand, True)
+        regular(root, True)
+        regular(nand, True)
         roots = {"": (root, identity(root)), "nand": (nand, identity(nand))}
+
+        layouts = [names for names in NAND_LAYOUTS if set(os.listdir(nand)) == set(names)]
+        require(layouts, "unexpected NAND entry")
+        nand_names = layouts[0]
 
         def check_inventory():
             require(set(os.listdir(root)) == {"nand", "device.lock.json", "identity.json", "kboot.bin", "nor.bin"},
                     "unexpected source entry")
-            require(set(os.listdir(nand)) == set(NAND_NAMES), "unexpected NAND entry")
+            require(set(os.listdir(nand)) == set(nand_names), "unexpected NAND entry")
         check_inventory()
+        order = archive_files(nand_names)
         files = {}
         total = 0
-        for name in FILES:
+        for name in order:
             parent, leaf = (nand, name[5:]) if name.startswith("nand/") else (root, name)
             fd = keep(os.open(leaf, FILE_FLAGS, dir_fd=parent))
-            st = immutable(fd)
+            st = regular(fd)
             require(st.st_size <= MAX_BYTES - total, "expanded source exceeds import limit")
             total += st.st_size
             files[name] = (fd, identity(fd), parent, leaf)
@@ -161,9 +173,9 @@ def write_bundle(source, pin, output):
         while chunk := os.read(lock_fd, CHUNK):
             blob.extend(chunk)
             require(len(blob) <= MAX_LOCK, "lock grew beyond metadata bound")
-        lock, expected, listing_pin = lock_plan(blob, pin)
+        lock, expected, listing_pin = lock_plan(blob, pin, nand_names)
         entries = [{"name": name, "size": files[name][1][3], "mode": stat.S_IMODE(files[name][1][2])}
-                   for name in FILES]
+                   for name in order]
         index = json.dumps({"entries": entries}, separators=(",", ":")).encode()
         parent_fd = keep(open_directory(output.parent))
         try:
@@ -208,7 +220,7 @@ def write_bundle(source, pin, output):
                 require(actual == expected[name], "source hash mismatch: " + name)
                 hashes[name] = actual
                 receipts.append(dict(entry, sha256=actual))
-            listing = "".join(name + " " + hashes["nand/" + name] + "\n" for name in sorted(NAND_NAMES))
+            listing = "".join(name + " " + hashes["nand/" + name] + "\n" for name in sorted(nand_names))
             require(hashlib.sha256(listing.encode()).hexdigest() == listing_pin, "authoritative NAND listing mismatch")
             emit(compressor.flush())
             # Check held descriptors AND their original names before publication.
@@ -251,7 +263,7 @@ def write_bundle(source, pin, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", required=True, help="absolute immutable n81 kboot base directory")
+    parser.add_argument("--source", required=True, help="absolute n81 kboot base directory")
     parser.add_argument("--lock-sha256", required=True, help="independently trusted device.lock.json SHA256")
     parser.add_argument("--output", required=True, help="absolute NEW bundle directory, outside the source")
     args = parser.parse_args()

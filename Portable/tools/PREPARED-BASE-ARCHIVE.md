@@ -2,14 +2,15 @@
 
 `write_prepared_base.py` is a Linux host transport tool, not firmware preparation
 or a target runner. It currently supports the n81ap kboot profile only: the four
-root files `device.lock.json`, `identity.json`, `kboot.bin`, `nor.bin`, and nine
-NAND files (`geometry.json` and bus0/bus1 CE0..3 stores). Other boards/layouts fail
-closed. No particular build, private fixture path or identity is embedded.
+root files `device.lock.json`, `identity.json`, `kboot.bin`, `nor.bin`, and the
+NAND: `geometry.json` with either the bus0/bus1 CE0..3 stores or the NAND container
+`nand.qcow2` FirmwareKit now writes. Other boards/layouts fail closed. The archive
+puts `geometry.json` right after the lock, so the importer packs chip files into the
+record's container as they stream. No particular build, private fixture path or identity is embedded.
 
 Before running it on a large source, obtain allocation for that read/compression
-work and independently verify the trusted lock SHA256. Keep the original source
-immutable; the tool refuses writable files/directories and never changes their
-permissions. It rejects symlinks in every source/output-parent component, hard
+work and independently verify the trusted lock SHA256. Don't change the source while
+it streams; the tool never changes its permissions. It rejects symlinks in every source/output-parent component, hard
 links, special files, extra/missing entries and unsupported lock paths. It checks
 the pinned lock, individual file hashes and authoritative NAND listing hash,
 retains open descriptors and verifies inode/stat identity before publication.
@@ -43,7 +44,7 @@ is this prepared-base archive.
 
 For Android, use the existing Import base archive flow after selecting the
 matching armv7 guest-tools package. That flow stages the compressed transport,
-then imports into a new independently validated immutable record. The current
+then imports into a new independently validated record. The current
 extractor writes the full logical base once on the target; this tool does not
 make extraction sparse. Check real target capacity for the expanded base,
 compressed staging, writable state and margin. Do not use directory import to
@@ -72,7 +73,7 @@ package implementation. No storage/import symbol is stubbed or replaced.
 
 Coverage includes accepted multi-chunk output and source/receipt integrity;
 production rejection of truncated streams, wrong archive hashes, traversal and
-payload/lock mismatches; refused writable/symlink/hard-link/extra-entry sources;
+payload/lock mismatches; refused symlink/hard-link/extra-entry sources;
 unsupported trusted lock paths; no output inside the source or over existing
 output; a no-replace publication race; and an injected midstream source change.
 Failed imports must leave no published or partial base. None of these checks is
