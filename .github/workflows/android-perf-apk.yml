@@ -645,6 +645,7 @@ jobs:
             -PportableDir="$GITHUB_WORKSPACE/Portable" \
             -PqemuSource="$GITHUB_WORKSPACE/qemu-ios" \
             -PengineRoot="$GITHUB_WORKSPACE/ci/engine" \
+            -PnetworkDeps="$GITHUB_WORKSPACE/ci/deps/prefix" \
             -PfirmwareKitDir="$GITHUB_WORKSPACE/ci/firmwarekit/android" \
             -PguestToolsDir="$GITHUB_WORKSPACE/ci/guest-tools" \
             -PmobileServicesArm64="$GITHUB_WORKSPACE/ci/mobile-services/arm64-v8a" \
