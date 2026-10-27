@@ -45,18 +45,20 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 note(
                     ui,
                     &p,
-                    if active {
-                        "Route, archive date and local network changes apply to new requests. Reload the page to use \
-                         them. If this session started with networking off, stop and start it once to enable networking."
-                    } else {
-                        "Applies when you start the device. Once enabled, you can change the route and archive date \
-                         while it runs."
-                    },
+                    "Changes apply right away, even while the device is running: reload the page to use them. The \
+                     first time networking is on in a session, the device takes a few seconds to set up.",
                 );
 
                 widgets::section(ui, &p, "Browse with");
                 widgets::card(ui, &p, |ui| {
-                    route_row(ui, &p, &mut edited.route, Route::Direct, icons::GLOBE, "Connect to websites as they are today");
+                    route_row(
+                        ui,
+                        &p,
+                        &mut edited.route,
+                        Route::Direct,
+                        icons::GLOBE,
+                        "Connect to websites as they are today",
+                    );
                     route_row(
                         ui,
                         &p,
@@ -256,8 +258,8 @@ fn https_dialog(ctx: &egui::Context, p: &theme::Palette) -> bool {
              trusts.",
             "The certificate is trusted only inside the emulated device. This computer's certificate settings stay as \
              they are. Apps that pin certificates may still refuse the connection.",
-            "Setup runs when the guest tools become available after startup. If setup fails, update guest tools and \
-             restart the device.",
+            "Setup runs once the guest tools are available, at startup or when you turn networking on. If setup \
+             fails, update guest tools and restart the device.",
         ] {
             ui.label(widgets::muted(p, text));
             ui.add_space(6.0);

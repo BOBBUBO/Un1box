@@ -119,12 +119,12 @@ pub struct BootOptions {
     pub serial_log: Option<PathBuf>,
     pub audio: bool,
     pub headphones: bool,
-    /// Guest networking; `None` boots with egress blocked.
+    /// Guest networking; `None` boots with egress blocked and no way to turn it on until a restart.
     pub network: Option<NetworkBoot>,
 }
 
-/// How the guest reaches the network. The proxy endpoint is created at boot, so a session started offline needs a
-/// restart before networking can be turned on.
+/// How the guest reaches the network. The engine forwards the proxy address to `proxy_socket` from boot whatever the
+/// mode, so the worker can listen there later and turn networking on live.
 #[derive(Debug, Clone)]
 pub struct NetworkBoot {
     pub mode: NetworkMode,

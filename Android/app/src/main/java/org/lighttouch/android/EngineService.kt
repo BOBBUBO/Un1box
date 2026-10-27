@@ -43,6 +43,9 @@ class EngineService : Service() {
     @Volatile private var usbError = ""
     private val networkSession = NetworkSession()
     @Volatile private var networkSetup = "Off"
+    /** The guest setup ran (or is running) this session; it keeps its certificate and proxy when networking is
+     * turned off and on again. */
+    private val guestNetworkStarted = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var networkSetupError = false
     private val networkThread = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "network-setup") }
     private val cpuSampler by lazy { WorkerCpuSampler() }
@@ -180,11 +183,12 @@ class EngineService : Service() {
             synchronized(networkSession) {
                 val network = NetworkConfiguration.load(applicationContext)
                 networkSession.begin(network)
+                guestNetworkStarted.set(false)
                 networkSetup = if (network.enabled) "Waiting for guest tools…" else "Off"
                 val roots = listOf("/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts").firstOrNull { File(it).isDirectory } ?: "/system/etc/security/cacerts"
                 error = Native.networkPrepare(filesDir.absolutePath, recordId, network.nativeMode, network.archiveDate, network.localNetwork, roots)
                 if (error.isEmpty()) error = if (coldRecovery) Native.recoverStart(libraryRoot, recordId, headphones) else Native.start(libraryRoot, recordId, headphones)
-                if (error.isEmpty() && network.enabled) networkThread.execute { configureGuestNetwork() }
+                if (error.isEmpty() && network.enabled) startGuestNetwork()
             }
             if (error.isEmpty()) { File(filesDir, "worker-stop-error.txt").delete(); if (!userPaused && !stopping.get()) startAudioOutput() }
             val response = status()
@@ -368,6 +372,14 @@ class EngineService : Service() {
             val result = Native.networkUpdate(config.nativeMode, config.archiveDate, config.localNetwork)
             (result.getOrNull(0)?.toIntOrNull() ?: 2) to result.getOrElse(1) { "Network worker unavailable" }
         }
+        // Turned on live for the first time this session: set the guest up as a networked start does.
+        if (networkSession.snapshot().active.enabled) startGuestNetwork()
+    }
+
+    private fun startGuestNetwork() {
+        if (!guestNetworkStarted.compareAndSet(false, true)) return
+        networkSetup = "Waiting for guest tools…"
+        networkThread.execute { configureGuestNetwork() }
     }
 
     /** Fixed typed operations only; no shell or arbitrary guest commands. A failed

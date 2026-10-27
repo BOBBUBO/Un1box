@@ -426,8 +426,7 @@ impl Model {
         }
     }
 
-    /// Save Settings → Network and apply it to the running session (a session started offline reports that it
-    /// needs a restart).
+    /// Save Settings → Network and apply it to the running session, including turning networking on or off.
     pub fn set_network(&mut self, network: network::NetworkSettings) {
         if let Err(e) = network.validate(network::Day::today()) {
             self.error = Some(e);

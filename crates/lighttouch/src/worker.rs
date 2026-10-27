@@ -10,7 +10,7 @@ use lighttouch_core::runtime::{self, BootOptions, Device, NetworkBoot, NetworkMo
 use lighttouch_core::{monotonic_ns, process_cpu_ns, sys};
 use lighttouch_model::network::{self as guest_network, GuestAgent, NetworkSession};
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Condvar, Mutex};
@@ -35,7 +35,8 @@ pub fn main(args: &[String]) -> i32 {
         bridge
     });
     // OpenSSL reads SSL_CERT_FILE when the proxy is made: the host's trusted roots, where its own defaults have none.
-    if let Some(network) = parsed.network.as_ref().filter(|n| n.config.mode != NetworkMode::Off) {
+    // Set before any thread starts, since networking can be turned on later in the session.
+    if let Some(network) = parsed.network.as_ref() {
         let cache = network.directory.parent().unwrap_or(&network.directory);
         if let Some(roots) = lighttouch_core::network::trust_roots(cache) {
             set_engine_env("SSL_CERT_FILE", &roots.to_string_lossy());
@@ -314,9 +315,6 @@ fn run(
 
     runtime.start().map_err(|e| format!("Couldn't start iOS: {e}"))?;
     let _ = events.send(Event::Started);
-    if let Some(network) = &mut network {
-        network.start_guest_setup(&runtime);
-    }
 
     let trace_input = std::env::var_os("LIGHTTOUCH_TRACE_INPUT").is_some();
     let mut pcm = vec![0i16; 4096 * 2];
@@ -569,11 +567,14 @@ fn run(
     Ok(outcome)
 }
 
-/// The session's guest networking: the proxy and its socket (when it started with networking on), what it applied,
-/// and the guest setup, which runs on its own thread once iOS starts.
+/// The session's guest networking: the socket the engine forwards to, the proxy listening there (made the first time
+/// networking is on, at boot or live), what it applied, and the guest setup, which runs on its own thread once iOS
+/// starts with networking on.
 struct Networking {
     proxy: Option<Arc<Proxy>>,
     socket: Option<SocketDir>,
+    /// The device's proxy identity folder.
+    directory: PathBuf,
     session: NetworkSession,
     guest_tools: PathBuf,
     /// The guest setup's step, and whether it failed.
@@ -585,12 +586,14 @@ struct Networking {
 }
 
 impl Networking {
-    /// Make the proxy before boot (the engine forwards to its socket). If that fails the device starts offline and
-    /// the status says why.
+    /// Make the socket folder before boot (the engine forwards to it whatever the mode), and the proxy when networking
+    /// starts on. If the folder fails the session can't go online until a restart; if the proxy fails it starts
+    /// offline and the status says why.
     fn prepare(args: &NetworkArgs) -> Self {
         let mut this = Self {
             proxy: None,
             socket: None,
+            directory: args.directory.clone(),
             session: NetworkSession::begin(args.config.clone(), false),
             guest_tools: args.guest_tools.clone(),
             setup: Arc::new(Mutex::new(("Off".into(), false))),
@@ -599,35 +602,42 @@ impl Networking {
             last_try: None,
             sent: None,
         };
-        if args.config.mode == NetworkMode::Off {
-            return this;
-        }
-        let made = SocketDir::create().and_then(|socket| {
-            let proxy = Proxy::create(&args.directory, &args.config)?;
-            proxy.listen(&socket.socket)?;
-            Ok((proxy, socket))
-        });
-        match made {
-            Ok((proxy, socket)) => {
-                eprintln!(
-                    "network: {:?} proxy at {} (CA {})",
-                    args.config.mode,
-                    socket.socket.display(),
-                    proxy.fingerprint()
-                );
-                this.proxy = Some(Arc::new(proxy));
-                this.socket = Some(socket);
-                this.session = NetworkSession::begin(args.config.clone(), true);
-                *this.setup.lock().unwrap() = ("Waiting for guest tools…".into(), false);
-            }
+        let off = NetworkConfig { mode: NetworkMode::Off, ..args.config.clone() };
+        match SocketDir::create() {
+            Ok(socket) => this.socket = Some(socket),
             Err(e) => {
                 eprintln!("network: {e}");
-                let off = NetworkConfig { mode: NetworkMode::Off, ..args.config.clone() };
                 this.session = NetworkSession::begin(off, false);
+                if args.config.mode != NetworkMode::Off {
+                    *this.setup.lock().unwrap() = (format!("Couldn't start networking: {e}"), true);
+                }
+                return this;
+            }
+        }
+        this.session = NetworkSession::begin(args.config.clone(), true);
+        if args.config.mode != NetworkMode::Off {
+            if let Err(e) = Self::listen(&mut this.proxy, this.socket.as_ref(), &this.directory, &args.config) {
+                eprintln!("network: {e}");
+                this.session = NetworkSession::begin(off, true);
                 *this.setup.lock().unwrap() = (format!("Couldn't start networking: {e}"), true);
             }
         }
         this
+    }
+
+    /// Make the proxy (its identity is kept per device) and listen on the socket the engine forwards to.
+    fn listen(
+        proxy: &mut Option<Arc<Proxy>>,
+        socket: Option<&SocketDir>,
+        directory: &Path,
+        config: &NetworkConfig,
+    ) -> lighttouch_core::Result<()> {
+        let Some(socket) = socket else { return Ok(()) };
+        let made = Proxy::create(directory, config)?;
+        made.listen(&socket.socket)?;
+        eprintln!("network: {:?} proxy at {} (CA {})", config.mode, socket.socket.display(), made.fingerprint());
+        *proxy = Some(Arc::new(made));
+        Ok(())
     }
 
     fn boot(&self) -> Option<NetworkBoot> {
@@ -644,6 +654,7 @@ impl Networking {
     fn start_guest_setup(&mut self, runtime: &Arc<Runtime>) {
         let Some(proxy) = &self.proxy else { return };
         let certificate = proxy.certificate();
+        *self.setup.lock().unwrap() = ("Waiting for guest tools…".into(), false);
         let agent = RuntimeAgent { runtime: runtime.clone(), stop: self.stop.clone(), epoch: Instant::now() };
         let (setup, tools) = (self.setup.clone(), self.guest_tools.clone());
         self.thread = thread::Builder::new()
@@ -658,19 +669,28 @@ impl Networking {
             .ok();
     }
 
-    /// Apply a pending live change (retried while the engine starts) and report the status when it changes.
-    fn tick(&mut self, runtime: &Runtime, events: &Sender<Event>) {
+    /// Apply a pending live change (retried while the engine starts), set the guest up the first time networking is
+    /// on, and report the status when it changes.
+    fn tick(&mut self, runtime: &Arc<Runtime>, events: &Sender<Event>) {
         if self.session.pending() && self.last_try.is_none_or(|t| t.elapsed() >= Duration::from_millis(100)) {
             self.last_try = Some(Instant::now());
-            let proxy = self.proxy.clone();
-            self.session.refresh(|config| {
-                // NAT first, then the proxy: a refused policy leaves both as they were.
+            let Self { proxy, socket, directory, session, .. } = self;
+            session.refresh(|config| {
+                // Turning networking on for the first time this session makes the proxy.
+                if config.mode != NetworkMode::Off && proxy.is_none() {
+                    Self::listen(proxy, socket.as_ref(), directory, config)?;
+                }
+                // NAT next, then the proxy: a refused policy leaves both as they were.
                 runtime.network_policy(config.mode, config.local_network)?;
-                match &proxy {
+                match proxy {
                     Some(proxy) => proxy.configure(config),
                     None => Ok(()),
                 }
             });
+        }
+        // Once per session: the guest keeps its certificate and proxy when networking is turned off and on again.
+        if self.thread.is_none() && self.proxy.is_some() && self.session.active().mode != NetworkMode::Off {
+            self.start_guest_setup(runtime);
         }
         let setup = self.setup.lock().unwrap().clone();
         let status =

@@ -1807,7 +1807,9 @@ lt_status lt_device_boot_argv(lt_device *d, const lt_boot_config *c, int *argc, 
         lt::require(c->network_mode <= 2, "Invalid network mode");
         std::string network = "user,id=wifi0,lan=" + std::string(c->network_local && c->network_mode == 1 ? "on" : "off") +
             ",restrict=" + (c->network_mode == 1 ? "off" : "on");
-        if (c->network_mode) {
+        // The proxy forward is there whatever the mode, so networking can be turned on while the guest runs: with no
+        // proxy listening yet a guest connection to it just closes, and Off still blocks every other destination.
+        if (c->network_socket) {
             // An absolute path that fits sockaddr_un everywhere (104 bytes on macOS); on Windows a drive path.
             const char *endpoint = c->network_socket;
 #ifdef _WIN32

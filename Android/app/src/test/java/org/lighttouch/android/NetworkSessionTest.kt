@@ -33,14 +33,12 @@ class NetworkSessionTest {
         session.refresh { fail("Already applied; must not reconfigure"); 0 to "" }
     }
 
-    @Test fun offlineBootKeepsEgressOffAndExplainsRequiredRestart() {
+    @Test fun offlineBootTurnsOnLive() {
         val session = NetworkSession()
         session.begin(NetworkConfiguration())
         session.request(archive)
-        session.refresh { fail("No proxy was created at boot"); 0 to "" }
-        assertFalse(session.snapshot().active.enabled)
-        assertTrue(session.snapshot().notice.contains("Stop and start"))
-        session.request(NetworkConfiguration())
+        session.refresh { assertEquals(archive, it); 0 to "" }
+        assertEquals(archive, session.snapshot().active)
         assertEquals("", session.snapshot().notice)
     }
 

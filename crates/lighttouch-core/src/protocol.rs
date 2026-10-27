@@ -173,7 +173,7 @@ pub struct StatusEvent {
 /// and the proxy's activity (like Android's Current session).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkStatus {
-    /// The session started with networking on, so it has a proxy and can change route live.
+    /// The engine forwards to a proxy socket, so every network setting applies live.
     pub proxy: bool,
     pub applied: NetworkConfig,
     /// "Waiting for guest tools…", "Ready", or what went wrong.

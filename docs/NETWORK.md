@@ -2,12 +2,11 @@
 
 Android exposes **Settings → Network**. Networking and local-network access are
 off by default. Enable networking and choose Direct internet or Wayback Machine;
-the selected calendar date uses the Archive's closest available capture. Once a
-session starts with networking enabled, route, archive date and LAN changes apply
-to new requests immediately. Reload the page after changing them. In-flight
-requests retain their original route/date. Networking can also be disabled and
-re-enabled live in that session. A session started offline needs a stop/start to
-create its private proxy endpoint; Settings explicitly reports this pending change.
+the selected calendar date uses the Archive's closest available capture. Every
+setting applies to the running session, turning networking on or off included:
+changes apply to new requests immediately. Reload the page after changing them.
+In-flight requests retain their original route/date. The first time networking is
+on in a session, the guest is set up as at a networked start (below).
 No capture means an archive error, never a live-web
 fallback. Archived browsing supports GET/HEAD; forms need Direct internet.
 
@@ -57,8 +56,11 @@ between uploads without aborting setup. Once accepted, a mutation is polled and
 never resubmitted automatically.
 
 The engine's bundled libslirp uses a native private Unix socket forward at
-`10.0.2.100:3128`, with no subprocess or host TCP listener. Off restricts guest
-egress and creates no proxy identity. Archive restricts egress to the private proxy.
+`10.0.2.100:3128`, with no subprocess or host TCP listener. The forward is added at
+every boot, Off included; libslirp connects to the socket per guest connection, so
+the worker makes the proxy (identity, then listener) the first time networking is
+turned on, at boot or live, and a guest connection before that just closes. Off
+restricts guest egress and creates no proxy identity until networking is first on. Archive restricts egress to the private proxy.
 Direct enables NAT and Android DNS using netd/getaddrinfo; LAN access remains an
 explicit opt-in. Host loopback remains blocked. This source integration replaces
 the fork PR's build-time patches.
@@ -117,8 +119,8 @@ first-save recovery, private key permissions and concurrent CA initialization.
 The Linux live-configuration fixture uses a local verified TLS upstream and no
 outbound traffic to check route/date changes, separate date caches, an old request
 completing after a date change, and switching to Direct while archive I/O is blocked.
-Android session tests cover startup admission retries, offline-boot restart notices,
-live disable/re-enable and preserving active status on failed policy changes.
+Android session tests cover startup admission retries, turning an offline boot on
+live, live disable/re-enable and preserving active status on failed policy changes.
 
 The raw NAT policy can also be checked against the engine's actual vendored
 libslirp on a native host (Meson and GLib development files required):

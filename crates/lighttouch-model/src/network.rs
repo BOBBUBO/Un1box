@@ -1,6 +1,6 @@
 //! Guest networking, as Android's Settings → Network: off by default; Direct internet or the Wayback Machine at a
-//! chosen calendar day, and local network access as an explicit opt-in. A session started with networking on can
-//! change route, date and LAN live; one started offline needs a restart (the proxy is made at boot).
+//! chosen calendar day, and local network access as an explicit opt-in. Every setting applies to the running session:
+//! the engine forwards the proxy address from boot, and the worker makes the proxy the first time networking is on.
 //!
 //! Besides the settings this holds the worker's side, kept free of the engine so it can be tested: `NetworkSession`
 //! (saved preferences versus what the running session applied) and `configure_guest` (installing the proxy's
@@ -176,7 +176,7 @@ pub(crate) fn lenient<'de, D: serde::Deserializer<'de>>(d: D) -> Result<NetworkS
 /// while the engine is starting (`LT_AGAIN`/`LT_BUSY`), then applied once or reported; it never touches the guest.
 #[derive(Debug, Default)]
 pub struct NetworkSession {
-    proxy: bool,
+    endpoint: bool,
     active: NetworkConfig,
     requested: NetworkConfig,
     pending: bool,
@@ -184,9 +184,10 @@ pub struct NetworkSession {
 }
 
 impl NetworkSession {
-    /// At boot: `proxy` says whether a proxy endpoint was made (networking on and set up).
-    pub fn begin(config: NetworkConfig, proxy: bool) -> Self {
-        Self { proxy, active: config.clone(), requested: config, pending: false, notice: String::new() }
+    /// At boot: `endpoint` says whether the engine forwards to a proxy socket (only an engine that can't leaves a
+    /// session that must restart to go online).
+    pub fn begin(config: NetworkConfig, endpoint: bool) -> Self {
+        Self { endpoint, active: config.clone(), requested: config, pending: false, notice: String::new() }
     }
 
     pub fn request(&mut self, config: NetworkConfig) {
@@ -199,12 +200,13 @@ impl NetworkSession {
         self.pending
     }
 
-    /// Try a pending change. `apply` changes the engine's policy and the proxy; its error carries an `lt_status`.
+    /// Try a pending change. `apply` changes the engine's policy and the proxy (making it on the first change that
+    /// needs one); its error carries an `lt_status`.
     pub fn refresh(&mut self, apply: impl FnOnce(&NetworkConfig) -> Result<(), lighttouch_core::Error>) {
         if !self.pending {
             return;
         }
-        if !self.proxy {
+        if !self.endpoint {
             if self.requested.mode != NetworkMode::Off {
                 self.notice = "Saved. Stop and start the device to enable networking for this session.".into();
             } else {
@@ -230,8 +232,8 @@ impl NetworkSession {
         }
     }
 
-    pub fn proxy(&self) -> bool {
-        self.proxy
+    pub fn endpoint(&self) -> bool {
+        self.endpoint
     }
 
     pub fn active(&self) -> &NetworkConfig {
@@ -364,7 +366,7 @@ pub fn status(
 ) -> NetworkStatus {
     let activity = activity.unwrap_or_default();
     NetworkStatus {
-        proxy: session.proxy(),
+        proxy: session.endpoint(),
         applied: session.active().clone(),
         setup: setup.0.to_string(),
         setup_error: setup.1,
@@ -460,7 +462,21 @@ mod tests {
     }
 
     #[test]
-    fn offline_session_needs_a_restart_to_enable() {
+    fn offline_session_turns_on_live() {
+        let mut session = NetworkSession::begin(NetworkConfig::default(), true);
+        session.request(direct());
+        let mut applied = None;
+        session.refresh(|config| {
+            applied = Some(config.mode);
+            Ok(())
+        });
+        assert_eq!(applied, Some(NetworkMode::Direct));
+        assert_eq!(session.active().mode, NetworkMode::Direct);
+        assert_eq!(session.notice(), "");
+    }
+
+    #[test]
+    fn session_without_an_endpoint_needs_a_restart_to_enable() {
         let mut session = NetworkSession::begin(NetworkConfig::default(), false);
         session.request(direct());
         session.refresh(|_| panic!("no proxy to apply to"));

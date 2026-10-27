@@ -645,12 +645,20 @@ JNI(remove) jstring JNICALL Java_org_lighttouch_android_Native_remove(JNIEnv *en
     auto status=open_library(path.value,&error);if(status==LT_OK)status=lt_library_remove(library,record.value,&error);
     return string(env,result(status,error));
 }
-// The listener and CA live for this worker; route/date/policy can change live.
+// The listener and CA live for this worker; route/date/policy can change live. The engine forwards to the socket
+// path from boot whatever the mode, and the proxy is made the first time networking is on (at boot or live).
 static std::mutex network_guard;
 static std::unique_ptr<lt::network::Proxy> network_proxy;
 static uint32_t network_mode = 0;
 static uint32_t network_local = 0;
 static std::string network_socket;
+static std::string network_identity;
+static std::string network_roots;
+static void network_listen(const lt::network::Configuration &config) {
+    network_proxy=std::make_unique<lt::network::Proxy>(network_identity,config,network_roots);
+    std::filesystem::remove(network_socket);
+    try { network_proxy->listen(network_socket); } catch(...) { network_proxy.reset(); throw; }
+}
 JNI(networkPrepare) jstring JNICALL Java_org_lighttouch_android_Native_networkPrepare(JNIEnv *env,jobject,jstring root,jstring record,jint mode,jstring date,jboolean local,jstring roots) {
     Utf directory(env,root),id(env,record),day(env,date),certificates(env,roots);
     try {
@@ -658,14 +666,14 @@ JNI(networkPrepare) jstring JNICALL Java_org_lighttouch_android_Native_networkPr
            std::string(id.value).find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")!=std::string::npos)
             return string(env,"Invalid network configuration");
         std::lock_guard<std::mutex> lock(network_guard);
-        network_proxy.reset();network_mode=uint32_t(mode);network_local=local;network_socket.clear();
+        network_proxy.reset();network_mode=uint32_t(mode);network_local=local;
+        network_identity=std::string(directory.value)+"/network/"+id.value;network_roots=certificates.value;
+        network_socket=std::string(directory.value)+"/network-proxy.sock";
+        std::filesystem::remove(network_socket);
         if(mode) {
             lt::network::Configuration config;config.mode=mode==1?lt::network::Mode::direct:lt::network::Mode::archive;
             config.archive_date=day.value;config.local_network=local;
-            network_proxy=std::make_unique<lt::network::Proxy>(std::string(directory.value)+"/network/"+id.value,config,certificates.value);
-            network_socket=std::string(directory.value)+"/network-proxy.sock";
-            std::filesystem::remove(network_socket);
-            network_proxy->listen(network_socket);
+            network_listen(config);
         }
         return string(env,"");
     } catch(const std::exception &e) { return string(env,e.what()); }
@@ -683,18 +691,27 @@ JNI(networkUpdate) jobjectArray JNICALL Java_org_lighttouch_android_Native_netwo
     lt_status status=LT_OK;
     std::string message;
     try {
+        const bool valid=mode>=0 && mode<=2 && day.value && lt::network::Configuration::valid_date(day.value);
+        lt::network::Configuration config;
+        if(valid) {
+            config.mode=mode==0?lt::network::Mode::off:mode==1?lt::network::Mode::direct:lt::network::Mode::archive;
+            config.archive_date=day.value;config.local_network=local;
+        }
+        // Turning networking on for the first time this session makes the proxy, outside the presenter's guard
+        // (a first identity takes a key generation).
+        if(valid && mode) {
+            std::lock_guard<std::mutex> lock(network_guard);
+            if(!network_proxy && !network_socket.empty())network_listen(config);
+        }
         std::scoped_lock lock(guard,network_guard);
-        if(mode<0 || mode>2 || !day.value || !lt::network::Configuration::valid_date(day.value)) {
+        if(!valid) {
             status=LT_INVALID;message="Invalid network configuration";
-        } else if(!network_proxy) {
-            status=LT_UNSUPPORTED;message="Enable networking and restart the device first";
+        } else if(!network_proxy && mode) {
+            status=LT_UNSUPPORTED;message="Networking isn't available in this session; stop and start the device";
         } else {
             status=lt_runtime_network_policy(runtime,uint32_t(mode),local,&error);
             if(status==LT_OK) {
-                lt::network::Configuration config;
-                config.mode=mode==0?lt::network::Mode::off:mode==1?lt::network::Mode::direct:lt::network::Mode::archive;
-                config.archive_date=day.value;config.local_network=local;
-                network_proxy->configure(std::move(config));
+                if(network_proxy)network_proxy->configure(std::move(config));
                 network_mode=uint32_t(mode);network_local=local;
             } else message=result(status,error);
         }
