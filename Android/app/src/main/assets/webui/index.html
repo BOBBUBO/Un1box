@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Un1box Web UI</title>
+<style>
+:root {
+  --bg: #0d0f10; --surface: #181b1d; --surface2: #1f2326; --line: #282d30;
+  --text: #e4e6e7; --muted: #9aa2a6; --accent: #71dcc8; --accent-deep: #0f7f6f;
+  --danger: #ff6b6b; --warning: #ffc56b; --radius: 14px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+h2 { font-size: 16px; margin: 0 0 10px; }
+h3 { font-size: 14px; margin: 0 0 6px; }
+header { display: flex; align-items: center; gap: 14px; padding: 12px 18px;
+  border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5; }
+header .brand { display: flex; align-items: baseline; gap: 8px; }
+header .brand small { color: var(--muted); }
+.pill { font-size: 13px; padding: 3px 12px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.running { color: var(--accent); border-color: var(--accent-deep); }
+.pill.starting, .pill.stopping { color: var(--warning); }
+.pill.failed { color: var(--danger); }
+header .device-name { color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header .spacer { flex: 1; }
+nav { display: flex; gap: 4px; padding: 0 14px; border-bottom: 1px solid var(--line);
+  overflow-x: auto; position: sticky; top: 50px; background: var(--bg); z-index: 4; }
+nav button { appearance: none; background: none; border: none; color: var(--muted);
+  font: inherit; padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+nav button .badge { background: var(--accent-deep); color: #dff; border-radius: 999px;
+  font-size: 11px; padding: 1px 7px; margin-left: 6px; }
+main { padding: 18px; max-width: 1060px; margin: 0 auto; }
+section.view { display: none; }
+section.view.active { display: block; }
+.card { background: var(--surface); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.grow { flex: 1; }
+.muted { color: var(--muted); font-size: 13px; }
+.small { font-size: 13px; }
+.danger { color: var(--danger); }
+.warn { color: var(--warning); }
+.ok-text { color: var(--accent); }
+button.act, label.file { appearance: none; background: var(--surface2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 10px; padding: 7px 14px; font: inherit; font-size: 14px;
+  cursor: pointer; }
+button.act.primary { background: var(--accent-deep); color: #dff7f0; border-color: var(--accent-deep); }
+button.act.danger-button { color: var(--danger); border-color: #5b2626; }
+button.act:disabled { opacity: .45; cursor: default; }
+input[type=text], input[type=search], select { background: var(--surface2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: inherit; }
+input[type=text] { min-width: 180px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip { appearance: none; background: none; border: 1px solid var(--line); color: var(--muted);
+  border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
+.chip.on { color: var(--accent); border-color: var(--accent-deep); background: rgba(15,127,111,.15); }
+.device { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--surface); margin-bottom: 10px; }
+.device.selected { outline: 1px solid var(--accent-deep); }
+.device .title { font-weight: 600; }
+.device .sub { color: var(--muted); font-size: 13px; }
+.device .tag { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.device .tag.dirty { color: var(--warning); border-color: var(--warning); }
+.device .tag.selected-tag { color: var(--accent); border-color: var(--accent-deep); }
+.device .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.progress-wrap { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; flex: 1; min-width: 80px; }
+.progress-fill { height: 100%; background: var(--accent-deep); width: 0%; }
+.error-banner { background: #3b0a0a; color: #ffb3b3; border-radius: var(--radius); padding: 10px 14px; margin-bottom: 14px; }
+.notice-banner { background: #0f3b33; color: var(--accent); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 14px; }
+#screen-wrap { display: flex; justify-content: center; background: #000; border-radius: var(--radius);
+  overflow: hidden; position: relative; touch-action: none; }
+#screen { display: block; max-width: 100%; max-height: 78vh; margin: 0 auto; cursor: pointer; user-select: none; -webkit-user-drag: none; }
+#screen.idle { max-height: 320px; opacity: .35; }
+.screen-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 16px; text-shadow: 0 1px 4px #000; pointer-events: none; }
+.dock { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+.dock button { min-width: 86px; }
+.app-row { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px;
+  background: var(--surface); margin-bottom: 8px; cursor: pointer; }
+.app-row:hover { background: var(--surface2); }
+.app-row .icon { width: 48px; height: 48px; border-radius: 11px; background: var(--surface2); object-fit: cover; }
+.app-row .fallback { width: 48px; height: 48px; border-radius: 11px; background: var(--surface2);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--muted); flex: none; }
+.app-row .name { font-weight: 600; }
+.app-row .dev { color: var(--muted); font-size: 13px; }
+.app-row .incompat { color: var(--warning); font-size: 13px; }
+.queue-item { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 10px;
+  background: var(--surface2); margin-bottom: 6px; font-size: 14px; }
+.shots { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+.shots img { height: 260px; border-radius: 8px; background: var(--line); }
+table.settings { width: 100%; border-collapse: collapse; }
+table.settings td { padding: 9px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+table.settings td:first-child { font-weight: 600; width: 36%; }
+table.settings .sub { display: block; font-weight: 400; color: var(--muted); font-size: 13px; }
+.switch { position: relative; width: 44px; height: 24px; flex: none; display: inline-block; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--line); transition: .15s; cursor: pointer; }
+.switch span::after { content: ""; position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; top: 3px; left: 3px; transition: .15s; }
+.switch input:checked + span { background: var(--accent-deep); }
+.switch input:checked + span::after { left: 23px; }
+#toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--surface2);
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px 18px; max-width: 90vw; display: none; z-index: 20; }
+#token-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none;
+  align-items: center; justify-content: center; z-index: 30; }
+#token-overlay .card { width: min(430px, 90vw); }
+.genre-row { display: flex; justify-content: space-between; padding: 10px 12px; border-radius: 10px;
+  background: var(--surface); margin-bottom: 6px; cursor: pointer; }
+.genre-row:hover { background: var(--surface2); }
+#frames-list { max-height: 260px; overflow: auto; font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+details pre { white-space: pre-wrap; font-size: 12px; color: var(--muted); }
+hr.sep { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><h1>Un1box</h1><small>Web UI</small></div>
+  <span class="pill" id="state-pill">off</span>
+  <span class="device-name" id="selected-name"></span>
+  <span class="spacer"></span>
+  <span class="muted small" id="app-version"></span>
+</header>
+<nav>
+  <button data-view="devices">Devices</button>
+  <button data-view="guest">Guest</button>
+  <button data-view="store">Store<span class="badge" id="queue-badge" style="display:none">0</span></button>
+  <button data-view="settings">Settings</button>
+</nav>
+<main>
+  <div id="op-error"></div>
+  <div id="op-notice"></div>
+
+  <section class="view" id="view-devices">
+    <div class="card">
+      <h2>Add a device</h2>
+      <div class="row" style="margin-bottom:10px">
+        <button class="act primary" id="prepare-toggle">Prepare from an IPSW</button>
+        <span class="muted">Downloads Apple's firmware and builds the device here, like the app's first-run wizard.</span>
+      </div>
+      <div id="prepare-card" style="display:none">
+        <div class="row" style="margin-bottom:10px">
+          <select id="firmware-select"></select>
+          <span class="muted" id="firmware-detail"></span>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <button class="act" id="ipsw-download">Download the IPSW</button>
+          <label class="file">Upload an IPSW…<input type="file" id="ipsw-file" hidden></label>
+          <span id="ipsw-state" class="small"></span>
+        </div>
+        <div class="row" id="ipsw-progress-row" style="display:none;margin-bottom:10px">
+          <div class="progress-wrap"><div class="progress-fill" id="ipsw-progress"></div></div>
+        </div>
+        <div class="row" id="rom-row" style="display:none;margin-bottom:10px">
+          <button class="act" id="rom-download">Download the boot ROM</button>
+          <label class="file">Upload a boot ROM…<input type="file" id="rom-file" hidden></label>
+          <span id="rom-state" class="small"></span>
+        </div>
+        <div class="row" style="margin-bottom:6px">
+          <button class="act primary" id="prepare-start">Prepare</button>
+          <button class="act" id="prepare-cancel" style="display:none">Cancel</button>
+          <span id="prepare-stage" class="small"></span>
+        </div>
+        <div class="row" id="prepare-progress-row" style="display:none;margin-bottom:6px">
+          <div class="progress-wrap"><div class="progress-fill" id="prepare-progress"></div></div>
+        </div>
+        <div id="prepare-result"></div>
+      </div>
+      <hr class="sep">
+      <h3>From device files</h3>
+      <div class="row" style="margin-bottom:10px">
+        <label class="file">Choose an .itbase or a ZIP…<input type="file" id="import-file" hidden></label>
+        <input type="text" id="import-name" placeholder="Device name (optional)">
+        <label class="file">Boot ROM (optional)…<input type="file" id="import-rom" hidden></label>
+        <span id="import-file-name" class="small"></span>
+      </div>
+      <div class="row">
+        <button class="act primary" id="import-start" disabled>Import</button>
+        <span class="muted">A prepared system (.itbase), a ZIP of one, or a ZIP of its folder — as the app's "I already have the device files".</span>
+      </div>
+      <div class="row" id="import-progress-row" style="display:none;margin-top:10px">
+        <div class="progress-wrap"><div class="progress-fill" id="import-progress"></div></div>
+      </div>
+      <div id="import-state" class="small" style="margin-top:6px"></div>
+    </div>
+    <div id="device-list"></div>
+  </section>
+
+  <section class="view" id="view-guest">
+    <div id="screen-wrap">
+      <img id="screen" alt="The guest's screen" draggable="false">
+      <div class="screen-note" id="screen-note"></div>
+    </div>
+    <div class="dock">
+      <button class="act" id="btn-home">⌂ Home</button>
+      <button class="act" id="btn-wake">⏻ Wake / Sleep</button>
+      <button class="act" id="btn-volup">+ Volume</button>
+      <button class="act" id="btn-voldown">− Volume</button>
+      <button class="act primary" id="btn-pause">⏸ <span id="pause-label">Pause</span></button>
+      <button class="act" id="btn-shot">📷 Screenshot</button>
+      <button class="act danger-button" id="btn-stop">⏹ Stop</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="muted">Mirror:</span>
+      <select id="fps"><option value="2">2 fps</option><option value="5" selected>5 fps</option><option value="10">10 fps</option></select>
+      <span class="muted small" id="guest-detail"></span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="act" id="btn-hitch">Inspect a hitch</button>
+      <button class="act" id="btn-profile">Record a profile</button>
+      <button class="act" id="btn-recover">Recover retained state</button>
+    </div>
+    <div id="hitch-card" class="card" style="display:none"></div>
+  </section>
+
+  <section class="view" id="view-store">
+    <div class="card">
+      <div class="row">
+        <input type="search" id="store-search" placeholder="Search the archive…" style="flex:1;min-width:200px">
+        <button class="act primary" id="store-search-button">Search</button>
+      </div>
+      <div class="chips" id="store-tabs" style="margin-top:10px">
+        <button class="chip" data-tab="search">Results</button>
+        <button class="chip" data-tab="installed">Installed</button>
+        <button class="chip" data-tab="featured">Featured</button>
+        <button class="chip" data-tab="charts">Charts</button>
+        <button class="chip" data-tab="categories">Categories</button>
+        <button class="chip" data-tab="collections">Collections</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label class="file">Install an IPA you have…<input type="file" id="ipa-file" accept=".ipa" hidden></label>
+        <button class="act" id="store-crash">Last crash report</button>
+        <span class="muted small" id="store-target"></span>
+      </div>
+      <div class="row" id="ipa-progress-row" style="display:none;margin-top:8px">
+        <div class="progress-wrap"><div class="progress-fill" id="ipa-progress"></div></div>
+      </div>
+    </div>
+    <div id="store-list"></div>
+  </section>
+
+  <section class="view" id="view-settings">
+    <div class="card"><h2>App settings</h2><table class="settings" id="settings-table"></table></div>
+    <div class="card">
+      <h2>Web UI</h2>
+      <p class="muted">This page, on port <b id="webui-port"></b>. The server can also be stopped from the app's Settings or its notification.</p>
+      <button class="act danger-button" id="webui-stop">Stop the Web UI</button>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+<div id="token-overlay">
+  <div class="card">
+    <h2>This Web UI needs its token</h2>
+    <p class="muted">Open the address shown in Un1box's Settings on the phone, with its <code>?token=…</code>.</p>
+    <div class="row"><input type="text" id="token-input" placeholder="Token" style="flex:1"><button class="act primary" id="token-apply">Open</button></div>
+  </div>
+</div>
+<script>
+"use strict";
+const TOKEN_KEY = "un1box-webui-token";
+let token = new URLSearchParams(location.search).get("token") || localStorage.getItem(TOKEN_KEY) || "";
+if (token) localStorage.setItem(TOKEN_KEY, token);
+
+let S = null;                    // the last /api/status answer
+let view = "devices";
+let frame = { w: 320, h: 480 };  // the mirrored frame's size, for touch mapping
+let romUploadPath = "";
+let importFile = null;
+let charts = { type: "top-free", device: "", genre: "", date: "" };
+let storeTab = "search";
+let storeList = { title: "", rows: [], total: 0, next: null, loading: false };
+let appPage = null;              // the open app's details
+let firmwares = [];
+let settings = {};
+
+const $ = (id) => document.getElementById(id);
+const ENTITY = (code) => String.fromCharCode(38) + "#" + code + ";";
+const ENTITIES = { "&": ENTITY(38), "<": ENTITY(60), ">": ENTITY(62), '"': ENTITY(34), "'": ENTITY(39) };
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ENTITIES[c]);
+const fmtBytes = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1e3)) + " KB";
+const pct = (fraction) => (typeof fraction === "number" && fraction >= 0 ? Math.round(fraction * 100) + "%" : "");
+
+function toast(message, isError) {
+  const el = $("toast");
+  el.textContent = message;
+  el.style.color = isError ? "var(--danger)" : "var(--text)";
+  el.style.display = "block";
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.style.display = "none"; }, 4000);
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, { ...options, headers: { ...(options.headers || {}), "X-WebUi-Token": token } });
+  if (response.status === 403) { $("token-overlay").style.display = "flex"; throw new Error("This Web UI needs its token"); }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || "HTTP " + response.status);
+  return body;
+}
+const post = (path, body) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+
+/** A raw-body upload, with the browser's own progress reporting. */
+function upload(path, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.setRequestHeader("X-WebUi-Token", token);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let body = {};
+      try { body = JSON.parse(xhr.responseText); } catch (_) {}
+      if (xhr.status === 403) { $("token-overlay").style.display = "flex"; reject(new Error("This Web UI needs its token")); return; }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body); else reject(new Error(body.error || "HTTP " + xhr.status));
+    };
+    xhr.onerror = () => reject(new Error("The upload failed"));
+    xhr.send(file);
+  });
+}
+
+// ------------------------------------------------------------------------------ status polling
+async function poll() {
+  try { S = await api("/api/status"); } catch (e) { if (S) toast(e.message, true); return; }
+  const state = S.engine.state || "stopped";
+  const pill = $("state-pill");
+  pill.textContent = state;
+  pill.className = "pill " + (["running", "starting", "stopped", "paused", "failed", "stopping"].includes(state) ? state : "");
+  $("selected-name").textContent = (S.devices.find((d) => d.selected) || {}).name || "No device selected";
+  $("app-version").textContent = "Un1box " + S.app.version;
+  const error = S.engine.error || S.error;
+  $("op-error").innerHTML = error ? `<div class="error-banner">${esc(error)} <button class="act" onclick="acknowledge()">Dismiss</button></div>` : "";
+  $("op-notice").innerHTML = !error && S.notice ? `<div class="notice-banner">${esc(S.notice)} <button class="act" onclick="acknowledge()">OK</button></div>` : "";
+  const queue = S.queue || [];
+  const badge = $("queue-badge");
+  const active = queue.filter((q) => q.active).length;
+  badge.style.display = queue.length ? "inline" : "none";
+  badge.textContent = active || queue.length;
+  renderView();
+}
+async function acknowledge() { await post("/api/ack").catch(() => {}); poll(); }
+
+// ------------------------------------------------------------------------------ view switching
+function renderView() {
+  document.querySelectorAll("section.view").forEach((s) => s.classList.remove("active"));
+  const activeView = $("view-" + view);
+  if (activeView) activeView.classList.add("active");
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  if (view === "devices") renderDevices();
+  else if (view === "guest") renderGuest();
+  else if (view === "store") renderStore();
+  else if (view === "settings") renderSettings();
+}
+
+// ------------------------------------------------------------------------------ devices
+function renderDevices() {
+  if (!S) return;
+  const state = S.engine.state;
+  const busyGuest = ["running", "paused", "starting", "stopping"].includes(state);
+
+  $("import-progress-row").style.display = S.import.active ? "flex" : "none";
+  if (S.import.active) { $("import-progress").style.width = pct(S.import.progress); $("import-state").textContent = S.import.phase; }
+  else if (S.import.phase) $("import-state").textContent = "";
+
+  const prep = S.prepare;
+  const running = prep.preparation && ["starting", "preparing", "cancelling"].includes(prep.preparation.state);
+  $("prepare-progress-row").style.display = running || prep.importing ? "flex" : "none";
+  if (running) {
+    const fraction = prep.preparation.total > 0 ? prep.preparation.done / prep.preparation.total : -1;
+    $("prepare-progress").style.width = pct(fraction);
+    $("prepare-stage").textContent = prep.preparation.stage || prep.preparation.state;
+    $("prepare-cancel").style.display = "inline-block";
+    $("prepare-start").disabled = true;
+  } else if (prep.importing) {
+    $("prepare-progress").style.width = pct(prep.importProgress);
+    $("prepare-stage").textContent = prep.importPhase;
+    $("prepare-cancel").style.display = "none";
+  } else {
+    $("prepare-cancel").style.display = "none";
+    $("prepare-start").disabled = !prep.ipsw.ready || (prep.rom.needed && !prep.rom.ready);
+  }
+  const settled = prep.preparation && ["complete", "failed", "cancelled"].includes(prep.preparation.state) && !running && !prep.importing;
+  $("prepare-result").innerHTML = settled ? prepareResultHtml(prep) : "";
+
+  $("ipsw-state").textContent = prep.ipsw.ready ? "Ready" : (prep.ipsw.downloading ? "Downloading…" : (prep.ipsw.error || prep.ipsw.status || ""));
+  $("ipsw-progress-row").style.display = prep.ipsw.downloading ? "flex" : "none";
+  if (prep.ipsw.downloading) $("ipsw-progress").style.width = pct(prep.ipsw.downloadProgress);
+  $("rom-row").style.display = prep.rom.needed ? "flex" : "none";
+  $("rom-state").textContent = prep.rom.ready ? "Ready" : (prep.rom.checking ? "Checking…" : (prep.rom.error || ""));
+  $("rom-download").disabled = prep.rom.checking;
+
+  $("device-list").innerHTML = S.devices.map((d) => `
+    <div class="device ${d.selected ? "selected" : ""}">
+      <div class="grow">
+        <div class="title">${esc(d.name)}
+          ${d.selected ? '<span class="tag selected-tag">selected</span>' : ""}
+          ${d.dirty ? '<span class="tag dirty">retained state</span>' : ""}</div>
+        <div class="sub">${esc(d.subtitle)}${d.contacts !== "1" ? " · mixed contacts" : ""}${d.bootromAvailable ? " · boot ROM" : ""}${d.guestPackageAvailable ? " · guest tools" : ""}</div>
+      </div>
+      <div class="actions">
+        ${d.selected && !d.dirty && ["stopped", "failed"].includes(state) ? `<button class="act primary" onclick="guestStart(false)">Start</button>` : ""}
+        ${d.selected && d.dirty && ["stopped", "failed"].includes(state) ? `<button class="act primary" onclick="guestStart(true)">Recover & start</button>` : ""}
+        ${!d.selected && !busyGuest ? `<button class="act" onclick="deviceSelect('${esc(d.id)}')">Select</button>` : ""}
+        <button class="act" onclick="deviceRename('${esc(d.id)}', '${esc(d.name).replace(/'/g, "\\'")}')">Rename</button>
+        <button class="act danger-button" onclick="deviceDelete('${esc(d.id)}')">Delete</button>
+      </div>
+    </div>`).join("") || `<div class="card muted">No devices yet. Prepare one from an IPSW above, or import files you already have.</div>`;
+}
+
+function prepareResultHtml(prep) {
+  if (prep.preparation.state === "complete") {
+    if (prep.imported) return `<div class="notice-banner">Prepared and added to the library — it is in the list below.</div>`;
+    return `<div class="error-banner">Prepared, but not added: ${esc(prep.importError)} <button class="act" onclick="retryPreparedImport()">Add it again</button></div>`;
+  }
+  if (prep.preparation.state === "failed") return `<div class="error-banner">Preparation failed: ${esc(prep.preparation.error || "unknown error")}</div>`;
+  if (prep.preparation.state === "cancelled") return `<div class="notice-banner">Preparation cancelled.</div>`;
+  return "";
+}
+
+async function loadFirmwares() {
+  const catalog = await api("/api/prepare/catalog");
+  firmwares = catalog.firmwares;
+  const select = $("firmware-select");
+  const chosen = firmwares.find((f) => f.recommended) || firmwares[0];
+  select.innerHTML = firmwares.map((f) => `<option value="${esc(f.id)}" ${f === chosen ? "selected" : ""}>${esc(f.label)} · ${esc(f.support)}</option>`).join("");
+  describeFirmware();
+  select.onchange = describeFirmware;
+}
+function chosenFirmwareId() { return $("firmware-select").value; }
+function describeFirmware() {
+  const row = firmwares.find((f) => f.id === chosenFirmwareId());
+  if (!row) return;
+  $("firmware-detail").textContent = row.support + " · " + (row.bytes ? fmtBytes(row.bytes) : "unknown size") + (row.needsRom ? " · needs its boot ROM" : "");
+  $("ipsw-download").textContent = "Download iOS " + row.version + (row.bytes ? " (" + fmtBytes(row.bytes) + ")" : "");
+}
+
+async function guestStart(recover) { try { toast((await post("/api/guest/start", { recover: !!recover })).result); } catch (e) { toast(e.message, true); } poll(); }
+async function deviceSelect(id) { try { await post("/api/devices/select", { id }); toast("Selected"); } catch (e) { toast(e.message, true); } poll(); }
+async function deviceRename(id, current) {
+  const name = prompt("New name for the device", current);
+  if (name === null) return;
+  try { toast((await post("/api/devices/rename", { id, name })).result); } catch (e) { toast(e.message, true); }
+  poll();
+}
+async function deviceDelete(id) {
+  if (!confirm("Delete this device, its storage and everything on it?")) return;
+  try { await post("/api/devices/delete", { id }); toast("Device deleted"); } catch (e) { toast(e.message, true); }
+  poll();
+}
+async function retryPreparedImport() { try { toast((await post("/api/prepare/import-retry")).result); } catch (e) { toast(e.message, true); } poll(); }
+
+// --- the device-files import
+$("import-file").onchange = (e) => {
+  importFile = e.target.files[0];
+  $("import-file-name").textContent = importFile ? importFile.name : "";
+  $("import-start").disabled = !importFile;
+};
+$("import-rom").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try { const answer = await upload("/api/devices/rom", file); romUploadPath = answer.path; toast("Boot ROM kept for this import"); }
+  catch (err) { toast(err.message, true); }
+};
+$("import-start").onclick = async () => {
+  if (!importFile) return;
+  const query = new URLSearchParams({ name: $("import-name").value.trim() });
+  if (romUploadPath) query.set("rom", romUploadPath);
+  $("import-progress-row").style.display = "flex";
+  $("import-progress").style.width = "0%";
+  try { toast((await upload("/api/devices/import?" + query, importFile, (f) => { $("import-progress").style.width = Math.round(f * 100) + "%"; })).result); }
+  catch (e) { toast(e.message, true); }
+  $("import-progress-row").style.display = "none";
+  poll();
+};
+
+// --- the prepare-from-IPSW flow
+$("prepare-toggle").onclick = () => { const card = $("prepare-card"); card.style.display = card.style.display === "none" ? "block" : "none"; };
+$("ipsw-download").onclick = async () => { try { toast((await post("/api/prepare/ipsw/download", { firmwareId: chosenFirmwareId() })).result); } catch (e) { toast(e.message, true); } };
+$("ipsw-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  $("ipsw-progress-row").style.display = "flex";
+  try { toast((await upload("/api/prepare/ipsw/upload?firmwareId=" + encodeURIComponent(chosenFirmwareId()), file, (f) => { $("ipsw-progress").style.width = Math.round(f * 100) + "%"; })).result); }
+  catch (err) { toast(err.message, true); }
+  $("ipsw-progress-row").style.display = "none";
+  poll();
+};
+$("rom-download").onclick = async () => { try { toast((await post("/api/prepare/rom/download", { firmwareId: chosenFirmwareId() })).result); } catch (e) { toast(e.message, true); } };
+$("rom-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try { toast((await upload("/api/prepare/rom/upload?firmwareId=" + encodeURIComponent(chosenFirmwareId()), file)).result); }
+  catch (err) { toast(err.message, true); }
+  poll();
+};
+$("prepare-start").onclick = async () => { try { toast((await post("/api/prepare/start", { firmwareId: chosenFirmwareId() })).result); } catch (e) { toast(e.message, true); } poll(); };
+$("prepare-cancel").onclick = async () => { try { await post("/api/prepare/cancel"); toast("Cancelling"); } catch (e) { toast(e.message, true); } poll(); };
+
+// ------------------------------------------------------------------------------ the guest
+function renderGuest() {
+  if (!S) return;
+  const state = S.engine.state;
+  const running = state === "running";
+  const paused = state === "paused";
+  $("btn-pause").disabled = !["running", "paused"].includes(state);
+  $("pause-label").textContent = paused ? "Resume" : "Pause";
+  $("btn-stop").disabled = !S.engine.sessionStarted || state === "stopping";
+  $("btn-shot").disabled = !["running", "paused"].includes(state);
+  $("btn-hitch").disabled = !["running", "paused"].includes(state);
+  $("btn-recover").style.display = ["stopped", "failed"].includes(state) ? "" : "none";
+  $("guest-detail").textContent = S.engine.detail || "";
+  const labels = { starting: "Starting iOS…", stopping: "Shutting down…", paused: "Paused · Resume below", failed: "iOS stopped unexpectedly", stopped: "Off · Start it from the Devices tab" };
+  $("screen-note").textContent = running ? "" : (labels[state] || "Off");
+  $("screen").classList.toggle("idle", !running && !paused);
+}
+
+$("btn-home").onclick = () => post("/api/guest/pulse", { id: 0 }).catch((e) => toast(e.message, true));
+$("btn-wake").onclick = () => post("/api/guest/pulse", { id: 1 }).catch((e) => toast(e.message, true));
+$("btn-volup").onclick = () => post("/api/guest/pulse", { id: 2 }).catch((e) => toast(e.message, true));
+$("btn-voldown").onclick = () => post("/api/guest/pulse", { id: 3 }).catch((e) => toast(e.message, true));
+$("btn-pause").onclick = async () => { try { toast((await post("/api/guest/pause", { paused: S.engine.state === "running" })).result); } catch (e) { toast(e.message, true); } poll(); };
+$("btn-stop").onclick = async () => {
+  if (!confirm("Shut the device down? Apps close; your apps and data are kept.")) return;
+  try { toast((await post("/api/guest/stop")).result); } catch (e) { toast(e.message, true); }
+  poll();
+};
+$("btn-shot").onclick = async () => { try { toast((await post("/api/guest/screenshot")).result); } catch (e) { toast(e.message, true); } };
+$("btn-recover").onclick = () => guestStart(true);
+$("btn-profile").onclick = async () => {
+  try { const r = await post("/api/guest/profile", { recording: !S.engine.profileRecording });
+    toast(r.profileNotice || (r.profileRecording ? "Recording…" : "Profile stopped"));
+  } catch (e) { toast(e.message, true); }
+  poll();
+};
+$("btn-hitch").onclick = async () => {
+  try {
+    const r = await post("/api/guest/hitch");
+    const frames = r.frames || [];
+    const rows = frames.slice(-80).map((f) => `<tr><td>${f[0]}</td><td>${(f[1] / 1e6).toFixed(1)}</td><td>${(f[2] / 1e6).toFixed(1)}</td><td>${(f[3] / 1e6).toFixed(1)}</td></tr>`).join("");
+    $("hitch-card").style.display = "block";
+    $("hitch-card").innerHTML = `<h2>Frame history</h2>
+      <div class="muted small">sequence · published ms · presented ms · presenter work ms — the last ${frames.length} frames${r.paused ? ", and the guest is paused" : ""}.</div>
+      ${r.paused ? `<button class="act primary" style="margin:8px 0" id="hitch-resume">Resume the guest</button>` : ""}
+      <div id="frames-list"><table><tr><td>#</td><td>pub</td><td>pres</td><td>work</td></tr>${rows}</table></div>
+      <details><summary class="muted">Engine log</summary><pre>${esc(r.engineLog || "")}</pre></details>`;
+    const resume = $("hitch-resume");
+    if (resume) resume.onclick = async () => { await post("/api/guest/pause", { paused: false }).catch(() => {}); $("hitch-card").style.display = "none"; poll(); };
+  } catch (e) { toast(e.message, true); }
+};
+
+// The screen mirror: the guest's frame as a PNG, fetched at the chosen rate while the guest runs.
+let screenBusy = false;
+let screenUrl = null;
+async function mirrorScreen() {
+  const running = S && ["running", "paused"].includes(S.engine.state);
+  if (!running || view !== "guest" || screenBusy) return;
+  screenBusy = true;
+  try {
+    const response = await fetch("/api/guest/screen.png", { headers: { "X-WebUi-Token": token } });
+    if (response.ok) {
+      const blob = await response.blob();
+      const next = URL.createObjectURL(blob);
+      const img = $("screen");
+      img.onload = () => {
+        if (screenUrl) URL.revokeObjectURL(screenUrl);
+        screenUrl = next;
+        frame.w = img.naturalWidth || frame.w;
+        frame.h = img.naturalHeight || frame.h;
+      };
+      img.src = next;
+    }
+  } catch (_) { /* the next turn tries again */ }
+  screenBusy = false;
+}
+let mirrorTimer = null;
+function scheduleMirror() {
+  clearTimeout(mirrorTimer);
+  const rate = Number($("fps").value || 5);
+  mirrorTimer = setTimeout(() => { mirrorScreen().then(scheduleMirror); }, 1000 / rate);
+}
+$("fps").onchange = scheduleMirror;
+scheduleMirror();
+
+// Touch onto the mirrored frame, mapped into guest pixels.
+const screenImage = $("screen");
+let pointerDown = false;
+let pendingMove = null;
+let moveFlush = 0;
+function guestPoint(event) {
+  const rect = screenImage.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(frame.w, (event.clientX - rect.left) / rect.width * frame.w)),
+    y: Math.max(0, Math.min(frame.h, (event.clientY - rect.top) / rect.height * frame.h)),
+  };
+}
+function sendTouch(contact) {
+  post("/api/guest/touch", { contacts: [contact], width: frame.w, height: frame.h }).catch(() => {});
+}
+screenImage.addEventListener("pointerdown", (event) => {
+  if (!S || S.engine.state !== "running") return;
+  event.preventDefault();
+  pointerDown = true;
+  try { screenImage.setPointerCapture(event.pointerId); } catch (_) {}
+  const p = guestPoint(event);
+  sendTouch({ phase: "down", x: p.x, y: p.y });
+});
+screenImage.addEventListener("pointermove", (event) => {
+  if (!pointerDown) return;
+  event.preventDefault();
+  pendingMove = guestPoint(event);
+  if (!moveFlush) moveFlush = requestAnimationFrame(() => {
+    moveFlush = 0;
+    const move = pendingMove;
+    pendingMove = null;
+    if (move && pointerDown) sendTouch({ phase: "move", x: move.x, y: move.y });
+  });
+});
+function pointerEnd(event, cancelled) {
+  if (!pointerDown) return;
+  pointerDown = false;
+  if (cancelled) { post("/api/guest/cancel-input").catch(() => {}); return; }
+  const p = guestPoint(event);
+  sendTouch({ phase: "up", x: p.x, y: p.y });
+}
+screenImage.addEventListener("pointerup", (e) => pointerEnd(e, false));
+screenImage.addEventListener("pointercancel", (e) => pointerEnd(e, true));
+
+// ------------------------------------------------------------------------------ the store
+const rowApps = [];
+function rememberRowApp(app) { return rowApps.push(app) - 1; }
+
+function renderStore() {
+  if (!S) return;
+  const running = S.engine.state === "running" && S.installer.socket;
+  $("store-target").textContent = running ? "The guest is running; installs go straight to it."
+    : (S.installer.available ? "Start the guest to install apps." : "Guest app services are not in this build.");
+  document.querySelectorAll("#store-tabs .chip").forEach((c) => c.classList.toggle("on", c.dataset.tab === storeTab));
+  rowApps.length = 0;
+  let html = "";
+  if (appPage) html = appPageHtml();
+  else if (storeTab === "installed") html = installedHtml();
+  else if (storeTab === "charts" && storeList.chart) html = chartControlsHtml() + chartRowsHtml();
+  else if (storeList.genreList) html = storeList.genreList.map((g) =>
+    `<div class="genre-row" onclick="openGenre('${esc(g.id)}', '${esc(g.name).replace(/'/g, "\\'")}')">
+      <span>${esc(g.name)}</span><span class="muted">${g.count} apps</span></div>`).join("");
+  else if (storeList.collectionList) html = storeList.collectionList.map((c) =>
+    `<div class="genre-row" onclick="openCollection('${esc(c.slug)}', '${esc(c.title).replace(/'/g, "\\'")}')">
+      <span>${esc(c.title)}${c.subtitle ? ` <span class="muted">· ${esc(c.subtitle)}</span>` : ""}</span><span class="muted">${c.count} apps</span></div>`).join("");
+  else html = listRowsHtml();
+  if (storeTab === "categories" && storeList.genre) html = sortChipsHtml() + html;
+  $("store-list").innerHTML = queueHtml() + html;
+}
+
+function listRowsHtml() {
+  if (storeList.loading) return `<div class="card muted">Loading…</div>`;
+  if (!storeList.rows.length) return `<div class="card muted">${esc(storeList.title || "Nothing here yet — open a tab above.")}</div>`;
+  let html = storeList.rows.map((app) => appRowHtml(app)).join("");
+  if (storeList.next) html += `<div class="row" style="margin-top:8px"><button class="act" onclick="moreApps()">More</button>
+    <span class="muted">${storeList.total ? storeList.total + " apps in this list" : ""}</span></div>`;
+  return html;
+}
+
+function appRowHtml(app, rank) {
+  if (!app || app.ghost) return `<div class="app-row" style="opacity:.5"><span class="fallback">?</span>
+    <div class="grow"><div class="name">${esc((app && app.name) || "Not in the archive")}</div></div></div>`;
+  const index = rememberRowApp(app);
+  const initial = (app.name || "?").trim().charAt(0).toUpperCase();
+  return `<div class="app-row" onclick="openRowIndex(${index})">
+    ${app.icon_url ? `<img class="icon" src="${esc(app.icon_url)}" loading="lazy" referrerpolicy="no-referrer">` : `<span class="fallback">${esc(initial)}</span>`}
+    ${rank ? `<b class="muted">${rank}</b>` : ""}
+    <div class="grow"><div class="name">${esc(app.name)}</div>
+      <div class="dev">${esc(app.developer || app.bundle_id || "")}</div>
+      ${app.compatibility ? `<div class="incompat">${esc(app.compatibility)}</div>` : ""}</div>
+    <button class="act">Open</button>
+  </div>`;
+}
+
+function chartControlsHtml() {
+  const chart = storeList.chart;
+  const types = [["top-free", "Top Free"], ["top-paid", "Top Paid"], ["top-grossing", "Top Grossing"],
+    ["new-noteworthy", "New & Noteworthy"], ["new-free", "New Free"], ["new-paid", "New Paid"]];
+  const years = [...new Set((chart.dates || []).map((d) => d.slice(0, 4)))];
+  return `<div class="card">
+    <div class="chips">${types.map(([slug, label]) => `<button class="chip ${charts.type === slug ? "on" : ""}" onclick="setChart('type', '${slug}')">${label}</button>`).join("")}</div>
+    <div class="chips" style="margin-top:6px">
+      ${["iphone", "ipad"].map((d) => `<button class="chip ${charts.device === d ? "on" : ""}" onclick="setChart('device', '${d}')">${d === "iphone" ? "iPhone" : "iPad"}</button>`).join("")}
+      ${years.length > 1 ? `<select onchange="setChart('date', this.value)">${years.map((y) =>
+        `<option value="${y}-07-01" ${chart.date.startsWith(y) ? "selected" : ""}>${y}</option>`).join("")}</select>` : ""}
+      <span class="muted">${esc(chart.title)} · snapshot ${esc(chart.date)}</span>
+    </div></div>`;
+}
+function chartRowsHtml() {
+  const rows = storeList.chart.rows || [];
+  const ghosts = rows.some((r) => !r.app);
+  return rows.map((r) => appRowHtml(r.app, r.position)).join("") +
+    (ghosts ? `<div class="card muted">Titles in grey have not been preserved in the archive yet.</div>` : "");
+}
+function sortChipsHtml() {
+  const sorts = [["versions", "Most archived"], ["newest", "Newest"], ["first_date", "Oldest"], ["name", "A to Z"]];
+  return `<div class="chips" style="margin-bottom:10px">${sorts.map(([slug, label]) =>
+    `<button class="chip ${storeList.sort === slug ? "on" : ""}" onclick="setSort('${slug}')">${label}</button>`).join("")}</div>`;
+}
+
+function queueHtml() {
+  const queue = S.queue || [];
+  if (!queue.length) return "";
+  return `<div class="card"><h2>Install queue</h2>` + queue.map((q) => `
+    <div class="queue-item">
+      <div class="grow"><b>${esc(q.name)}</b> <span class="muted">${esc(q.phase)}</span>
+        ${q.error ? `<div class="danger small">${esc(q.error)}</div>` : ""}</div>
+      ${["DOWNLOADING", "INSTALLING"].includes(q.state) ? `<div class="progress-wrap"><div class="progress-fill" style="width:${Math.round(q.overall * 100)}%"></div></div>` : ""}
+      ${q.state === "DONE" ? `<span class="ok-text small">Installed</span>` : ""}
+      ${q.state === "FAILED" ? `<span class="danger small">Failed</span>` : ""}
+      ${q.cancellable ? `<button class="act" onclick="queueAction('cancel', ${q.id})">Cancel</button>` : ""}
+      ${q.state === "FAILED" ? `<button class="act" onclick="queueAction('retry', ${q.id})">Retry</button>` : ""}
+      ${!q.active ? `<button class="act" onclick="queueAction('dismiss', ${q.id})">Dismiss</button>` : ""}
+    </div>`).join("") + `</div>`;
+}
+
+function installedHtml() {
+  const installed = window._installed;
+  if (!installed) return `<div class="card muted">Reading the apps on this device…</div>`;
+  if (installed.error) return `<div class="card danger">${esc(installed.error)}</div>`;
+  if (!installed.apps.length) return `<div class="card muted">No apps installed on this device yet.</div>`;
+  return `<div class="card"><h2>On this device</h2>` + installed.apps.map((a) =>
+    `<div class="app-row"><span class="fallback">${esc((a.name || "?").charAt(0).toUpperCase())}</span>
+      <div class="grow"><div class="name">${esc(a.name)}</div>
+        <div class="dev">${esc(a.bundleId)} · version ${esc(a.version || "?")}${a.newest && a.newest !== a.version ? ` · <span class="ok-text">${esc(a.newest)} is archived</span>` : ""}</div></div>
+    </div>`).join("") + `</div>`;
+}
+
+function appPageHtml() {
+  const a = appPage;
+  const copies = a.copies.map((c) =>
+    `<button class="chip ${a.selected === c.ipaId ? "on" : ""}" onclick="pickCopy(${c.ipaId})">v${esc(c.version)}${c.size ? " · " + fmtBytes(c.size) : ""}</button>`).join(" ");
+  return `<div class="card">
+    <div class="row"><button class="act" onclick="closeApp()">← Back</button><h2>${esc(a.app.name)}</h2></div>
+    <div class="muted">${esc(a.app.developer || "")}${a.info && a.info.genre ? " · " + esc(a.info.genre) : ""}
+      ${a.info && a.info.first_date ? " · first released " + esc(String(a.info.first_date).slice(0, 10)) : ""}</div>
+    ${a.shots.length ? `<div class="shots" style="margin-top:10px">${a.shots.map((s) => `<img src="${esc(s.url)}" referrerpolicy="no-referrer" loading="lazy">`).join("")}</div>` : ""}
+    <div class="chips" style="margin:12px 0">${copies || '<span class="muted">No archived version runs on this device.</span>'}</div>
+    <div class="row">
+      <button class="act primary" ${a.copies.length ? "" : "disabled"} onclick="installApp()">Install</button>
+      ${a.problem ? `<span class="warn small">${esc(a.problem)}</span>` : ""}
+    </div>
+    ${a.info ? `<details style="margin-top:10px"><summary class="muted">What the archive knows</summary><pre>${esc(JSON.stringify(a.info, null, 2))}</pre></details>` : ""}
+  </div>`;
+}
+
+// --- store actions
+$("store-search-button").onclick = doSearch;
+$("store-search").onkeydown = (e) => { if (e.key === "Enter") doSearch(); };
+async function doSearch() {
+  storeTab = "search";
+  appPage = null;
+  storeList = { title: "Results", rows: [], total: 0, next: null, loading: true };
+  renderStore();
+  try {
+    const r = await api("/api/store/search?q=" + encodeURIComponent($("store-search").value));
+    storeList = { title: "Results", rows: r.apps, total: r.apps.length, next: null, loading: false };
+  } catch (e) { storeList = { title: "Results", rows: [], total: 0, next: null, loading: false }; toast(e.message, true); }
+  renderStore();
+}
+document.querySelectorAll("#store-tabs .chip").forEach((chip) => {
+  chip.onclick = () => { storeTab = chip.dataset.tab; appPage = null; storeList = { title: "", rows: [], total: 0, next: null, loading: false }; loadStoreTab(); };
+});
+async function loadStoreTab() {
+  renderStore();
+  try {
+    if (storeTab === "installed") { refreshInstalled().then(renderStore); return; }
+    if (storeTab === "search") { if (!$("store-search").value) { storeList = { ...storeList, title: "", rows: [] }; renderStore(); } return; }
+    if (storeTab === "featured") {
+      const r = await api("/api/store/featured");
+      storeList = { title: "Featured", rows: r.apps, total: r.total, next: r.next, loading: false };
+    } else if (storeTab === "charts") {
+      const params = new URLSearchParams({ type: charts.type });
+      if (charts.device) params.set("device", charts.device);
+      if (charts.date) params.set("date", charts.date);
+      const r = await api("/api/store/charts?" + params);
+      storeList = { title: "Charts", rows: [], total: 0, next: null, loading: false, chart: r.chart };
+      if (r.chart.dates && r.chart.dates.length && !charts.date) charts.date = r.chart.date;
+    } else if (storeTab === "categories" && !storeList.genre && !storeList.genreList) {
+      const r = await api("/api/store/genres");
+      storeList = { title: "Categories", rows: [], total: 0, next: null, loading: false, genreList: r.genres };
+    } else if (storeTab === "collections" && !storeList.collectionList) {
+      const r = await api("/api/store/collections");
+      storeList = { title: "Collections", rows: [], total: 0, next: null, loading: false, collectionList: r.collections };
+    }
+  } catch (e) { toast(e.message, true); storeList = { ...storeList, loading: false }; }
+  renderStore();
+}
+async function refreshInstalled() {
+  if (!S.installer.socket) { window._installed = { apps: [], error: "The guest is not running; start it to list its apps." }; return; }
+  try {
+    const r = await api("/api/store/refresh");
+    window._installed = { apps: r.installed, error: "" };
+  } catch (e) { window._installed = { apps: [], error: e.message }; }
+}
+function setChart(kind, value) { charts[kind] = value; storeList.chart = null; loadStoreTab(); }
+function setSort(sort) { storeList.sort = sort; openGenre(storeList.genre.id, storeList.genre.name); }
+async function openGenre(id, name) {
+  storeTab = "categories";
+  storeList = { title: name, rows: [], total: 0, next: null, loading: true, genre: { id, name }, sort: storeList.sort || "versions" };
+  renderStore();
+  try {
+    const r = await api("/api/store/genre?id=" + encodeURIComponent(id) + "&sort=" + storeList.sort);
+    storeList = { ...storeList, rows: r.apps, total: r.total, next: r.next, loading: false };
+  } catch (e) { storeList = { ...storeList, loading: false }; toast(e.message, true); }
+  renderStore();
+}
+async function openCollection(slug, title) {
+  storeTab = "collections";
+  storeList = { title, rows: [], total: 0, next: null, loading: true };
+  renderStore();
+  try {
+    const r = await api("/api/store/collection?slug=" + encodeURIComponent(slug));
+    storeList = { title, rows: r.apps, total: r.total, next: r.next, loading: false };
+  } catch (e) { storeList = { ...storeList, loading: false }; toast(e.message, true); }
+  renderStore();
+}
+async function moreApps() {
+  if (!storeList.next) return;
+  try {
+    const r = await api("/api/store/page?url=" + encodeURIComponent(storeList.next));
+    storeList.rows = storeList.rows.concat(r.apps);
+    storeList.next = r.next;
+    renderStore();
+  } catch (e) { toast(e.message, true); }
+}
+async function openRowIndex(index) { openApp(rowApps[index]); }
+async function openApp(app) {
+  appPage = { app, copies: [], shots: [], selected: 0, info: null, problem: "" };
+  renderStore();
+  try { Object.assign(appPage, await post("/api/store/app", { app })); }
+  catch (e) { appPage.problem = e.message; }
+  renderStore();
+}
+function closeApp() { appPage = null; renderStore(); }
+function pickCopy(ipaId) { appPage.selected = ipaId; renderStore(); }
+async function installApp() {
+  try {
+    toast((await post("/api/store/install", { app: appPage.app, ipaId: appPage.selected })).result);
+    closeApp();
+  } catch (e) { toast(e.message, true); }
+  poll();
+}
+async function queueAction(what, id) { try { await post("/api/queue/" + what, { id }); } catch (e) { toast(e.message, true); } poll(); }
+$("ipa-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  $("ipa-progress-row").style.display = "flex";
+  try { toast((await upload("/api/store/ipa?name=" + encodeURIComponent(file.name), file, (f) => { $("ipa-progress").style.width = Math.round(f * 100) + "%"; })).result); }
+  catch (err) { toast(err.message, true); }
+  $("ipa-progress-row").style.display = "none";
+  $("ipa-progress").style.width = "0%";
+  poll();
+};
+$("store-crash").onclick = async () => {
+  try {
+    const r = await api("/api/store/crash");
+    alert(r.none ? "The guest has no crash reports." : r.name + "\n\n" + r.text);
+  } catch (e) { toast(e.message, true); }
+};
+
+// ------------------------------------------------------------------------------ settings
+const SETTING_ROWS = [
+  ["theme", "Theme", "SYSTEM|DARK|LIGHT"],
+  ["tilt", "Tilt controls", "bool"],
+  ["volumeKeys", "Phone volume keys control the device", "bool"],
+  ["haptics", "Haptic feedback (on the phone)", "bool"],
+  ["headphones", "Headphones plugged in", "bool", "Applies at the next device start"],
+  ["microphone", "Microphone into the device", "bool", "Needs the Android permission; grant it in the app once"],
+  ["camera", "Camera into the device", "bool", "Needs the Android permission; grant it in the app once"],
+  ["autoResume", "Unpause when you return", "bool"],
+  ["reduceAppSwitchPauses", "Fewer pauses when opening iOS apps", "bool", "Applies after restarting the device"],
+  ["graphicsProvider", "GPU driver", "PLATFORM|ANGLE"],
+  ["scaling", "Screen scaling", "SMOOTH|SHARP"],
+  ["overlay", "Performance overlay (on the phone)", "OFF|FPS|COMPACT|FULL"],
+  ["overlayGraph", "Overlay graph", "FRAME_TIME|FPS"],
+  ["overlayCorner", "Overlay position", "TOP_LEFT|TOP_RIGHT|BOTTOM_LEFT|BOTTOM_RIGHT"],
+  ["overlayOpacity", "Overlay background (0 to 0.9)", "float"],
+  ["overlayInDeviceView", "Overlay in device view", "bool"],
+  ["hitchButton", "Inspect button in the app", "bool"],
+  ["detailedTiming", "Detailed frame timing", "bool", "Costs about 6% speed while on"],
+];
+function renderSettings() {
+  if (!S || !settings.webUiPort && settings.webUiPort !== 0) return;
+  $("settings-table").innerHTML = SETTING_ROWS.map(([key, title, kind, note]) => {
+    const value = settings[key];
+    let control;
+    if (kind === "bool") control = `<label class="switch"><input type="checkbox" ${value ? "checked" : ""} onchange="saveSetting('${key}', this.checked)"><span></span></label>`;
+    else if (kind === "float") control = `<input type="text" value="${value ?? ""}" style="min-width:80px" onchange="saveSetting('${key}', parseFloat(this.value))">`;
+    else control = `<select onchange="saveSetting('${key}', this.value)">${kind.split("|").map((o) =>
+      `<option value="${o}" ${String(value) === o ? "selected" : ""}>${o === "SYSTEM" ? "System" : o.charAt(0) + o.slice(1).toLowerCase()}</option>`).join("")}</select>`;
+    return `<tr><td>${title}${note ? `<span class="sub">${note}</span>` : ""}</td><td>${control}</td></tr>`;
+  }).join("");
+  $("webui-port").textContent = settings.webUiPort;
+}
+async function saveSetting(key, value) {
+  try { settings = await post("/api/settings", { [key]: value }); toast("Saved"); renderSettings(); }
+  catch (e) { toast(e.message, true); }
+}
+$("webui-stop").onclick = async () => {
+  if (!confirm("Stop the Web UI? This page stops working.")) return;
+  await post("/api/webui/stop").catch(() => {});
+  toast("The Web UI is stopping");
+};
+
+// ------------------------------------------------------------------------------ navigation
+document.querySelectorAll("nav button").forEach((button) => {
+  button.onclick = () => { view = button.dataset.view; renderView(); };
+});
+$("token-apply").onclick = () => {
+  token = $("token-input").value.trim();
+  localStorage.setItem(TOKEN_KEY, token);
+  $("token-overlay").style.display = "none";
+  start();
+};
+
+// ------------------------------------------------------------------------------ start
+async function start() {
+  if (!token) { $("token-overlay").style.display = "flex"; return; }
+  try { settings = await api("/api/settings"); } catch (_) {}
+  await loadFirmwares().catch(() => {});
+  await poll();
+  loadStoreTab();
+}
+setInterval(poll, 1000);
+setInterval(async () => {
+  if (!token) return;
+  try { settings = await api("/api/settings"); if (view === "settings") renderSettings(); } catch (_) {}
+}, 5000);
+start();
+</script>
+</body>
+</html>

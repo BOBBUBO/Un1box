@@ -110,6 +110,9 @@ internal fun SettingsScreen(host: GuestHost, onBack: () -> Unit) {
                     ActionRow(LtIcons.Download, "Prepare from an IPSW", "Choose a device and iOS version; Un1box downloads Apple's firmware and builds it here",
                         enabled = !host.active && !host.busy) { host.openPreparation() }
                 }
+                Group("Web UI") {
+                    WebUiSection()
+                }
                 Group("About") {
                     ActionRow(LtIcons.Info, "Un1box ${BuildConfig.VERSION_NAME}", "Classic iOS for Android") {}
                     ActionRow(LtIcons.Code, "Source code", "github.com/KlugKlugTG/Un1box") {
@@ -187,8 +190,7 @@ private fun ActionRow(icon: ImageVector?, title: String, subtitle: String?, enab
     }
 }
 
-/** The overlay as it will look, over a stand-in screen, with live numbers when iOS is running. */
-@Composable
+/** The overlay as it will look, over a stand-in screen, with live numbers when iOS is running. */@Composable
 private fun OverlayPreview(host: GuestHost) {
     val s = host.settings
     val sample = if (host.running && host.perf.fps > 0) host.perf else remember {
@@ -200,5 +202,42 @@ private fun OverlayPreview(host: GuestHost) {
         .clip(RoundedCornerShape(14.dp)).background(Color(0xFF1B3A4B)).testTag("overlay_preview")) {
         PerformanceOverlay(sample, s.overlay, s.overlayGraph, s.overlayOpacity, s.detailedTiming,
             Modifier.align(Alignment.of(s.overlayCorner)).padding(8.dp))
+    }
+}
+
+/**
+ * The Web UI switch: the same devices, store and settings, from any browser on this network. The
+ * address carries a token the server requires, so it cannot be reached by port scanning; the
+ * notification while it runs shows the address and stops it.
+ */
+@Composable
+private fun WebUiSection() {
+    val context = LocalContext.current
+    var state by remember { mutableStateOf(WebUiState.running) }
+    var addresses by remember { mutableStateOf(listOf<String>()) }
+    var port by remember { mutableStateOf(WebUiPrefs.port(context).toString()) }
+    DisposableEffect(Unit) {
+        val forget = WebUiState.listen { state = WebUiState.running; addresses = if (WebUiState.running) webUiAddresses(context, WebUiState.port) else emptyList() }
+        onDispose { forget() }
+    }
+    LaunchedEffect(state) { if (state) addresses = webUiAddresses(context, WebUiState.port) }
+    SwitchRow(LtIcons.Phone, "Web UI", "Manage everything from a browser on this network: devices, the store, IPAs, settings and the guest itself, with its screen and touch",
+        state, "webui_toggle") { WebUiService.setEnabled(context, it); if (it) state = true else state = false }
+    if (state) {
+        for (address in addresses) Text(address, Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("webui_address"),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = port, onValueChange = { text -> if (text.length <= 5 && text.all { it.isDigit() }) port = text },
+                label = { Text("Port") }, singleLine = true, modifier = Modifier.width(120.dp).testTag("webui_port"))
+            Spacer(Modifier.width(12.dp))
+            TextButton(onClick = {
+                port.toIntOrNull()?.takeIf { it in 1024..65535 }?.let { number ->
+                    WebUiPrefs.setPort(context, number)
+                    if (WebUiState.running) context.startForegroundService(Intent(context, WebUiService::class.java))
+                } ?: run { port = WebUiPrefs.port(context).toString() }
+            }, enabled = port.toIntOrNull() in 1024..65535 && port.toIntOrNull() != WebUiPrefs.port(context)) { Text("Apply") }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { WebUiPrefs.resetToken(context); if (WebUiState.running) context.startForegroundService(Intent(context, WebUiService::class.java)) }) { Text("New token") }
+        }
     }
 }

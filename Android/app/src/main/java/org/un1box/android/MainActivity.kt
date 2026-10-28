@@ -341,6 +341,8 @@ class MainActivity : ComponentActivity(), SensorEventListener, GuestHost {
             } catch (_: Exception) { /* The Store falls back to the running guest's own report. */ }
         }, "store-targets").start()
         bindWorker()
+        // The Web UI the user left on: bring its server back with the app.
+        if (WebUiPrefs.enabled(this)) startForegroundService(Intent(this, WebUiService::class.java))
         setContent {
             val guestInFront = overlay == null && !devicesOpen && !licensesOpen && !preparationOpen && status == "running"
             LaunchedEffect(guestInFront) { preferSixtyHertz(guestInFront) }
