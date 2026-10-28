@@ -420,7 +420,7 @@ internal class WebUi(private val context: Context) {
         if (id !in 0..3) throw WebUiError(400, "Unknown button $id")
         val engine = engine()
         buttonCalls.execute {
-            try { val result = engine.button(id, down); if (result.isNotEmpty()) opError = result } catch (_: RemoteException) { }
+            try { val result: String = engine.button(id, down); if (result.isNotEmpty()) opError = result } catch (_: RemoteException) { }
         }
         return ok("")
     }
@@ -580,7 +580,7 @@ internal class WebUi(private val context: Context) {
                 staging.deleteRecursively(); importing = false
                 return@Thread
             }
-            val result = try {
+            val result: String = try {
                 engine.importDevice(received.first.absolutePath, name, rom, "", received.second)
             } catch (failure: Exception) { failure.message ?: "The import failed" }
             if (result.isEmpty()) {
@@ -916,7 +916,7 @@ internal class WebUi(private val context: Context) {
         Thread({
             var name = ""
             val engine = worker
-            val result = try {
+            val result: String = try {
                 checkNotNull(engine) { "The device worker is unavailable; the prepared device is kept" }
                 name = defaultDeviceName(board, build, firmwareTargets(), deviceNames())
                 val own = destination.startsWith(app.filesDir.absolutePath) && File(destination, "device.lock.json").isFile
