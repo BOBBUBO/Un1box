@@ -420,7 +420,10 @@ internal class WebUi(private val context: Context) {
         if (id !in 0..3) throw WebUiError(400, "Unknown button $id")
         val engine = engine()
         buttonCalls.execute {
-            try { val result: String = engine.button(id, down); if (result.isNotEmpty()) opError = result } catch (_: RemoteException) { }
+            try {
+                val result = engine.button(id, down)
+                if (result.isNotEmpty()) opError = result
+            } catch (_: RemoteException) { }
         }
         return ok("")
     }
