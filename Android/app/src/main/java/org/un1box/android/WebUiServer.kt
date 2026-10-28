@@ -171,7 +171,7 @@ internal class WebUiServer(private val port: Int, private val token: String, pri
             }
             if (head.headers["expect"]?.contains("100-continue") == true)
                 output.write("HTTP/1.1 100 Continue\r\n\r\n".toByteArray(Charsets.ISO_8859_1))
-            val supplied = head.query["token"] ?: head.headers["x-webui-token"]
+            val supplied = head.request.query["token"] ?: head.headers["x-webui-token"]
             if (supplied != token) {
                 write(output, WebUiResponse.error(403, "This Web UI needs its token; open the address shown in Un1box's Settings"), false)
                 return
@@ -184,7 +184,7 @@ internal class WebUiServer(private val port: Int, private val token: String, pri
                 android.util.Log.w("Un1box", "Web UI request failed", failure)
                 WebUiResponse.error(500, failure.message ?: "Request failed")
             }
-            write(output, response, head.method == "HEAD")
+            write(output, response, head.request.method == "HEAD")
         }
     }
 

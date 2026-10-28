@@ -33,6 +33,8 @@ import java.util.zip.ZipInputStream
  * worker for its state (the device library along with it), exactly as the activity's poll does,
  * so every browser client reads a cache instead of stampeding the worker.
  */
+private fun WebUiRequest.param(name: String, default: String = ""): String = query[name] ?: default
+
 internal class WebUi(private val context: Context) {
     private val app = context.applicationContext
     private val installer = StoreInstaller.of(app)
@@ -188,11 +190,11 @@ internal class WebUi(private val context: Context) {
             request.method == "GET" && path == "/api/store/search" -> storeSearch(request)
             request.method == "GET" && path == "/api/store/featured" -> storeListing { LegacyStore.collection("featured") }
             request.method == "GET" && path == "/api/store/genres" -> { WebUiResponse.json(JSONObject().put("genres", LegacyStore.genres().map { JSONObject().put("id", it.id).put("name", it.name).put("count", it.count) })) }
-            request.method == "GET" && path == "/api/store/genre" -> storeListing { LegacyStore.genreApps(request.query("id"), request.query("sort", "versions")) }
+            request.method == "GET" && path == "/api/store/genre" -> storeListing { LegacyStore.genreApps(request.param("id"), request.param("sort", "versions")) }
             request.method == "GET" && path == "/api/store/collections" -> { WebUiResponse.json(JSONObject().put("collections", LegacyStore.collections().map { JSONObject().put("slug", it.slug).put("title", it.title).put("subtitle", it.subtitle).put("count", it.count) })) }
-            request.method == "GET" && path == "/api/store/collection" -> storeListing { LegacyStore.collection(request.query("slug")) }
+            request.method == "GET" && path == "/api/store/collection" -> storeListing { LegacyStore.collection(request.param("slug")) }
             request.method == "GET" && path == "/api/store/charts" -> storeChart(request)
-            request.method == "GET" && path == "/api/store/page" -> storeListing { LegacyStore.page(request.query("url")) }
+            request.method == "GET" && path == "/api/store/page" -> storeListing { LegacyStore.page(request.param("url")) }
             post && path == "/api/store/app" -> storeApp(request.json())
             post && path == "/api/store/install" -> storeInstall(request.json())
             post && path == "/api/store/ipa" -> ipaUpload(request)
@@ -416,7 +418,7 @@ internal class WebUi(private val context: Context) {
         if (id !in 0..3) throw WebUiError(400, "Unknown button $id")
         val engine = engine()
         buttonCalls.execute {
-            try { val result = engine.button(id, down); if (result.isNotEmpty()) opError = result } catch (_: RemoteException) { }
+            try { val result = engine.button(id, down); if (!result.isEmpty()) opError = result } catch (_: RemoteException) { }
         }
         return ok("")
     }
@@ -448,7 +450,7 @@ internal class WebUi(private val context: Context) {
         val result = try {
             engine.touch(System.nanoTime(), ids, phases, xy, body.optInt("width"), body.optInt("height"), 0)
         } catch (failure: RemoteException) { throw WebUiError(503, "Guest worker unavailable") }
-        if (result.isNotEmpty()) throw WebUiError(409, result)
+        if (!result.isEmpty()) throw WebUiError(409, result)
         return ok("")
     }
 
@@ -458,7 +460,7 @@ internal class WebUi(private val context: Context) {
         val file = File(directory, "web-${System.nanoTime()}.png")
         try {
             val error = try { engine.screenshot(file.absolutePath) } catch (failure: RemoteException) { "Guest worker unavailable" }
-            if (error.isNotEmpty()) throw WebUiError(409, error)
+            if (!error.isEmpty()) throw WebUiError(409, error)
             return WebUiResponse.bytes("image/png", file.readBytes())
         } finally { file.delete() }
     }
@@ -466,7 +468,7 @@ internal class WebUi(private val context: Context) {
     private fun screenshotToPictures(): WebUiResponse {
         val path = File(app.filesDir, "screenshots/guest-${System.currentTimeMillis()}.png").absolutePath
         val error = try { engine().screenshot(path) } catch (failure: RemoteException) { "Guest worker unavailable" }
-        if (error.isNotEmpty()) throw WebUiError(409, error)
+        if (!error.isEmpty()) throw WebUiError(409, error)
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, File(path).name)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
@@ -525,7 +527,7 @@ internal class WebUi(private val context: Context) {
     private fun selectDevice(id: String): WebUiResponse {
         if (id.isEmpty()) throw WebUiError(400, "No device was named")
         val result = try { engine().select(id) } catch (failure: RemoteException) { throw WebUiError(503, "Device worker unavailable") }
-        if (result.isNotEmpty()) throw WebUiError(409, result)
+        if (!result.isEmpty()) throw WebUiError(409, result)
         return ok("Selected")
     }
 
@@ -533,14 +535,14 @@ internal class WebUi(private val context: Context) {
         if (id.isEmpty()) throw WebUiError(400, "No device was named")
         if (!fitsDeviceName(name)) throw WebUiError(400, "A device name is at most 60 characters (127 bytes)")
         val result = try { engine().rename(id, name.trim()) } catch (failure: RemoteException) { throw WebUiError(503, "Device worker unavailable") }
-        if (result.isNotEmpty()) throw WebUiError(409, result)
+        if (!result.isEmpty()) throw WebUiError(409, result)
         return ok("Renamed to ${name.trim()}")
     }
 
     private fun deleteDevice(id: String): WebUiResponse {
         if (id.isEmpty()) throw WebUiError(400, "No device was named")
         val result = try { engine().remove(id) } catch (failure: RemoteException) { throw WebUiError(503, "Device worker unavailable") }
-        if (result.isNotEmpty()) throw WebUiError(409, result)
+        if (!result.isEmpty()) throw WebUiError(409, result)
         return ok("Device deleted")
     }
 
@@ -560,9 +562,9 @@ internal class WebUi(private val context: Context) {
      */
     private fun importUpload(request: WebUiRequest): WebUiResponse {
         if (importing) throw WebUiError(409, "An import is already running")
-        val name = request.query("name").trim()
-        val rom = request.query("rom")
-        if (rom.isNotEmpty() && !File(rom).isFile) throw WebUiError(400, "No such boot ROM was uploaded")
+        val name = request.param("name").trim()
+        val rom = request.param("rom")
+        if (!rom.isEmpty() && !File(rom).isFile) throw WebUiError(400, "No such boot ROM was uploaded")
         if (request.contentLength <= 0) throw WebUiError(400, "Send the device files as the request body")
         val staging = File(app.filesDir, "webui-import-${System.nanoTime()}").apply { mkdirs() }
         val received = receiveDeviceFiles(staging, request.bodyStream())
@@ -688,7 +690,7 @@ internal class WebUi(private val context: Context) {
     private fun prepareJson(): JSONObject {
         val chosen = firmwares().firstOrNull { it.id == prep.firmwareId }
         val ipsw = JSONObject()
-            .put("forFirmware", prep.ipswFor).put("ready", prep.ipswPath.isNotEmpty() && prep.ipswFor == prep.firmwareId)
+            .put("forFirmware", prep.ipswFor).put("ready", !prep.ipswPath.isEmpty() && prep.ipswFor == prep.firmwareId)
             .put("error", prep.ipswError)
             .put("downloading", IpswDownload.running)
             .put("downloadFirmware", IpswDownload.firmwareId)
@@ -699,7 +701,7 @@ internal class WebUi(private val context: Context) {
             .put("firmwareId", prep.firmwareId)
             .put("ipsw", ipsw)
             .put("rom", JSONObject()
-                .put("needed", rom != null).put("ready", rom != null && prep.romPath.isNotEmpty() && prep.romFor == rom)
+                .put("needed", rom != null).put("ready", rom != null && !prep.romPath.isEmpty() && prep.romFor == rom)
                 .put("label", prep.romLabel).put("checking", prep.romChecking).put("error", prep.romError))
             .put("preparation", prep.preparation?.let { bundleToJson(it) } ?: JSONObject.NULL)
             .put("importing", prep.importing).put("importPhase", prep.importPhase)
@@ -740,7 +742,7 @@ internal class WebUi(private val context: Context) {
 
     /** A stock IPSW from the page, checked against the catalog's size and SHA-1 as the app checks its own. */
     private fun ipswUpload(request: WebUiRequest): WebUiResponse {
-        val firmware = chooseFirmware(request.query("firmwareId"))
+        val firmware = chooseFirmware(request.param("firmwareId"))
         if (request.contentLength <= 0) throw WebUiError(400, "Send the IPSW as the request body")
         if (firmware.bytes > 0 && request.contentLength != firmware.bytes)
             throw WebUiError(400, "That file is not the iOS ${firmware.label} IPSW")
@@ -759,7 +761,7 @@ internal class WebUi(private val context: Context) {
                 }
             }
             val sha1 = hex(digest)
-            if (firmware.sha1.isNotEmpty() && sha1 != firmware.sha1)
+            if (!firmware.sha1.isEmpty() && sha1 != firmware.sha1)
                 throw WebUiError(400, "That file is not the iOS ${firmware.label} IPSW")
             val target = File(directory, firmware.fileName)
             if (!partial.renameTo(target)) throw WebUiError(500, "Could not save the IPSW")
@@ -788,7 +790,7 @@ internal class WebUi(private val context: Context) {
     }
 
     private fun romUploadPrepare(request: WebUiRequest): WebUiResponse {
-        val rom = romTarget(request.query("firmwareId"))
+        val rom = romTarget(request.param("firmwareId"))
         if (request.contentLength !in 1..(1L shl 20)) throw WebUiError(400, "That file is not a boot ROM")
         val bytes = request.readBody(1L shl 20)
         if (!rom.matches(bytes)) throw WebUiError(400, "That file is not the ${rom.label} boot ROM")
@@ -799,14 +801,14 @@ internal class WebUi(private val context: Context) {
     }
 
     private fun startPreparation(firmwareId: String): WebUiResponse {
-        if (firmwareId.isNotEmpty()) chooseFirmware(firmwareId)
+        if (!firmwareId.isEmpty()) chooseFirmware(firmwareId)
         if (prep.importing) throw WebUiError(409, "The prepared device is still being added")
         val chosen = firmwares().firstOrNull { it.id == prep.firmwareId }
             ?: throw WebUiError(400, "Choose a device and iOS version first")
-        if (!(prep.ipswPath.isNotEmpty() && prep.ipswFor == chosen.id))
+        if (!(!prep.ipswPath.isEmpty() && prep.ipswFor == chosen.id))
             throw WebUiError(409, "Choose the iOS ${chosen.label} IPSW first")
         val bootrom = Bootrom.forBoard(chosen.board)
-        if (bootrom != null && !(prep.romPath.isNotEmpty() && prep.romFor == bootrom))
+        if (bootrom != null && !(!prep.romPath.isEmpty() && prep.romFor == bootrom))
             throw WebUiError(409, "Provide the ${bootrom.label} boot ROM first")
         val active = firmware
         if (active == null) {
@@ -961,7 +963,7 @@ internal class WebUi(private val context: Context) {
     /** The device a search or install is checked against: the running guest's own report, else the record. */
     private fun storeTarget(): StoreTarget? {
         val socket = if (status.getString("state") == "running") status.getString("usbMuxSocket") ?: "" else ""
-        if (socket.isNotEmpty()) {
+        if (!socket.isEmpty()) {
             exactTarget?.takeIf { it.first == socket }?.let { return it.second }
             val asked = try { guestApps.target(socket) } catch (_: Exception) { null }
             if (asked != null) { exactTarget = socket to asked; return asked }
@@ -974,7 +976,7 @@ internal class WebUi(private val context: Context) {
         val socket = if (status.getString("state") == "running") status.getString("usbMuxSocket") ?: "" else ""
         val target = storeTarget()
         val installed = JSONArray()
-        if (socket.isNotEmpty() && guestApps.available) {
+        if (!socket.isEmpty() && guestApps.available) {
             val apps = try { guestApps.installedApps(socket) } catch (failure: Exception) {
                 throw WebUiError(409, "The guest's app list is unavailable: ${failure.message}")
             }
@@ -987,13 +989,13 @@ internal class WebUi(private val context: Context) {
         }
         return WebUiResponse.json(JSONObject()
             .put("target", target?.let { JSONObject().put("productType", it.productType).put("ios", it.ios).put("arch", it.arch) } ?: JSONObject.NULL)
-            .put("running", socket.isNotEmpty())
+            .put("running", !socket.isEmpty())
             .put("installed", installed))
     }
 
     private fun storeSearch(request: WebUiRequest): WebUiResponse {
         val target = storeTarget() ?: throw WebUiError(409, "Select a device first; the store checks every app against it")
-        val rows = LegacyStore.search(request.query("q"), target)
+        val rows = LegacyStore.search(request.param("q"), target)
         return WebUiResponse.json(JSONObject().put("apps", JSONArray().putAllJson(rows.map { withCompatibility(it) })))
     }
 
@@ -1012,9 +1014,11 @@ internal class WebUi(private val context: Context) {
 
     private fun storeChart(request: WebUiRequest): WebUiResponse {
         val target = storeTarget()
-        val chart = LegacyStore.chart(request.query("type", "top-free"),
-            request.query("device", if (target?.family == "2") "ipad" else "iphone"),
-            request.query("genre").ifEmpty { null }, request.query("date").ifEmpty { null })
+        val genre = request.param("genre").takeIf { it.isNotEmpty() }
+        val date = request.param("date").takeIf { it.isNotEmpty() }
+        val chart = LegacyStore.chart(request.param("type", "top-free"),
+            request.param("device", if (target?.family == "2") "ipad" else "iphone"),
+            genre, date)
         val rows = JSONArray()
         for (row in chart.rows) rows.put(JSONObject()
             .put("position", row.position).put("name", row.name).put("developer", row.developer ?: JSONObject.NULL)
@@ -1054,14 +1058,14 @@ internal class WebUi(private val context: Context) {
         val row = if (ipaId > 0) {
             val candidate = try {
                 val found = LegacyStore.compatibleCopy(ipaId, target)
-                if (app.text("bundle_id")?.let { it != found.optString("bundle_id") } == true)
+                if (app.optString("bundle_id")?.let { it != found.optString("bundle_id") } == true)
                     throw StoreError("This copy belongs to a different app.")
                 LegacyStore.checkCopy(LegacyStore.copyDetails(ipaId), found, target)
                 found
             } catch (failure: Exception) { throw WebUiError(409, failure.message ?: "This copy cannot be installed") }
             candidate
         } else app
-        val key = "app:" + (row.text("bundle_id") ?: row.text("app_store_id") ?: row.text("app_url")?.trimEnd('/')?.substringAfterLast('/')
+        val key = "app:" + (row.optString("bundle_id") ?: row.optString("app_store_id") ?: row.optString("app_url")?.trimEnd('/')?.substringAfterLast('/')
             ?: row.optInt("ipa_id").toString())
         if (!installer.queue.enqueue(key, row.optString("name"), InstallRequest.Catalog(row)))
             throw WebUiError(409, "${row.optString("name")} is already in the queue")
@@ -1073,7 +1077,7 @@ internal class WebUi(private val context: Context) {
         if (request.contentLength <= 0) throw WebUiError(400, "Send the IPA as the request body")
         val socket = installer.socket ?: throw WebUiError(409, "Start the guest to install apps")
         installer.socket = socket
-        val name = request.query("name").ifEmpty { "Local IPA" }
+        val name = request.param("name").takeIf { it.isNotEmpty() } ?: "Local IPA"
         val directory = File(app.filesDir, "webui-uploads").apply { mkdirs() }
         val file = File(directory, "ipa-${System.nanoTime()}.ipa")
         try {
