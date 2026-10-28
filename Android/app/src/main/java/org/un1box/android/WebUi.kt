@@ -21,6 +21,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
+import kotlin.text.isEmpty
+import kotlin.text.isNotEmpty
 
 /**
  * The Web UI's backend: every request the page makes, answered by driving the same binder
@@ -269,7 +271,7 @@ internal class WebUi(private val context: Context) {
     }
 
     private fun stoppedStatus(error: String) = Bundle().apply {
-        putString("state", if (error.length == 0) "stopped" else "failed")
+        putString("state", if (error.isEmpty()) "stopped" else "failed")
         putString("detail", ""); putString("error", error); putBoolean("sessionStarted", false)
     }
 
@@ -346,7 +348,7 @@ internal class WebUi(private val context: Context) {
     // ------------------------------------------------------------------------------- guest control
 
     private fun startGuest(recordId: String, cold: Boolean): WebUiResponse {
-        if (recordId.length == 0) throw WebUiError(400, "Select a device to start")
+        if (recordId.isEmpty()) throw WebUiError(400, "Select a device to start")
         if (startBusy) throw WebUiError(409, "A start is already in progress")
         val observed = worker
         if (observed == null) {
@@ -418,7 +420,7 @@ internal class WebUi(private val context: Context) {
         if (id !in 0..3) throw WebUiError(400, "Unknown button $id")
         val engine = engine()
         buttonCalls.execute {
-            try { val result = engine.button(id, down); if (!result.length == 0) opError = result } catch (_: RemoteException) { }
+            try { val result = engine.button(id, down); if (result.isNotEmpty()) opError = result } catch (_: RemoteException) { }
         }
         return ok("")
     }
@@ -450,7 +452,7 @@ internal class WebUi(private val context: Context) {
         val result = try {
             engine.touch(System.nanoTime(), ids, phases, xy, body.optInt("width"), body.optInt("height"), 0)
         } catch (failure: RemoteException) { throw WebUiError(503, "Guest worker unavailable") }
-        if (!result.length == 0) throw WebUiError(409, result)
+        if (result.isNotEmpty()) throw WebUiError(409, result)
         return ok("")
     }
 
@@ -460,7 +462,7 @@ internal class WebUi(private val context: Context) {
         val file = File(directory, "web-${System.nanoTime()}.png")
         try {
             val error = try { engine.screenshot(file.absolutePath) } catch (failure: RemoteException) { "Guest worker unavailable" }
-            if (!error.length == 0) throw WebUiError(409, error)
+            if (error.isNotEmpty()) throw WebUiError(409, error)
             return WebUiResponse.bytes("image/png", file.readBytes())
         } finally { file.delete() }
     }
@@ -468,7 +470,7 @@ internal class WebUi(private val context: Context) {
     private fun screenshotToPictures(): WebUiResponse {
         val path = File(app.filesDir, "screenshots/guest-${System.currentTimeMillis()}.png").absolutePath
         val error = try { engine().screenshot(path) } catch (failure: RemoteException) { "Guest worker unavailable" }
-        if (!error.length == 0) throw WebUiError(409, error)
+        if (error.isNotEmpty()) throw WebUiError(409, error)
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, File(path).name)
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
@@ -525,24 +527,24 @@ internal class WebUi(private val context: Context) {
         WebUiResponse.json(JSONObject().put("devices", JSONArray().putAllJson(records.map { recordJson(it) })))
 
     private fun selectDevice(id: String): WebUiResponse {
-        if (id.length == 0) throw WebUiError(400, "No device was named")
+        if (id.isEmpty()) throw WebUiError(400, "No device was named")
         val result = try { engine().select(id) } catch (failure: RemoteException) { throw WebUiError(503, "Device worker unavailable") }
-        if (!result.length == 0) throw WebUiError(409, result)
+        if (result.isNotEmpty()) throw WebUiError(409, result)
         return ok("Selected")
     }
 
     private fun renameDevice(id: String, name: String): WebUiResponse {
-        if (id.length == 0) throw WebUiError(400, "No device was named")
+        if (id.isEmpty()) throw WebUiError(400, "No device was named")
         if (!fitsDeviceName(name)) throw WebUiError(400, "A device name is at most 60 characters (127 bytes)")
         val result = try { engine().rename(id, name.trim()) } catch (failure: RemoteException) { throw WebUiError(503, "Device worker unavailable") }
-        if (!result.length == 0) throw WebUiError(409, result)
+        if (result.isNotEmpty()) throw WebUiError(409, result)
         return ok("Renamed to ${name.trim()}")
     }
 
     private fun deleteDevice(id: String): WebUiResponse {
-        if (id.length == 0) throw WebUiError(400, "No device was named")
+        if (id.isEmpty()) throw WebUiError(400, "No device was named")
         val result = try { engine().remove(id) } catch (failure: RemoteException) { throw WebUiError(503, "Device worker unavailable") }
-        if (!result.length == 0) throw WebUiError(409, result)
+        if (result.isNotEmpty()) throw WebUiError(409, result)
         return ok("Device deleted")
     }
 
@@ -564,7 +566,7 @@ internal class WebUi(private val context: Context) {
         if (importing) throw WebUiError(409, "An import is already running")
         val name = request.param("name").trim()
         val rom = request.param("rom")
-        if (!rom.length == 0 && !File(rom).isFile) throw WebUiError(400, "No such boot ROM was uploaded")
+        if (rom.isNotEmpty() && !File(rom).isFile) throw WebUiError(400, "No such boot ROM was uploaded")
         if (request.contentLength <= 0) throw WebUiError(400, "Send the device files as the request body")
         val staging = File(app.filesDir, "webui-import-${System.nanoTime()}").apply { mkdirs() }
         val received = receiveDeviceFiles(staging, request.bodyStream())
@@ -581,7 +583,7 @@ internal class WebUi(private val context: Context) {
             val result = try {
                 engine.importDevice(received.first.absolutePath, name, rom, "", received.second)
             } catch (failure: Exception) { failure.message ?: "The import failed" }
-            if (result.length == 0) {
+            if (result.isEmpty()) {
                 try {
                     val created = engine.records().firstOrNull { it.getString("id") !in before }
                     if (created != null) {
@@ -601,7 +603,7 @@ internal class WebUi(private val context: Context) {
             staging.deleteRecursively()
             importing = false
         }, "webui-device-import").start()
-        return ok("Importing${if (name.length == 0) "" else " $name"}…")
+        return ok("Importing${if (name.isEmpty()) "" else " $name"}…")
     }
 
     /** One uploaded body as either an archive (with its SHA-256) or an unpacked folder. */
@@ -641,7 +643,7 @@ internal class WebUi(private val context: Context) {
             while (true) {
                 val entry: ZipEntry = zipStream.nextEntry ?: break
                 val name = entry.name
-                if (name.length == 0 || name.startsWith("/") || name.contains("..")) throw WebUiError(400, "The ZIP holds an unusable entry")
+                if (name.isEmpty() || name.startsWith("/") || name.contains("..")) throw WebUiError(400, "The ZIP holds an unusable entry")
                 names += name
                 if (++files > 20_000) throw WebUiError(400, "The ZIP holds too many files")
                 if (entry.isDirectory) { File(unpacked, name).mkdirs(); continue }
@@ -690,7 +692,7 @@ internal class WebUi(private val context: Context) {
     private fun prepareJson(): JSONObject {
         val chosen = firmwares().firstOrNull { it.id == prep.firmwareId }
         val ipsw = JSONObject()
-            .put("forFirmware", prep.ipswFor).put("ready", !prep.ipswPath.length == 0 && prep.ipswFor == prep.firmwareId)
+            .put("forFirmware", prep.ipswFor).put("ready", prep.ipswPath.isNotEmpty() && prep.ipswFor == prep.firmwareId)
             .put("error", prep.ipswError)
             .put("downloading", IpswDownload.running)
             .put("downloadFirmware", IpswDownload.firmwareId)
@@ -701,7 +703,7 @@ internal class WebUi(private val context: Context) {
             .put("firmwareId", prep.firmwareId)
             .put("ipsw", ipsw)
             .put("rom", JSONObject()
-                .put("needed", rom != null).put("ready", rom != null && !prep.romPath.length == 0 && prep.romFor == rom)
+                .put("needed", rom != null).put("ready", rom != null && prep.romPath.isNotEmpty() && prep.romFor == rom)
                 .put("label", prep.romLabel).put("checking", prep.romChecking).put("error", prep.romError))
             .put("preparation", prep.preparation?.let { bundleToJson(it) } ?: JSONObject.NULL)
             .put("importing", prep.importing).put("importPhase", prep.importPhase)
@@ -761,7 +763,7 @@ internal class WebUi(private val context: Context) {
                 }
             }
             val sha1 = hex(digest)
-            if (!firmware.sha1.length == 0 && sha1 != firmware.sha1)
+            if (firmware.sha1.isNotEmpty() && sha1 != firmware.sha1)
                 throw WebUiError(400, "That file is not the iOS ${firmware.label} IPSW")
             val target = File(directory, firmware.fileName)
             if (!partial.renameTo(target)) throw WebUiError(500, "Could not save the IPSW")
@@ -801,14 +803,14 @@ internal class WebUi(private val context: Context) {
     }
 
     private fun startPreparation(firmwareId: String): WebUiResponse {
-        if (!firmwareId.length == 0) chooseFirmware(firmwareId)
+        if (firmwareId.isNotEmpty()) chooseFirmware(firmwareId)
         if (prep.importing) throw WebUiError(409, "The prepared device is still being added")
         val chosen = firmwares().firstOrNull { it.id == prep.firmwareId }
             ?: throw WebUiError(400, "Choose a device and iOS version first")
-        if (!(!prep.ipswPath.length == 0 && prep.ipswFor == chosen.id))
+        if (!(prep.ipswPath.isNotEmpty() && prep.ipswFor == chosen.id))
             throw WebUiError(409, "Choose the iOS ${chosen.label} IPSW first")
         val bootrom = Bootrom.forBoard(chosen.board)
-        if (bootrom != null && !(!prep.romPath.length == 0 && prep.romFor == bootrom))
+        if (bootrom != null && !(prep.romPath.isNotEmpty() && prep.romFor == bootrom))
             throw WebUiError(409, "Provide the ${bootrom.label} boot ROM first")
         val active = firmware
         if (active == null) {
@@ -920,7 +922,7 @@ internal class WebUi(private val context: Context) {
                 val own = destination.startsWith(app.filesDir.absolutePath) && File(destination, "device.lock.json").isFile
                 if (own) engine.adoptPrepared(destination, name, rom) else engine.importPrepared(destination, name, rom)
             } catch (failure: Exception) { failure.message ?: "The device worker exited during import" }
-            if (result.length == 0) {
+            if (result.isEmpty()) {
                 File(destination).walkTopDown().forEach { it.setWritable(true, true) }
                 File(destination).deleteRecursively()
                 File("$destination.native.log").delete()
@@ -937,7 +939,7 @@ internal class WebUi(private val context: Context) {
             }
             app.getSharedPreferences("preparation-imports", Context.MODE_PRIVATE).edit()
                 .putString("preparedImported", destination).remove("pendingPrepared").remove("ipsw").apply()
-            if (result.length == 0) {
+            if (result.isEmpty()) {
                 prep.imported = true
                 if (ipsw.startsWith(app.filesDir.absolutePath)) prep.ipswPath = ""
                 if (PreparationNote.read(app)?.optString("destination") == destination) PreparationNote.clear(app)
@@ -963,7 +965,7 @@ internal class WebUi(private val context: Context) {
     /** The device a search or install is checked against: the running guest's own report, else the record. */
     private fun storeTarget(): StoreTarget? {
         val socket = if (status.getString("state") == "running") status.getString("usbMuxSocket") ?: "" else ""
-        if (!socket.length == 0) {
+        if (socket.isNotEmpty()) {
             exactTarget?.takeIf { it.first == socket }?.let { return it.second }
             val asked = try { guestApps.target(socket) } catch (_: Exception) { null }
             if (asked != null) { exactTarget = socket to asked; return asked }
@@ -976,7 +978,7 @@ internal class WebUi(private val context: Context) {
         val socket = if (status.getString("state") == "running") status.getString("usbMuxSocket") ?: "" else ""
         val target = storeTarget()
         val installed = JSONArray()
-        if (!socket.length == 0 && guestApps.available) {
+        if (socket.isNotEmpty() && guestApps.available) {
             val apps = try { guestApps.installedApps(socket) } catch (failure: Exception) {
                 throw WebUiError(409, "The guest's app list is unavailable: ${failure.message}")
             }
@@ -989,7 +991,7 @@ internal class WebUi(private val context: Context) {
         }
         return WebUiResponse.json(JSONObject()
             .put("target", target?.let { JSONObject().put("productType", it.productType).put("ios", it.ios).put("arch", it.arch) } ?: JSONObject.NULL)
-            .put("running", !socket.length == 0)
+            .put("running", socket.isNotEmpty())
             .put("installed", installed))
     }
 
